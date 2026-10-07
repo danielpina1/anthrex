@@ -87,4 +87,6 @@ mod validate_rounds;
 mod validate_stages;
 
 #[cfg(test)]
+mod model_roles_golden;
+#[cfg(test)]
 mod test_support;

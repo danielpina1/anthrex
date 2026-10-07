@@ -1,0 +1,65 @@
+{
+  "default": {
+    "brainstorm.first": "claude:claude-opus-5-5", "brainstorm.second": "codex:default",
+    "helpers": "claude:claude-haiku-4-5", "implementer.hub": "claude:claude-opus-5-5",
+    "implementer.medium": "claude:claude-sonnet-5", "implementer.small": "claude:claude-sonnet-5",
+    "orchestrator": "claude:claude-opus-5-5", "planner": "claude:claude-opus-5-5",
+    "research": "claude:claude-haiku-4-5", "reviewer": "codex:default", "test_writer": "codex:default"
+  },
+  "default_runtime_codex": {
+    "brainstorm.first": "claude:claude-opus-5-5", "brainstorm.second": "codex:default",
+    "helpers": "claude:claude-haiku-4-5", "implementer.hub": "unresolved",
+    "implementer.medium": "codex:default", "implementer.small": "codex:default",
+    "orchestrator": "codex:default", "planner": "claude:claude-opus-5-5",
+    "research": "codex:default", "reviewer": "claude:claude-sonnet-5", "test_writer": "claude:claude-sonnet-5"
+  },
+  "routes": {
+    "brainstorm.first": "codex:gpt-6-sol", "brainstorm.second": "claude:claude-sonnet-5",
+    "helpers": "claude:claude-sonnet-5", "implementer.hub": "claude:claude-opus-5-5",
+    "implementer.medium": "claude:claude-sonnet-5", "implementer.small": "codex:gpt-6-sol",
+    "orchestrator": "codex:gpt-6.1-sol", "planner": "codex:gpt-6.1-sol",
+    "research": "claude:claude-sonnet-5", "reviewer": "codex:gpt-6.1-sol", "test_writer": "codex:default"
+  },
+  "agent": {
+    "brainstorm.first": "claude:claude-opus-5-5", "brainstorm.second": "codex:default",
+    "helpers": "claude:claude-haiku-4-5", "implementer.hub": "claude:claude-opus-5-5",
+    "implementer.medium": "claude:claude-sonnet-5", "implementer.small": "claude:claude-sonnet-5",
+    "orchestrator": "claude:claude-sonnet-5", "planner": "claude:claude-opus-5-5",
+    "research": "claude:claude-haiku-4-5", "reviewer": "codex:default", "test_writer": "codex:default"
+  },
+  "planners": {
+    "brainstorm.first": "claude:claude-opus-5-5", "brainstorm.second": "codex:default",
+    "helpers": "claude:claude-haiku-4-5", "implementer.hub": "claude:claude-opus-5-5",
+    "implementer.medium": "claude:claude-sonnet-5", "implementer.small": "claude:claude-sonnet-5",
+    "orchestrator": "claude:claude-opus-5-5", "planner": "codex:default",
+    "research": "claude:claude-haiku-4-5", "reviewer": "codex:default", "test_writer": "codex:default"
+  },
+  "scouts": {
+    "brainstorm.first": "claude:claude-opus-5-5", "brainstorm.second": "codex:default",
+    "helpers": "claude:claude-haiku-4-5", "implementer.hub": "claude:claude-opus-5-5",
+    "implementer.medium": "claude:claude-sonnet-5", "implementer.small": "claude:claude-sonnet-5",
+    "orchestrator": "claude:claude-opus-5-5", "planner": "claude:claude-opus-5-5",
+    "research": "claude:claude-sonnet-5", "reviewer": "codex:default", "test_writer": "codex:default"
+  },
+  "deciders": {
+    "brainstorm.first": "claude:claude-opus-5-5", "brainstorm.second": "codex:default",
+    "helpers": "codex:default", "implementer.hub": "claude:claude-opus-5-5",
+    "implementer.medium": "claude:claude-sonnet-5", "implementer.small": "claude:claude-sonnet-5",
+    "orchestrator": "claude:claude-opus-5-5", "planner": "claude:claude-opus-5-5",
+    "research": "claude:claude-haiku-4-5", "reviewer": "codex:default", "test_writer": "codex:default"
+  },
+  "custom_roster": {
+    "brainstorm.first": "claude:claude-opus-5-5", "brainstorm.second": "codex:gpt-6.1-sol",
+    "helpers": "claude:claude-haiku-4-5", "implementer.hub": "codex:gpt-6.1-sol",
+    "implementer.medium": "codex:default", "implementer.small": "codex:default",
+    "orchestrator": "codex:gpt-6.1-sol", "planner": "codex:gpt-6.1-sol",
+    "research": "codex:gpt-6-luna", "reviewer": "claude:claude-sonnet-5", "test_writer": "claude:claude-sonnet-5"
+  },
+  "no_builtin_models": {
+    "brainstorm.first": "codex:gpt-6.1-sol", "brainstorm.second": "codex:gpt-6.1-sol",
+    "helpers": "claude:default", "implementer.hub": "codex:gpt-6.1-sol",
+    "implementer.medium": "codex:gpt-6-sol", "implementer.small": "codex:gpt-6-sol",
+    "orchestrator": "codex:gpt-6.1-sol", "planner": "codex:gpt-6.1-sol",
+    "research": "codex:gpt-6-luna", "reviewer": "codex:gpt-6.1-sol", "test_writer": "codex:gpt-6-sol"
+  }
+}
