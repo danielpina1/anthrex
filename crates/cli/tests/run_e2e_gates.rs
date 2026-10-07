@@ -312,15 +312,14 @@ fn e2e_plan_with_an_l_task_is_rejected() {
 
 #[test]
 fn e2e_cross_runtime_overlapping_owns_are_rejected() {
-    let h = harness("");
-    let plan = gates_plan(&[
-        task("t1", &["src/**"], ""),
-        task("t2", &["src/a.rs"], CODEX),
-    ]);
+    // Milestone 9.8 decisions 31 and 33: the runtimes come from the role table (size M
+    // on Codex), and the refusal names it.
+    let h = RunHarness::with_repo_and_config("", &[], &[("check.sh", CHECK_SH)], CODEX_MEDIUM);
+    let plan = gates_plan(&[task("t1", &["src/**"], ""), task_m("t2", &["src/a.rs"], "")]);
     let message = refused(h.start_reply(&h.repo, &plan, true, false));
     assert!(
         message.lines().any(|l| l
-            == "task t2: owns: overlaps task t1's owns (src/**) and the two tasks run on different runtimes (claude, codex) (rule 9)"),
+            == "task t2: owns: overlaps task t1's owns (src/**) and the two tasks run on different runtimes (claude, codex): the role table runs size S on claude and size M on codex; give them the same size or separate owns (rule 9)"),
         "{message}"
     );
     assert!(no_run_branches(&h.repo));

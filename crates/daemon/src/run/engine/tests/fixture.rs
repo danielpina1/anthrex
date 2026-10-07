@@ -13,7 +13,7 @@ use crate::run::model::{OpId, Run, Task};
 use crate::run::plan::{BuildContext, Preflight, build_run, parse_plan};
 use crate::run::refit::Tuned;
 
-pub use crate::run::test_support::{plan_with, task_toml};
+pub use crate::run::test_support::{codex_medium, codex_small, plan_with, task_toml, with_row};
 
 /// `b0` × 20: the base commit.
 pub const BASE: &str = "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0";

@@ -14,10 +14,11 @@ fn blocked_question(reason: &str) -> Value {
 }
 
 /// Milestone 9.8 decision 29: the small row (Sonnet) falls back to Codex's default, so
-/// rung 2 past Sonnet's top effort moves to Codex. The plan starts the task at `high`,
-/// the built-in list's top, so on the default table (no fallback) it would stay on
-/// Sonnet: the peer runtime needs the fallback row (D2).
-const SMALL_FALLS_BACK_TO_CODEX: &str = "[models.implementer.small]\nmodel = \"claude:claude-sonnet-5\"\neffort = \"low\"\nfallback = \"codex:default\"";
+/// rung 2 past Sonnet's top effort moves to Codex. The row starts the task at `high`,
+/// the built-in list's top (decision 31: a plan's route is ignored, so the effort is
+/// the row's), so on the default table (no fallback) it would stay on Sonnet: the peer
+/// runtime needs the fallback row (D2).
+const SMALL_FALLS_BACK_TO_CODEX: &str = "[models.implementer.small]\nmodel = \"claude:claude-sonnet-5\"\neffort = \"high\"\nfallback = \"codex:default\"";
 
 #[test]
 fn e2e_two_rejections_then_a_fresh_peer_worker_is_approved() {
@@ -47,14 +48,7 @@ fn e2e_two_rejections_then_a_fresh_peer_worker_is_approved() {
         &[commit("b.rs", "fn b() {}\n"), done("added the check")],
     );
     h.script("reviewer-t1-3", &[approve()]);
-    let plan = plan(
-        "",
-        &[task(
-            "t1",
-            &["a.rs", "b.rs"],
-            "route = { runtime = \"claude\", effort = \"high\" }",
-        )],
-    );
+    let plan = plan("", &[task("t1", &["a.rs", "b.rs"], "")]);
     let id = h.start(&plan, true);
 
     // A fresh session of the same task is a task path of its own (k = 2).
@@ -341,10 +335,8 @@ fn e2e_a_claude_worker_client_error_blocks_at_once() {
             done("added a"),
         ],
     );
-    let plan = plan(
-        "",
-        &[task("t1", &["a.txt"], "route = { runtime = \"claude\" }")],
-    );
+    // On Claude by its row (milestone 9.8 decision 31: a plan's route is ignored).
+    let plan = plan("", &[task("t1", &["a.txt"], "")]);
     let id = h.start(&plan, true);
     // One task path; no engine timer is on it.
     let run = h.wait_run(&id, |r| t(r, "t1").state == TaskState::Blocked, RUN_WAIT);

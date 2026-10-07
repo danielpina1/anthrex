@@ -31,15 +31,14 @@ fn harness() -> RunHarness {
     h
 }
 
-/// The plan: one hub M `tdd` task `t1` on a Claude route, paired, writing `t_reset`.
-/// The route names strength `standard`: a hub's default is `frontier`, where the
-/// built-in roster has no Codex model, so the writer would stay on Claude (decision
-/// 25's fallback to the task's route).
+/// The plan: one hub M `tdd` task `t1`, on Claude by the hub row, paired, writing
+/// `t_reset`; the test writer is the `test_writer` row's (Codex's default). Milestone
+/// 9.8 decision 31: a plan's route is ignored, so none is set.
 fn pair_plan() -> String {
     let paired = task(
         "t1",
         &["tests/**"],
-        &format!("pair = true\ntest_to_write = \"{TEST}\"\nroute = {{ runtime = \"claude\", strength = \"standard\" }}"),
+        &format!("pair = true\ntest_to_write = \"{TEST}\""),
     )
     .replace("size = \"S\"", "size = \"M\"")
     .replace(

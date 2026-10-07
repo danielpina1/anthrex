@@ -91,17 +91,20 @@ fn a_racing_task_that_widens_the_reach_is_refused_by_the_trust_check() {
                     Role::ImplementerSmall,
                     choice("claude:claude-sonnet-5", Some("codex:gpt-5-codex")),
                 ),
+                // Decision 31: `t1`'s model from its row, not a plan route.
+                (
+                    Role::ImplementerMedium,
+                    choice("claude:claude-opus-5", None),
+                ),
             ]
             .into(),
             brainstorm: None,
         },
         ..config::Orchestrator::default()
     };
-    let route = "[task.route]\nruntime = \"claude\"\nmodel = \"claude-opus-5\"";
-    // Milestone 9.8 decision 29: an M task, whose row (the built-in Sonnet) has no
-    // fallback, so its escalation stays on Claude; the S row's Codex fallback is the
-    // racer's.
-    let plan = plan_with(PROFILE, &[task_toml("t1", "M", "[\"docs/a.md\"]", route)]);
+    // Milestone 9.8 decision 29: an M task, whose row (Opus) has no fallback, so its
+    // escalation stays on Claude; the S row's Codex fallback is the racer's.
+    let plan = plan_with(PROFILE, &[task_toml("t1", "M", "[\"docs/a.md\"]", "")]);
     let mut fx = Fixture::with_config(&plan, config);
     fx.ready(false);
     assert_eq!(
@@ -109,8 +112,8 @@ fn a_racing_task_that_widens_the_reach_is_refused_by_the_trust_check() {
         [Runtime::Claude]
     );
     let refusal = "Codex's project settings".to_string();
-    let sonnet = "race = true\n[task.route]\nruntime = \"claude\"\nmodel = \"claude-sonnet-5\"";
-    let text = plan_with(PROFILE, &[task("t9", "S", "t9", sonnet)]);
+    // On the S row's Sonnet, racing on its Codex fallback.
+    let text = plan_with(PROFILE, &[task("t9", "S", "t9", "race = true")]);
     let racing = crate::run::plan::parse_plan(&text).unwrap().tasks.remove(0);
     let reply = fx.reply();
     let effects = fx.next(EventKind::Edit {

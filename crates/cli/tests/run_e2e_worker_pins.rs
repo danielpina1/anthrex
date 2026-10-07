@@ -13,7 +13,7 @@ use support::run_plans::*;
 
 #[test]
 fn e2e_workers_get_their_own_tmpdir_and_pinned_sandbox_settings() {
-    let h = RunHarness::new("");
+    let h = RunHarness::with_config("", CODEX_MEDIUM, &[]);
     let seen = h.dir.path().join("seen");
     std::fs::create_dir_all(&seen).unwrap();
     for (task, file) in [("t1", "a.txt"), ("t2", "b.txt")] {
@@ -32,7 +32,7 @@ fn e2e_workers_get_their_own_tmpdir_and_pinned_sandbox_settings() {
     }
     let plan = plan(
         "",
-        &[task("t1", &["a.txt"], ""), task("t2", &["b.txt"], CODEX)],
+        &[task("t1", &["a.txt"], ""), task_m("t2", &["b.txt"], "")],
     );
     let id = h.start(&plan, true);
     h.wait_run(&id, complete, RUN_WAIT);
@@ -194,7 +194,7 @@ fn e2e_workers_get_their_own_tmpdir_and_pinned_sandbox_settings() {
 /// no profile key.
 #[test]
 fn e2e_a_codex_worker_below_profiles_gets_the_legacy_flags() {
-    let h = RunHarness::with_env("", &[("FAKE_CODEX_VERSION", "0.155.0")], true);
+    let h = RunHarness::with_env_and_config("", &[("FAKE_CODEX_VERSION", "0.155.0")], CODEX_MEDIUM);
     let seen = h.dir.path().join("seen");
     h.script(
         "worker-t1-1",
@@ -205,7 +205,7 @@ fn e2e_a_codex_worker_below_profiles_gets_the_legacy_flags() {
         ],
     );
     h.script("reviewer-t1-1", &[approve()]);
-    let id = h.start(&plan("", &[task("t1", &["a.txt"], CODEX)]), true);
+    let id = h.start(&plan("", &[task_m("t1", &["a.txt"], "")]), true);
     h.wait_run(&id, complete, RUN_WAIT);
     let tmp = std::fs::read_to_string(&seen).unwrap();
 

@@ -266,9 +266,9 @@ fn an_earlier_rounds_task_is_refused_first() {
 /// `engine/tests/race_pair_plan.rs`).
 #[test]
 fn race_and_pair_widen_reach() {
-    let route = "[task.route]\nruntime = \"claude\"\nmodel = \"claude-sonnet-5\"";
+    // Milestone 9.8 decision 31: on Claude Sonnet by its row (a plan's route is ignored).
     for flag in ["race = true", "pair = true\ntest_to_write = \"t1::works\""] {
-        let text = plan_with(PROFILE, &[code("t1", &format!("{flag}\n{route}"))]);
+        let text = plan_with(PROFILE, &[code("t1", flag)]);
         let run = run_ok(&text);
         assert_eq!(
             reachable_runtimes(&run),
@@ -328,7 +328,8 @@ fn a_started_racing_task_on_a_moved_route_still_takes_a_brief() {
 }
 
 /// Review m1: an amend naming `race` (or `pair`) and `route` on a started task gets
-/// both refusals in one reply.
+/// both refusals in one reply. Milestone 9.8 decision 31: only a user's route is read
+/// (`run edit`); the orchestrator's is ignored, so it gets the one refusal.
 #[test]
 fn a_started_tasks_race_and_route_amend_reports_both_refusals() {
     for field in ["race", "pair"] {
@@ -336,14 +337,29 @@ fn a_started_tasks_race_and_route_amend_reports_both_refusals() {
         run.tasks[0].state = TaskState::Working;
         run.tasks[0].start_commit = Some("c".repeat(40));
         let edit = json!({"op": "amend_task", "task_id": "t1", field: true,
-            "route": {"runtime": "codex"}});
+            "route": {"runtime": "codex", "model": ""}});
+        let edit: PlanEdit = serde_json::from_value(edit).unwrap();
+        let by_user = apply_edits(
+            &run,
+            std::slice::from_ref(&edit),
+            &EditScope::Run,
+            &EditSource::User,
+            5,
+        );
+        let errors: Vec<String> = (by_user.unwrap_err().iter())
+            .map(ToString::to_string)
+            .collect();
         assert_eq!(
-            apply(&run, vec![serde_json::from_value(edit).unwrap()]).unwrap_err(),
+            errors,
             [
                 format!("task t1 has started: its {field} cannot change"),
                 "task t1 is working; route can be amended only on pending, queued or blocked tasks"
                     .to_string(),
             ]
+        );
+        assert_eq!(
+            apply(&run, vec![edit]).unwrap_err(),
+            [format!("task t1 has started: its {field} cannot change")]
         );
     }
 }

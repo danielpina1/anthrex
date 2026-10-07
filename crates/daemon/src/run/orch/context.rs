@@ -1,5 +1,5 @@
 //! `get_context` (decision 17, Interfaces "The context"): the run and its triage, who
-//! is asking, the profile, the limits, the roster with `installed`, the scout reports,
+//! is asking, the profile, the limits, the role table with `installed`, the scout reports,
 //! the epics and the plan so far, at most [`CONTEXT_MAX_BYTES`]. Pure: the driver
 //! reads the reports and the stored profile and passes them in.
 
@@ -99,13 +99,7 @@ pub fn context(inputs: &ContextInputs<'_>) -> Value {
             // Milestone 9.2 decision 16: the frozen `[delivery] stage_target_lines`.
             "stage_target_lines": run.delivery.limits.stage_target_lines,
         },
-        "roster": run.roster.iter().map(|m| json!({
-            "runtime": m.runtime.label(),
-            "model": m.model,
-            "strength": label(&m.strength),
-            "note": m.note,
-            "installed": run.orch.installed.get(m.runtime.label()).copied().unwrap_or(false),
-        })).collect::<Vec<_>>(),
+        "roles": roles(run),
         "scouts": scouts(inputs, epic.map(|e| (e.scout_refs.as_slice(), e.area.as_slice()))),
         "epics": run.orch.epics.iter().map(|e| json!({
             "epic": e.epic,
@@ -134,10 +128,6 @@ pub fn context(inputs: &ContextInputs<'_>) -> Value {
             })).collect::<Vec<_>>(),
         "omitted": {"scouts": 0},
     });
-    // Milestone 9.5 decision 9a: the user's model lists, only when there are any.
-    if let Some(routes) = crate::run::route_pick::context_routes(&limits.route_lists) {
-        answer["limits"]["routes"] = routes;
-    }
     fold_all(&mut answer);
     let finished: Vec<&str> = run
         .tasks
@@ -147,6 +137,21 @@ pub fn context(inputs: &ContextInputs<'_>) -> Value {
         .collect();
     trim(&mut answer, &finished);
     answer
+}
+
+/// Milestone 9.8 decision 34: the model each size runs on (its row of the run's frozen
+/// table), and which runtimes the start found installed.
+fn roles(run: &Run) -> Value {
+    use proto::models::Role;
+    let models = run.limits.models();
+    let row = |role| models.choice(role).model.to_string();
+    let installed = |runtime: &str| run.orch.installed.get(runtime).copied().unwrap_or(false);
+    json!({
+        "small": row(Role::ImplementerSmall),
+        "medium": row(Role::ImplementerMedium),
+        "hub": row(Role::ImplementerHub),
+        "installed": {"claude": installed("claude"), "codex": installed("codex")},
+    })
 }
 
 /// The onboarding report as `onboarding`, then every run scout in order (with its

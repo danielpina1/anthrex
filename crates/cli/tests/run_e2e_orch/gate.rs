@@ -183,3 +183,36 @@ fn e2e_orchestrator_cannot_approve_merge_or_write() {
     });
     assert_eq!(head, info.base_sha);
 }
+
+/// Milestone 9.8 decision 31: the orchestrator sizes; it never routes. A route it sends
+/// with `add_task` is ignored: the worker runs on its size's row (the harness's `S` row
+/// is the built-in Claude Sonnet), and the run log says so.
+#[test]
+fn an_orchestrator_route_is_ignored_and_the_run_says_so() {
+    let h = harness("");
+    green(&h, "t1", "a.txt");
+    let route = json!({"route": {"runtime": "codex", "model": "gpt-6-sol"}});
+    let steps = [
+        prompt(),
+        edit_plan(
+            vec![add(plan_task("t1", &["a.txt"], route))],
+            json!({"submit": true}),
+        ),
+        expect("/awaiting_approval", json!(true)),
+        marker(),
+        read(None),
+    ];
+    let (run, _) = start(&h, &steps);
+    wait_passed(&h, 1);
+    approve_plan(&h, &run);
+    wait_task(&h, &run, "t1", TaskState::Merged);
+    let argv: Vec<String> = serde_json::from_str(&h.io_lines("worker-t1-1", "args")[0]).unwrap();
+    let at = argv.iter().position(|a| a == "--model").expect("--model");
+    assert_eq!(argv[at + 1], "claude-sonnet-5", "{argv:?}");
+    let log = crate::support::run_pr::log_lines(&h, &run);
+    assert!(
+        log.iter()
+            .any(|l| l == "route model ignored: models come from the role table"),
+        "{log:#?}"
+    );
+}

@@ -41,7 +41,14 @@ pub fn task(id: &str, owns: &[&str], extra: &str) -> String {
     )
 }
 
-pub const CODEX: &str = "route = { runtime = \"codex\" }";
+/// Milestone 9.8: the harness config that runs M tasks on Codex (a plan's route is
+/// ignored, MR §3.6). Use with `RunHarness::with_config("", CODEX_MEDIUM, &[])`.
+pub const CODEX_MEDIUM: &str = "[models.implementer.medium]\nmodel = \"codex:default\"\n";
+
+/// [`task`] at size M: with [`CODEX_MEDIUM`], a Codex task.
+pub fn task_m(id: &str, owns: &[&str], extra: &str) -> String {
+    task(id, owns, extra).replacen("size = \"S\"", "size = \"M\"", 1)
+}
 
 /// A plan with `check = "true"` and `profile` extra lines.
 pub fn plan(profile: &str, tasks: &[String]) -> String {

@@ -17,9 +17,13 @@ use super::*;
 use crate::run::engine::{Effect, OpKind, OpResult};
 use crate::run::orch::RefreshState;
 
-/// A route on the Claude sonnet at `high` effort, so rung 2 cannot raise the effort.
-const SONNET_HIGH: &str =
-    "[task.route]\nruntime = \"claude\"\nmodel = \"claude-sonnet-5\"\neffort = \"high\"";
+/// `config` whose small row is the Claude Sonnet at `high` effort, so rung 2 cannot
+/// raise the effort (milestone 9.8 decision 31: from the table, not a plan's route).
+fn sonnet_high(mut config: config::Orchestrator) -> config::Orchestrator {
+    let small = proto::models::Role::ImplementerSmall;
+    with_row(&mut config, small, "claude:claude-sonnet-5", Some("high"));
+    config
+}
 
 /// The test writer's two failed red checks: rung 2, its window killed and exited.
 fn rung2(fx: &mut Fixture, writer: u32) {
@@ -66,8 +70,8 @@ fn writer_row(fallback: &str) -> config::Orchestrator {
 /// fallback, Opus.
 #[test]
 fn the_writers_rung_2_skips_a_runtime_that_is_not_installed() {
-    let tasks = [task("t1", "S", "a", &format!("{PAIRED}\n{SONNET_HIGH}"))];
-    let config = writer_row("claude:claude-opus-5-5");
+    let tasks = [task("t1", "S", "a", PAIRED)];
+    let config = sonnet_high(writer_row("claude:claude-opus-5-5"));
     let (mut fx, launch, writer) = running(PROFILE, &tasks, config, |run| {
         run.orch.installed.insert("codex".into(), false);
         crate::run::test_support::with_efforts(run);
@@ -354,8 +358,9 @@ fn a_red_check_leaves_a_red_only_proof_record() {
 /// chose, records the list's source and snapshot.
 #[test]
 fn a_writer_on_a_list_chosen_route_records_the_list() {
-    let tasks = [task("t1", "S", "a", &format!("{PAIRED}\n{SONNET_HIGH}"))];
-    let (fx, launch, _) = running(PROFILE, &tasks, config::Orchestrator::default(), |run| {
+    let tasks = [task("t1", "S", "a", PAIRED)];
+    let config = sonnet_high(config::Orchestrator::default());
+    let (fx, launch, _) = running(PROFILE, &tasks, config, |run| {
         run.orch.installed.insert("codex".into(), false);
         let route = run.tasks[0].route.clone();
         run.tasks[0].list_pick = Some(crate::run::model::ListPick {

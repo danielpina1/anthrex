@@ -101,6 +101,11 @@ pub(super) fn apply_batch(
                 worker_messages::queue(run, &task_id, text, now)
             }
             EditConsequence::Recipients(outcome) => message = Some(outcome),
+            // Milestone 9.8 decision 31, for the orchestrator's `edit_plan` and a
+            // sub-planner's `submit_epic` alike.
+            EditConsequence::RouteIgnored => {
+                log(run, now, crate::run::orch::contract::ROUTE_IGNORED)
+            }
             // Decision 37: the scheduler's `complete::finish_pass` does the rest.
             EditConsequence::Finish => {
                 run.finish_edit = true;

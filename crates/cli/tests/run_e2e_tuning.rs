@@ -144,7 +144,8 @@ fn past_check(task: &TaskInfo) -> bool {
 fn e2e_a_rate_limit_halves_writers_for_that_runtime() {
     let h = RunHarness::tuning("", "", &[]);
     let watcher = h.subscribe();
-    let claude = "route = { runtime = \"claude\" }";
+    // On Claude by their row (milestone 9.8 decision 31: a plan's route is ignored).
+    let claude = "";
     h.script(
         "worker-t1-1",
         &[

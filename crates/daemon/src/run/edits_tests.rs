@@ -156,7 +156,8 @@ fn add_task_is_validated_like_a_plan_task() {
 
     // Invalid in four rule families at once: spans two modules with interface_change
     // (7.2.2 raise, then 7.2.4), check without a reason (8), an unknown model (route),
-    // and a blank acceptance item (fields).
+    // and a blank acceptance item (fields). Milestone 9.8 decision 31: a plan file's
+    // route is ignored, so only the user's added task is refused for its model.
     let bad = task_toml(
         "t9",
         "S",
@@ -171,13 +172,21 @@ fn add_task_is_validated_like_a_plan_task() {
         .map(ToString::to_string)
         .collect();
     assert!(
-        from_plan.len() >= 4,
+        from_plan.len() >= 3,
         "the fixture must break several rules: {from_plan:?}"
     );
 
     let run = run_ok(&plan_with(PROFILE, &base));
     let from_edit = rejected(&run, vec![PlanEdit::AddTask { task: spec(&bad) }]);
-    assert_eq!(from_edit, from_plan);
+    let extra: Vec<&String> = (from_edit.iter())
+        .filter(|e| !from_plan.contains(e))
+        .collect();
+    assert_eq!(
+        extra,
+        ["task t9: route.model: no-such-model is not in the roster for claude"],
+        "{from_edit:?}"
+    );
+    assert_eq!(from_edit.len(), from_plan.len() + 1, "{from_edit:?}");
 
     // A valid task is resolved exactly as the plan resolves it: spanning two modules
     // raises it to M with a note, and it gets its branch and worktree.

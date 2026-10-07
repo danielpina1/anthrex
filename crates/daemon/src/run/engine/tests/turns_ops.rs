@@ -10,7 +10,7 @@ use serde_json::json;
 use super::dispatch::{edit, replies};
 use super::fixture::*;
 use super::holds::delivers;
-use super::turns::{exited, killed_exit, queue, working_on};
+use super::turns::{exited, killed_exit, queue, working_on, working_on_codex};
 use super::turns_fixes::assert_alive;
 use crate::run::contract::{
     DONE_ACCEPTED, DONE_NUDGE, NO_COMMIT_NUDGE, protected_file_message, stall_nudge,
@@ -20,7 +20,6 @@ use crate::run::model::{FallbackState, StallState};
 
 const ROOMY: &str = "[task.budget]\ntool_calls = 1000\nminutes = 1000";
 const FIVE_MIN: &str = "[task.budget]\ntool_calls = 1000\nminutes = 5";
-const CODEX_ROOMY: &str = "[task.route]\nruntime = \"codex\"\nmodel = \"\"\n[task.budget]\ntool_calls = 1000\nminutes = 1000";
 
 fn args() -> serde_json::Value {
     json!({"summary": "did it", "test": "a::works", "red": "abcdef1"})
@@ -439,7 +438,7 @@ fn claim_outlasts_the_stall(fx: &mut Fixture, window: u32, verify: OpId) {
 /// nothing to resume: rung 2, with the nudge at the end of the fresh session's prompt.
 #[test]
 fn a_codex_interrupt_before_its_session_id_is_rung_two() {
-    let (mut fx, window) = working_on(CODEX_ROOMY);
+    let (mut fx, window) = working_on_codex(ROOMY);
     let stall_after = fx.run().limits.stall_after_secs;
     let quiet = fx.task("t1").rounds[0].last_event;
     let effects = fx.send(quiet + stall_after + 1, EventKind::Tick);
@@ -499,7 +498,7 @@ fn results_between_the_kill_and_the_fresh_session_are_dropped() {
 /// the delivery that was in flight to it, failing late, leaves the fresh session alone.
 #[test]
 fn a_dead_sessions_late_delivery_failure_leaves_the_fresh_session_alone() {
-    let (mut fx, window) = working_on(CODEX_ROOMY);
+    let (mut fx, window) = working_on_codex(ROOMY);
     fx.turn_completed(window);
     let (op, _) = fx.op("CountCommits");
     let effects = fx.done(op, commits(2));

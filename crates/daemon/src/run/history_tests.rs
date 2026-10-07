@@ -12,7 +12,7 @@ use crate::run::contract::generated_files_message;
 use crate::run::model::{DoneClaim, ReviewLevel, Run, SizeCheckState};
 use crate::run::phases::set_state;
 use crate::run::routing::{record_reviewer, record_worker};
-use crate::run::test_support::{escalated, with_efforts};
+use crate::run::test_support::{escalated, set_row, with_efforts};
 
 #[path = "history_tests_fixtures.rs"]
 mod fixtures;
@@ -240,6 +240,16 @@ fn routing_history_keeps_choice_time_candidates() {
         Effort::MEDIUM,
     );
     assert_eq!(run.tasks[0].route, sonnet);
+    // The small row back at its built-in `low`, so the task's `medium` is its own (a
+    // user's route, decision 10; a plan's before milestone 9.8 decision 31) and the
+    // row's route is one escalation never steps to.
+    set_row(
+        &mut run,
+        proto::models::Role::ImplementerSmall,
+        "claude:claude-sonnet-5",
+        Some("low"),
+        None,
+    );
     // Milestone 9.8 decision 29: Sonnet reports `low`, `medium`, `high`.
     with_efforts(&mut run);
 
@@ -320,7 +330,7 @@ fn routing_history_keeps_choice_time_candidates() {
     );
     decisions.iter().for_each(assert_selected);
     let (claude, codex) = ("claude:", "codex:");
-    // Ruling F16: the small row's model (at the plan's effort), with no fallback.
+    // Ruling F16: the small row's model (at the task's own effort), with no fallback.
     assert_eq!(
         candidates(&decisions[0]),
         vec![(format!("{claude}claude-sonnet-5"), Effort::MEDIUM, None)]

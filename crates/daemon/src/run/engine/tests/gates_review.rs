@@ -16,8 +16,6 @@ use crate::run::contract::{
 use crate::run::engine::{AgentSignal, Effect, EventKind, OpKind, OpResult};
 use crate::run::model::{OpId, ReviewLevel};
 
-pub(super) const CODEX_AUTHOR: &str = "[task.route]\nruntime = \"codex\"\nmodel = \"\"";
-
 /// A check-mode `t1` whose check passed: its `PrepareReview`.
 pub(super) fn in_review(fx: &mut Fixture, window: u32) -> (OpId, OpKind) {
     let effects = accepted(fx, window, json!({"summary": "s"}));
@@ -50,7 +48,17 @@ pub(super) fn reviewer(fx: &mut Fixture, op: OpId, patch: &str) -> (u32, OpKind)
 
 /// A working `t1` under review by a live reviewer: (fixture, worker, reviewer).
 pub(super) fn reviewed(profile: &str, extra: &str) -> (Fixture, u32, u32) {
-    let (mut fx, window) = working_on(profile, &format!("{CHECK_MODE}\n{extra}"));
+    reviewed_with(profile, extra, config::Orchestrator::default())
+}
+
+/// [`reviewed`] under `config` (milestone 9.8: [`codex_small`] for a Codex author, as a
+/// plan's route is ignored, decision 31).
+pub(super) fn reviewed_with(
+    profile: &str,
+    extra: &str,
+    config: config::Orchestrator,
+) -> (Fixture, u32, u32) {
+    let (mut fx, window) = working_with(profile, &format!("{CHECK_MODE}\n{extra}"), config);
     let (op, _) = in_review(&mut fx, window);
     let (rwindow, _) = reviewer(&mut fx, op, "diff --git a/x b/x");
     (fx, window, rwindow)
@@ -82,8 +90,13 @@ pub(super) fn blocking() -> Vec<serde_json::Value> {
 
 #[test]
 fn review_round_uses_a_fresh_session_and_worktree() {
-    for (extra, reviewer_runtime) in [("", Runtime::Codex), (CODEX_AUTHOR, Runtime::Claude)] {
-        let (mut fx, window) = working_on(PROFILE, &format!("{CHECK_MODE}\n{extra}"));
+    // Milestone 9.8: a Codex author from the table (`codex_small`).
+    let authors = [
+        (config::Orchestrator::default(), Runtime::Codex),
+        (codex_small(), Runtime::Claude),
+    ];
+    for (config, reviewer_runtime) in authors {
+        let (mut fx, window) = working_with(PROFILE, CHECK_MODE, config);
         let (op, kind) = in_review(&mut fx, window);
         let t1 = fx.task("t1");
         assert_eq!(

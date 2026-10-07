@@ -260,16 +260,21 @@ fn plan_task() -> JsonObject {
     )
 }
 
+/// Milestone 9.8 decision 32: kept so an older orchestrator's call is not rejected, its
+/// four old keys with their values unchecked; the engine ignores it (decision 31).
 fn route() -> JsonObject {
-    closed(
+    let mut route = closed(
         json!({
-            "runtime": one_of(&["claude", "codex"]),
-            "model": {"type": "string", "minLength": 0, "maxLength": 100},
-            "strength": one_of(&["fast", "standard", "frontier"]),
-            "effort": one_of(&["low", "medium", "high"]),
+            "runtime": {"type": "string"},
+            "model": {"type": "string"},
+            "strength": {"type": "string"},
+            "effort": {"type": "string"},
         }),
         &[],
-    )
+    );
+    let ignored = "Ignored: models come from the role table.";
+    route.insert("description".into(), json!(ignored));
+    route
 }
 
 fn size() -> Value {

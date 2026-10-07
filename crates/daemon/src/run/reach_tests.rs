@@ -55,7 +55,9 @@ fn falling_back_to_codex(mut config: config::Orchestrator) -> config::Orchestrat
     config
 }
 
-/// One `size` task owning `owns`, routed to `model` at `effort` on `runtime`.
+/// One `size` task owning `owns`, on `model` at `effort` on `runtime`: milestone 9.8
+/// decision 31 ignores a plan's route, so its size's row is set to that model (its
+/// fallback kept) and routes it.
 fn run_of(
     config: &config::Orchestrator,
     size: &str,
@@ -64,11 +66,23 @@ fn run_of(
     model: &str,
     effort: &str,
 ) -> Run {
-    let route = format!(
-        "[task.route]\nruntime = \"{runtime}\"\nmodel = \"{model}\"\neffort = \"{effort}\""
-    );
-    let text = plan_with(PROFILE, &[task_toml("t1", size, owns, &route)]);
-    build_with(&text, config).unwrap_or_else(|e| panic!("fixture plan must build: {e:?}"))
+    use proto::models::{ModelRef, Role, RoleChoice};
+    let mut config = config.clone();
+    let role = match size {
+        _ if owns == HUB => Role::ImplementerHub,
+        "S" => Role::ImplementerSmall,
+        _ => Role::ImplementerMedium,
+    };
+    let id = if model.is_empty() { "default" } else { model };
+    let fallback = (config.roles.rows.get(&role)).and_then(|r| r.fallback.clone());
+    let row = RoleChoice {
+        model: ModelRef::parse(&format!("{runtime}:{id}")).unwrap(),
+        effort: Some(effort.to_string()),
+        fallback,
+    };
+    config.roles.rows.insert(role, row);
+    let text = plan_with(PROFILE, &[task_toml("t1", size, owns, "")]);
+    build_with(&text, &config).unwrap_or_else(|e| panic!("fixture plan must build: {e:?}"))
 }
 
 const DOCS: &str = "[\"docs/a.md\"]";

@@ -10,7 +10,11 @@ use crate::run::model::{
 use crate::run::test_support::{EXAMPLE_PLAN, run_ok, task};
 
 fn base_run() -> Run {
-    run_ok(EXAMPLE_PLAN)
+    let mut run = run_ok(EXAMPLE_PLAN);
+    // Milestone 9.8 decision 31: the example plan's route is ignored with a log line;
+    // these fixtures start, as before, from an empty log.
+    run.log.clear();
+    run
 }
 
 /// A worker round with every field filled, its counters set from the caller.

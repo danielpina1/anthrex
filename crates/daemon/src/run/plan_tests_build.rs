@@ -99,25 +99,17 @@ fn globs_that_do_not_compile_are_rejected() {
 #[test]
 fn dot_components_in_owns_are_rejected() {
     // Without the rejection, `./crates/…` would dodge rule 9 against `crates/…`.
+    // Milestone 9.8 decision 31: the two runtimes come from the role table (size M on
+    // Codex), not from the plan's routes.
     let text = plan_with(
         PROFILE,
         &[
-            task_toml(
-                "t1",
-                "S",
-                r#"["./crates/a/src/x.rs"]"#,
-                "[task.route]\nruntime = \"claude\"",
-            ),
-            task_toml(
-                "t2",
-                "S",
-                r#"["crates//b/src/y.rs"]"#,
-                "[task.route]\nruntime = \"codex\"",
-            ),
+            task_toml("t1", "S", r#"["./crates/a/src/x.rs"]"#, ""),
+            task_toml("t2", "M", r#"["crates//b/src/y.rs"]"#, ""),
         ],
     );
     assert_eq!(
-        errors_of(&text),
+        build_with(&text, &codex_medium()).unwrap_err(),
         vec![
             err(
                 Some("t1"),

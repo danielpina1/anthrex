@@ -43,6 +43,16 @@ impl Batch {
             return;
         };
         let Some(i) = self.find(task_id) else { return };
+        // Milestone 9.8 decision 31: the orchestrator's and a sub-planner's route is
+        // ignored, so it neither changes the task nor is refused on a started one.
+        let ignored = route.is_some() && self.source != EditSource::User;
+        let route = match route {
+            Some(sent) if ignored => {
+                self.route_ignored(sent);
+                &None
+            }
+            route => route,
+        };
         let nothing = brief.is_none()
             && acceptance.is_none()
             && route.is_none()
@@ -54,6 +64,10 @@ impl Batch {
             && stage.is_none()
             && race.is_none()
             && pair.is_none();
+        // An amend that named only the ignored route is a no-op, not an error.
+        if nothing && ignored {
+            return;
+        }
         if nothing {
             self.errors.push(PlanError::new(
                 Some(task_id),

@@ -7,7 +7,9 @@ use serde_json::json;
 use super::dispatch::replies;
 use super::fixture::*;
 use super::gates::{CHECK_MODE, accepted, check_result, only_op, working_on};
-use super::gates_review::{blocking, in_review, reviewed, reviewer, submit, verdict};
+use super::gates_review::{
+    blocking, in_review, reviewed, reviewed_with, reviewer, submit, verdict,
+};
 use super::turns_fixes::assert_alive;
 use crate::run::contract::REVIEW_NUDGE;
 use crate::run::engine::{AgentSignal, Effect, EventKind, OpResult};
@@ -188,7 +190,8 @@ fn a_reviewer_whose_resume_fails_is_replaced() {
 /// nudge; its window is still the reviewer's and may submit.
 #[test]
 fn a_claude_reviewer_that_exits_between_turns_is_resumed_with_its_nudge() {
-    let (mut fx, _, rwindow) = reviewed(PROFILE, "[task.route]\nruntime = \"codex\"\nmodel = \"\"");
+    // Milestone 9.8: a Codex author (the small row), so the reviewer is Claude.
+    let (mut fx, _, rwindow) = reviewed_with(PROFILE, "", codex_small());
     assert_eq!(
         fx.task("t1").rounds.last().unwrap().route.runtime,
         proto::Runtime::Claude

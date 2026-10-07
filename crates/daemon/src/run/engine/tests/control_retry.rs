@@ -404,11 +404,14 @@ fn an_override_count_is_not_confused_with_a_fallback_count() {
 /// were checked against at the start.
 #[test]
 fn probe_b_a_retried_task_stays_inside_the_reachable_set() {
-    let route = "test_mode = \"tdd\"\ntest_to_write = \"a::works\"\n[task.route]\nruntime = \"claude\"\nmodel = \"claude-sonnet-5\"\neffort = \"medium\"";
-    let config = config::Orchestrator {
+    let route = "test_mode = \"tdd\"\ntest_to_write = \"a::works\"";
+    let mut config = config::Orchestrator {
         review_small: false,
         ..config::Orchestrator::default()
     };
+    // Milestone 9.8 decision 31: Sonnet at `medium` from the small row, not a route.
+    let small = proto::models::Role::ImplementerSmall;
+    with_row(&mut config, small, "claude:claude-sonnet-5", Some("medium"));
     let mut fx = Fixture::with_config(&plan_with(PROFILE, &[task("t1", "S", "a", route)]), config);
     fx.ready(true);
     let window = fx.launch_all()[0].1;
@@ -417,7 +420,6 @@ fn probe_b_a_retried_task_stays_inside_the_reachable_set() {
         None,
         "the probe's task is not reviewed"
     );
-    let small = proto::models::Role::ImplementerSmall;
     let sonnet = "claude:claude-sonnet-5";
     crate::run::test_support::set_row(
         fx.run_mut(),

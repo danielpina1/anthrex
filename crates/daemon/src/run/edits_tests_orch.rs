@@ -1,9 +1,10 @@
 //! Milestone 9 decision 25's `amend_task deps`, and a sub-planner's added tasks
 //! inheriting its epic (M9.4). Every test goes through `apply_edits`.
 
-use proto::{BlockReason, PlanEdit, TaskState};
+use proto::{BlockReason, Effort, PlanEdit, PlanTask, RouteSpec, TaskState};
 
 use super::*;
+use crate::run::model_roles::RunModels;
 use crate::run::orch::{EditSource, EpicRecord, PlannerPhase};
 
 fn amend_deps(task_id: &str, deps: &[&str]) -> PlanEdit {
@@ -264,4 +265,112 @@ fn a_planners_split_of_an_unknown_task_reports_the_unknown_task() {
         .map(ToString::to_string)
         .collect();
     assert_eq!(errors, ["task ghost: task_id: no such task"]);
+}
+
+/// Milestone 9.8 decision 31: the route an orchestrator or a sub-planner sends.
+fn sent_route() -> RouteSpec {
+    RouteSpec {
+        runtime: Some(proto::Runtime::Codex),
+        model: Some("gpt-6-sol".into()),
+        strength: Some(proto::Strength::Frontier),
+        effort: Some(Effort::HIGH),
+    }
+}
+
+/// `one(id, "")` carrying [`sent_route`].
+fn routed(id: &str) -> PlanTask {
+    let mut task = spec(&one(id, ""));
+    task.route = sent_route();
+    task
+}
+
+/// Decision 31 for `source`, on `run` (whose `t3` and `t4` it may edit): an added task,
+/// a split's children and an amended task each drop the route they were sent and take
+/// their row's; each batch notes it once, and all three in one batch once too.
+fn routes_are_ignored(run: &Run, source: &EditSource) {
+    let check = |edits: Vec<PlanEdit>, ids: &[&str]| {
+        let (edited, consequences) = apply_edits(run, &edits, &EditScope::Run, source, 9)
+            .unwrap_or_else(|e| panic!("{source:?}: {}", show(&e)));
+        for id in ids {
+            let t = task(&edited, id);
+            assert_eq!(t.spec.route, RouteSpec::default(), "{source:?} {id}");
+            let row = edited.limits.models().route(RunModels::task_role(t));
+            assert_eq!(t.route, row, "{source:?} {id}");
+        }
+        assert_eq!(
+            consequences,
+            vec![EditConsequence::RouteIgnored],
+            "{source:?} {ids:?}"
+        );
+    };
+    let add = || PlanEdit::AddTask { task: routed("a1") };
+    let split = || PlanEdit::SplitTask {
+        task_id: "t4".into(),
+        into: vec![routed("a2"), routed("a3")],
+    };
+    let amended = || {
+        amend(
+            "t3",
+            Amend {
+                route: Some(sent_route()),
+                priority: Some(4),
+                ..Amend::default()
+            },
+        )
+    };
+    check(vec![add()], &["a1"]);
+    check(vec![split()], &["a2", "a3"]);
+    check(vec![amended()], &["t3"]);
+    check(vec![add(), split(), amended()], &["a1", "a2", "a3", "t3"]);
+    // An amend that names only a route changes nothing and is not refused.
+    let only = amend(
+        "t3",
+        Amend {
+            route: Some(sent_route()),
+            ..Amend::default()
+        },
+    );
+    check(vec![only], &["t3"]);
+}
+
+#[test]
+fn an_orchestrators_route_is_ignored_and_noted() {
+    routes_are_ignored(&flat(), &EditSource::Orchestrator);
+}
+
+#[test]
+fn a_planners_route_is_ignored() {
+    let mut run = flat();
+    run.tasks[2].spec.epic = Some("e1".into());
+    run.tasks[3].spec.epic = Some("e1".into());
+    run.orch
+        .epics
+        .push(EpicRecord::new("e1", PlannerPhase::Planning));
+    routes_are_ignored(&run, &EditSource::Planner { epic: "e1".into() });
+}
+
+/// Decision 31: a user's `amend_task` (`run edit`, the task edit form) keeps its route
+/// (decision 10), with nothing noted.
+#[test]
+fn a_users_amend_keeps_its_route() {
+    let route = RouteSpec {
+        model: Some("claude-opus-5-5".into()),
+        effort: Some(Effort::HIGH),
+        ..RouteSpec::default()
+    };
+    let edit = amend(
+        "t3",
+        Amend {
+            route: Some(route.clone()),
+            ..Amend::default()
+        },
+    );
+    let (edited, consequences) = applied(&flat(), vec![edit]);
+    let t3 = task(&edited, "t3");
+    assert_eq!(t3.spec.route, route);
+    assert_eq!(
+        (t3.route.model.as_str(), &t3.route.effort),
+        ("claude-opus-5-5", &Effort::HIGH)
+    );
+    assert_eq!(consequences, vec![]);
 }

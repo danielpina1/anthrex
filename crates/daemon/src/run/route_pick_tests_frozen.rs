@@ -1,6 +1,6 @@
 //! Task M9.5.10a, continued from `route_pick_tests.rs` (split for the 600-line rule):
-//! the lists are frozen into the run, an old run has none, no list changes nothing, and
-//! the planners see them.
+//! the lists are frozen into the run, an old run has none, and no list changes nothing
+//! (milestone 9.8 decision 34: the planners see the role table instead).
 
 use super::*;
 
@@ -80,40 +80,6 @@ fn no_lists_reproduce_today() {
     let edited = add(&run, &[m("t5", "[\"crates/d/**\"]", "")]);
     assert_eq!(task(&edited, "t5").route, sonnet(Effort::MEDIUM));
     assert_eq!(task(&edited, "t5").list_pick, None);
-}
-
-fn context_of(run: &Run) -> serde_json::Value {
-    context(&ContextInputs {
-        run,
-        asker: Asker::Orchestrator,
-        profile: None,
-        reports: Vec::new(),
-        only: None,
-    })
-}
-
-#[test]
-fn get_context_shows_the_lists() {
-    let lists = RouteLists {
-        m: m_example(Pick::Spread),
-        ..Default::default()
-    };
-    let run = built(&[m("t1", "[\"crates/a/**\"]", "")], lists);
-    let routes = &context_of(&run)["limits"]["routes"];
-    assert_eq!(
-        *routes,
-        serde_json::json!({"m": {"pick": "spread", "candidates": [
-            {"runtime": "codex", "model": SOL, "strength": "frontier", "effort": "high"},
-            {"runtime": "claude", "model": OPUS, "strength": "frontier", "effort": "medium"},
-        ]}})
-    );
-    let plain = built(&[m("t1", "[\"crates/a/**\"]", "")], RouteLists::default());
-    let limits = &context_of(&plain)["limits"];
-    assert!(limits.get("routes").is_none(), "{limits}");
-
-    let line = "Model lists are set by the user; leave route empty to use them, or name one of the listed models.";
-    assert!(ORCHESTRATOR_CONTRACT.contains(line));
-    assert!(PLANNER_CONTRACT.contains(line));
 }
 
 /// Targets by id: the edit path's.

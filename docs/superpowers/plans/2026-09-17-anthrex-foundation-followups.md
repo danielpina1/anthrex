@@ -2000,3 +2000,8 @@ A Claude worker on Ubuntu 26.04 could not commit (reported with Claude Code 2.1.
 ## From M9.8.8 (2026-10-07, escalation along the role table), for M9.8.13
 
 - **A fix task naming a row model outside `run.roster` is refused.** `validate::resolve_route` (`daemon/src/run/validate.rs`, the `roster::find` arm) refuses a route that names a model the frozen roster does not list (`<model> is not in the roster for <runtime>`). Since M9.8.8 an engine fix task (`engine/bisect.rs`, `engine/delivery/fix.rs`) names the route `role_step::escalate` gives along the culprit's row, which can be any catalog model the user chose (say `codex:gpt-6-sol`); such a fix task is refused and falls back to the culprit's route, or for a CI fix to the row's route. Fix direction: when `Run.roster` goes (M9.8.13), drop the roster-membership check for a named model (the strength check with it), as 7b did for `--orchestrator`.
+
+## From M9.8.9 (2026-10-08, the orchestrator sizes; it never routes), for M9.8.13 or later
+
+- **`get_context`'s tool description still says "the models you can route to".** `mcp/src/tools_orch.rs` (the `get_context` tool) and its fixture `mcp/src/fixtures/orch_tools.json` keep milestone 9's text, while contract rule 4 now says "the role table (which model each size runs on)" and `get_context` answers `roles` (decision 34). The brief's file list names only `route()`. Fix direction: reword the description to match rule 4, in the code, the fixture and `tools_orch_tests.rs::GET_CONTEXT`.
+- **`route_pick::context_routes` has no caller left.** `get_context` no longer reads `limits.route_lists`; the function stays with the rest of `route_pick.rs` until M9.8.13 deletes it.

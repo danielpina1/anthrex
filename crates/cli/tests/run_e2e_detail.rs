@@ -102,7 +102,7 @@ fn claude_worker_activity_then_summary() {
 
 #[test]
 fn codex_worker_summary_is_its_last_message() {
-    let h = RunHarness::new("");
+    let h = RunHarness::with_config("", CODEX_MEDIUM, &[]);
     // A Codex worker that never calls `task_done`: its turn ends with a commit, it
     // answers the fallback's nudge with a message and nothing else, and the fallback
     // completes it (as `e2e_turn_end_fallback_completes_a_silent_worker` does).
@@ -116,7 +116,7 @@ fn codex_worker_summary_is_its_last_message() {
         ],
     );
     h.script("reviewer-t1-1", &[approve()]);
-    let id = h.start(&plan("", &[task("t1", &["a.txt"], CODEX)]), true);
+    let id = h.start(&plan("", &[task_m("t1", &["a.txt"], "")]), true);
     let run = h.wait_run(&id, complete, RUN_WAIT);
     let t1 = t(&run, "t1");
     assert_eq!(t1.state, TaskState::Merged);

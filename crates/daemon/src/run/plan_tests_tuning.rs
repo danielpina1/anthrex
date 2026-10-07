@@ -124,7 +124,7 @@ fn class_routes_are_frozen_but_the_rows_fill_the_routes() {
         task_toml("s1", "S", "[\"crates/a/src/x.rs\"]", ""),
         task_toml("m1", "M", "[\"crates/b/src/y.rs\"]", ""),
         task_toml("h1", "M", "[\"crates/proto/src/wire.rs\"]", ""),
-        // An explicit route keeps its own effort.
+        // Milestone 9.8 decision 31: a plan's route is ignored, its effort too.
         task_toml(
             "e1",
             "S",
@@ -140,7 +140,7 @@ fn class_routes_are_frozen_but_the_rows_fill_the_routes() {
     assert_eq!(of("s1"), (Strength::Standard, Effort::LOW));
     assert_eq!(of("m1"), (Strength::Standard, Effort::MEDIUM));
     assert_eq!(of("h1"), (Strength::Standard, Effort::HIGH));
-    assert_eq!(of("e1").1, Effort::HIGH);
+    assert_eq!(of("e1").1, Effort::LOW);
     assert_eq!(
         run.limits.class_routes,
         ClassRoutes {
@@ -154,7 +154,8 @@ fn class_routes_are_frozen_but_the_rows_fill_the_routes() {
         log,
         [
             "tuning: route S standard/medium (applied)",
-            "tuning: route M frontier/medium (applied)"
+            "tuning: route M frontier/medium (applied)",
+            crate::run::orch::contract::ROUTE_IGNORED,
         ]
     );
 }
@@ -166,7 +167,10 @@ fn default_tuning_reproduces_today() {
     // `build_with` builds with `Tuned::default()` too, so the pin is the limits below,
     // `none == today` and `the_brief_example_builds_a_run`, not a comparison of the two.
     let run = built(EXAMPLE_PLAN, &config, Tuned::default());
-    assert!(run.log.is_empty());
+    // Milestone 9.8 decision 31: the example plan's route is ignored, which its one
+    // log line says.
+    let texts: Vec<&str> = run.log.iter().map(|e| e.text.as_str()).collect();
+    assert_eq!(texts, [crate::run::orch::contract::ROUTE_IGNORED]);
     // What a start with nothing learned freezes is the same run, but for its log line
     // and the same line kept for the report (ruling T21-1).
     let mut none = built(
@@ -174,7 +178,7 @@ fn default_tuning_reproduces_today() {
         &config,
         tuned(&TuningFile::default(), &config),
     );
-    let log: Vec<String> = none.log.drain(..).map(|e| e.text).collect();
+    let log = vec![none.log.remove(0).text];
     assert_eq!(
         log,
         ["tuning: none (history has fewer than 30 samples per class)"]

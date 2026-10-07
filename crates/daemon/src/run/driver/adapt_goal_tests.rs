@@ -71,7 +71,8 @@ fn repo_with_project_settings(root: &Path) {
     git(root, &["commit", "-q", "-m", "base"]);
 }
 
-/// The fast path's one-task plan, owning a hub file, routed to Claude.
+/// The fast path's one-task plan, owning a hub file, on Claude by its row (milestone
+/// 9.8 decision 31: a plan's route is ignored; the built-in rows are Claude's).
 const HUB_PLAN: &str = r#"
 goal = "Rename a wire field"
 
@@ -93,11 +94,6 @@ test_mode_reason = "a rename"
 owns = ["crates/proto/src/wire.rs"]
 brief = "Rename it."
 acceptance = ["renamed"]
-[task.route]
-runtime = "claude"
-model = "claude-sonnet-5"
-strength = "standard"
-effort = "medium"
 "#;
 
 #[tokio::test]
@@ -205,7 +201,7 @@ fn shipped_service(data: &Path) -> Arc<RunService> {
 /// launches it.
 const INSTALLED_STAND_IN: &str = "/usr/bin/false";
 
-/// A one-task plan in `crates/a`, routed to Claude.
+/// A one-task plan in `crates/a`, on Claude by its row.
 fn one_task_plan() -> String {
     HUB_PLAN
         .replace("hub = [\"crates/proto/**\"]\n", "")

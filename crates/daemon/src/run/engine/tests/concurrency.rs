@@ -16,8 +16,6 @@ use crate::run::engine::{AgentSignal, Effect, EngineState, EventKind, OpResult, 
 use crate::run::model::{Lane, Race, Run};
 use crate::run::snapshot::snapshot;
 
-const CODEX: &str = "[task.route]\nruntime = \"codex\"\nmodel = \"\"";
-
 /// The 9.3 `run.json` milestone 9.5 task 2 captured with the base's code.
 const M93_RUN: &str = include_str!("../../../../tests/fixtures/run/m93-run.json");
 
@@ -29,6 +27,9 @@ fn config(hold_secs: u64, recover_mins: u64) -> config::Orchestrator {
     c.tuning.table.recover_after_mins = recover_mins;
     c.stall_after_secs = 100_000;
     c.budget_s.minutes = 100_000;
+    c.budget_m.minutes = 100_000;
+    // Milestone 9.8 decision 31: a plan's route is ignored; size M runs on Codex.
+    crate::run::test_support::with_codex_medium(&mut c);
     c
 }
 
@@ -97,8 +98,9 @@ fn logged(fx: &Fixture, needle: &str) -> Vec<String> {
         .collect()
 }
 
+/// A Codex task: size M, whose row [`config`] puts on Codex.
 fn codex(id: &str, module: &str) -> String {
-    task(id, "S", module, CODEX)
+    task(id, "M", module, "")
 }
 
 #[test]

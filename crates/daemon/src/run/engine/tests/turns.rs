@@ -16,7 +16,18 @@ use crate::run::snapshot::snapshot;
 
 /// A working `t1` (S) whose first turn is open; its window.
 pub(super) fn working_on(extra: &str) -> (Fixture, u32) {
-    let mut fx = Fixture::new(&plan_with(PROFILE, &[task("t1", "S", "a", extra)]));
+    working_under(extra, config::Orchestrator::default())
+}
+
+/// [`working_on`] on Codex: milestone 9.8 decision 31 ignores a plan's route, so the
+/// small row runs on Codex ([`codex_small`]).
+pub(super) fn working_on_codex(extra: &str) -> (Fixture, u32) {
+    working_under(extra, codex_small())
+}
+
+fn working_under(extra: &str, config: config::Orchestrator) -> (Fixture, u32) {
+    let plan = plan_with(PROFILE, &[task("t1", "S", "a", extra)]);
+    let mut fx = Fixture::with_config(&plan, config);
     fx.ready(true);
     let window = fx.launch_all()[0].1;
     assert!(fx.task("t1").rounds[0].turn_open);
@@ -549,7 +560,7 @@ fn a_claude_process_that_exits_between_turns_is_resumed_on_the_next_delivery() {
 
 #[test]
 fn a_codex_exit_after_turn_completed_is_normal() {
-    let (mut fx, window) = working_on("[task.route]\nruntime = \"codex\"\nmodel = \"\"");
+    let (mut fx, window) = working_on_codex("");
     fx.turn_completed(window);
     let before = fx.run().clone();
     let effects = fx.signal(

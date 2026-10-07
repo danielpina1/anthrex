@@ -6,17 +6,22 @@ use proto::{
 };
 
 use crate::run::model::{AgentRound, CheckRecord, ProofRecord, ReviewRecord, Run};
-use crate::run::test_support::{PROFILE, plan_with, run_ok, task_toml};
+use crate::run::test_support::{PROFILE, build_with, plan_with, show, task_toml};
 
+/// Milestone 9.8: the role table that runs size S on Claude Sonnet at `medium` (a
+/// plan's route is ignored, decision 31), where these tasks ran by their route before.
 pub(super) const STANDARD: &str =
-    "[task.route]\nruntime = \"claude\"\nstrength = \"standard\"\neffort = \"medium\"";
+    "[models.implementer.small]\nmodel = \"claude:claude-sonnet-5\"\neffort = \"medium\"\n";
 
 pub(super) fn run_of(tasks: &[&str]) -> Run {
     let tasks: Vec<String> = tasks
         .iter()
-        .map(|id| task_toml(id, "S", &format!("[\"crates/{id}/**\"]"), STANDARD))
+        .map(|id| task_toml(id, "S", &format!("[\"crates/{id}/**\"]"), ""))
         .collect();
-    let mut run = run_ok(&plan_with(PROFILE, &tasks));
+    let (config, problems) = config::parse(STANDARD);
+    assert!(problems.is_empty(), "{problems:?}");
+    let built = build_with(&plan_with(PROFILE, &tasks), &config.orchestrator);
+    let mut run = built.unwrap_or_else(|e| panic!("{}", show(&e)));
     run.repo_dir = "/tmp/data/repos/x".into();
     run
 }

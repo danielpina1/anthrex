@@ -368,8 +368,8 @@ fn an_edit_that_reaches_an_unchecked_runtime_is_refused() {
         },
         ..config::Orchestrator::default()
     };
-    let route = "[task.route]\nruntime = \"claude\"\nmodel = \"claude-sonnet-5\"";
-    let plan = plan_with(PROFILE, &[task_toml("t1", "S", "[\"docs/a.md\"]", route)]);
+    // On the small row's Claude Sonnet (milestone 9.8 decision 31: not a plan route).
+    let plan = plan_with(PROFILE, &[task_toml("t1", "S", "[\"docs/a.md\"]", "")]);
     let mut fx = Fixture::with_config(&plan, config);
     fx.ready(false);
     assert_eq!(

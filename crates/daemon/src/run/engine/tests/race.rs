@@ -16,8 +16,6 @@ use crate::run::model::{Lane, OpId, RuntimeConcurrency, task_branch};
 
 /// A racing task's extra line.
 pub(super) const RACING: &str = "race = true";
-/// The second lane's runtime, and a task on it.
-const CODEX: &str = "[task.route]\nruntime = \"codex\"\nmodel = \"\"";
 
 /// `config` with its small and medium implementer rows racing on Codex: milestone 9.8
 /// decision 28's second racer is the row's fallback (`codex:default`, the peer route
@@ -289,6 +287,16 @@ fn a_race_whose_fallback_is_not_installed_races_on_the_tasks_route() {
 /// then leads the critical path (with `t4` after it), with `t0` still holding a writer
 /// slot; `t3` (S) comes last.
 pub(super) fn behind_one_slot(limits: &str, t0_extra: &str) -> Fixture {
+    behind_one_slot_with(limits, t0_extra, config::Orchestrator::default())
+}
+
+/// [`behind_one_slot`] under `config` (milestone 9.8: [`codex_medium`] puts the M
+/// task `t0` on Codex, as a plan's route is ignored, decision 31).
+pub(super) fn behind_one_slot_with(
+    limits: &str,
+    t0_extra: &str,
+    config: config::Orchestrator,
+) -> Fixture {
     let tasks = [
         task("tdep", "S", "d", ""),
         task("t0", "M", "z", t0_extra),
@@ -296,11 +304,7 @@ pub(super) fn behind_one_slot(limits: &str, t0_extra: &str) -> Fixture {
         task("t3", "S", "c", ""),
         task("t4", "M", "e", "deps = [\"t1\"]"),
     ];
-    let fx = launched(
-        &profile_with(limits),
-        &tasks,
-        config::Orchestrator::default(),
-    );
+    let fx = launched(&profile_with(limits), &tasks, config);
     assert_eq!(fx.task("t0").state, TaskState::Working);
     fx
 }
@@ -341,7 +345,7 @@ fn a_race_holds_the_head_of_the_line_then_gives_up() {
 #[test]
 fn lanes_respect_runtime_caps() {
     // `t0` works on Codex, whose cap a rate limit brought down to 1: lane b has no room.
-    let mut fx = behind_one_slot("max_writers = 4", CODEX);
+    let mut fx = behind_one_slot_with("max_writers = 4", "", codex_medium());
     assert_eq!(fx.task("t0").route.runtime, Runtime::Codex);
     assert!(fx.run().limits.adaptive_concurrency);
     let now = fx.now;

@@ -380,3 +380,17 @@ fn parse_call_bounds_iterate() {
         "invalid arguments: edits[0]: goal: must be 1 to 16384 characters"
     );
 }
+
+/// Milestone 9.8 decision 32: a route is still read as an object of at most the four
+/// old keys, but its values are no longer bounded to the old strengths and efforts; the
+/// engine ignores it (decision 31).
+#[test]
+fn a_route_with_any_values_is_accepted() {
+    let mut t = task(false);
+    t["route"] = json!({"runtime": "codex", "model": "x", "strength": "frontier",
+                        "effort": "xhigh"});
+    assert!(edit_plan(json!({"op": "add_task", "task": t})).is_ok());
+    let amend = json!({"op": "amend_task", "task_id": "t1",
+                       "route": {"runtime": "codex", "model": "x", "effort": "xhigh"}});
+    assert!(edit_plan(amend).is_ok());
+}

@@ -232,10 +232,10 @@ fn e2e_task_worktree_is_watched() {
 fn e2e_a_worker_is_watchable_through_its_conversation() {
     // A Codex worker: its conversation is built from its stream (decision 27). A fake
     // Claude session fires no turn hooks of its own (M8a.20's m7), so it would show none.
-    let h = RunHarness::new("");
+    let h = RunHarness::with_config("", CODEX_MEDIUM, &[]);
     h.script("worker-t1-1", &[commit("a.txt", "a\n"), done("added a")]);
     h.script("reviewer-t1-1", &[approve()]);
-    let id = h.start(&plan("", &[task("t1", &["a.txt"], CODEX)]), true);
+    let id = h.start(&plan("", &[task_m("t1", &["a.txt"], "")]), true);
     let run = h.wait_run(&id, |r| t(r, "t1").state == TaskState::Merged, RUN_WAIT);
     let worker = window_of(&run, "t1", AgentRole::Worker).unwrap();
     let watcher = h.watch(Some(ClientMsg::SubscribeConversation {

@@ -26,14 +26,57 @@ pub(super) fn plan(tasks: &[String]) -> String {
 /// A run of `tasks` whose repository has an onboarding report, started (`yes`: at
 /// once, else at the plan gate) with its integration worktree made; the deciders on.
 pub(super) fn evidenced(tasks: &[String], yes: bool, config: config::Orchestrator) -> Fixture {
+    evidenced_routed(tasks, yes, config, &[])
+}
+
+/// [`evidenced`], each `(task, route)` set by the user (`run edit`'s `amend_task`,
+/// milestone 9.8 decision 10) before the start: the only route a task keeps now that a
+/// plan's is ignored (decision 31).
+fn evidenced_routed(
+    tasks: &[String],
+    yes: bool,
+    config: config::Orchestrator,
+    routes: &[(&str, proto::RouteSpec)],
+) -> Fixture {
+    use crate::run::edits::apply_edits;
+    use crate::run::orch::EditSource;
+    use crate::run::validate::EditScope;
+    let amends: Vec<PlanEdit> = (routes.iter())
+        .map(|(id, route)| amend_route(id, route))
+        .collect();
     let mut fx = Fixture::deciding(&plan(tasks), config);
-    fx.start_with(yes, |run| run.onboarding_report = Some(ONBOARDING.into()));
+    fx.start_with(yes, |run| {
+        if !amends.is_empty() {
+            let user = &EditSource::User;
+            let edited = apply_edits(run, &amends, &EditScope::Run, user, 1_500);
+            *run = edited.unwrap_or_else(|e| panic!("{e:?}")).0;
+        }
+        run.onboarding_report = Some(ONBOARDING.into());
+    });
     let (op, _) = fx.op("CreateRunBranch");
     fx.done(
         op,
         crate::run::engine::OpResult::Worktree { head: BASE.into() },
     );
     fx
+}
+
+/// An `amend_task` of `id`'s route alone.
+fn amend_route(id: &str, route: &proto::RouteSpec) -> PlanEdit {
+    PlanEdit::AmendTask {
+        task_id: id.into(),
+        brief: None,
+        acceptance: None,
+        route: Some(route.clone()),
+        test_mode: None,
+        test_mode_reason: None,
+        priority: None,
+        size: None,
+        deps: None,
+        stage: None,
+        race: None,
+        pair: None,
+    }
 }
 
 /// The latest `Decide` op, which must be a size check: its id, task ids and input.
@@ -129,10 +172,16 @@ fn size_check_raises_s_to_m_and_rederives_route_budget_and_review() {
     assert_alive(&fx);
 }
 
+/// Milestone 9.8 decision 31: a planner's route is ignored, so the effort that survives
+/// is a user's (decision 10).
 #[test]
-fn a_planner_set_effort_survives_a_raise() {
-    let route = "[task.route]\neffort = \"high\"";
-    let mut fx = evidenced(&[task("t1", "S", "a", route)], true, Default::default());
+fn a_users_effort_survives_a_raise() {
+    let route = proto::RouteSpec {
+        effort: Some(Effort::HIGH),
+        ..Default::default()
+    };
+    let tasks = [task("t1", "S", "a", "")];
+    let mut fx = evidenced_routed(&tasks, true, Default::default(), &[("t1", route)]);
     assert_eq!(fx.task("t1").route.effort, Effort::HIGH);
     let (op, ..) = size_check_op(&fx);
     fx.decided(op, verdicts(&[("t1", Size::M, "bigger")]));
@@ -143,7 +192,8 @@ fn a_planner_set_effort_survives_a_raise() {
 
 /// Milestone 9.8 decision 10 (controller ruling, M9.8.8): a raise to M re-resolves the
 /// task to `implementer.medium`'s row, model and effort; a route that names its model
-/// (a user's, decision 10) keeps that model.
+/// (a user's, decision 10) keeps that model. Since decision 31 a plan's route is
+/// ignored, so `t2`'s is set by the user.
 #[test]
 fn a_raise_to_m_takes_the_medium_row_unless_the_route_names_a_model() {
     use proto::models::{ModelRef, ModelTable, Role, RoleChoice};
@@ -157,9 +207,13 @@ fn a_raise_to_m_takes_the_medium_row_unless_the_route_names_a_model() {
         rows: [(Role::ImplementerSmall, row)].into(),
         brainstorm: None,
     };
-    let named = "[task.route]\nruntime = \"claude\"\nmodel = \"claude-opus-5-5\"";
-    let tasks = [task("t1", "S", "a", ""), task("t2", "S", "b", named)];
-    let mut fx = evidenced(&tasks, true, config);
+    let named = proto::RouteSpec {
+        runtime: Some(proto::Runtime::Claude),
+        model: Some("claude-opus-5-5".into()),
+        ..Default::default()
+    };
+    let tasks = [task("t1", "S", "a", ""), task("t2", "S", "b", "")];
+    let mut fx = evidenced_routed(&tasks, true, config, &[("t2", named)]);
     let small = fx.run().limits.models().route(Role::ImplementerSmall);
     assert_eq!(fx.task("t1").route, small);
     let (op, ..) = size_check_op(&fx);
@@ -175,7 +229,7 @@ fn a_raise_to_m_takes_the_medium_row_unless_the_route_names_a_model() {
         (t2.size, t2.route.model.as_str()),
         (Size::M, "claude-opus-5-5")
     );
-    assert_eq!(t2.route.effort, medium.effort, "the plan set no effort");
+    assert_eq!(t2.route.effort, medium.effort, "the user set no effort");
     let models = fx.run().limits.models();
     assert_eq!(t1.review_route, Some(models.reviewer_route(&t1.route).0));
 }

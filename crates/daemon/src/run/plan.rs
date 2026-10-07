@@ -358,7 +358,10 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
     check_plan(&plan, &profile, &mut errors);
 
     let mut tasks = Vec::with_capacity(plan.tasks.len());
-    for spec in plan.tasks {
+    // Milestone 9.8 decision 31: a plan file's routes are cleared; the rows route.
+    let mut routed = false;
+    for mut spec in plan.tasks {
+        routed |= std::mem::take(&mut spec.route) != proto::RouteSpec::default();
         let (mut task, task_errors) = resolve_task_lenient(spec, &profile, &limits, &config.models);
         errors.extend(task_errors);
         errors.extend(super::validate::reserved_new_id(task.id()));
@@ -446,9 +449,11 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         // (`engine::design_spend::tuned`, ruling T13-5).
         // Milestone 9.8: the role table's start lines follow them.
         log: (ctx.tuning.log.iter().chain(&ctx.models_log))
+            .map(String::as_str)
+            .chain(routed.then_some(super::orch::contract::ROUTE_IGNORED))
             .map(|text| super::model::LogEntry {
                 at: ctx.now,
-                text: text.clone(),
+                text: text.to_string(),
             })
             .collect(),
         created_at: ctx.now,

@@ -19,11 +19,11 @@ fn settings_refusal(who: &str, paths: &str) -> String {
 
 #[test]
 fn e2e_project_settings_are_refused_without_trust_project() {
-    let h = RunHarness::with_repo(
+    let h = RunHarness::with_repo_and_config(
         "",
         &[("ANTHREX_TEST_NO_SETTING_SOURCES", "1")],
-        true,
         &[(".claude/settings.json", HOOKED_SETTINGS)],
+        CODEX_MEDIUM,
     );
     let claude = plan("", &[task("t1", &["a.txt"], "")]);
     let message = refused(h.start_reply(&h.repo, &claude, true, false));
@@ -38,7 +38,7 @@ fn e2e_project_settings_are_refused_without_trust_project() {
 
     // Ruling T22-I1: a Codex worker's reviewer runs Claude, so a Codex-only plan is
     // refused too.
-    let codex = plan("", &[task("t1", &["a.txt"], CODEX)]);
+    let codex = plan("", &[task_m("t1", &["a.txt"], "")]);
     let message = refused(h.start_reply(&h.repo, &codex, true, false));
     assert_eq!(message, settings_refusal("Claude", ".claude/settings.json"));
     assert!(no_run_branches(&h.repo));
@@ -50,13 +50,13 @@ fn e2e_project_settings_are_refused_without_trust_project() {
 /// with it, the run starts and records the file.
 #[test]
 fn e2e_a_codex_workers_claude_reviewer_needs_trust_project() {
-    let h = RunHarness::with_repo(
+    let h = RunHarness::with_repo_and_config(
         "",
         &[("ANTHREX_TEST_NO_SETTING_SOURCES", "1")],
-        true,
         &[(".claude/settings.json", HOOKED_SETTINGS)],
+        CODEX_MEDIUM,
     );
-    let codex = plan("", &[task("t1", &["a.txt"], CODEX)]);
+    let codex = plan("", &[task_m("t1", &["a.txt"], "")]);
     let message = refused(h.start_reply(&h.repo, &codex, true, false));
     assert_eq!(message, settings_refusal("Claude", ".claude/settings.json"));
     assert!(no_run_branches(&h.repo));
@@ -118,7 +118,7 @@ const EXCLUDE_FLAG: &str = "--anthrex-test-exclude-project-config";
 
 /// The branch where Codex loads project config and cannot be told not to.
 fn codex_refuses(h: &RunHarness) {
-    let codex = plan("", &[task("t1", &["a.txt"], CODEX)]);
+    let codex = plan("", &[task_m("t1", &["a.txt"], "")]);
     let message = refused(h.start_reply(&h.repo, &codex, true, false));
     assert_eq!(message, settings_refusal("Codex", ".codex/config.toml"));
     assert!(no_run_branches(&h.repo));
@@ -137,7 +137,7 @@ fn codex_excludes(h: &RunHarness, flags: &[&str], line: &str) {
         ],
     );
     h.script("reviewer-t1-1", &[approve()]);
-    let id = h.start(&plan("", &[task("t1", &["a.txt"], CODEX)]), true);
+    let id = h.start(&plan("", &[task_m("t1", &["a.txt"], "")]), true);
     let run = h.wait_run(&id, complete, RUN_WAIT);
     until("the report's codex line", RUN_WAIT, || {
         report(&run).contains(line).then_some(())
@@ -165,18 +165,18 @@ fn e2e_codex_project_config_follows_cli_caps() {
     // `load`: refused, naming the file; accepted with --trust-project and reported; a
     // Claude-only plan is refused for it too, since its reviewer runs Codex (ruling
     // T22-I1).
-    let h = RunHarness::with_repo(
+    let h = RunHarness::with_repo_and_config(
         "",
         &[("ANTHREX_TEST_CODEX_PROJECT_CONFIG", "load")],
-        true,
         CODEX_CONFIG,
+        CODEX_MEDIUM,
     );
     codex_refuses(&h);
     h.script("worker-t1-1", &[commit("a.txt", "a\n"), done("added a")]);
     h.script("reviewer-t1-1", &[approve()]);
     let id = h.start_in(
         &h.repo,
-        &plan("", &[task("t1", &["a.txt"], CODEX)]),
+        &plan("", &[task_m("t1", &["a.txt"], "")]),
         true,
         true,
     );
@@ -194,18 +194,18 @@ fn e2e_codex_project_config_follows_cli_caps() {
     drop(h);
 
     // `exclude`: the placeholder flag on both turns' argv.
-    let h = RunHarness::with_repo(
+    let h = RunHarness::with_repo_and_config(
         "",
         &[("ANTHREX_TEST_CODEX_PROJECT_CONFIG", "exclude")],
-        true,
         CODEX_CONFIG,
+        CODEX_MEDIUM,
     );
     codex_excludes(&h, &[EXCLUDE_FLAG], "codex project config: excluded\n");
     drop(h);
 
     // Unset: whichever branch the real CLI_CAPS names.
     let caps = daemon::headless::argv::CLI_CAPS;
-    let h = RunHarness::with_repo("", &[], true, CODEX_CONFIG);
+    let h = RunHarness::with_repo_and_config("", &[], CODEX_CONFIG, CODEX_MEDIUM);
     match (caps.codex_loads_project_config, caps.codex_user_config_only) {
         (true, None) => codex_refuses(&h),
         (true, Some(flags)) => codex_excludes(&h, flags, "codex project config: excluded\n"),
@@ -260,6 +260,11 @@ const CLAUDE_BOUND: &str = "builtin_models = false\n\n[orchestrator.review]\nsma
 /// A roster with Codex entries only, so a Codex plan never reaches Claude.
 const CODEX_ONLY: &str = "builtin_models = false\n\n[[orchestrator.models]]\nruntime = \"codex\"\nmodel = \"gpt-5-codex\"\nstrength = \"standard\"\n";
 
+/// Milestone 9.8 decision 31: the rows that keep a plan on Codex (a plan's route is
+/// ignored): sizes S and M (a raise's) on `gpt-5-codex`, reviewed by Codex's default
+/// with no fallback.
+const CODEX_ROWS: &str = "[models.implementer.small]\nmodel = \"codex:gpt-5-codex\"\n\n[models.implementer.medium]\nmodel = \"codex:gpt-5-codex\"\n\n[models.reviewer]\nmodel = \"codex:default\"\n";
+
 /// The brief's case, where the run really stays on Claude: a Claude plan is not refused
 /// for `.codex/config.toml`. An edit that adds a Codex task would reach Codex, whose
 /// project config was never checked, and is refused with decision 53's text.
@@ -271,14 +276,9 @@ fn e2e_a_claude_bound_plan_starts_and_an_edit_onto_codex_is_refused() {
         true,
         CODEX_CONFIG,
     );
-    let claude = plan(
-        "",
-        &[task(
-            "t1",
-            &["a.txt"],
-            "route = { runtime = \"claude\", model = \"claude-sonnet-5\" }",
-        )],
-    );
+    // Milestone 9.8 decision 31: on Claude Sonnet by the small row (a plan's route is
+    // ignored).
+    let claude = plan("", &[task("t1", &["a.txt"], "")]);
     let id = h.start_in(&h.repo, &claude, false, false);
     assert!(h.run(&id).unwrap().trusted_project.is_empty());
 
@@ -311,20 +311,13 @@ fn e2e_a_claude_bound_plan_starts_and_an_edit_onto_codex_is_refused() {
 /// tracking a hooked `.claude/settings.json`, since no session of it runs Claude.
 #[test]
 fn e2e_a_codex_bound_plan_starts_beside_claude_settings() {
-    let h = RunHarness::with_repo(
+    let h = RunHarness::with_repo_and_config(
         CODEX_ONLY,
         &[("ANTHREX_TEST_NO_SETTING_SOURCES", "1")],
-        true,
         &[(".claude/settings.json", HOOKED_SETTINGS)],
+        CODEX_ROWS,
     );
-    let codex = plan(
-        "",
-        &[task(
-            "t1",
-            &["a.txt"],
-            "route = { runtime = \"codex\", model = \"gpt-5-codex\" }",
-        )],
-    );
+    let codex = plan("", &[task("t1", &["a.txt"], "")]);
     let id = h.start_in(&h.repo, &codex, false, false);
     assert!(h.run(&id).unwrap().trusted_project.is_empty());
 }

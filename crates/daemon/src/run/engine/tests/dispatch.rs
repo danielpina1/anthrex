@@ -169,9 +169,9 @@ fn approve_starts_dispatch_and_yes_skips_the_gate() {
     assert_eq!(round.launch_op, *op);
 
     // --yes on a Codex task: no gate, a fresh worktree, then the window. Milestone 9.8
-    // decision 10: a route leaves the row by naming a model (`codex:default`'s is "").
-    let codex = "[task.route]\nruntime = \"codex\"\nmodel = \"\"";
-    let mut fx = Fixture::new(&plan_with(PROFILE, &[task("t1", "S", "a", codex)]));
+    // decision 31: Codex from the table (the small row), as a plan's route is ignored.
+    let plan = plan_with(PROFILE, &[task("t1", "S", "a", "")]);
+    let mut fx = Fixture::with_config(&plan, codex_small());
     fx.ready(true);
     assert_eq!(fx.run().state, RunState::Running);
     assert_eq!(fx.run().approved_by.as_deref(), Some("--yes"));

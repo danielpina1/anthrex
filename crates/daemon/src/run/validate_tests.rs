@@ -420,33 +420,24 @@ fn review_small_off_skips_s_but_not_hub() {
 
 // ---- Runtimes and implicit dependencies, decision 11 ----
 
+/// Milestone 9.8 decisions 31 and 33: the runtimes come from the role table (size M on
+/// Codex here), never from a plan's route.
 #[test]
 fn cross_runtime_overlap_is_rejected_on_the_later_task() {
     let text = plan_with(
         PROFILE,
         &[
-            task_toml(
-                "t1",
-                "M",
-                r#"["crates/proto/**"]"#,
-                "[task.route]\nruntime = \"claude\"",
-            ),
-            task_toml(
-                "t2",
-                "M",
-                r#"["crates/proto/src/run.rs"]"#,
-                "[task.route]\nruntime = \"codex\"\nmodel = \"\"",
-            ),
+            task_toml("t1", "S", r#"["crates/a/src/**"]"#, ""),
+            task_toml("t2", "M", r#"["crates/a/src/lib.rs"]"#, ""),
         ],
     );
-    // Milestone 9.8 decision 10: t2 (a hub task) leaves its row by naming Codex's model.
     assert_eq!(
-        errors_of(&text),
+        build_with(&text, &codex_medium()).unwrap_err(),
         vec![err(
             Some("t2"),
             "owns",
             "9",
-            "overlaps task t1's owns (crates/proto/**) and the two tasks run on different runtimes (claude, codex): the role table runs size hub on claude and size hub on codex; give them the same size or separate owns (rule 9)"
+            "overlaps task t1's owns (crates/a/src/**) and the two tasks run on different runtimes (claude, codex): the role table runs size S on claude and size M on codex; give them the same size or separate owns (rule 9)"
         )]
     );
 }

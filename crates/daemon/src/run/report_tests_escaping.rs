@@ -321,7 +321,8 @@ fn route_and_review_route_content_is_asserted_m2() {
     let run = base_run();
     let t = task(&run, "t1");
     let out = render(&run, 2_000);
-    assert!(out.contains("Route: claude claude-sonnet-5 (standard/high)"));
+    // Milestone 9.8 decision 31: the medium row's effort (the plan's `high` is ignored).
+    assert!(out.contains("Route: claude claude-sonnet-5 (standard/medium)"));
     assert!(
         t.review_route.is_some(),
         "the fixture task must be reviewed"

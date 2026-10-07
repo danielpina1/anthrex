@@ -13,6 +13,24 @@ fn route(runtime: Runtime, model: &str, strength: Strength, effort: Effort) -> R
     }
 }
 
+/// Milestone 9.8 decision 31: a plan file's route is ignored, so the routes these tests
+/// resolve are a user's: `tasks` added by `run edit`'s `add_task` (`EditSource::User`,
+/// decision 10) to a run of one other task.
+fn users_tasks(tasks: &[String]) -> Result<crate::run::model::Run, Vec<PlanError>> {
+    use crate::run::edits::apply_edits;
+    use crate::run::orch::EditSource;
+    use crate::run::validate::EditScope;
+    let run = run_ok(&plan_with(
+        PROFILE,
+        &[task_toml("base", "S", r#"["crates/z/src/lib.rs"]"#, "")],
+    ));
+    let plan = parse_plan(&plan_with(PROFILE, tasks)).expect("the tasks parse");
+    let edits: Vec<proto::PlanEdit> = (plan.tasks.into_iter())
+        .map(|task| proto::PlanEdit::AddTask { task })
+        .collect();
+    apply_edits(&run, &edits, &EditScope::Run, &EditSource::User, 2_000).map(|(run, _)| run)
+}
+
 /// Milestone 9.8 decision 10: each task's row (the built-ins here); every route a row
 /// gives is `standard` until M9.8.14 removes the strength.
 #[test]
@@ -79,18 +97,16 @@ fn default_runtime_comes_from_config() {
     );
 }
 
+/// A user's route (milestone 9.8 decision 31; a plan's before).
 #[test]
 fn a_given_model_fixes_the_strength() {
-    let text = plan_with(
-        PROFILE,
-        &[task_toml(
-            "s",
-            "S",
-            r#"["crates/a/src/lib.rs"]"#,
-            "[task.route]\nmodel = \"claude-haiku-4-5\"",
-        )],
-    );
-    let run = run_ok(&text);
+    let run = users_tasks(&[task_toml(
+        "s",
+        "S",
+        r#"["crates/a/src/lib.rs"]"#,
+        "[task.route]\nmodel = \"claude-haiku-4-5\"",
+    )])
+    .unwrap_or_else(|e| panic!("{}", show(&e)));
     // S policy would give standard; the model is fast in the roster, so fast it is.
     assert_eq!(
         task(&run, "s").route,
@@ -103,19 +119,18 @@ fn a_given_model_fixes_the_strength() {
     );
 }
 
+/// A user's route (milestone 9.8 decision 31; a plan's before).
 #[test]
 fn a_contradicting_strength_is_an_error() {
-    let text = plan_with(
-        PROFILE,
-        &[task_toml(
-            "s",
-            "S",
-            r#"["crates/a/src/lib.rs"]"#,
-            "[task.route]\nmodel = \"claude-sonnet-5\"\nstrength = \"frontier\"",
-        )],
-    );
+    let errors = users_tasks(&[task_toml(
+        "s",
+        "S",
+        r#"["crates/a/src/lib.rs"]"#,
+        "[task.route]\nmodel = \"claude-sonnet-5\"\nstrength = \"frontier\"",
+    )])
+    .unwrap_err();
     assert_eq!(
-        errors_of(&text),
+        errors,
         vec![err(
             Some("s"),
             "route.strength",
@@ -125,35 +140,34 @@ fn a_contradicting_strength_is_an_error() {
     );
 }
 
+/// A user's routes (milestone 9.8 decision 31; a plan's before).
 #[test]
 fn route_problems_are_errors() {
-    let text = plan_with(
-        PROFILE,
-        &[
-            task_toml(
-                "a",
-                "S",
-                r#"["crates/a/src/lib.rs"]"#,
-                "[task.route]\nmodel = \"gpt-9\"",
-            ),
-            task_toml(
-                "b",
-                "S",
-                r#"["crates/b/src/lib.rs"]"#,
-                "[task.route]\nruntime = \"shell\"",
-            ),
-            // Milestone 9.8 decision 10: a route that names no model takes the row, so
-            // a strength with no roster model at it is no longer an error.
-            task_toml(
-                "c",
-                "S",
-                r#"["crates/c/src/lib.rs"]"#,
-                "[task.route]\nruntime = \"codex\"\nstrength = \"frontier\"",
-            ),
-        ],
-    );
+    let errors = users_tasks(&[
+        task_toml(
+            "a",
+            "S",
+            r#"["crates/a/src/lib.rs"]"#,
+            "[task.route]\nmodel = \"gpt-9\"",
+        ),
+        task_toml(
+            "b",
+            "S",
+            r#"["crates/b/src/lib.rs"]"#,
+            "[task.route]\nruntime = \"shell\"",
+        ),
+        // Milestone 9.8 decision 10: a route that names no model takes the row, so
+        // a strength with no roster model at it is no longer an error.
+        task_toml(
+            "c",
+            "S",
+            r#"["crates/c/src/lib.rs"]"#,
+            "[task.route]\nruntime = \"codex\"\nstrength = \"frontier\"",
+        ),
+    ])
+    .unwrap_err();
     assert_eq!(
-        errors_of(&text),
+        errors,
         vec![
             err(
                 Some("a"),
@@ -168,5 +182,55 @@ fn route_problems_are_errors() {
                 "must be claude or codex"
             ),
         ]
+    );
+}
+
+/// Milestone 9.8 decision 31: a plan file's route is cleared before resolution, so each
+/// task takes its row, and the run log says so once; a plan with no route logs nothing.
+#[test]
+fn a_plan_files_route_is_ignored_and_noted() {
+    let text = plan_with(
+        PROFILE,
+        &[
+            task_toml(
+                "s",
+                "S",
+                r#"["crates/a/src/lib.rs"]"#,
+                "[task.route]\nruntime = \"codex\"\nmodel = \"gpt-6-sol\"",
+            ),
+            task_toml(
+                "m",
+                "M",
+                r#"["crates/b/src/lib.rs"]"#,
+                "[task.route]\neffort = \"high\"",
+            ),
+        ],
+    );
+    let run = run_ok(&text);
+    let models = run.limits.models();
+    for id in ["s", "m"] {
+        let t = task(&run, id);
+        assert_eq!(t.spec.route, proto::RouteSpec::default(), "{id}");
+        let row = models.route(crate::run::model_roles::RunModels::task_role(t));
+        assert_eq!(t.route, row, "{id}");
+    }
+    let ignored: Vec<_> = (run.log.iter())
+        .filter(|l| l.text == crate::run::orch::contract::ROUTE_IGNORED)
+        .collect();
+    assert_eq!(ignored.len(), 1, "{:?}", run.log);
+    assert_eq!(
+        run.log.last().unwrap().text,
+        "route model ignored: models come from the role table"
+    );
+
+    let plain = plan_with(
+        PROFILE,
+        &[task_toml("s", "S", r#"["crates/a/src/lib.rs"]"#, "")],
+    );
+    let run = run_ok(&plain);
+    assert!(
+        !(run.log.iter()).any(|l| l.text == crate::run::orch::contract::ROUTE_IGNORED),
+        "{:?}",
+        run.log
     );
 }

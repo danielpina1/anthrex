@@ -13,7 +13,7 @@ use super::dispatch::edit;
 use super::done::one_reply;
 use super::fixture::*;
 use super::gates::{CHECK_MODE, only_op, working_on};
-use super::gates_review::{CODEX_AUTHOR, in_review, reviewed, submit, verdict};
+use super::gates_review::{in_review, reviewed, reviewed_with, submit, verdict};
 use super::liveness::assert_alive;
 use super::merge::{doc_task, start_on, window_of};
 use super::turns::{exited, queue, working};
@@ -260,7 +260,8 @@ fn a_reviewer_whose_verdict_is_in_is_not_resumed() {
 /// beside it, and a pause edit's resume sends it no restart message.
 #[test]
 fn a_reviewer_ended_between_turns_is_neither_replaced_nor_told_of_a_restart() {
-    let (mut fx, _, rwindow) = reviewed(PROFILE, CODEX_AUTHOR);
+    // Milestone 9.8: a Codex author (the small row), so the reviewer is Claude.
+    let (mut fx, _, rwindow) = reviewed_with(PROFILE, "", codex_small());
     let outcome = TurnOutcome::Failed {
         error: "rate limit reached".into(),
         kind: FailureKind::RateLimit,

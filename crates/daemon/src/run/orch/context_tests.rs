@@ -138,7 +138,13 @@ fn context_for_the_orchestrator() {
     for key in ["max_tasks", "max_readers", "max_bounces"] {
         assert!(limits[key].is_u64(), "{key}");
     }
-    assert_eq!(c["roster"].as_array().unwrap().len(), run.roster.len());
+    // Milestone 9.8 decision 34: the role table, not the roster.
+    assert_eq!(
+        c["roles"],
+        json!({"small": "claude:claude-sonnet-5", "medium": "claude:claude-sonnet-5",
+               "hub": "claude:claude-opus-5-5",
+               "installed": {"claude": true, "codex": false}})
+    );
     // Every report, the onboarding one first as `onboarding`, and the queued scout.
     assert_eq!(
         ids(&c, "scouts", "id"),
@@ -200,27 +206,22 @@ fn only_listed_scouts_are_returned() {
     assert_eq!(ids(&c, "scouts", "id"), ["3f9a-a"]);
 }
 
+/// Milestone 9.8 decision 34: `roles.installed` is what the start found, per runtime.
 #[test]
 fn installed_is_carried() {
     let run = planning_run();
     let c = ask(&run, Asker::Orchestrator, None);
-    for entry in c["roster"].as_array().unwrap() {
-        let expected = entry["runtime"] == "claude";
-        assert_eq!(entry["installed"], expected, "{entry}");
-        for key in ["model", "strength", "note"] {
-            assert!(entry[key].is_string(), "{key}: {entry}");
-        }
-    }
+    assert_eq!(
+        c["roles"]["installed"],
+        json!({"claude": true, "codex": false})
+    );
     // A run built before the check (no entry) lists nothing as installed.
     let mut run = planning_run();
     run.orch.installed.clear();
     let c = ask(&run, Asker::Orchestrator, None);
-    assert!(
-        c["roster"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|e| e["installed"] == false)
+    assert_eq!(
+        c["roles"]["installed"],
+        json!({"claude": false, "codex": false})
     );
 }
 
@@ -418,4 +419,39 @@ fn get_context_sizes_follow_the_runs_thresholds() {
         tuned["M"],
         "one to three files inside one module, a clear spec, a check exists, about 140 changed lines"
     );
+}
+
+/// Milestone 9.8 decision 34: `roles` replaces `roster` and `limits.routes`: the model
+/// each size runs on (its row's), and which runtimes are installed.
+#[test]
+fn get_context_shows_the_roles() {
+    use proto::models::Role;
+    let mut run = planning_run();
+    crate::run::test_support::set_row(
+        &mut run,
+        Role::ImplementerSmall,
+        "codex:gpt-6-sol",
+        None,
+        None,
+    );
+    crate::run::test_support::set_row(
+        &mut run,
+        Role::ImplementerMedium,
+        "claude:claude-sonnet-5",
+        None,
+        None,
+    );
+    run.orch.installed = BTreeMap::from([("claude".into(), true), ("codex".into(), true)]);
+    let answer = ask(&run, Asker::Orchestrator, None);
+    assert_eq!(
+        answer["roles"],
+        json!({"small": "codex:gpt-6-sol", "medium": "claude:claude-sonnet-5",
+               "hub": "claude:claude-opus-5-5",
+               "installed": {"claude": true, "codex": true}})
+    );
+    assert!(answer.get("roster").is_none(), "{answer}");
+    assert!(answer["limits"].get("routes").is_none(), "{answer}");
+    // A sub-planner sees the same table.
+    let planner = ask(&run, Asker::Planner { epic: "a".into() }, None);
+    assert_eq!(planner["roles"], answer["roles"]);
 }

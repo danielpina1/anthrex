@@ -176,6 +176,55 @@ pub fn build_with(text: &str, config: &config::Orchestrator) -> Result<Run, Vec<
     build_full(text, config, preflight())
 }
 
+/// Milestone 9.8: the config whose `implementer.medium` row runs on Codex at its
+/// default model. A plan's route is ignored (decision 31), so with it a size M task is
+/// a Codex task and a size S task a Claude one.
+pub fn codex_medium() -> config::Orchestrator {
+    let mut config = config::Orchestrator::default();
+    with_codex_medium(&mut config);
+    config
+}
+
+/// [`codex_medium`]'s row, set in `config`.
+pub fn with_codex_medium(config: &mut config::Orchestrator) {
+    with_row(
+        config,
+        proto::models::Role::ImplementerMedium,
+        "codex:default",
+        None,
+    );
+}
+
+/// Milestone 9.8: the config whose `implementer.small` row runs on Codex at its default
+/// model, so a size S task is a Codex task (a plan's route is ignored, decision 31).
+pub fn codex_small() -> config::Orchestrator {
+    let mut config = config::Orchestrator::default();
+    with_row(
+        &mut config,
+        proto::models::Role::ImplementerSmall,
+        "codex:default",
+        None,
+    );
+    config
+}
+
+/// Milestone 9.8: `config`'s global `role` row set to `model` (`<runtime>:<id>`) at
+/// `effort`, no fallback: what a test once gave a plan's route (decision 31).
+pub fn with_row(
+    config: &mut config::Orchestrator,
+    role: proto::models::Role,
+    model: &str,
+    effort: Option<&str>,
+) {
+    use proto::models::{ModelRef, RoleChoice};
+    let row = RoleChoice {
+        model: ModelRef::parse(model).expect("a model"),
+        effort: effort.map(str::to_string),
+        fallback: None,
+    };
+    config.roles.rows.insert(role, row);
+}
+
 pub fn build(text: &str) -> Result<Run, Vec<PlanError>> {
     build_with(text, &config::Orchestrator::default())
 }

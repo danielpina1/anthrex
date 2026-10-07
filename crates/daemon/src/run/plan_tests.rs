@@ -38,13 +38,18 @@ fn the_brief_example_builds_a_run() {
         t1.worktree,
         PathBuf::from(format!("/tmp/wt/runs/{RUN_ID}/t1"))
     );
+    // Milestone 9.8 decision 31: the plan's route (Sonnet at `high`) is ignored; the
+    // medium row routes it, and the log says so.
     let expected_route = Route {
         runtime: Runtime::Claude,
         model: "claude-sonnet-5".to_string(),
         strength: Strength::Standard,
-        effort: Effort::HIGH,
+        effort: Effort::MEDIUM,
     };
     assert_eq!(t1.route, expected_route);
+    assert_eq!(t1.spec.route, proto::RouteSpec::default());
+    let log: Vec<&str> = run.log.iter().map(|e| e.text.as_str()).collect();
+    assert_eq!(log, [crate::run::orch::contract::ROUTE_IGNORED]);
     assert_eq!(
         t1.budget,
         Budget {
