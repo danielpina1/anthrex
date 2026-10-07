@@ -181,6 +181,21 @@ pub(super) fn remove_with_worktree(
 /// client disconnects mid-restart matters here too: an aborted restart could leave the
 /// window's `restarting` flag set with nothing left to clear it, or worse, leave the kill
 /// half-delivered and the old process neither confirmed dead nor replaced.
+/// Milestone 9.8 (MR §4.3): the catalogs asked for, answered from a task of its own so
+/// a probe never holds this connection's loop.
+pub(super) fn list_models(
+    models: Arc<crate::models::ModelService>,
+    out: mpsc::Sender<DaemonMsg>,
+    runtime: Option<proto::Runtime>,
+    refresh: bool,
+) {
+    let list = models.list(runtime, refresh);
+    detach(async move {
+        let catalogs = list.await;
+        reply_to(&out, DaemonMsg::Models { catalogs }).await;
+    });
+}
+
 pub(super) fn restart(manager: Arc<WindowManager>, out: mpsc::Sender<DaemonMsg>, window_id: u32) {
     // Whole-branch-review Minor m13: this label appeared twice as an independent bare
     // literal (the `Ack` below and the `error` call), unlike `request::CREATE` /

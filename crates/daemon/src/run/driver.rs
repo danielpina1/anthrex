@@ -149,6 +149,10 @@ pub struct RunService {
     /// Milestone 9.0.6 decision 28: held by one Settings save at a time (`settings.rs`).
     settings_write: Arc<tokio::sync::Mutex<()>>,
     tuning: tuning::TuningLocks,
+    /// Milestone 9.8: the discovered models (`crate::models`), and what cancels their
+    /// probes when the service stops.
+    models: Arc<crate::models::ModelService>,
+    models_cancel: tokio_util::sync::CancellationToken,
 }
 
 /// Unix seconds, the reducer's clock.
@@ -193,6 +197,14 @@ impl RunService {
         let (pushes, _) = broadcast::channel(256);
         let slots = ctx.testing.test_slots.unwrap_or_else(slots::default_slots);
         let test_cache_days = ctx.testing.test_cache_days;
+        let models_cancel = tokio_util::sync::CancellationToken::new();
+        let probes = crate::models::CliProbes {
+            claude_bin: manager.config().claude_bin.clone(),
+            codex_bin: manager.config().codex_bin.clone(),
+            claude_auth: ctx.settings.current().orchestrator.claude.auth,
+            cancel: models_cancel.clone(),
+        };
+        let models = crate::models::ModelService::new(ctx.data_dir.clone(), Arc::new(probes));
         Arc::new(RunService {
             manager,
             ctx,
@@ -235,7 +247,14 @@ impl RunService {
             test_cache: TestCache::new(test_cache_days),
             settings_write: Arc::default(),
             tuning: Default::default(),
+            models,
+            models_cancel,
         })
+    }
+
+    /// Milestone 9.8: the discovered models.
+    pub fn models(&self) -> Arc<crate::models::ModelService> {
+        self.models.clone()
     }
 
     pub fn scheduler(&self) -> &Arc<TestScheduler> {

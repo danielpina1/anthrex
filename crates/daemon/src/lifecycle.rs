@@ -397,6 +397,9 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     // its role names this daemon's receiver (or none), not the last daemon's.
     let receiver = otlp.as_ref().map(|o| format!("http://{}", o.addr));
     runs.refresh_orchestrator_otlp(receiver.as_deref());
+    // Milestone 9.8 decision 20: the catalogs on disk, read on a blocking thread; no
+    // CLI is probed at start.
+    runs.models().load_disk().await;
     let served = server::serve(
         listener,
         manager.clone(),

@@ -13,6 +13,8 @@ impl RunService {
     /// Decision 46: after `stop` the service ignores every event, and the last
     /// `run.json` of each run is the one written here.
     pub async fn stop(&self) {
+        // A model probe in flight ends now; `ProbeChild` kills and reaps its CLI.
+        self.models_cancel.cancel();
         if self.saved.load(Ordering::SeqCst) {
             return;
         }
