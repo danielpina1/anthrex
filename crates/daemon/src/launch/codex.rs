@@ -99,6 +99,8 @@ pub const HOOK_EVENTS: [(&str, &str); 8] = [
     ("Stop", "stop"),
 ];
 
+/// The floor for launching Codex at all; Codex >= 0.160.0 (`codex_sandbox::DIALECTS`) is
+/// needed for permission-profile sandboxing (Codex worker commits on Linux).
 pub const MIN_CODEX_VERSION: (u64, u64, u64) = (0, 135, 0);
 
 pub fn toml_string(s: &str) -> String {
