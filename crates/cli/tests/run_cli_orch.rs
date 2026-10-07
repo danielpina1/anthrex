@@ -83,12 +83,22 @@ fn orchestrator_flag_parses_and_refuses_bad_values() {
     // `claude:<model>` reaches the daemon and the planned run's orchestrator runs it:
     // milestone 9.8 lets the user name any model (MR §5.2's `custom…`), so a model
     // outside the catalog is the user's choice, not a refusal.
-    h.decider("triage", 2, triage_plan());
+    for n in 1..=2 {
+        h.decider("triage", n, triage_plan());
+    }
     let id = h.start_goal_id("rework storage", &["--orchestrator", "claude:test-model"]);
     let route = h.run(&id).unwrap().orchestrator.unwrap().route;
     assert_eq!(
         (route.runtime, route.model.as_str()),
         (Runtime::Claude, "test-model")
+    );
+    // Fix round 1 (I2): `--orchestrator claude` names only the runtime: the
+    // `orchestrator` row on it (the built-in Opus), never the CLI's default.
+    let id = h.start_goal_id("rework the cache", &["--orchestrator", "claude"]);
+    let route = h.run(&id).unwrap().orchestrator.unwrap().route;
+    assert_eq!(
+        (route.runtime, route.model.as_str()),
+        (Runtime::Claude, "claude-opus-5-5")
     );
 }
 

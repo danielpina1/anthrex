@@ -118,3 +118,26 @@ async fn onboarding_scouts_and_deciders_use_their_rows_over_what_is_installed() 
         (Runtime::Codex, "gpt-6-luna")
     );
 }
+
+/// MR §7 (fix round 1, M2): an onboarding scout whose program is missing names its row
+/// and the way out; any other start error is reported as before.
+#[test]
+fn a_missing_onboarding_scout_program_names_the_research_row() {
+    use super::service_run::onboarding_start_error;
+    use crate::headless::session::ProgramNotFound;
+    let route = crate::run::model_roles::RunModels::route_of(
+        &ModelRef::parse("codex:default").unwrap(),
+        None,
+    );
+    let gone = std::io::Error::from(std::io::ErrorKind::NotFound);
+    let missing = anyhow::Error::new(ProgramNotFound::new("codex".into(), gone));
+    assert_eq!(
+        onboarding_start_error(Some(&route), &missing),
+        "could not start the onboarding scout: research: codex not found; choose another model in C-b S"
+    );
+    let other = anyhow::anyhow!("the window manager is shutting down");
+    assert_eq!(
+        onboarding_start_error(Some(&route), &other),
+        "could not start the onboarding scout: the window manager is shutting down"
+    );
+}

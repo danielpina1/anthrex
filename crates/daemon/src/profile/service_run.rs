@@ -312,9 +312,8 @@ impl ProfileService {
             Some(route) => self.scouts.start_on(spec, route).await,
             None => self.scouts.start(spec).await,
         };
-        let handle = started.map_err(|error| {
-            Stop::Failed(format!("could not start the onboarding scout: {error}"))
-        })?;
+        let handle = started
+            .map_err(|error| Stop::Failed(onboarding_start_error(job.route.as_ref(), &error)))?;
         job.record.window_id = Some(handle.window_id);
         if !self.advance(job, ProposalState::Scouting).await {
             self.scouts.stop(&id);
@@ -454,4 +453,18 @@ pub fn confirm_record(
         project.display(),
         repo_dir.join(store::PROFILE_FILE).display()
     ))
+}
+
+/// The onboarding scout's start failure: MR §7's `research: <runtime> not found; …` when
+/// the spawn found no program on its `route` (milestone 9.8 fix round 1, M2), else the
+/// error as before.
+pub(super) fn onboarding_start_error(
+    route: Option<&proto::Route>,
+    error: &anyhow::Error,
+) -> String {
+    let text = match route {
+        Some(route) => crate::run::driver::start_error::named_as("research", route.runtime, error),
+        None => error.to_string(),
+    };
+    format!("could not start the onboarding scout: {text}")
 }

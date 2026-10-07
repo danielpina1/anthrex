@@ -120,7 +120,8 @@ fn the_document_reviewer_is_never_the_orchestrators_model() {
     let luna = Some("codex:gpt-6-luna");
     let reviewer = proto::models::Role::Reviewer;
     crate::run::test_support::set_row(&mut run, reviewer, opus, Some("high"), luna);
-    let (picked, why) = review_pick(&run, &crate::decider::DECIDER_CAPS).unwrap();
+    let pick = review_pick(&run, &crate::decider::DECIDER_CAPS).unwrap();
+    let picked = &pick.route;
     assert_eq!(
         (
             picked.runtime,
@@ -129,7 +130,79 @@ fn the_document_reviewer_is_never_the_orchestrators_model() {
         ),
         (Runtime::Codex, LUNA, "")
     );
-    assert_eq!(why, None);
+    assert_eq!((pick.why, pick.warning), (None, None));
+}
+
+/// A run whose orchestrator runs Opus at high, its `reviewer` row `model` with
+/// `fallback`.
+fn reviewing(model: &str, fallback: Option<&str>) -> Run {
+    let mut run = run_of(1);
+    let mut o = record_of();
+    o.route = route(
+        Runtime::Claude,
+        "claude-opus-5-5",
+        Strength::Standard,
+        Effort::HIGH,
+    );
+    run.orch.orchestrator = Some(o);
+    let reviewer = proto::models::Role::Reviewer;
+    crate::run::test_support::set_row(&mut run, reviewer, model, None, fallback);
+    run
+}
+
+const SAME_OPUS: &str = "reviewer: claude:claude-opus-5-5 reviews work by the same model; set an \"if it struggles\" model for the reviewer in C-b S";
+
+/// MR D3, decision 27 (fix round 1, I1): a reviewer row on the orchestrator's model with
+/// no fallback reviews on it, with the run-log warning.
+#[test]
+fn a_document_reviewer_on_the_orchestrators_model_is_warned() {
+    let run = reviewing("claude:claude-opus-5-5", None);
+    let pick = review_pick(&run, &crate::decider::DECIDER_CAPS).unwrap();
+    assert_eq!(pick.route.model, "claude-opus-5-5");
+    assert_eq!(pick.why, None);
+    assert_eq!(pick.warning.as_deref(), Some(SAME_OPUS));
+}
+
+/// Fix round 1 (I1): a reviewer that falls back to the orchestrator's own route reviews
+/// work by the same model, and says so too.
+#[test]
+fn a_document_reviewer_on_the_orchestrators_own_route_is_warned() {
+    let run = reviewing("codex:default", None);
+    let caps = crate::decider::DeciderCaps {
+        codex_ephemeral: false,
+        ..crate::decider::DECIDER_CAPS
+    };
+    let pick = review_pick(&run, &caps).unwrap();
+    assert_eq!(pick.route.model, "claude-opus-5-5");
+    let why = "the codex CLI cannot run a session without saving it";
+    assert_eq!(pick.why.as_deref(), Some(why));
+    assert_eq!(pick.warning.as_deref(), Some(SAME_OPUS));
+}
+
+/// Fix round 1 (M4, D3): a reviewer row's pick that cannot run is replaced by the row's
+/// fallback, when it can run and is not the author's model, before the orchestrator's
+/// own route.
+#[test]
+fn a_document_reviewer_that_cannot_run_takes_its_rows_fallback() {
+    let run = reviewing("codex:default", Some("claude:claude-sonnet-5"));
+    let caps = crate::decider::DeciderCaps {
+        codex_ephemeral: false,
+        ..crate::decider::DECIDER_CAPS
+    };
+    let pick = review_pick(&run, &caps).unwrap();
+    assert_eq!(
+        (pick.route.runtime, pick.route.model.as_str()),
+        (Runtime::Claude, "claude-sonnet-5")
+    );
+    assert_eq!(pick.why, None);
+    let line = "reviewer: codex:default cannot review: the codex CLI cannot run a session without saving it; its \"if it struggles\" model claude:claude-sonnet-5 reviews";
+    assert_eq!(pick.warning.as_deref(), Some(line));
+    // A fallback on the author's own model is not taken over the orchestrator's route
+    // with its reason.
+    let run = reviewing("codex:default", Some("claude:claude-opus-5-5"));
+    let pick = review_pick(&run, &caps).unwrap();
+    assert!(pick.why.is_some());
+    assert_eq!(pick.warning.as_deref(), Some(SAME_OPUS));
 }
 
 /// Ruling T8-4: the row's installed runtimes whose CLI cannot run unsaved are said so;

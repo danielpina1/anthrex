@@ -30,19 +30,20 @@ pub(super) fn named(
 
 /// [`named`] for a session whose row's label the caller knows (`research` for a run
 /// scout, `planner`, `brainstorm`).
-pub(super) fn named_as(role: &str, runtime: Runtime, error: &anyhow::Error) -> String {
+pub(crate) fn named_as(role: &str, runtime: Runtime, error: &anyhow::Error) -> String {
     match missing(error) {
         true => not_found(role, runtime),
         false => error.to_string(),
     }
 }
 
-/// Whether the spawn found no program (`ENOENT` anywhere in the error's chain).
+/// Whether the spawn found no program: a [`ProgramNotFound`] in the error's chain
+/// (fix round 1, M3: any other `ENOENT`, a vanished worktree, is not the model's fault).
+///
+/// [`ProgramNotFound`]: crate::headless::session::ProgramNotFound
 fn missing(error: &anyhow::Error) -> bool {
-    error.chain().any(|e| {
-        e.downcast_ref::<std::io::Error>()
-            .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
-    })
+    use crate::headless::session::ProgramNotFound;
+    error.chain().any(|e| e.is::<ProgramNotFound>())
 }
 
 /// MR §7's text, exactly.

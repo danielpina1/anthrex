@@ -97,30 +97,78 @@ pub fn brainstorm_picks_with(run: &Run, caps: &DeciderCaps) -> Option<Vec<Brains
     Some(vec![pick(labels.0, a), pick(labels.1, b)])
 }
 
-/// Milestone 9.6 decision 10 (task M9.6.10, DF §4.2), milestone 9.8 (decision 27): the
-/// document reviewer's route, the `reviewer` row's pick against the orchestrator's
-/// route (its author), and, when it is instead the orchestrator's own route, why (fix
-/// round 1, m1): the pick's runtime is not installed, or its CLI cannot run a session
-/// without saving it (ruling T8-4). `None` when the orchestrator's own runtime cannot
-/// run one unsaved either: there is no fallback to a runtime that saves its session
-/// (ruling WB-A-W2, ruling WB-B m4).
-pub fn review_pick(run: &Run, caps: &DeciderCaps) -> Option<(Route, Option<String>)> {
+/// The document reviewer's pick ([`review_pick`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReviewPick {
+    pub route: Route,
+    /// Why the route is the orchestrator's own (fix round 1, m1 of milestone 9.6): the
+    /// row's pick's runtime is not installed, or its CLI cannot run unsaved.
+    pub why: Option<String>,
+    /// The run-log line the pick owes (milestone 9.8 fix round 1, I1 and M4): D3's
+    /// same-model warning when the reviewer is the orchestrator's model, or the row's
+    /// pick replaced by its fallback.
+    pub warning: Option<String>,
+}
+
+/// Milestone 9.6 decision 10 (task M9.6.10, DF §4.2), milestone 9.8 (decision 27, D3):
+/// the document reviewer, whose author is the orchestrator. The `reviewer` row's pick
+/// against the orchestrator's route; when that pick's runtime is not installed or its
+/// CLI cannot run a session unsaved (ruling T8-4), the row's fallback when it can and is
+/// not the author's model (fix round 1, M4), else the orchestrator's own route with why.
+/// A pick on the author's model carries D3's warning. `None` when the orchestrator's own
+/// runtime cannot run one unsaved either: there is no fallback to a runtime that saves
+/// its session (ruling WB-A-W2, ruling WB-B m4).
+pub fn review_pick(run: &Run, caps: &DeciderCaps) -> Option<ReviewPick> {
     let own = (run.orch.orchestrator.as_ref()).map_or_else(
         || crate::run::orch::launch::scout_route(run),
         |o| o.route.clone(),
     );
-    let (pick, _) = run.limits.models().reviewer_route(&own);
-    let name = pick.runtime.label();
+    let models = run.limits.models();
+    let (pick, warning) = models.reviewer_route(&own);
     let installed = &run.orch.installed;
-    let why = if installed.get(name) == Some(&false) {
-        format!("the {name} runtime is not installed")
-    } else if !runs_unsaved(pick.runtime, caps) {
-        format!("the {name} CLI cannot run a session without saving it")
-    } else {
-        return Some((pick, None));
+    let blocked = |route: &Route| {
+        let name = route.runtime.label();
+        if installed.get(name) == Some(&false) {
+            Some(format!("the {name} runtime is not installed"))
+        } else if !runs_unsaved(route.runtime, caps) {
+            Some(format!(
+                "the {name} CLI cannot run a session without saving it"
+            ))
+        } else {
+            None
+        }
     };
-    let own_installed = installed.get(own.runtime.label()) != Some(&false);
-    (own_installed && runs_unsaved(own.runtime, caps)).then_some((own, Some(why)))
+    let Some(why) = blocked(&pick) else {
+        return Some(ReviewPick {
+            route: pick,
+            why: None,
+            warning,
+        });
+    };
+    let fallback = (models
+        .choice(proto::models::Role::Reviewer)
+        .fallback
+        .as_ref())
+    .map(|f| RunModels::route_of(f, None))
+    .filter(|f| *f != pick && !RunModels::same_model(f, &own) && blocked(f).is_none());
+    if let Some(route) = fallback {
+        let warning = format!(
+            "reviewer: {} cannot review: {why}; its \"if it struggles\" model {} reviews",
+            RunModels::label_of(&pick),
+            RunModels::label_of(&route)
+        );
+        return Some(ReviewPick {
+            route,
+            why: None,
+            warning: Some(warning),
+        });
+    }
+    let warning = Some(RunModels::same_model_line(&own));
+    blocked(&own).is_none().then_some(ReviewPick {
+        route: own,
+        why: Some(why),
+        warning,
+    })
 }
 
 #[cfg(test)]

@@ -103,19 +103,39 @@ fn the_same_runtime_fallback_names_its_reason() {
     use crate::decider::{DECIDER_CAPS, DeciderCaps};
     use crate::run::orch::roles::lists::review_pick;
     let mut fx = specifying();
-    let (peer, why) = review_pick(fx.run(), &DECIDER_CAPS).unwrap();
-    assert_eq!((peer.runtime, why), (Runtime::Codex, None));
+    let peer = review_pick(fx.run(), &DECIDER_CAPS).unwrap();
+    assert_eq!((peer.route.runtime, peer.why), (Runtime::Codex, None));
     let unsaved = DeciderCaps {
         codex_ephemeral: false,
         ..DECIDER_CAPS
     };
-    let (own, why) = review_pick(fx.run(), &unsaved).unwrap();
-    assert_eq!(own.runtime, Runtime::Claude);
+    let own = review_pick(fx.run(), &unsaved).unwrap();
+    assert_eq!(own.route.runtime, Runtime::Claude);
     let line = "the codex CLI cannot run a session without saving it";
-    assert_eq!(why.as_deref(), Some(line));
+    assert_eq!(own.why.as_deref(), Some(line));
     fx.run_mut().orch.installed = [("codex".to_string(), false)].into();
-    let (_, why) = review_pick(fx.run(), &unsaved).unwrap();
-    assert_eq!(why.as_deref(), Some("the codex runtime is not installed"));
+    let own = review_pick(fx.run(), &unsaved).unwrap();
+    assert_eq!(
+        own.why.as_deref(),
+        Some("the codex runtime is not installed")
+    );
+}
+
+/// MR D3, decision 27 (fix round 1, I1): a document reviewer on the orchestrator's own
+/// model is warned in the run log once, when its review is queued.
+#[test]
+fn a_document_reviewer_on_the_authors_model_is_logged() {
+    let mut fx = specifying();
+    let own = fx.run().orch.orchestrator.as_ref().unwrap().route.clone();
+    let model = format!("claude:{}", own.model);
+    let reviewer = proto::models::Role::Reviewer;
+    crate::run::test_support::set_row(fx.run_mut(), reviewer, &model, None, None);
+    outcome(&submit_spec(&mut fx, false, Value::Null)).unwrap();
+    let line = format!(
+        "reviewer: {model} reviews work by the same model; set an \"if it struggles\" model for the reviewer in C-b S"
+    );
+    let lines = log_lines(&fx);
+    assert_eq!(lines.iter().filter(|l| **l == line).count(), 1, "{lines:?}");
 }
 
 /// Rulings T10-4 and T10-6: a spec gate revising after a Back or a failed read-back is

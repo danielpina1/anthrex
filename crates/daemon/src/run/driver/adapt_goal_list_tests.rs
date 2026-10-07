@@ -29,12 +29,13 @@ async fn a_planned_start_takes_the_orchestrator_row_below_an_explicit_choice() {
     );
     assert_eq!(o.routing.source, "role_table");
 
-    // An explicit choice beats the row.
+    // An explicit choice beats the row. Fix round 1 (I2): a runtime-only choice off the
+    // row's runtime is that runtime's built-in orchestrator, never the CLI's default.
     let run = build(&both, &root, Some(Runtime::Claude)).await.unwrap();
     let o = run.orch.orchestrator.as_ref().expect("an orchestrator");
     assert_eq!(
         (o.route.runtime, o.route.model.as_str()),
-        (Runtime::Claude, "")
+        (Runtime::Claude, "claude-opus-5-5")
     );
     assert_eq!(o.routing.source, "explicit_choice");
 }

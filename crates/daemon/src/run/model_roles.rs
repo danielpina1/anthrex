@@ -174,6 +174,30 @@ impl RunModels {
         }
     }
 
+    /// The model `route` runs, as the table names it (`<runtime>:<id>`, or `default`).
+    pub fn model_of(route: &Route) -> ModelRef {
+        let id = (!route.model.is_empty()).then(|| route.model.clone());
+        ModelRef {
+            runtime: route.runtime,
+            id,
+        }
+    }
+
+    /// `route`'s model's label ([`RunModels::model_of`]).
+    pub fn label_of(route: &Route) -> String {
+        RunModels::model_of(route).label()
+    }
+
+    /// Whether routes `a` and `b` run the same model (runtime and id).
+    pub fn same_model(a: &Route, b: &Route) -> bool {
+        is_model_route(a, b)
+    }
+
+    /// Decision 27's run-log line for a reviewer on `author`'s own model.
+    pub fn same_model_line(author: &Route) -> String {
+        same_model_line(&RunModels::model_of(author))
+    }
+
     /// Decision 28: a racing task's second lane takes its row's fallback at its default
     /// effort, else the task's own route.
     pub fn racer_route(&self, role: Role, current: &Route) -> Route {

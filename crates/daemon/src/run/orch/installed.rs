@@ -8,6 +8,11 @@ use super::launch::{Resolved, orchestrator_route};
 use crate::run::model::Run;
 use crate::run::model_roles::RunModels;
 
+/// The orchestrator's missing-runtime refusal's way out (MR §7; fix round 1, M1): the
+/// table that chose the runtime, or a per-run flag.
+pub const ORCHESTRATOR_HINT: &str =
+    "choose another model for the orchestrator in C-b S, or another runtime with --orchestrator";
+
 /// A runtime's configured binary when that binary is not installed, `None` when it is.
 pub type Missing<'a> = &'a dyn Fn(Runtime) -> Option<String>;
 
@@ -20,8 +25,8 @@ pub fn resolve_installed(
     missing: Missing<'_>,
 ) -> Result<Resolved, String> {
     let resolved = orchestrator_route(choice, models);
-    let hint = "choose another runtime with --orchestrator";
-    match not_installed("the orchestrator's", resolved.route.runtime, missing, hint) {
+    let runtime = resolved.route.runtime;
+    match not_installed("the orchestrator's", runtime, missing, ORCHESTRATOR_HINT) {
         Some(refused) => Err(refused),
         None => Ok(resolved),
     }

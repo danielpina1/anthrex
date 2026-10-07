@@ -34,7 +34,7 @@ fn a_rows_or_a_chosen_runtime_that_is_not_installed_refuses_the_start() {
     assert_eq!(
         text,
         "the orchestrator's runtime claude is not installed (/nonexistent/claude is not an \
-         executable file); install it, or choose another runtime with --orchestrator"
+         executable file); install it, or choose another model for the orchestrator in C-b S, or another runtime with --orchestrator"
     );
     let missing = without(&[Runtime::Codex]);
     let choice = OrchestratorChoice {

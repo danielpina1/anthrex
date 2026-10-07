@@ -286,6 +286,47 @@ fn the_orchestrator_takes_its_row_unless_the_goal_form_chose() {
     assert_eq!(other.route.model, "gpt-6-luna");
 }
 
+/// Fix round 1 (I2, controller ruling): a choice naming only a runtime (`--orchestrator
+/// claude`, the goal form's default, promote's default entry) takes the `orchestrator`
+/// row when the row is on that runtime, else that runtime's built-in orchestrator from
+/// the role table: never the CLI's bare default for Claude.
+#[test]
+fn a_runtime_only_choice_takes_the_row_or_the_runtimes_built_in() {
+    use proto::models::Role;
+    let runtime_only = |runtime, effort: Option<&str>| OrchestratorChoice {
+        runtime,
+        model: None,
+        effort: effort.map(str::to_string),
+    };
+    let mut run = run_with(&[task_toml("t1", "S", "[\"a/**\"]", "")]);
+    let sol = "codex:gpt-6.1-sol";
+    crate::run::test_support::set_row(&mut run, Role::Orchestrator, sol, Some("medium"), None);
+    let models = run.limits.models();
+    // The row's runtime: the row.
+    let codex = orchestrator_route(Some(&runtime_only(Runtime::Codex, None)), models);
+    assert_eq!(
+        model_of(&codex.route),
+        (Runtime::Codex, "gpt-6.1-sol", "medium")
+    );
+    assert_eq!(codex.source, "explicit_choice");
+    // The choice's effort is kept.
+    let max = orchestrator_route(Some(&runtime_only(Runtime::Codex, Some("max"))), models);
+    assert_eq!(model_of(&max.route), (Runtime::Codex, "gpt-6.1-sol", "max"));
+    // Another runtime: its built-in, Opus at high for Claude.
+    let claude = orchestrator_route(Some(&runtime_only(Runtime::Claude, None)), models);
+    assert_eq!(
+        model_of(&claude.route),
+        (Runtime::Claude, "claude-opus-5-5", "high")
+    );
+    // A model named empty is a runtime-only choice too.
+    let empty = OrchestratorChoice {
+        model: Some(String::new()),
+        ..runtime_only(Runtime::Claude, None)
+    };
+    let claude = orchestrator_route(Some(&empty), models);
+    assert_eq!(claude.route.model, "claude-opus-5-5");
+}
+
 /// Milestone 9.8 (MR §3.1): a sub-planner takes the `planner` row, once the run has
 /// an orchestrator.
 #[test]

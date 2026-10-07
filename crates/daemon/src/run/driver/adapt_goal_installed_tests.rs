@@ -242,7 +242,7 @@ async fn promoting_to_a_missing_runtime_is_refused_without_side_effects() {
         effort: None,
     };
     let claude_missing = format!(
-        "the orchestrator's runtime claude is not installed ({NO_CLAUDE} is not an executable file); install it, or choose another runtime with --orchestrator"
+        "the orchestrator's runtime claude is not installed ({NO_CLAUDE} is not an executable file); install it, or choose another model for the orchestrator in C-b S, or another runtime with --orchestrator"
     );
 
     // Claude, chosen or the run's default.

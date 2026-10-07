@@ -2,7 +2,7 @@
 //! orchestrator's route (decision 6), its role and its window (decisions 5, 11), a
 //! sub-planner's route and session (decision 31), and a run scout's (decision 20). Pure.
 
-use proto::models::{ModelRef, Role};
+use proto::models::{ModelRef, Role, RoleChoice};
 use proto::{AgentRole, OrchestratorChoice, Route, RoutingCandidate, RunRef, Runtime, WindowSpec};
 
 use std::path::Path;
@@ -38,23 +38,31 @@ pub struct Resolved {
     pub candidates: Vec<RoutingCandidate>,
 }
 
-/// Milestone 9.8 (MR §3.1): the `orchestrator` row of the run's table, unless `choice`
-/// (the goal form's) names the model: its runtime and model (`None`: the CLI's
-/// default), at its effort, else at the row's when it is the row's own model, else at
-/// the model's default.
+/// Milestone 9.8 (MR §3.1): the `orchestrator` row of the run's table, unless there is
+/// a `choice` (the goal form's, `--orchestrator`, promote's). A choice naming a model
+/// runs it, at the choice's effort, else the row's when it is the row's own model, else
+/// the model's default. A choice naming only a runtime (fix round 1, I2, controller
+/// ruling) runs [`runtime_default`]: never the CLI's bare default for a runtime the
+/// table has an orchestrator on.
 pub fn orchestrator_route(choice: Option<&OrchestratorChoice>, models: &RunModels) -> Resolved {
     let row = models.choice(Role::Orchestrator);
     let (route, source) = match choice {
         None => (models.route(Role::Orchestrator), ROLE_TABLE),
         Some(c) => {
-            let model = ModelRef {
-                runtime: c.runtime,
-                id: c.model.clone().filter(|m| !m.is_empty()),
+            let named = c.model.clone().filter(|m| !m.is_empty());
+            let (model, effort) = match named {
+                Some(id) => {
+                    let model = ModelRef {
+                        runtime: c.runtime,
+                        id: Some(id),
+                    };
+                    let own = (model == row.model).then_some(row.effort.clone()).flatten();
+                    (model, own)
+                }
+                None => runtime_default(c.runtime, row),
             };
-            let effort = (c.effort.as_deref()).or((model == row.model)
-                .then_some(row.effort.as_deref())
-                .flatten());
-            let route = RunModels::route_of(&model, effort);
+            let effort = c.effort.clone().or(effort);
+            let route = RunModels::route_of(&model, effort.as_deref());
             (route, super::roles::lists::EXPLICIT_SOURCE)
         }
     };
@@ -67,6 +75,31 @@ pub fn orchestrator_route(choice: Option<&OrchestratorChoice>, models: &RunModel
         source: source.to_string(),
         candidates,
     }
+}
+
+/// Fix round 1 (I2, controller ruling): the orchestrator a choice naming only `runtime`
+/// runs, and its effort: the `orchestrator` row when the row is on `runtime`, else the
+/// built-in table's orchestrator on `runtime` (Opus at high for Claude), else the
+/// built-in brainstorm row's model on `runtime` at its effort (the built-in table's
+/// only Codex model is `codex:default`), else the runtime's default.
+fn runtime_default(runtime: Runtime, row: &RoleChoice) -> (ModelRef, Option<String>) {
+    let builtin = config::models::builtin_choice(Role::Orchestrator);
+    let pair = config::models::builtin_brainstorm();
+    let brainstorm = [&pair.first, &pair.second]
+        .into_iter()
+        .find(|m| m.runtime == runtime)
+        .map(|m| RoleChoice {
+            model: m.clone(),
+            effort: pair.effort.clone(),
+            fallback: None,
+        });
+    [Some(row.clone()), Some(builtin), brainstorm]
+        .into_iter()
+        .flatten()
+        .find(|r| r.model.runtime == runtime)
+        .map_or((ModelRef::default_of(runtime), None), |r| {
+            (r.model, r.effort)
+        })
 }
 
 /// The orchestrator's role (decisions 7–11): session `run.orch.orchestrator`'s, its

@@ -8,17 +8,15 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::{DONE_CHECK_GIT_TIMEOUT, OpCtx, RunService, cleanup, merge, stage_ops, tier};
+use super::{OpCtx, RunService, cleanup, merge, stage_ops, tier};
 use crate::headless::{HeadlessSpec, SessionArg};
-use crate::run::engine::{OpKind, OpResult, ResolutionAt};
+use crate::run::engine::{OpKind, OpResult};
 use crate::run::exec::ShellOutcome;
 use crate::run::git::{self, RefreshedIn};
-use crate::run::globs::{OwnsMatcher, ProtectedMatcher};
-use crate::run::model::{OpId, SyncCheck};
+use crate::run::model::OpId;
 use crate::run::proof::ProofOp;
 use crate::run::role_launch::worker_git_roots;
 use crate::run::slots::{Priority, Want};
-use crate::run::tiers::SignalsSpec;
 
 // Decision 33's proof and decision 34's check (split out to keep this file under the
 // 600-line rule).
@@ -29,6 +27,12 @@ mod lane_ops;
 #[path = "sync_done.rs"]
 mod sync_done;
 use gate_ops::{check, proof};
+
+// `VerifyDone`'s git check (milestone 9.8 fix round 1, M5: out of this file by the
+// 600-line rule).
+#[path = "done_check.rs"]
+mod done_check;
+use done_check::verify_done;
 
 // Task 5 of the Codex sandbox profiles plan: a worker's grant shape and a Codex
 // worker's read-only entries (kept out of this file by the 600-line rule).
@@ -522,80 +526,4 @@ pub(super) async fn run(
         // Milestone 9.6 decision 23.
         OpKind::CommitDesignDocs(_) => super::design_commit::run(service, ctx, kind).await,
     }
-}
-
-/// `verify_done`, then `resolution_only` when the claim follows a conflicted hand-back
-/// (ruling T14-R2): an error there counts as `Some(false)` and never fails the check.
-#[allow(clippy::too_many_arguments)]
-fn verify_done(
-    git: &OsString,
-    worktree: &Path,
-    start: &str,
-    run_head: &str,
-    (owns, generated, protected): (&[String], &[String], &[String]),
-    (red, resolution, signals): (Option<String>, Option<ResolutionAt>, Option<&SignalsSpec>),
-    (refreshed, spill_base, sync): (RefreshedIn, Option<String>, Option<Box<SyncCheck>>),
-    git_timeout: Duration,
-) -> Result<OpResult, String> {
-    let t = git_timeout.min(DONE_CHECK_GIT_TIMEOUT);
-    let generated = OwnsMatcher::new(generated)?;
-    let protected = ProtectedMatcher::new(protected)?;
-    let mut d = git::verify_done_spilling(
-        git,
-        worktree,
-        start,
-        run_head,
-        owns,
-        (&generated, &protected),
-        red.as_deref(),
-        (&refreshed, spill_base.as_deref()),
-        t,
-    )?;
-    let resolution_only = resolution.map(|r| {
-        git::resolution_only(git, worktree, &d.head, &r.onto, &r.run_head, &r.files, t)
-            .unwrap_or(false)
-    });
-    // Milestone 9.1 decision 40: only when the op asks (never for an untiered profile).
-    // Controller ruling C-21 (2): a sync task's from its conflicted tree.
-    // Milestone 9.5 rulings RP-2 and T16-7: a paired task's implementer's: the writer's
-    // paths from its red commit, every other path from the merge base with the run head.
-    let red_at = signals.and_then(|s| s.red.as_deref());
-    let mut signals =
-        match (signals, red_at.or(spill_base.as_deref())) {
-            (Some(spec), Some(red)) if red_at.is_some() && !d.head.is_empty() => Some(Box::new(
-                git::pair_signals(git, worktree, (start, red, run_head, &d.head), spec, t)?,
-            )),
-            (Some(spec), Some(base)) if !d.head.is_empty() => Some(Box::new(
-                git::done_signals_from(git, worktree, (base, &d.head), spec, t)?,
-            )),
-            (Some(spec), _) => Some(Box::new(git::done_signals(
-                git, worktree, run_head, &d.head, spec, t,
-            )?)),
-            (None, _) => None,
-        };
-    let sync_kept = match sync.filter(|_| !d.head.is_empty()) {
-        Some(sync) => Some(sync_done::apply(
-            git,
-            worktree,
-            &sync,
-            (&mut d, &mut signals),
-            t,
-        )?),
-        None => None,
-    };
-    Ok(OpResult::DoneChecked {
-        commits: d.commits,
-        dirty_tracked: d.dirty_tracked,
-        merge_in_progress: d.merge_in_progress,
-        untracked_in_owns: d.untracked_in_owns,
-        outside_owns: d.outside_owns,
-        generated_outside_owns: d.generated_outside_owns,
-        protected_changed: d.protected_changed,
-        red_ok: d.red_ok,
-        head: d.head,
-        head_branch: d.head_branch,
-        resolution_only,
-        signals,
-        sync_kept,
-    })
 }

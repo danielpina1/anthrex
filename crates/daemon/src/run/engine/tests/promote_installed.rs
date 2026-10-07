@@ -102,3 +102,31 @@ fn a_promotion_takes_the_orchestrator_row() {
     );
     assert_eq!(fx.run().orch.promote_window, None, "taken by the promotion");
 }
+
+/// Fix round 1 (I2, controller ruling): promote's runtime-only choice takes the
+/// `orchestrator` row on that runtime, else the runtime's built-in orchestrator.
+#[test]
+fn a_runtime_only_promotion_takes_the_row_or_the_built_in() {
+    let mut fx = fast();
+    let sol = "codex:gpt-6.1-sol";
+    set_row(fx.run_mut(), Role::Orchestrator, sol, Some("high"), None);
+    promote(&mut fx, codex());
+    let record = fx.run().orch.orchestrator.clone().expect("promoted");
+    assert_eq!(
+        (record.route.runtime, record.route.model.as_str()),
+        (Runtime::Codex, "gpt-6.1-sol")
+    );
+    let mut fx = fast();
+    set_row(fx.run_mut(), Role::Orchestrator, sol, Some("high"), None);
+    let claude = OrchestratorChoice {
+        runtime: Runtime::Claude,
+        model: None,
+        effort: None,
+    };
+    promote(&mut fx, Some(claude));
+    let record = fx.run().orch.orchestrator.clone().expect("promoted");
+    assert_eq!(
+        (record.route.runtime, record.route.model.as_str()),
+        (Runtime::Claude, "claude-opus-5-5")
+    );
+}

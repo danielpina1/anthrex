@@ -89,7 +89,7 @@ pub fn reachable_runtimes(run: &Run) -> Vec<Runtime> {
             found.extend(picks.iter().map(|p| p.route.runtime));
             let caps = crate::decider::caps();
             let doc = super::orch::roles::lists::review_pick(run, &caps);
-            found.extend(doc.map(|(r, _)| r.runtime));
+            found.extend(doc.map(|p| p.route.runtime));
         }
     }
     [Runtime::Claude, Runtime::Codex]
