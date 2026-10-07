@@ -170,7 +170,7 @@ fn legacy_renders_todays_flags() {
             "-c", "sandbox_workspace_write.network_access=false",
             "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true",
             "-c", "sandbox_workspace_write.exclude_slash_tmp=true",
-            "-c", "sandbox_workspace_write.writable_roots=[\"/d/git\", \"/d/tmp\"]",
+            "-c", "sandbox_workspace_write.writable_roots=[\"/d/git\",\"/d/tmp\"]",
         ]
     );
     let resumed = CodexSandboxDialect::Legacy.render(&plan, true, false).unwrap();
@@ -187,7 +187,6 @@ fn legacy_refuses_read_only_paths() {
 }
 ```
 
-(Check `toml_array`'s exact separator in `headless/argv.rs` before fixing the expected `writable_roots` string; the legacy rendering must equal what `codex_args` emits today.)
 
 - [ ] **Step 2: Run to verify they fail**
 
