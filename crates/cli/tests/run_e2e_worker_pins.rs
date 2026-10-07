@@ -161,10 +161,20 @@ fn e2e_workers_get_their_own_tmpdir_and_pinned_sandbox_settings() {
         .and_then(|(_, rest)| rest.split_once("\"=\"write\""))
         .map(|(cwd, _)| cwd)
         .unwrap();
+    // The `.git` entry spells the checkout as the grant does: canonically (on macOS
+    // `/private/var` for `/var`), whatever spelling the working directory has.
+    let git_entry = fs
+        .split("\"=\"read\"")
+        .filter_map(|head| head.rsplit_once('"').map(|(_, path)| path))
+        .find(|path| path.ends_with("/.git"))
+        .unwrap_or_else(|| panic!("no .git read entry: {fs}"));
+    let canonical = std::fs::canonicalize(h.dir.path()).unwrap();
     assert!(
-        fs.contains(&format!("\"{cwd}/.git\"=\"read\"")),
-        "{cwd}: {fs}"
+        std::path::Path::new(git_entry).starts_with(&canonical),
+        "{git_entry} is not under {}: {fs}",
+        canonical.display()
     );
+    assert!(git_entry.ends_with(&format!("{}/.git", cwd.rsplit('/').next().unwrap())));
     for tail in protected {
         assert!(!fs.contains(&format!("{tail}\"=")), "{tail}: {fs}");
     }

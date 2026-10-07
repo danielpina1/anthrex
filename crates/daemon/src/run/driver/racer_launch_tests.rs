@@ -299,6 +299,63 @@ fn a_legacy_codex_racer_gets_the_files_grant_and_no_read_only_entries() {
     );
 }
 
+/// Hardening: the protected agent-config paths that exist in a Codex worker's checkout
+/// at launch (here `AGENTS.md` and `.codex/`, made on the real filesystem) are among
+/// its read-only entries on the profiles dialect; absent ones are not.
+#[test]
+fn a_codex_racers_existing_protected_paths_are_read_only_entries() {
+    let rig = Rig::new(&["t1", "t1.a", "t1.b"], |_| {});
+    let own_path = rig.run(|run| run.task_path("t1.b"));
+    std::fs::write(own_path.join("AGENTS.md"), "x\n").unwrap();
+    std::fs::create_dir(own_path.join(".codex")).unwrap();
+    let mut spec = rig.racer(RaceLane::B);
+    assert!(spec.claude_sandbox.is_none(), "lane b is Codex's");
+    rig.complete(&mut spec).unwrap();
+    for present in ["AGENTS.md", ".codex"] {
+        assert!(
+            spec.codex_read_only.contains(&own_path.join(present)),
+            "{present}: {:?}",
+            spec.codex_read_only
+        );
+    }
+    assert!(
+        !spec.codex_read_only.contains(&own_path.join("CLAUDE.md")),
+        "{:?}",
+        spec.codex_read_only
+    );
+}
+
+/// Hardening: every read-only entry spells the checkout as the grant does (its
+/// canonical path), whatever spelling the session's working directory has (macOS
+/// `/tmp` for `/private/tmp`, here a symbolic link made on the real filesystem).
+#[test]
+fn a_codex_racers_read_only_entries_use_the_canonical_checkout() {
+    let rig = Rig::new(&["t1", "t1.a", "t1.b"], |_| {});
+    let own_path = rig.run(|run| run.task_path("t1.b"));
+    std::fs::write(own_path.join("AGENTS.md"), "x\n").unwrap();
+    let link = rig.root.join("alias");
+    std::os::unix::fs::symlink(&own_path, &link).unwrap();
+    let mut spec = rig.racer(RaceLane::B);
+    spec.cwd = link.clone();
+    rig.complete(&mut spec).unwrap();
+    let canonical = own_path.canonicalize().unwrap();
+    assert!(
+        spec.codex_read_only.contains(&canonical.join(".git")),
+        "{:?}",
+        spec.codex_read_only
+    );
+    assert!(
+        spec.codex_read_only.contains(&canonical.join("AGENTS.md")),
+        "{:?}",
+        spec.codex_read_only
+    );
+    assert!(
+        spec.codex_read_only.iter().all(|p| !p.starts_with(&link)),
+        "{:?}",
+        spec.codex_read_only
+    );
+}
+
 /// A test writer's sandbox is completed on the task's own checkout, as a worker's.
 #[test]
 fn a_test_writers_sandbox_is_its_tasks_checkout() {

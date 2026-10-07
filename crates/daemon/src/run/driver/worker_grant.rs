@@ -18,6 +18,31 @@ pub(super) fn grant_shape(claude: bool, dialect: CodexSandboxDialect) -> git::Gr
     }
 }
 
+/// The checkout `cwd` spelled as the grant spells it (canonical), so every profile
+/// entry joined onto it matches the grant's own: macOS `/tmp` is `/private/tmp`. Only
+/// the checkout is resolved, never the tails joined onto it (a worker could swap a
+/// tail for a link). The given path when it cannot be resolved. Blocking file work.
+pub(super) fn canonical_checkout(cwd: &Path) -> PathBuf {
+    std::fs::canonicalize(cwd).unwrap_or_else(|error| {
+        tracing::debug!(cwd = %cwd.display(), %error, "checkout not canonicalized");
+        cwd.to_path_buf()
+    })
+}
+
+/// [`codex_read_only`] on the real filesystem: `cwd` canonicalized, existence by
+/// `symlink_metadata`. Blocking file work.
+pub(super) fn codex_read_only_on_disk(
+    dialect: CodexSandboxDialect,
+    cwd: &Path,
+    owns: &[String],
+    deny: Vec<PathBuf>,
+) -> Vec<PathBuf> {
+    let cwd = canonical_checkout(cwd);
+    codex_read_only(dialect, &cwd, owns, deny, |path| {
+        std::fs::symlink_metadata(path).is_ok()
+    })
+}
+
 /// A Codex worker's read-only entries in checkout `cwd` (ruling R3). Codex's legacy
 /// `workspace-write` kept `.git` and `.codex` under a writable root read-only on its
 /// own; a profile extending `:read-only` with a `"write"` entry for the checkout does

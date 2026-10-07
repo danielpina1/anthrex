@@ -34,7 +34,7 @@ use gate_ops::{check, proof};
 // worker's read-only entries (kept out of this file by the 600-line rule).
 #[path = "worker_grant.rs"]
 mod worker_grant;
-use worker_grant::{codex_read_only, grant_shape};
+use worker_grant::{codex_read_only_on_disk, grant_shape};
 
 // Controller ruling 1 and ruling C-12b: M8a's commands through the test scheduler.
 #[path = "scheduled.rs"]
@@ -178,14 +178,15 @@ async fn worker_git_dirs(
     if !sandboxed {
         return Ok(());
     }
-    // A worker's grant has the host's shape (on Linux its checkout's git directory
-    // whole, with what it must not change denied: bubblewrap cannot grant a lock file
-    // that does not exist yet) for Claude, and for Codex when its dialect can keep a
-    // path read-only inside a writable one; the exact files otherwise.
+    // The host's shape (on Linux the git directory whole, protected entries denied:
+    // bubblewrap cannot grant a lock file not yet made) for Claude and for a Codex
+    // dialect that can keep a path read-only inside a writable one; else exact files.
     let claude = spec
         .claude_sandbox
         .as_ref()
         .is_some_and(|s| !s.writable_roots.is_empty());
+    // The dialect is the probed version's: wait for the launch gate, no lock held.
+    service.manager.config().launch_gate.wait().await;
     let dialect = service.ctx.cli_caps.codex_dialect();
     let shape = grant_shape(claude, dialect);
     let codex = !spec.codex_writable_roots.is_empty();
@@ -201,9 +202,7 @@ async fn worker_git_dirs(
                 .collect::<Result<Vec<_>, _>>()?;
             let grant = git::worker_git_grant(&common, &cwd, &roots, shape)?;
             let read_only = if codex {
-                codex_read_only(dialect, &cwd, &owns, grant.deny.clone(), |path| {
-                    std::fs::symlink_metadata(path).is_ok()
-                })
+                codex_read_only_on_disk(dialect, &cwd, &owns, grant.deny.clone())
             } else {
                 Vec::new()
             };
