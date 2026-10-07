@@ -2,12 +2,14 @@
 //! an effort and an "if it struggles" fallback. The types live in `proto::models` (the
 //! settings document carries them); this module adds the built-in rows, the resolution
 //! order (repository file, then the global table, then the built-in), reading and
-//! rendering a `[models]` table (`parse.rs`) and the repository file (`repo.rs`, the
-//! only file here with I/O).
+//! rendering a `[models]` table (`parse.rs`), the repository file (`repo.rs`, the
+//! only file here with I/O) and the migration of the old model keys (`migrate.rs`).
 
+mod migrate;
 mod parse;
 mod repo;
 
+pub use migrate::migrate;
 pub(crate) use parse::read_table;
 pub use parse::{parse_text, render};
 pub use proto::models::{
@@ -77,5 +79,7 @@ pub fn resolve_brainstorm(repo: Option<&ModelTable>, global: &ModelTable) -> Bra
         .unwrap_or_else(builtin_brainstorm)
 }
 
+#[cfg(test)]
+mod migrate_tests;
 #[cfg(test)]
 mod tests;

@@ -87,8 +87,9 @@ pub(crate) fn report_unknown_routes(value: &toml::Value, problems: &mut Vec<Prob
 }
 
 /// Reads `[orchestrator.routes]` out of `[orchestrator]` (`orchestrator`), checking
-/// every candidate against the merged `roster`. Never fails.
-pub(super) fn read_routes(
+/// every candidate against the merged `roster`. Never fails. Also read by
+/// `models::migrate` (M9.8 preflight ruling F4).
+pub(crate) fn read_routes(
     orchestrator: &toml::Table,
     roster: &[ModelEntry],
     problems: &mut Vec<Problem>,

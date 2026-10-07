@@ -204,3 +204,44 @@ fn todays_resolution_matches_the_golden_file() {
         assert_eq!(today(&config.orchestrator), golden[*name], "{name}");
     }
 }
+
+/// What the role table resolves each golden row to (task M9.8.3).
+fn resolved(cfg: &config::Orchestrator) -> BTreeMap<String, String> {
+    use config::models::{Role, resolve, resolve_brainstorm};
+    let t = &cfg.roles;
+    let mut out: BTreeMap<String, String> = [
+        ("orchestrator", Role::Orchestrator),
+        ("planner", Role::Planner),
+        ("implementer.small", Role::ImplementerSmall),
+        ("implementer.medium", Role::ImplementerMedium),
+        ("implementer.hub", Role::ImplementerHub),
+        ("test_writer", Role::TestWriter),
+        ("reviewer", Role::Reviewer),
+        ("research", Role::Research),
+        ("helpers", Role::Helpers),
+    ]
+    .into_iter()
+    .map(|(key, role)| (key.to_string(), resolve(role, None, t).model.label()))
+    .collect();
+    let b = resolve_brainstorm(None, t);
+    out.insert("brainstorm.first".into(), b.first.label());
+    out.insert("brainstorm.second".into(), b.second.label());
+    out
+}
+
+#[test]
+fn the_role_table_resolves_every_old_config_as_today() {
+    let builtin = resolved(&config::Orchestrator::default());
+    for (name, text) in &matrix() {
+        let (config, _) = config::parse(text);
+        let new = resolved(&config.orchestrator);
+        for (row, model) in &golden()[*name] {
+            let want = if model == UNRESOLVED {
+                &builtin[row]
+            } else {
+                model
+            };
+            assert_eq!(&new[row], want, "{name}: {row}");
+        }
+    }
+}

@@ -285,7 +285,18 @@ auto = "yes"
                 .to_string(),
         ]
     );
-    assert_eq!(config.orchestrator, Orchestrator::default());
+    // Milestone 9.8 decision 14: the scout keys are present, so they still feed the
+    // research row (at their defaults, today's research route) and give a note each.
+    let o = config.orchestrator;
+    let research = crate::models::builtin_choice(crate::Role::Research);
+    assert_eq!(o.roles.rows, [(crate::Role::Research, research)].into());
+    assert_eq!(o.roles_notes.len(), 2, "{:?}", o.roles_notes);
+    let unmigrated = Orchestrator {
+        roles: Default::default(),
+        roles_notes: Vec::new(),
+        ..o
+    };
+    assert_eq!(unmigrated, Orchestrator::default());
 }
 
 #[test]

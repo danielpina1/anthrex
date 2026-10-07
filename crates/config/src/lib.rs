@@ -215,11 +215,16 @@ pub fn parse(text: &str) -> (Config, Vec<Problem>) {
     read_git(&table, &mut config, &mut problems);
     read_conversation(&table, &mut config, &mut problems);
     config.orchestrator = orchestrator::read(&table, &mut problems);
-    // Milestone 9.8: the explicit `[models]` rows; M9.8.3 overlays them on the migrated keys.
+    // Milestone 9.8 (decisions 14-19): the old model keys migrated into the role table,
+    // overlaid by the explicit `[models]` rows.
     let explicit = table
         .get("models")
-        .map(|v| models::read_table(v, &mut problems));
-    config.orchestrator.roles = explicit.unwrap_or_default();
+        .map(|v| models::read_table(v, &mut problems))
+        .unwrap_or_default();
+    let raw = table.get("orchestrator").and_then(|v| v.as_table());
+    let (migrated, notes) = models::migrate(&config.orchestrator, raw);
+    config.orchestrator.roles = migrated.overlaid(&explicit);
+    config.orchestrator.roles_notes = notes;
     read_testing(&table, &mut config, &mut problems);
     read_delivery(&table, &mut config, &mut problems);
     read_theme(&table, &mut config, &mut problems);

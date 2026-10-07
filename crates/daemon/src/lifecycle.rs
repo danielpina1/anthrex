@@ -254,6 +254,10 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     for problem in &config_problems {
         tracing::warn!(problem = %problem, "config problem");
     }
+    // Milestone 9.8 decision 18: each old model key the role table migrated, once.
+    for note in &loaded_config.orchestrator.roles_notes {
+        tracing::warn!(note = %note, "config migration");
+    }
 
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
     let mut config =

@@ -14,8 +14,8 @@ use crate::{Problem, not_a_table_problem, read_bool_key, read_u64_in_range};
 // gains one `mod` line for both (decision 3's +4).
 #[path = "routes.rs"]
 mod routes;
-pub(crate) use routes::report_unknown_routes;
 pub use routes::{Candidate, Pick, RouteList, RouteLists};
+pub(crate) use routes::{read_routes, report_unknown_routes};
 
 pub(crate) const KNOWN_TUNING_KEYS: &[&str] = &[
     "min_samples",
