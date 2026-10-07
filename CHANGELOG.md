@@ -14,6 +14,8 @@ release is a pre-release and any release may change behaviour or the protocol.
   git directory whole, with its configuration and the protected agent-config paths
   (`.git`, `.claude`, `.codex`, `.mcp.json`, `AGENTS.md`, `CLAUDE.md`) read-only. Older
   Codex keeps the legacy sandbox flags, and its workers still cannot commit on Linux.
+  Do not downgrade anthrex with a run in flight: older daemons ignore the new read-only
+  list.
 
 ## [0.1.2] — 2026-10-07
 

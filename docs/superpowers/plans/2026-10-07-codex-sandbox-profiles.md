@@ -27,7 +27,7 @@
 1. A path that is both granted and read-only (equal paths): Codex lets `write` beat `read` at equal specificity, so the plan must drop the write entry; pinned in Task 1 (`equal_write_and_read_only_paths_keep_read_only`).
 2. Paths with spaces, quotes or backslashes as TOML keys: must be quoted, not broken; pinned in Task 1 (`profile_keys_are_quoted_toml_strings`).
 3. A resumed session must carry the same profile as its first turn (a resume that loses the profile would run with Codex's default): pinned in Task 3 (`resume_carries_the_same_profile`).
-4. A daemon whose version probe fails or times out must not fall back to `Legacy` (whose worker grant cannot commit on Linux): pinned in Task 1 (`unknown_version_is_profiles`) and Task 2 (`recorded_version_drives_the_detected_dialect`).
+4. A daemon whose version probe fails or times out must not fall back to `Legacy` (whose worker grant cannot commit on Linux): pinned in Task 1 (`unknown_version_is_profiles`) and Task 2 (`recorded_version_drives_the_detected_dialect`). Superseded after the final review (ruling R6): an unknown version is `Legacy` (`unknown_version_is_legacy`); see the spec's Implementation notes.
 5. `Legacy` on Linux must keep the `Files` grant (it cannot express `read_only`): pinned in Task 5 (`legacy_dialect_keeps_the_files_grant`).
 
 ---

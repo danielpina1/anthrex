@@ -75,8 +75,9 @@ from *how* a given Codex version is told:
   can express. Nothing is ever silently widened.
 - The dialect is chosen from the Codex version the daemon already probes at startup
   (`lifecycle/codex_version.rs`), now recorded instead of only logged: `CliCaps.codex_sandbox_dialect`
-  is `Profiles` for ≥ 0.160.0, `Legacy` below, and `Profiles` when the version is unknown (the
-  newest dialect; old Codex is the exception to support, not the default).
+  is `Profiles` for ≥ 0.160.0, `Legacy` below, and `Legacy` when the version is unknown (the
+  probe failed or timed out; amended after final review, see Implementation notes). Every
+  path that resolves the dialect first waits for the daemon's launch gate (the probe).
   A table `DIALECTS: &[(min_version, CodexSandboxDialect)]` holds the mapping, so adding a
   generation is one row.
 
@@ -105,6 +106,10 @@ The `Profiles` rendering, on a first turn and on a resume alike:
 
 ### 4.3 Failing closed
 
+- An unknown Codex version is `Legacy` (amended after final review): a profile on a Codex too old
+  to read it carries no `-s`, so the user's own `sandbox_mode` would apply. A session's grant
+  records the dialect it was computed for (`HeadlessSpec.codex_grant_dialect`), and a confined
+  session always renders in that dialect, never in a newer one that would drop its protection.
 - `MIN_CODEX_VERSION` stays the floor for launching at all; below 0.160 the `Legacy` dialect keeps
   today's behaviour (`Files` grant, commits fail on Linux as now), and the startup warning names
   0.160 as the version that enables Codex worker commits on Linux.
@@ -129,8 +134,8 @@ the manual macOS acceptance in §5 confirms it under profiles before merge.
 - `crates/cli/tests/run_e2e_worker_pins.rs`: Codex rows on Linux expect the 5 protected paths plus
   the 10 git-denied entries, as Claude's do.
 - `codex_sandbox` unit tests: each dialect renders each mode; `Legacy` refuses a plan with
-  `read_only`; the version table picks `Legacy` for 0.159.x, `Profiles` for 0.160.0 and for an
-  unknown version.
+  `read_only`; the version table picks `Legacy` for 0.159.x and for an unknown version, and
+  `Profiles` for 0.160.0.
 - Manual acceptance on this Mac, same isolation, one small Codex worker run that commits, with
   the user's approval for that real-agent run.
 - Manual acceptance on nexus1 (isolated `ANTHREX_SOCKET`/`ANTHREX_DATA_DIR` under `/tmp/ax-*`): one
@@ -163,4 +168,30 @@ Deviations from the design above, recorded by the implementation.
   nothing else needed it changed.
 - New tests live in `argv_sandbox_tests.rs` and `worker_grant.rs` / `worker_grant_tests.rs`
   because `argv_tests.rs` and `ops.rs` were at the 600-line limit.
+- Unknown version → `Legacy` (amended after final review, ruling R6). The design said an
+  unknown version was `Profiles`; on Codex < 0.160 a profile argv has no `-s`, so a probe that
+  failed or timed out would have left the user's own `sandbox_mode` in charge. `for_version(None)`
+  is now `Legacy`, and every production path that resolves a Codex dialect waits for the launch
+  gate first: the worker grant, `create_headless`, the window launch and restart, the decider
+  call, and a headless send or resume (a window restored at start can be resumed while the probe
+  runs). None holds a lock across the wait.
+- A grant records its dialect (ruling R7): `HeadlessSpec.codex_grant_dialect`, set by the worker
+  grant; `None` (a spec persisted by an earlier daemon, or never granted) means `Legacy`. A
+  confined plan renders in that dialect, not the CLI's current one, so a restored or resumed
+  spec whose grant had no read-only entries keeps Legacy's implicit `.git`/`.codex` protection,
+  and the grant and its argv can never disagree. Read-only and full-access plans hold no grant
+  and render in the current (gate-awaited) dialect. Every confined plan uses the grant's
+  dialect, not only those with writable roots: a confined spec that never went through the
+  grant has always been rendered Legacy.
+- Read-only entries are fixed at launch: a protected path created later in the session (an
+  `AGENTS.md` the worker writes, say) stays writable for that session. `.codex` is still checked
+  by `codex_config_guard` before each process; `AGENTS.md` and `CLAUDE.md` were never protected
+  for Codex before either.
+- When a dialect cannot express a plan, §4.2 said the caller falls back to the `Files` grant. The
+  grant side does exactly that (Legacy gets `Files` and no read-only entries); the argv-level
+  backstop in `codex_args`, which should never fire, narrows further and renders a read-only
+  session rather than a widened one.
+- `SandboxPlan::new` also drops a `write` entry equal to the working directory or to an earlier
+  `write` entry: each profile path is a key of one inline TOML table, where a repeated key is
+  invalid.
 - Manual acceptance: recorded by the controller (nexus1, macOS)
