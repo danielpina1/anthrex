@@ -1,0 +1,9 @@
+[
+  {"data": [
+    {"id": "gpt-6-luna", "model": "gpt-6-luna", "displayName": "gpt-6 luna", "description": "Fast, low cost", "supportedReasoningEfforts": [{"reasoningEffort": "low", "description": ""}, {"reasoningEffort": "medium", "description": ""}, {"reasoningEffort": "high", "description": ""}, {"reasoningEffort": "xhigh", "description": ""}], "defaultReasoningEffort": "low", "isDefault": false},
+    {"id": "gpt-6-sol", "model": "gpt-6-sol", "displayName": "gpt-6 sol", "description": "Balanced", "supportedReasoningEfforts": [{"reasoningEffort": "low", "description": ""}, {"reasoningEffort": "medium", "description": ""}, {"reasoningEffort": "high", "description": ""}, {"reasoningEffort": "max", "description": ""}], "defaultReasoningEffort": "medium", "isDefault": true}
+  ], "nextCursor": "p2"},
+  {"data": [
+    {"id": "gpt-6.1-sol", "model": "gpt-6.1-sol", "displayName": "gpt-6.1 sol", "description": "Frontier", "supportedReasoningEfforts": [{"reasoningEffort": "low", "description": ""}, {"reasoningEffort": "medium", "description": ""}, {"reasoningEffort": "high", "description": ""}, {"reasoningEffort": "max", "description": ""}], "defaultReasoningEffort": "high", "isDefault": false}
+  ], "nextCursor": null}
+]

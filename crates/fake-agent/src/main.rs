@@ -1,6 +1,7 @@
 mod bash;
 mod decider;
 mod diag;
+mod discovery;
 mod headless;
 mod mcp;
 mod orch_steps;
@@ -44,6 +45,9 @@ fn main() {
 
 fn run() -> Result<i32> {
     let args: Vec<String> = env::args().skip(1).collect();
+    if let Some(code) = discovery::codex_app_server(&args)? {
+        return Ok(code);
+    }
     if let Some(invocation) = headless::detect(&args) {
         return headless::run(&args, invocation);
     }
@@ -53,6 +57,10 @@ fn run() -> Result<i32> {
     }
     roles::record_args(&roles::fallback().name, &args)?;
     if args.iter().any(|arg| arg == "--version") {
+        if let Ok(line) = env::var("FAKE_AGENT_VERSION") {
+            println!("{line}");
+            return Ok(0);
+        }
         let version = env::var("FAKE_CODEX_VERSION").unwrap_or_else(|_| "0.160.1".into());
         println!("codex-cli {version}");
         return Ok(0);
