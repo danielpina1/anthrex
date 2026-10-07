@@ -2,7 +2,6 @@ use daemon::manager::{ManagerConfig, WindowManager};
 use daemon::window::WindowEvent;
 use proto::{HookSource, Runtime, Status, WindowInfo, WindowSpec};
 use serde_json::{Value, json};
-use std::os::unix::fs::PermissionsExt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
@@ -23,8 +22,7 @@ impl Agent {
         } else {
             "#!/bin/sh\nexec sleep 300\n"
         };
-        std::fs::write(&stub, body).unwrap();
-        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+        testexec::write_executable(&stub, body);
         let mut config = ManagerConfig::for_tests(dir.path().join("daemon.sock"), "/bin/sh".into());
         config.claude_bin = stub.to_str().unwrap().into();
         let (manager, events) = WindowManager::new(config);

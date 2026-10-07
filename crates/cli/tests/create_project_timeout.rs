@@ -2,7 +2,6 @@ mod support;
 
 use std::ffi::OsString;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -89,17 +88,13 @@ fn new_outlives_project_detection_timeout_without_duplicate_or_leak() {
     fs::create_dir_all(&bin).unwrap();
     let cwd = cwd.canonicalize().unwrap();
     let git = bin.join("git");
-    fs::write(
+    testexec::write_executable(
         &git,
         format!(
             "#!/bin/sh\nprintf '%s\\n' \"$$\" > '{}'\nexec /bin/sleep 30\n",
             pid_file.display()
         ),
-    )
-    .unwrap();
-    let mut permissions = fs::metadata(&git).unwrap().permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(&git, permissions).unwrap();
+    );
     let mut wrapper = OwnedGitWrapper {
         pid_file: pid_file.clone(),
         exited: false,

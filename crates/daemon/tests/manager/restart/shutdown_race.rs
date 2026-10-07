@@ -94,20 +94,16 @@ async fn restart_is_refused_after_shutdown() {
 /// after everything settles.
 #[tokio::test]
 async fn restart_admitted_before_shutdown_is_refused_and_leaves_no_process_behind() {
-    use std::os::unix::fs::PermissionsExt;
-
     let dir = tempfile::tempdir().unwrap();
     let pid_log = dir.path().join("pids.log");
     let shell = dir.path().join("stubborn-shell.sh");
-    std::fs::write(
+    testexec::write_executable(
         &shell,
         format!(
             "#!/bin/sh\ntrap '' HUP TERM\nprintf '%s\\n' \"$$\" >> '{}'\nwhile :; do :; done\n",
             pid_log.display()
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
 
     // `ManagerConfig::new`'s default `restart_wait_deadline` is `KILL_GRACE + 2s` —
     // comfortably past the ~3s the stubborn shell actually takes to die to `SIGKILL`, so
@@ -281,13 +277,11 @@ async fn restart_admitted_before_shutdown_ordinary_shell_variant() {
 /// before, and no longer built from two constants that merely happened not to coincide.
 #[tokio::test]
 async fn kill_after_a_timed_out_restart_still_signals_the_window() {
-    use std::os::unix::fs::PermissionsExt;
-
     let dir = tempfile::tempdir().unwrap();
     let log = dir.path().join("signals.log");
     let ready = dir.path().join("ready");
     let shell = dir.path().join("logging-shell.sh");
-    std::fs::write(
+    testexec::write_executable(
         &shell,
         format!(
             "#!/bin/sh\ntrap 'echo hup >> \"{}\"' HUP\ntrap 'echo term >> \"{}\"' TERM\n\
@@ -296,9 +290,7 @@ async fn kill_after_a_timed_out_restart_still_signals_the_window() {
             log.display(),
             ready.display()
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
 
     let mut config =
         ManagerConfig::for_tests("/tmp/unused.sock".into(), shell.display().to_string());

@@ -63,10 +63,7 @@ impl Rig {
         let tmp = tempfile::tempdir().unwrap();
         let top = tmp.path().canonicalize().unwrap();
         if let Some(script) = wrapper(&top) {
-            let path = top.join("git-wrapper.sh");
-            std::fs::write(&path, script).unwrap();
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            testexec::write_executable(top.join("git-wrapper.sh"), script);
         }
         let root = top.join("repo");
         std::fs::create_dir_all(&root).unwrap();

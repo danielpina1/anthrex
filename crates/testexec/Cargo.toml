@@ -1,0 +1,14 @@
+[package]
+name = "anthrex-testexec"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+description = "Test support: write a stand-in executable that a concurrent fork can never leave busy (ETXTBSY)."
+
+[dependencies]
+libc.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

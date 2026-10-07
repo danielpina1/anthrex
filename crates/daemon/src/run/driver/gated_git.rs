@@ -3,7 +3,6 @@
 //! releases it. A git read through it ends only by its caller's deadline, never by
 //! how long a call happened to take.
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -41,8 +40,7 @@ impl GatedGit {
              : > \"$d/exited\"\n\
              exit 1\n"
         );
-        std::fs::write(&program, body).unwrap();
-        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        testexec::write_executable(&program, body);
         GatedGit {
             dir: dir.to_path_buf(),
             program,

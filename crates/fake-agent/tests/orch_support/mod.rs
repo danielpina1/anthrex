@@ -4,7 +4,6 @@
 
 use std::fs;
 use std::io::{Read, Write};
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
@@ -127,10 +126,7 @@ pub fn wrapper() -> &'static Path {
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("anthrex-wrap");
         if fs::read_to_string(&path).ok().as_deref() != Some(script) {
-            let staged = dir.join(format!("anthrex-wrap.{}", std::process::id()));
-            fs::write(&staged, script).unwrap();
-            fs::set_permissions(&staged, fs::Permissions::from_mode(0o755)).unwrap();
-            fs::rename(&staged, &path).unwrap();
+            testexec::write_executable(&path, script);
         }
         path
     })

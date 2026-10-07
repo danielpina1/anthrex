@@ -3,9 +3,6 @@
 
 mod headless_support;
 
-use std::fs;
-use std::os::unix::fs::PermissionsExt;
-
 use headless_support::*;
 use serde_json::{Value, json};
 
@@ -247,8 +244,7 @@ done
 fn mcp_call_sends_initialized_between_initialize_and_the_call() {
     let dir = tempdir();
     let server = dir.path().join("server.sh");
-    fs::write(&server, LOGGING_SERVER).unwrap();
-    fs::set_permissions(&server, fs::Permissions::from_mode(0o755)).unwrap();
+    testexec::write_executable(&server, LOGGING_SERVER);
     let script = write_steps(
         &dir.path().join("s.jsonl"),
         &[json!({"mcp_call": {"tool": "task_done", "args": {"summary": "x"}}})],

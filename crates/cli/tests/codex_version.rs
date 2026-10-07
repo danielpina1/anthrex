@@ -1,6 +1,5 @@
 mod support;
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -105,8 +104,7 @@ fn running_command_finishes_when_a_descendant_keeps_output_handles_open() {
 fn probe(script: &str) -> (String, Duration, tempfile::TempDir) {
     let dir = tempdir();
     let bin = dir.path().join("codex");
-    std::fs::write(&bin, format!("#!/bin/sh\n{script}\n")).unwrap();
-    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
+    testexec::write_executable_mode(&bin, format!("#!/bin/sh\n{script}\n"), 0o700);
     let started = Instant::now();
     let mut command = isolated_command(dir.path(), &["daemon", "start", "--foreground"]);
     command
@@ -215,7 +213,7 @@ fn wait_for_probe_to_finish(dir: &Path, bound: Duration) {
 fn ordering_codex(dir: &Path, stall: Duration) -> std::path::PathBuf {
     let bin = dir.join("codex");
     let seconds = stall.as_secs();
-    std::fs::write(
+    testexec::write_executable_mode(
         &bin,
         format!(
             "#!/bin/sh\n\
@@ -232,9 +230,8 @@ fn ordering_codex(dir: &Path, stall: Duration) -> std::path::PathBuf {
              printf 'launch\\n' >> \"$PROBE_DIR/order\"\n\
              exec sleep 600\n"
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
+        0o700,
+    );
     let warm = RunningCommand::start(Command::new(&bin).arg(WARM_UP_ARG)).finish(WALL_CLOCK_SLACK);
     assert!(
         warm.status.success(),

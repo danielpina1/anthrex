@@ -55,10 +55,8 @@ pub fn spec(runtime: Runtime, cwd: &Path) -> HeadlessSpec {
 
 /// An executable `/bin/sh` script at `dir/name`.
 pub fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
     let path = dir.join(name);
-    std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    testexec::write_executable(&path, format!("#!/bin/sh\n{body}\n"));
     path
 }
 

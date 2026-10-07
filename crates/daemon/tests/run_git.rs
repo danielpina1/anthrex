@@ -9,15 +9,13 @@ mod support;
 use daemon::run::git::{preflight, project_settings, protected_files};
 use daemon::run::globs::ProtectedMatcher;
 use daemon::run::plan::BUILTIN_PROTECTED;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use support::TempRepo;
 use support::run_git::{T, commit_file, head, out, real_git, repo, write, wt_dir};
 
 fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
     let path = dir.join(name);
-    std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    testexec::write_executable(&path, format!("#!/bin/sh\n{body}\n"));
     path
 }
 

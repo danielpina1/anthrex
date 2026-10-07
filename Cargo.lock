@@ -84,6 +84,7 @@ dependencies = [
  "anthrex-daemon",
  "anthrex-mcp",
  "anthrex-proto",
+ "anthrex-testexec",
  "anthrex-tui",
  "anyhow",
  "clap",
@@ -114,6 +115,7 @@ dependencies = [
  "anthrex-config",
  "anthrex-mcp",
  "anthrex-proto",
+ "anthrex-testexec",
  "anyhow",
  "bytes",
  "globset",
@@ -145,6 +147,7 @@ dependencies = [
  "anthrex-config",
  "anthrex-daemon",
  "anthrex-proto",
+ "anthrex-testexec",
  "anyhow",
  "libc",
  "portable-pty",
@@ -183,12 +186,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "anthrex-testexec"
+version = "0.1.2"
+dependencies = [
+ "libc",
+ "tempfile",
+]
+
+[[package]]
 name = "anthrex-tui"
 version = "0.1.2"
 dependencies = [
  "anthrex-config",
  "anthrex-daemon",
  "anthrex-proto",
+ "anthrex-testexec",
  "anyhow",
  "crossterm",
  "dirs",

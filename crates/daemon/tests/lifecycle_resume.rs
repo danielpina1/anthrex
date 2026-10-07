@@ -77,16 +77,10 @@ async fn restart_resumes_claude_and_codex_sessions() {
     std::fs::create_dir_all(&data_dir).unwrap();
 
     let script = dir.path().join("argv.sh");
-    std::fs::write(
+    testexec::write_executable(
         &script,
         "#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'codex-cli 0.155.0\\n'; exit 0; fi\nprintf 'ARGV:'\nfor a in \"$@\"; do printf ' [%s]' \"$a\"; done\nprintf '\\n'\nprintf 'READY\\n'\nexec sleep 60\n",
-    )
-    .unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    );
     // Run the fixture once, through its side-effect-free `--version` branch, before the
     // daemon starts. On macOS the first exec of a freshly written executable waits for a
     // security assessment (`docs/timing-budgets.md`, "First exec of a freshly written

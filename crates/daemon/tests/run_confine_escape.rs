@@ -46,13 +46,10 @@ fn build_app(app: &Path, id: &str, marker: &Path) {
     let macos = app.join("Contents/MacOS");
     std::fs::create_dir_all(&macos).unwrap();
     let exe = macos.join("probe");
-    std::fs::write(
+    testexec::write_executable(
         &exe,
         format!("#!/bin/sh\n/usr/bin/touch '{}'\n", marker.display()),
-    )
-    .unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     std::fs::write(
         app.join("Contents/Info.plist"),
         format!(

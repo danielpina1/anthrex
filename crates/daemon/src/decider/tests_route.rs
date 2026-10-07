@@ -4,7 +4,6 @@
 //! call. No decider is spawned: every binary is a path that does not exist or a
 //! stand-in the probe only stats.
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 use config::{Candidate, Pick, RouteList};
@@ -128,8 +127,7 @@ async fn deciders_use_their_list_unless_off() {
 async fn deciders_route_over_what_is_installed_at_each_call() {
     let dir = tempfile::tempdir().unwrap();
     let codex = dir.path().join("codex");
-    std::fs::write(&codex, "#!/bin/sh\nexit 0\n").unwrap();
-    std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o755)).unwrap();
+    testexec::write_executable(&codex, "#!/bin/sh\nexit 0\n");
     let codex_bin = codex.display().to_string();
     let ctx = ctx(
         DeciderMode::Claude,
@@ -167,8 +165,7 @@ async fn deciders_route_over_what_is_installed_at_each_call() {
     );
     assert_eq!(second.program, ctx.program);
     // A list candidate not installed is skipped.
-    std::fs::write(&codex, "#!/bin/sh\nexit 0\n").unwrap();
-    std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o755)).unwrap();
+    testexec::write_executable(&codex, "#!/bin/sh\nexit 0\n");
     let listed = self::ctx(
         DeciderMode::Claude,
         RouteList {

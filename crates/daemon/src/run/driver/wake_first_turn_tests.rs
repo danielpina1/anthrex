@@ -42,8 +42,7 @@ pub(in crate::run::driver::wake) struct Rig {
 fn stand_in(dir: &Path) -> String {
     let claude = dir.join("claude");
     let script = "#!/bin/sh\necho \"$*\" >> \"$0.args\"\necho starting\nexec sleep 300\n";
-    std::fs::write(&claude, script).unwrap();
-    std::fs::set_permissions(&claude, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    testexec::write_executable(&claude, script);
     claude.to_str().unwrap().into()
 }
 

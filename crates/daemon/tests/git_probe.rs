@@ -3,7 +3,6 @@ use proto::{GitOperation, Head};
 use std::ffi::OsStr;
 use std::fs;
 use std::io;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -54,12 +53,6 @@ fn init_repo() -> TempDir {
     dir
 }
 
-fn set_executable(path: &Path) {
-    let mut permissions = fs::metadata(path).unwrap().permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(path, permissions).unwrap();
-}
-
 /// Set only on [`write_script`]'s warm-up run: the script exits before its own first line.
 const WARM_UP_VAR: &str = "ANTHREX_TEST_WARM_UP";
 
@@ -76,12 +69,10 @@ fn write_script(dir: &Path, name: &str, body: &str) -> PathBuf {
     let body = body
         .strip_prefix("#!/bin/sh\n")
         .expect("write_script writes #!/bin/sh scripts only");
-    fs::write(
+    testexec::write_executable(
         &script,
         format!("#!/bin/sh\n[ -n \"${WARM_UP_VAR}\" ] && exit 0\n{body}"),
-    )
-    .unwrap();
-    set_executable(&script);
+    );
     let mut warm = Command::new(&script).env(WARM_UP_VAR, "1").spawn().unwrap();
     // A harness deadline, not a budget: a warm-up queued behind other first execs can
     // take seconds, and this only turns a wedged exec into a named failure.
