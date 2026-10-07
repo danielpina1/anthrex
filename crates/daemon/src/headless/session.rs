@@ -363,8 +363,9 @@ impl HeadlessHandle {
     }
 }
 
-/// Decision 26's environment on `command`, less `remove`, then `env` on top.
-fn session_env(command: &mut Command, env: &[(String, String)], remove: &[&str]) {
+/// Decision 26's environment on `command`, less `remove`, then `env` on top. Model
+/// discovery's probes use it too (M9.8.6, MR §4.1: the same scrubbed environment).
+pub(crate) fn session_env(command: &mut Command, env: &[(String, String)], remove: &[&str]) {
     scrub_git_location_env(command);
     for (key, _) in std::env::vars_os() {
         let bytes = key.as_bytes();

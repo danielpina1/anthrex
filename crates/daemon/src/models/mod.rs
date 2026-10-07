@@ -99,8 +99,9 @@ impl Probes for CliProbes {
     }
 }
 
-/// The command a model probe runs: `env_remove` removed and `headless::session_vars`
-/// set, as a headless session's process gets them; its own process group; stdin and
+/// The command a model probe runs, with a headless session's environment
+/// (`headless::session::session_env`: its scrubbed prefixes, names, session identity
+/// and git location variables, less `env_remove`, with `headless::session_vars` set); its own process group; stdin and
 /// stdout piped, stderr discarded.
 pub(crate) fn probe_command(
     program: &str,
@@ -110,12 +111,8 @@ pub(crate) fn probe_command(
 ) -> Command {
     let mut command = Command::new(program);
     command.args(args);
-    for name in env_remove {
-        command.env_remove(name);
-    }
-    for (name, value) in crate::headless::session_vars(runtime, &[]) {
-        command.env(name, value);
-    }
+    let vars = crate::headless::session_vars(runtime, &[]);
+    crate::headless::session::session_env(&mut command, &vars, env_remove);
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

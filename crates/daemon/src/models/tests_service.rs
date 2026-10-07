@@ -156,6 +156,27 @@ async fn a_cache_for_the_same_version_is_used_without_probing() {
     assert_eq!(again, first);
 }
 
+/// Fix round 1: a cache file that does not parse is no cache; the probe runs and its
+/// catalog replaces the file.
+#[tokio::test]
+async fn a_garbage_cache_file_is_treated_as_absent() {
+    let dir = tempfile::tempdir().unwrap();
+    let models = dir.path().join("models");
+    std::fs::create_dir_all(&models).unwrap();
+    let path = models.join("codex-0.160.1.json");
+    std::fs::write(&path, "not json {").unwrap();
+    let probes = CountingProbes::new();
+    let catalogs = service(dir.path(), &probes)
+        .list(Some(Runtime::Codex), false)
+        .await;
+    assert_eq!(probes.model_calls(Runtime::Codex), 1);
+    assert_eq!(catalogs[0].source, CatalogSource::Live);
+    assert_eq!(catalogs[0].models, vec![model("gpt-6-sol")]);
+    let written: ModelCatalog =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(written, catalogs[0]);
+}
+
 #[tokio::test]
 async fn a_new_version_probes_again() {
     let dir = tempfile::tempdir().unwrap();
