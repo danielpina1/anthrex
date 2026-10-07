@@ -310,14 +310,11 @@ fn a_paused_rebase_with_a_clean_tree_is_dirty() {
 /// Stops an interactive rebase of the last two commits at the first one, leaving a
 /// `rebase-merge` state and a clean working tree.
 fn pause_rebase_at_edit(worktree: &Path) {
-    use std::os::unix::fs::PermissionsExt;
     let editor = worktree.join(".pause-rebase.sh");
-    fs::write(
+    testexec::write_executable(
         &editor,
         "#!/bin/sh\nsed -e '1s/^pick/edit/' \"$1\" > \"$1.anthrex\" && mv \"$1.anthrex\" \"$1\"\n",
-    )
-    .unwrap();
-    fs::set_permissions(&editor, fs::Permissions::from_mode(0o755)).unwrap();
+    );
 
     let output = support::git_output_env(
         worktree,

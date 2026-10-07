@@ -4,7 +4,6 @@
 //! path that does not exist and Codex's a stand-in the probe only stats. No scout or
 //! decider is started.
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -23,10 +22,7 @@ const NO_CLAUDE: &str = "/nonexistent/anthrex-test/claude";
 
 /// A stand-in `codex` the probe finds executable; nothing runs it.
 fn codex_stand_in(dir: &Path) -> PathBuf {
-    let codex = dir.join("codex");
-    std::fs::write(&codex, "#!/bin/sh\nexit 0\n").unwrap();
-    std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o755)).unwrap();
-    codex
+    testexec::write_executable(dir.join("codex"), "#!/bin/sh\nexit 0\n")
 }
 
 /// A profile service and the daemon's decider context, both wired over `config`.

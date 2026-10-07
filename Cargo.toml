@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/proto", "crates/config", "crates/daemon", "crates/tui", "crates/cli", "crates/fake-agent", "crates/mcp"]
+members = ["crates/proto", "crates/config", "crates/daemon", "crates/tui", "crates/cli", "crates/fake-agent", "crates/mcp", "crates/testexec"]
 
 [workspace.package]
 version = "0.1.2"
@@ -14,6 +14,7 @@ config = { path = "crates/config", package = "anthrex-config" }
 daemon = { path = "crates/daemon", package = "anthrex-daemon" }
 tui = { path = "crates/tui", package = "anthrex-tui" }
 mcp = { path = "crates/mcp", package = "anthrex-mcp" }
+testexec = { path = "crates/testexec", package = "anthrex-testexec" }
 anyhow = "1"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }

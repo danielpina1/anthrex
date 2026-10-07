@@ -9,7 +9,6 @@
 //! this one test.
 
 use std::ffi::OsStr;
-use std::os::unix::fs::PermissionsExt;
 use std::time::Duration;
 
 const SCRUBBED: [&str; 11] = [
@@ -34,8 +33,7 @@ fn project_detection_runs_git_without_the_inherited_git_variables() {
     // detection falls back to the directory itself.
     let git = tmp.path().join("git");
     let script = format!("#!/bin/sh\nenv > '{}'\nexit 1\n", seen.display());
-    std::fs::write(&git, script).unwrap();
-    std::fs::set_permissions(&git, std::fs::Permissions::from_mode(0o755)).unwrap();
+    testexec::write_executable(&git, script);
     // SAFETY: the only test in this binary, so no other thread reads the environment.
     unsafe {
         for key in SCRUBBED {

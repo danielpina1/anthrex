@@ -136,8 +136,7 @@ fn slow_worktree_removal(h: &RunHarness) -> String {
         mark = mark.display()
     );
     let git = bin.join("git");
-    std::fs::write(&git, script).unwrap();
-    std::fs::set_permissions(&git, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    testexec::write_executable(&git, script);
     format!(
         "{}:{}",
         bin.display(),

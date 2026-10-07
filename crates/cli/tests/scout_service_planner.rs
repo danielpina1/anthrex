@@ -5,7 +5,6 @@
 
 mod support;
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -115,7 +114,7 @@ async fn a_planner_session_runs_on_the_scout_machine_and_is_accepted() {
     let repo = dir.path().join("repo");
     init_repo(&repo, &[("Cargo.toml", "[workspace]\n")]);
     let wrapper = dir.path().join("claude.sh");
-    std::fs::write(
+    testexec::write_executable(
         &wrapper,
         format!(
             "#!/bin/sh\nexport FAKE_AGENT_ARGS_FILE='{}'\nexport FAKE_AGENT_STDIN_FILE='{}'\nexec '{}' \"$@\"\n",
@@ -123,9 +122,7 @@ async fn a_planner_session_runs_on_the_scout_machine_and_is_accepted() {
             dir.path().join("stdin.jsonl").display(),
             fake_agent_bin().display()
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     let mut config = ManagerConfig::for_tests(dir.path().join("d.sock"), "/bin/sh".into());
     config.exe = PathBuf::from(ANTHREX);
     config.claude_bin = wrapper.display().to_string();

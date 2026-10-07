@@ -33,6 +33,8 @@ thiserror.workspace = true
 unicode-segmentation.workspace = true
 
 [dev-dependencies]
+# Stand-in executables a concurrent fork cannot leave busy (ETXTBSY).
+testexec.workspace = true
 # Task M9.11: the driver's read-path tests call tools as `anthrex mcp` forwards them
 # (`mcp::forward`); `rmcp` still stays out of the daemon itself.
 mcp.workspace = true

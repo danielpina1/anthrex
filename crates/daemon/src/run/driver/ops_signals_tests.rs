@@ -86,17 +86,14 @@ impl Rig {
         let top = tmp.path().canonicalize().unwrap();
         let log = top.join("git.log");
         let wrapper = top.join("git-wrapper.sh");
-        std::fs::write(
+        testexec::write_executable(
             &wrapper,
             format!(
                 "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\n{extra}\nexec '{}' \"$@\"\n",
                 log.display(),
                 real_git()
             ),
-        )
-        .unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        );
         let root = top.join("repo");
         std::fs::create_dir_all(&root).unwrap();
         git(&root, &["init", "-q", "-b", "main"]);

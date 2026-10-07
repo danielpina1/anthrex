@@ -292,17 +292,14 @@ fn a_manual_restart_after_a_daemon_restart_names_the_receiver_that_is_up_now() {
     let first = otlp_addr(&h);
     let seen = h.data().join("orch-endpoints.txt");
     let wrapper = h.data().join("claude-wrapper.sh");
-    std::fs::write(
+    testexec::write_executable(
         &wrapper,
         format!(
             "#!/bin/sh\nprintf '%s\\n' \"$OTEL_EXPORTER_OTLP_ENDPOINT\" >> '{}'\nexec '{}' \"$@\"\n",
             seen.display(),
             support::fake_agent_bin().display()
         ),
-    )
-    .unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
 
     let _ = std::fs::remove_file(h.data().join("otlp.addr"));
     h.restart_daemon(&[("ANTHREX_CLAUDE_BIN", wrapper.to_str().unwrap())]);

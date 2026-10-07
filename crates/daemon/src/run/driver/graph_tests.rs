@@ -4,7 +4,6 @@
 
 use std::cell::RefCell;
 use std::ffi::OsStr;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -107,15 +106,15 @@ fn cargo_graph_is_read_offline_and_cached_by_manifest_hash() {
     // A `cargo` ahead of the real one on `PATH` that logs each call, then runs it.
     let bin = tmp.path().join("bin");
     let log = tmp.path().join("cargo-calls");
-    write(
-        &bin.join("cargo"),
-        &format!(
+    std::fs::create_dir_all(&bin).unwrap();
+    testexec::write_executable(
+        bin.join("cargo"),
+        format!(
             "#!/bin/sh\necho \"$*\" >> '{}'\nexec '{}' \"$@\"\n",
             log.display(),
             real_cargo.display()
         ),
     );
-    std::fs::set_permissions(bin.join("cargo"), std::fs::Permissions::from_mode(0o755)).unwrap();
     let path = std::env::join_paths(std::iter::once(bin.clone()).chain(std::env::split_paths(
         &std::env::var_os("PATH").unwrap_or_default(),
     )))

@@ -75,8 +75,7 @@ pub(in crate::run::driver) fn role(run_id: &str) -> RoleLaunch {
 /// `claude` as a stand-in that sleeps, in `dir`.
 pub(in crate::run::driver) fn sleeping_claude(dir: &Path) -> String {
     let claude = dir.join("claude");
-    std::fs::write(&claude, "#!/bin/sh\nexec sleep 300\n").unwrap();
-    std::fs::set_permissions(&claude, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    testexec::write_executable(&claude, "#!/bin/sh\nexec sleep 300\n");
     claude.to_str().unwrap().into()
 }
 

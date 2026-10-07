@@ -28,5 +28,7 @@ serde_json.workspace = true
 toml.workspace = true
 
 [dev-dependencies]
+# Stand-in executables a concurrent fork cannot leave busy (ETXTBSY).
+testexec.workspace = true
 tokio-util.workspace = true
 tempfile.workspace = true

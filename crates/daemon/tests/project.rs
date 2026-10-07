@@ -2,7 +2,6 @@ use daemon::project::{DETECT_TIMEOUT, detect_roots, detect_roots_with, resolve_r
 use std::ffi::OsStr;
 use std::fs;
 use std::io;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc;
@@ -46,10 +45,7 @@ fn init_repo() -> TempDir {
 
 fn hanging_git(dir: &Path) -> PathBuf {
     let script = dir.join("hanging-git");
-    fs::write(&script, "#!/bin/sh\nsleep 10\n").unwrap();
-    let mut permissions = fs::metadata(&script).unwrap().permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(&script, permissions).unwrap();
+    testexec::write_executable(&script, "#!/bin/sh\nsleep 10\n");
     script
 }
 
@@ -57,10 +53,7 @@ fn hanging_git(dir: &Path) -> PathBuf {
 /// distinct from a missing binary, which fails to spawn at all.
 fn failing_git(dir: &Path) -> PathBuf {
     let script = dir.join("failing-git");
-    fs::write(&script, "#!/bin/sh\nexit 1\n").unwrap();
-    let mut permissions = fs::metadata(&script).unwrap().permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(&script, permissions).unwrap();
+    testexec::write_executable(&script, "#!/bin/sh\nexit 1\n");
     script
 }
 
@@ -254,7 +247,7 @@ fn inherited_stdout_does_not_outlive_the_detection_deadline() {
     let pid_file = scripts.path().join("helper.pid");
     let root = repo.path().canonicalize().unwrap();
     let cwd = root.clone();
-    fs::write(
+    testexec::write_executable(
         &script,
         format!(
             "#!/bin/sh\nsleep 30 &\nprintf '%s\\n' \"$!\" > '{}'\nprintf '%s\\n%s\\n' '{}'/'.git' '{}'\nexit 0\n",
@@ -262,11 +255,7 @@ fn inherited_stdout_does_not_outlive_the_detection_deadline() {
             root.display(),
             root.display(),
         ),
-    )
-    .unwrap();
-    let mut permissions = fs::metadata(&script).unwrap().permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(&script, permissions).unwrap();
+    );
     let mut helper = OwnedHelper {
         pid_file: pid_file.clone(),
         stopped: false,
@@ -448,10 +437,7 @@ fn malformed_output_is_a_detection_failure_not_a_negative_answer() {
     let repo = init_repo();
     let scripts = tempdir().unwrap();
     let script = scripts.path().join("malformed-git");
-    fs::write(&script, "#!/bin/sh\nprintf 'one\\ntwo\\nthree\\n'\n").unwrap();
-    let mut permissions = fs::metadata(&script).unwrap().permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(&script, permissions).unwrap();
+    testexec::write_executable(&script, "#!/bin/sh\nprintf 'one\\ntwo\\nthree\\n'\n");
 
     let roots = detect_roots_with(script.as_os_str(), repo.path(), DETECT_TIMEOUT);
 
@@ -475,7 +461,7 @@ fn detection_passes_no_optional_locks() {
     let scripts = tempdir().unwrap();
     let argv_log = scripts.path().join("argv.log");
     let script = scripts.path().join("argv-recording-git");
-    fs::write(
+    testexec::write_executable(
         &script,
         format!(
             "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nprintf '%s\\n%s\\n' '{}'/'.git' '{}'\n",
@@ -483,11 +469,7 @@ fn detection_passes_no_optional_locks() {
             root.display(),
             root.display(),
         ),
-    )
-    .unwrap();
-    let mut permissions = fs::metadata(&script).unwrap().permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(&script, permissions).unwrap();
+    );
 
     let roots = detect_roots_with(script.as_os_str(), repo.path(), DETECT_TIMEOUT);
 

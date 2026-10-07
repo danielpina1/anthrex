@@ -12,10 +12,8 @@ use crate::run::engine::{OpKind, OpResult};
 /// A `git` stand-in that logs each call's arguments and `GIT_` variables, then runs
 /// the real git.
 pub(super) fn recording(dir: &Path) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
-    let script = dir.join("recording-git");
-    std::fs::write(
-        &script,
+    testexec::write_executable(
+        dir.join("recording-git"),
         format!(
             "#!/bin/sh\n\
              log='{log}'\n\
@@ -25,9 +23,6 @@ pub(super) fn recording(dir: &Path) -> PathBuf {
             log = dir.join("git.log").display(),
         ),
     )
-    .unwrap();
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-    script
 }
 
 /// Hard rules 2, 10 and 11 and the addendum: the commit waits for the project's git

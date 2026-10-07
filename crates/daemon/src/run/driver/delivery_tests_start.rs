@@ -4,7 +4,6 @@
 //! and every agent and decider binary a stand-in or a path that does not exist.
 
 use std::collections::BTreeMap;
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -223,39 +222,25 @@ async fn local_mode_calls_no_host() {
 
 /// A decider stand-in that records each call in `marker`, with what it read on stdin (a
 /// Claude decider's prompt, so a test can tell a triage from a run name), and fails (the
-/// decider falls back): never a real agent. Fix round 1, m3: it is written under another name, closed
-/// and renamed into place, then executed once (a guard makes that run exit at once),
-/// retrying while a concurrent fork still holds a writable copy of its descriptor
-/// (`ETXTBSY`), so the daemon's exec of it is never the first and never busy.
+/// decider falls back): never a real agent. Fix round 1, m3: it is written with no write
+/// descriptor in this process (`testexec`), so no concurrent fork can leave it busy
+/// (`ETXTBSY`), then executed once (a guard makes that run exit at once), so the
+/// daemon's exec of it is never the first.
 pub(in crate::run::driver) fn decider_stand_in(dir: &Path) -> (String, std::path::PathBuf) {
     let marker = dir.join("decider-called");
-    let script = dir.join("decider.sh");
-    let staged = dir.join("decider.sh.new");
-    std::fs::write(
-        &staged,
+    let script = testexec::write_executable(
+        dir.join("decider.sh"),
         format!(
             "#!/bin/sh\n[ -n \"$ANTHREX_TEST_WARM_UP\" ] && exit 0\necho called >> '{0}'\ncat >> '{0}'\nexit 1\n",
             marker.display()
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755)).unwrap();
-    std::fs::rename(&staged, &script).unwrap();
+    );
     let deadline = Instant::now() + Duration::from_secs(10);
-    let mut child = loop {
-        match std::process::Command::new(&script)
-            .env("ANTHREX_TEST_WARM_UP", "1")
-            .stdin(std::process::Stdio::null())
-            .spawn()
-        {
-            Ok(child) => break child,
-            Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
-                assert!(Instant::now() < deadline, "the stand-in stayed busy: {e}");
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            Err(e) => panic!("the stand-in did not start: {e}"),
-        }
-    };
+    let mut child = std::process::Command::new(&script)
+        .env("ANTHREX_TEST_WARM_UP", "1")
+        .stdin(std::process::Stdio::null())
+        .spawn()
+        .unwrap_or_else(|e| panic!("the stand-in did not start: {e}"));
     let status = loop {
         if let Some(status) = child.try_wait().unwrap() {
             break status;

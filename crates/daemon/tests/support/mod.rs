@@ -61,10 +61,8 @@ pub async fn start_daemon_configured(
     let dir = tempfile::tempdir().unwrap();
     let socket = dir.path().join("d.sock");
     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
-    use std::os::unix::fs::PermissionsExt;
     let stub = dir.path().join("stub.sh");
-    std::fs::write(&stub, "#!/bin/sh\nexec sleep 300\n").unwrap();
-    std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+    testexec::write_executable(&stub, "#!/bin/sh\nexec sleep 300\n");
     let worktrees_root = dir.path().canonicalize().unwrap().join("worktrees");
     let mut config = ManagerConfig::for_tests(socket.clone(), "/bin/sh".into());
     config.claude_bin = stub.to_str().unwrap().into();
@@ -337,20 +335,17 @@ impl TempRepo {
     }
 
     fn post_checkout_hook(&self, body: &str) {
-        use std::os::unix::fs::PermissionsExt;
         let hook = self.root.join(".git/hooks/post-checkout");
         std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
         // The marker is written with an absolute path because the hook runs with the new
         // worktree as its working directory, not the main checkout.
-        std::fs::write(
+        testexec::write_executable(
             &hook,
             format!(
                 "#!/bin/sh\n: > '{}'\n{body}\n",
                 self.hook_marker().display()
             ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        );
     }
 }
 
@@ -383,10 +378,9 @@ pub async fn claude_window(d: &TestDaemon, name: &str) -> u32 {
 /// argument after a tab) and one `env` line per `GIT_*` variable it was given to
 /// `<dir>/git.log`, then execs the real `git` with the same arguments.
 pub fn recording_git(dir: &std::path::Path) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
     let log = dir.join("git.log");
     let script = dir.join("recording-git");
-    std::fs::write(
+    testexec::write_executable(
         &script,
         format!(
             "#!/bin/sh\n\
@@ -396,8 +390,6 @@ pub fn recording_git(dir: &std::path::Path) -> PathBuf {
              exec git \"$@\"\n",
             log = log.display()
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     script
 }

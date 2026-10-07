@@ -154,16 +154,10 @@ async fn reconnect_now_supersedes_an_in_flight_automatic_attempt() {
     // socket (so `ensure_daemon`'s own poll just runs out its 3s budget harmlessly).
     let marker = dir.path().join("started.log");
     let script = dir.path().join("fake_daemon.sh");
-    std::fs::write(
+    testexec::write_executable(
         &script,
         format!("#!/bin/sh\necho invoked >> {:?}\nexit 0\n", marker),
-    )
-    .unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    );
 
     let mut driver = ConnectionDriver::new();
 

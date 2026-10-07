@@ -28,16 +28,10 @@ async fn only_one_racing_ensure_daemon_call_spawns_a_child() {
     // it was launched as `daemon start --foreground` — which is all this test needs to
     // count how many competing children actually got spawned.
     let script = dir.path().join("counting_daemon.sh");
-    std::fs::write(
+    testexec::write_executable(
         &script,
         format!("#!/bin/sh\necho invoked >> {:?}\nexit 0\n", marker),
-    )
-    .unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    );
 
     // SAFETY: serialized by ENV_LOCK; nothing else in this process reads these
     // variables concurrently.

@@ -90,7 +90,6 @@ pub fn worktree_block(root: &Path, path: &Path) -> Option<String> {
 /// appearing just before an `update-ref`, a commit landing on the base just before a
 /// merge — with no timing involved.
 pub fn wrapper_git(dir: &Path, before: &str) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
     let which = std::process::Command::new("sh")
         .args(["-c", "command -v git"])
         .output()
@@ -98,38 +97,11 @@ pub fn wrapper_git(dir: &Path, before: &str) -> PathBuf {
     let real = String::from_utf8(which.stdout).unwrap().trim().to_string();
     assert!(!real.is_empty(), "no git on PATH");
     let script = dir.join("wrapper-git");
-    std::fs::write(
+    testexec::write_executable(
         &script,
-        format!(
-            "#!/bin/sh\n[ -n \"$ANTHREX_TEST_SETTLE\" ] && exit 0\nREAL='{real}'\n{before}\nexec \"$REAL\" \"$@\"\n"
-        ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-    settle(&script);
+        format!("#!/bin/sh\nREAL='{real}'\n{before}\nexec \"$REAL\" \"$@\"\n"),
+    );
     script
-}
-
-/// Waits until `script` can be executed. On Linux a fork in another test thread can
-/// briefly inherit the fd that wrote it, and exec then fails with ETXTBSY; the probe
-/// run (`ANTHREX_TEST_SETTLE` set) exits before the script does anything.
-fn settle(script: &Path) {
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    loop {
-        match std::process::Command::new(script)
-            .env("ANTHREX_TEST_SETTLE", "1")
-            .status()
-        {
-            Ok(status) => {
-                assert!(status.success(), "the settle probe failed: {status}");
-                return;
-            }
-            Err(e) if e.raw_os_error() == Some(26) && std::time::Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            Err(e) => panic!("{} does not run: {e}", script.display()),
-        }
-    }
 }
 
 /// Final fix batch F1b: a task worktree's `HEAD` is detached (a plain commit id), never

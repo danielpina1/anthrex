@@ -343,10 +343,9 @@ fn a_create_whose_cleanup_also_fails_says_the_worktree_is_still_there() {
 /// A `git` that refuses every `worktree remove` and is the real git otherwise, so a
 /// create's cleanup fails for a reason the test controls.
 fn git_that_refuses_to_remove(dir: &Path) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
     let real = which_git();
     let script = dir.join("obstinate-git");
-    fs::write(
+    testexec::write_executable(
         &script,
         format!(
             "#!/bin/sh\ncase \"$*\" in\n  *'worktree remove'*)\n    \
@@ -354,9 +353,7 @@ fn git_that_refuses_to_remove(dir: &Path) -> PathBuf {
              *) exec '{real}' \"$@\" ;;\nesac\n",
             real = real.display(),
         ),
-    )
-    .unwrap();
-    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    );
     script
 }
 
@@ -364,10 +361,9 @@ fn git_that_refuses_to_remove(dir: &Path) -> PathBuf {
 /// that asks whether it exists, and is the real git for everything else — the race in
 /// review item 1, made deterministic.
 fn racing_git(dir: &Path, repo: &Path, branch: &str) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
     let real = which_git();
     let script = dir.join("racing-git");
-    fs::write(
+    testexec::write_executable(
         &script,
         format!(
             "#!/bin/sh\ncase \"$*\" in\n  *show-ref*)\n    '{real}' \"$@\"\n    rc=$?\n    \
@@ -376,9 +372,7 @@ fn racing_git(dir: &Path, repo: &Path, branch: &str) -> PathBuf {
             real = real.display(),
             repo = repo.display(),
         ),
-    )
-    .unwrap();
-    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    );
     script
 }
 
@@ -588,19 +582,16 @@ fn a_create_that_fails_after_worktree_add_cleans_up_but_keeps_an_older_branch() 
 /// A `git` that appends its whole argv to `log` and then becomes the real git, so a
 /// create can be run for real while every invocation it makes is recorded.
 fn recording_git(dir: &Path, log: &Path) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
     let real = which_git();
     let script = dir.join("recording-git");
-    fs::write(
+    testexec::write_executable(
         &script,
         format!(
             "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexec '{}' \"$@\"\n",
             log.display(),
             real.display()
         ),
-    )
-    .unwrap();
-    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    );
     script
 }
 

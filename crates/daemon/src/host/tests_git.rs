@@ -183,9 +183,7 @@ fn push_to_a_rewritten_remote_is_rejected_never_forced() {
     // Ruling R-11: a refusal by the remote (a hook, a protection rule) is told apart.
     let hook = rig.bare.join("hooks/pre-receive");
     std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
-    std::fs::write(&hook, "#!/bin/sh\necho 'protected by policy' >&2\nexit 1\n").unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    testexec::write_executable(&hook, "#!/bin/sh\necho 'protected by policy' >&2\nexit 1\n");
     assert_eq!(
         rig.push(2, &a),
         Ok(PushOutcome::Refused {
