@@ -187,3 +187,45 @@ fn e2e_workers_get_their_own_tmpdir_and_pinned_sandbox_settings() {
         "{fs}"
     );
 }
+
+/// Final review M2: a Codex older than permission profiles (the daemon's startup probe
+/// reads 0.155.0) keeps the legacy flags end to end: `-s workspace-write`, the three
+/// pins, and the exact git files plus the task's temporary directory as writable roots;
+/// no profile key.
+#[test]
+fn e2e_a_codex_worker_below_profiles_gets_the_legacy_flags() {
+    let h = RunHarness::with_env("", &[("FAKE_CODEX_VERSION", "0.155.0")], true);
+    let seen = h.dir.path().join("seen");
+    h.script(
+        "worker-t1-1",
+        &[
+            sh(&format!("printf %s \"$TMPDIR\" > '{}'", seen.display())),
+            commit("a.txt", "x\n"),
+            done("added it"),
+        ],
+    );
+    h.script("reviewer-t1-1", &[approve()]);
+    let id = h.start(&plan("", &[task("t1", &["a.txt"], CODEX)]), true);
+    h.wait_run(&id, complete, RUN_WAIT);
+    let tmp = std::fs::read_to_string(&seen).unwrap();
+
+    let argv: Vec<String> = serde_json::from_str(&h.io_lines("worker-t1-1", "args")[0]).unwrap();
+    assert!(
+        argv.windows(2).any(|w| w == ["-s", "workspace-write"]),
+        "{argv:?}"
+    );
+    for pin in daemon::headless::argv::CODEX_SANDBOX_PINS {
+        assert!(argv.iter().any(|a| a == pin), "{pin} missing: {argv:?}");
+    }
+    let roots = argv
+        .iter()
+        .find(|a| a.starts_with("sandbox_workspace_write.writable_roots="))
+        .unwrap_or_else(|| panic!("no writable roots: {argv:?}"));
+    assert!(roots.contains(&format!("\"{tmp}\"")), "{tmp}: {roots}");
+    assert!(
+        !argv
+            .iter()
+            .any(|a| a.starts_with("default_permissions=") || a.starts_with("permissions.")),
+        "{argv:?}"
+    );
+}
