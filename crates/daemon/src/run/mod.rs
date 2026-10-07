@@ -50,6 +50,7 @@ pub mod model;
 pub mod orch;
 pub mod phases;
 pub mod plan;
+mod plan_repo;
 pub mod proof;
 pub mod reach;
 pub mod reconcile;
