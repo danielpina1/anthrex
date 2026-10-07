@@ -209,5 +209,10 @@ Deviations from the design above, recorded by the implementation.
     These used the `-c` layer as a stand-in for config-file values.
   - macOS (Seatbelt, Codex 0.159.3, so Legacy): run `add-hello-txt-a9e4` completed; the Codex
     worker committed `hello.txt` (`d891779`) under the legacy exact-file grant
-    (`codex_grant_dialect = "Legacy"`, no read-only entries). The Profiles path on macOS awaits a
-    Codex ≥ 0.160 on this Mac.
+    (`codex_grant_dialect = "Legacy"`, no read-only entries).
+  - macOS (Seatbelt, Codex upgraded to 0.160.1, Profiles): run `add-hello-txt-6744` completed; the
+    Codex worker committed `hello.txt` (`00c7bff`) under the profile with the exact-file grant:
+    `index.lock`, `HEAD.lock` and `COMMIT_EDITMSG` were granted before they existed and git created
+    them; the worktree `.git` was a read-only entry. The cwd `write` entry kept the `/tmp/…`
+    spelling while the grant used `/private/tmp/…`, and the worker could write its checkout, so
+    the mixed spelling is harmless on Codex 0.160.1.
