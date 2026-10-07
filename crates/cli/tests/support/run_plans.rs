@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use proto::{AgentRole, RunInfo, RunReply, RunState, TaskInfo};
 use serde_json::{Value, json};
 
-use super::run_harness::{git_in, script_in};
+use super::run_harness::{REQUEST_WAIT, git_in, script_in};
 
 /// Decision 52's retirement: a retired window stays listed this long.
 pub const RETIRE_AFTER: Duration = Duration::from_secs(30);
@@ -139,10 +139,32 @@ pub fn changes(findings: &[Value]) -> Value {
     json!({"mcp_call": {"tool": "submit_review", "args": {"verdict": "changes", "summary": "needs work", "findings": findings}}})
 }
 
-/// The run's `run.json`, next to its report.
+/// The run's `run.json`, next to its report, as it is on disk now. A snapshot can be
+/// ahead of it: see [`run_json_when`].
 pub fn run_json(run: &RunInfo) -> Value {
     let path = run.report_path.with_file_name("run.json");
     serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap()
+}
+
+/// The run's `run.json` once `ready` holds for it, waiting at most `REQUEST_WAIT`.
+///
+/// The driver publishes an engine step's snapshot at once but saves its `run.json` on a
+/// blocking thread (`driver::effects::save`), so a state a test saw in a snapshot can
+/// reach the file a moment later. What is left after the snapshot is that step's one
+/// fsynced write: inside `REQUEST_WAIT` (`docs/timing-budgets.md`). The saves are
+/// ordered (ruling T22-N2), so a file that shows a step shows every step before it.
+pub fn run_json_when(run: &RunInfo, what: &str, ready: impl Fn(&Value) -> bool) -> Value {
+    until(&format!("{what} in run.json"), REQUEST_WAIT, || {
+        let all = run_json(run);
+        ready(&all).then_some(all)
+    })
+}
+
+/// The run's `run.json` once it has task `id` (see [`run_json_when`]).
+pub fn run_json_with_task(run: &RunInfo, id: &str) -> Value {
+    run_json_when(run, id, |all| {
+        (all["tasks"].as_array().into_iter().flatten()).any(|t| t["spec"]["id"] == id)
+    })
 }
 
 /// Waits until the run's report contains `needle` (the report is written at most every

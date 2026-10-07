@@ -119,18 +119,32 @@ pub fn run_progress(run: &RunInfo) -> (usize, usize) {
     })
 }
 
-/// The text a run is known by in the tree: its goal, or its id when the goal is blank.
-pub fn run_title(run: &RunInfo) -> &str {
-    if run.goal.trim().is_empty() {
-        &run.run_id
-    } else {
+/// The run title change: the text a run is named by, its short title when it has one
+/// (protocol 18's `RunInfo.title`), else its goal.
+pub fn run_label(run: &RunInfo) -> &str {
+    if run.title.trim().is_empty() {
         &run.goal
+    } else {
+        &run.title
     }
 }
 
-/// The project-tree filter (decision 7): a run matches on its goal or its id.
+/// The text a run is known by in the tree: its [`run_label`], or its id when that is
+/// blank.
+pub fn run_title(run: &RunInfo) -> &str {
+    let label = run_label(run);
+    if label.trim().is_empty() {
+        &run.run_id
+    } else {
+        label
+    }
+}
+
+/// The project-tree filter (decision 7): a run matches on its goal, its title or its id.
 pub(super) fn run_matches_filter(run: &RunInfo, filter: &str) -> bool {
-    matches_filter(&run.goal, filter) || matches_filter(&run.run_id, filter)
+    matches_filter(&run.goal, filter)
+        || matches_filter(&run.title, filter)
+        || matches_filter(&run.run_id, filter)
 }
 
 /// Milestone 9.3 decision 32: the idle row's text, `orchestrator · idle · after <h4>`,

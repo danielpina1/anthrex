@@ -235,7 +235,9 @@ fn run_title(app: &App, run_id: &str, width: u16) -> (String, Option<String>) {
         Some((room, right)) => (room, Some(right)),
         None => (width.saturating_sub(chrome), None),
     };
-    let name = super::kit::run_name_in(&run.goal, &run.run_id, room, app.palette());
+    // The run title change: the run's title, else its goal.
+    let label = tree::run_label(run);
+    let name = super::kit::run_name_in(label, &run.run_id, room, app.palette());
     (format!("run · {name}{round}"), right)
 }
 

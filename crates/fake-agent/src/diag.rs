@@ -16,10 +16,27 @@ pub fn set_script(name: &str) {
     let _ = SCRIPT.set(name.to_owned());
 }
 
-/// `text` on stderr, and appended to `FAKE_AGENT_ERROR_LOG` when it is set. Never fails:
-/// a diagnostic that cannot be kept is only printed.
+/// `text` appended to `FAKE_AGENT_ERROR_LOG` when it is set, then on stderr. Never fails
+/// and never panics: the file comes first, so a stderr the daemon has stopped reading
+/// (`eprintln!` would panic on it) cannot lose the line.
 pub fn emit(text: &str) {
-    eprintln!("{text}");
+    keep(text);
+    let _ = writeln!(std::io::stderr(), "{text}");
+}
+
+/// Every panic's message kept as [`emit`] keeps a line (2026-10-06): the default hook
+/// prints it on stderr only, which reaches the daemon and not the test.
+pub fn keep_panics() {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        keep(&format!("fake-agent: {info}"));
+        default(info);
+    }));
+}
+
+/// `text` appended to `FAKE_AGENT_ERROR_LOG` with the time, the pid, the script and
+/// the cwd, when it is set.
+fn keep(text: &str) {
     let Some(path) = std::env::var_os("FAKE_AGENT_ERROR_LOG") else {
         return;
     };

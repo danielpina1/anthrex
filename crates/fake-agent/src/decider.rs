@@ -317,6 +317,11 @@ mod tests {
             kind("[anthrex decider] size_check v1"),
             Some("size_check".into())
         );
+        // The run title change's kind, scripted as `run_name-<n>.json`.
+        assert_eq!(
+            kind("[anthrex decider] run_name v1\nYou name a coding run"),
+            Some("run_name".into())
+        );
         for prompt in [
             "",
             "hello",

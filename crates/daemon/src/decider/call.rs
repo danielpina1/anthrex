@@ -205,6 +205,42 @@ pub async fn decide(ctx: &DeciderContext, request: &DeciderRequest) -> Decision 
     decision
 }
 
+/// [`routed`] then [`decide`], the whole of it within `bound` (the run title change's
+/// `run_name` call, 15 s): the call's own timeout is at most `bound`, and a call still
+/// running `bound` after it began (the probe included) is dropped, which kills its
+/// process, for the fallback `the decider timed out after <bound> s`. With the deciders
+/// off, the fallback at once. `None`: the probe itself outlasted `bound`, so there is no
+/// route to record.
+pub async fn decide_within(
+    ctx: &DeciderContext,
+    request: &DeciderRequest,
+    bound: Duration,
+) -> (Option<Routed>, Decision) {
+    if ctx.mode == DeciderMode::Off {
+        return (None, fallback_decision(request, OFF_REASON.into()));
+    }
+    let started = Instant::now();
+    let timed_out = || {
+        let mut decision = fallback_decision(
+            request,
+            format!("the decider timed out after {} s", bound.as_secs()),
+        );
+        decision.secs = started.elapsed().as_secs();
+        decision
+    };
+    let deadline = tokio::time::Instant::now() + bound;
+    let Ok(routed) = tokio::time::timeout_at(deadline, routed(ctx)).await else {
+        return (None, timed_out());
+    };
+    let mut bounded = routed.ctx.clone();
+    bounded.timeout = bounded.timeout.min(bound);
+    let decision = match tokio::time::timeout_at(deadline, decide(&bounded, request)).await {
+        Ok(decision) => decision,
+        Err(_) => timed_out(),
+    };
+    (Some(routed), decision)
+}
+
 /// The answer or the fallback reason, and the turn's usage if a turn ended.
 async fn call(
     ctx: &DeciderContext,

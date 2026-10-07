@@ -530,6 +530,12 @@ async fn pre_run_triage_writes_a_record_even_when_no_run_is_created() {
     let path = repo_dir.join("history.jsonl");
     let (lines, problems) = daemon::run::history_io::read_history(&path);
     assert!(problems.is_empty(), "{problems:?}");
+    // The run title change: the run name's own record (`run_name/...`), written off the
+    // start's path, may be there too; triage's is the one this test is about.
+    let lines: Vec<HistoryLine> = lines
+        .into_iter()
+        .filter(|l| !matches!(l, HistoryLine::RoleRoute(d) if d.trigger == "run_name"))
+        .collect();
     assert_eq!(lines.len(), 1, "{lines:#?}");
     let HistoryLine::RoleRoute(d) = &lines[0] else {
         panic!("a role_route line: {lines:#?}");

@@ -78,9 +78,14 @@ pub(crate) fn run_inspection(
         },
         app,
     );
+    // The run title change: a titled run's title line names it by its title, and its
+    // full goal gets a row of its own, first.
+    if !run.title.trim().is_empty() {
+        fields.insert(0, field("goal", clean(&run.goal)));
+    }
     rows(
         glyph,
-        format!("{}  {}", run.run_id, clean(&run.goal)),
+        format!("{}  {}", run.run_id, clean(crate::tree::run_label(run))),
         right,
         fields,
     )

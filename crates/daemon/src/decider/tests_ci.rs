@@ -44,7 +44,7 @@ fn input(log: &str) -> CiSummaryInput {
 #[test]
 fn ci_summary_schema_prompt_and_fallback_are_exact() {
     // The kind: appended last, labelled `ci_summary`.
-    assert_eq!(DeciderKind::ALL.len(), 5);
+    assert_eq!(DeciderKind::ALL.len(), 6);
     assert_eq!(DeciderKind::ALL[4], DeciderKind::CiSummary);
     assert_eq!(DeciderKind::CiSummary.label(), "ci_summary");
     assert_eq!(CI_SUMMARY_INPUT_BYTES, 48 * 1024);

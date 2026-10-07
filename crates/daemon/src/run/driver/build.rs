@@ -14,6 +14,7 @@ use std::time::Duration;
 use proto::{Plan, Runtime};
 
 use super::adapt::BuildError;
+use super::build_name::RunName;
 use super::delivery::DeliveryStart;
 use super::ops::blocking;
 use super::{RunService, unix_now};
@@ -98,6 +99,9 @@ fn run_refs(git: &OsString, root: &Path, timeout: Duration) -> Result<Vec<String
 pub(super) struct TuneOnce {
     config: std::sync::OnceLock<config::Orchestrator>,
     tuned: tokio::sync::OnceCell<crate::run::refit::Tuned>,
+    /// The run title change: a goal's run name, asked once per start, so a fast build
+    /// that falls back to a planned one does not ask again.
+    named: tokio::sync::OnceCell<RunName>,
 }
 
 impl TuneOnce {
@@ -333,7 +337,16 @@ impl RunService {
 
         let (g, root) = (git.clone(), pre.root.clone());
         let refs = blocking(move || run_refs(&g, &root, timeout)).await?;
-        let id = self.pick_id(&plan.goal, &refs)?;
+        // The run title change: a goal's run (fast, planned, or a chain's next goal) is
+        // named before its id is drawn; a plan file's keeps today's id and no title.
+        let named = match shape {
+            Shape::PlanFile => RunName::default(),
+            Shape::Fast | Shape::Planned(_) => {
+                let name = self.name_run(&plan.goal, &pre.project, &choice.languages);
+                once.named.get_or_init(|| name).await.clone()
+            }
+        };
+        let id = self.pick_id(named.id_head(&plan.goal), &refs)?;
         let wt_dir = repo_worktrees_dir(&self.ctx.worktrees_root, &pre.project);
         let now = unix_now();
         // Milestone 9.5 decision 12 (ruling RH-8): every start kind tunes here, once; a
@@ -353,6 +366,10 @@ impl RunService {
             tuning,
         };
         let mut run = crate::run::plan::build_run(plan, pre, ctx).map_err(BuildError::Plan)?;
+        run.title = named.title;
+        if let Some(usage) = named.usage {
+            run.decider_usage += usage;
+        }
         delivery.apply(&mut run);
         super::adapt::fast_barrier(fast, &run)?;
         super::adapt::apply_choice(&mut run, choice, now);
@@ -544,12 +561,13 @@ impl RunService {
         Ok(checks)
     }
 
-    /// Decision 15: the slug and a random suffix, redrawn while the id's branches, its
-    /// data directory or an engine run already take it, or (milestone 9.3) a chain
-    /// already has its suffix (`chain::suffix_taken`).
-    fn pick_id(&self, goal: &str, refs: &[String]) -> Result<String, String> {
+    /// Decision 15: the slug of `head` and a random suffix, redrawn while the id's
+    /// branches, its data directory or an engine run already take it, or (milestone
+    /// 9.3) a chain already has its suffix (`chain::suffix_taken`). `head` is the goal,
+    /// or the `run_name` decider's slug (the run title change, `RunName::id_head`).
+    pub(super) fn pick_id(&self, head: &str, refs: &[String]) -> Result<String, String> {
         for _ in 0..ID_DRAWS {
-            let id = slug(goal, random_suffix());
+            let id = slug(head, random_suffix());
             let taken =
                 run_id_taken(&id, refs) || runs_dir(&self.ctx.data_dir).join(&id).exists() || {
                     let state = crate::lock(&self.state);

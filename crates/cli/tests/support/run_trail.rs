@@ -1,7 +1,7 @@
 //! What a run left behind, for a failure message: CI keeps nothing else once the
 //! harness's directory is gone. Each task's whole history (the snapshot shows its last
-//! ten events), what every `fake-agent` said on stderr, its MCP calls, and the state of
-//! every script claim.
+//! ten events), what every `fake-agent` said on stderr, its MCP calls, the state of
+//! every script claim, and the daemon log's tail.
 
 use std::path::Path;
 
@@ -51,6 +51,9 @@ impl RunHarness {
         }
         out.push_str("--- script claims:\n");
         out.push_str(&claims(&self.repo.join(".git").join("fake-agent")));
+        // How each session process ended, and what it said on stderr (a panic's message
+        // never reaches the error log): the daemon logs both.
+        out.push_str(&format!("--- daemon.log (tail):\n{}\n", self.log_tail()));
         out
     }
 }

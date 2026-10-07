@@ -5,7 +5,34 @@
 use super::App;
 use proto::{AgentRole, WindowKind};
 
+/// The toast when a bare Esc is held back from a working orchestrator.
+pub(crate) const ESC_HELD: &str =
+    "Esc is off in the orchestrator while it works; press Ctrl-C to interrupt it";
+
 impl App {
+    /// A stray Esc must not interrupt a live run's orchestrator mid-turn: a bare Esc
+    /// (`bytes` is exactly `ESC`) for the focused window is held back, with a toast,
+    /// while that window is the `Working` orchestrator of a run this client shows as not
+    /// terminal. Ctrl-C is untouched, and Esc passes whenever the orchestrator is not
+    /// working, since Claude Code needs it to close its menus and permission dialogs.
+    pub(super) fn holds_esc(&mut self, bytes: &[u8]) -> bool {
+        if bytes != [0x1b] {
+            return false;
+        }
+        let held = self.focused_window().is_some_and(|w| {
+            w.status == proto::Status::Working
+                && w.run.as_ref().is_some_and(|run| {
+                    run.role == AgentRole::Orchestrator
+                        && (self.runs.runs.iter())
+                            .any(|r| r.run_id == run.run_id && !r.state.is_terminal())
+                })
+        });
+        if held {
+            self.toast(ESC_HELD);
+        }
+        held
+    }
+
     /// Decision 49: a headless run session's window has no terminal. No `Subscribe`,
     /// `Input` or mouse report is ever sent for it; its pane points at `C-b m`.
     pub(crate) fn is_headless(&self, id: u32) -> bool {

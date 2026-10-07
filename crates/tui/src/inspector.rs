@@ -486,3 +486,6 @@ mod run_writes_tests;
 
 #[cfg(test)]
 mod run_design_tests;
+
+#[cfg(test)]
+mod run_title_tests;

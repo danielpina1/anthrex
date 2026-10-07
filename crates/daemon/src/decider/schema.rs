@@ -5,8 +5,8 @@
 use super::DeciderKind;
 use serde_json::Value;
 
-/// The schemas, keyed by the kind's label (M8b's "Decider schemas (exact)", and 9.2's
-/// `ci_summary` from its Interfaces).
+/// The schemas, keyed by the kind's label (M8b's "Decider schemas (exact)", 9.2's
+/// `ci_summary` from its Interfaces, and the run title change's `run_name`).
 const SCHEMAS: &str = r#"{"triage":{"type":"object","additionalProperties":false,"required":["kinds","scale","reason","task"],"properties":{
   "kinds":{"type":"array","minItems":1,"maxItems":4,"items":{"enum":["code","docs","research","review"]}},
   "scale":{"enum":["single","plan","large"]},
@@ -34,7 +34,10 @@ const SCHEMAS: &str = r#"{"triage":{"type":"object","additionalProperties":false
  "ci_summary":{"type":"object","additionalProperties":false,"required":["lines","failing_tests","category"],"properties":{
   "lines":{"type":"array","minItems":1,"maxItems":40,"items":{"type":"string","maxLength":300}},
   "failing_tests":{"type":"array","maxItems":50,"items":{"type":"string","minLength":1,"maxLength":200}},
-  "category":{"enum":["test","build","lint","infra","unknown"]}}}}"#;
+  "category":{"enum":["test","build","lint","infra","unknown"]}}},
+ "run_name":{"type":"object","additionalProperties":false,"required":["title","slug"],"properties":{
+  "title":{"type":"string","minLength":1,"maxLength":60},
+  "slug":{"type":"string","minLength":1,"maxLength":32,"pattern":"^[a-z0-9]+(-[a-z0-9]+)*$"}}}}"#;
 
 /// The schema of `kind`'s answer.
 pub fn schema(kind: DeciderKind) -> Value {
