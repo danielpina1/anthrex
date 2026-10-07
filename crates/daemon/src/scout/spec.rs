@@ -249,6 +249,7 @@ pub fn headless_spec_on(scout: &ScoutSpec, ctx: &ScoutContext, route: &Route) ->
         }),
         codex_sandbox: REVIEWER_CODEX_SANDBOX.to_string(),
         codex_writable_roots: Vec::new(),
+        codex_read_only: Vec::new(),
         env: Vec::new(),
         claude_auth: ctx.claude.auth,
         api_key_helper: None,

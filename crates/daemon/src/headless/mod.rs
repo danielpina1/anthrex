@@ -47,6 +47,10 @@ pub struct HeadlessSpec {
     pub claude_sandbox: Option<ClaudeSandbox>,
     pub codex_sandbox: String,
     pub codex_writable_roots: Vec<PathBuf>,
+    /// Read-only although inside a writable root (a worker's denied git entries); only
+    /// a dialect that can express it receives it (`headless::codex_sandbox`).
+    #[serde(default)]
+    pub codex_read_only: Vec<PathBuf>,
     pub env: Vec<(String, String)>,
     #[serde(with = "claude_auth_serde")]
     pub claude_auth: config::ClaudeAuth,

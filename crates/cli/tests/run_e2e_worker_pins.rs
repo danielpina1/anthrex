@@ -130,19 +130,25 @@ fn e2e_workers_get_their_own_tmpdir_and_pinned_sandbox_settings() {
         "{sandbox}"
     );
 
-    // Codex: network, `$TMPDIR` and `/tmp` pinned off, and the task's own
-    // temporary directory among the writable roots.
+    // Codex (0.160 profiles, what the fake agent reports): network off, and the task's
+    // own temporary directory among the profile's writable entries.
     let argv: Vec<String> = serde_json::from_str(&h.io_lines("worker-t2-1", "args")[0]).unwrap();
-    for pin in [
-        "sandbox_workspace_write.network_access=false",
-        "sandbox_workspace_write.exclude_tmpdir_env_var=true",
-        "sandbox_workspace_write.exclude_slash_tmp=true",
+    for want in [
+        "default_permissions=\"anthrex\"",
+        "permissions.anthrex.network.enabled=false",
     ] {
-        assert!(argv.iter().any(|a| a == pin), "{pin} missing from {argv:?}");
+        assert!(
+            argv.iter().any(|a| a == want),
+            "{want} missing from {argv:?}"
+        );
     }
-    let roots = argv
+    assert!(
+        !argv.iter().any(|a| a == "-s" || a.starts_with("sandbox_")),
+        "{argv:?}"
+    );
+    let fs = argv
         .iter()
-        .find(|a| a.starts_with("sandbox_workspace_write.writable_roots="))
+        .find(|a| a.starts_with("permissions.anthrex.filesystem="))
         .unwrap();
-    assert!(roots.contains(&tmps[1]), "{roots}");
+    assert!(fs.contains(&format!("{:?}=\"write\"", tmps[1])), "{fs}");
 }

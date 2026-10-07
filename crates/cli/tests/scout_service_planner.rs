@@ -74,6 +74,7 @@ fn planner_spec(repo: &std::path::Path) -> PlannerSpec {
         }),
         codex_sandbox: "read-only".into(),
         codex_writable_roots: Vec::new(),
+        codex_read_only: Vec::new(),
         env: Vec::new(),
         claude_auth: config::ClaudeAuth::default(),
         api_key_helper: None,

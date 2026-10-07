@@ -44,6 +44,7 @@ pub fn spec(runtime: Runtime, cwd: &Path) -> HeadlessSpec {
         claude_sandbox: None,
         codex_sandbox: "workspace-write".into(),
         codex_writable_roots: Vec::new(),
+        codex_read_only: Vec::new(),
         env: vec![("PROFILE_VAR".into(), "profile-value".into())],
         claude_auth: config::ClaudeAuth::Login,
         api_key_helper: None,

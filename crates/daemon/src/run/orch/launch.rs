@@ -405,6 +405,7 @@ pub(crate) fn read_only(
         }),
         codex_sandbox: REVIEWER_CODEX_SANDBOX.to_string(),
         codex_writable_roots: Vec::new(),
+        codex_read_only: Vec::new(),
         env: Vec::new(),
         claude_auth: run.limits.claude_auth.into(),
         api_key_helper: run.limits.api_key_helper.clone(),

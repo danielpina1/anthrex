@@ -1,6 +1,7 @@
 //! The argv of every headless session (decisions 24, 25, 50, 53 and 54) and what the
 //! installed CLIs can do (`CLI_CAPS`, set from M8a.1's findings). Pure.
 
+use super::codex_sandbox::{Mode, SandboxPlan};
 use super::{ClaudeSandbox, HeadlessSpec, McpTarget, SessionArg};
 use crate::decider::DECIDER_CAPS;
 use crate::launch;
@@ -445,15 +446,25 @@ pub fn claude_args(
     args
 }
 
+/// The sandbox plan a Codex session's spec describes.
+pub fn codex_plan(spec: &HeadlessSpec) -> SandboxPlan {
+    SandboxPlan::new(
+        Mode::from_codex_sandbox(&spec.codex_sandbox),
+        spec.cwd.clone(),
+        spec.codex_writable_roots.clone(),
+        spec.codex_read_only.clone(),
+    )
+}
+
 /// One Codex turn's argv (decision 25): `exec --json` for the first turn, `exec resume
 /// <id> --json` for every later one (a design agent's, never resumed by ruling T8-7,
 /// with `--ephemeral` on every turn, ruling T8-4), then the project-config exclusion when the CLI has
 /// one, the MCP server, the instructions (with M9.5 decision 28's filter note), effort
-/// and approval policy, the sandbox, a worker's writable roots, the model when named,
-/// `--`, and the turn's message. `exec resume` rejects `-s` (M8a.1 item 6), so a resume
-/// passes `-c sandbox_mode=…` unless the caps say otherwise. Since final fix batch F1d
-/// Codex's network, `$TMPDIR` and `/tmp` are pinned off ([`CODEX_SANDBOX_PINS`]). Every
-/// TOML string comes from `launch::codex::toml_string`.
+/// and approval policy, the sandbox, the model when named, `--`, and the turn's message.
+/// The sandbox flags come from [`codex_plan`] rendered in the caps' dialect
+/// (`headless::codex_sandbox`): the legacy dialect's resume rule (`exec resume` rejects
+/// `-s`, M8a.1 item 6) and pins ([`CODEX_SANDBOX_PINS`]) live there. Every TOML string
+/// comes from `launch::codex::toml_string`.
 pub fn codex_args(
     spec: &HeadlessSpec,
     session: &SessionArg,
@@ -509,27 +520,25 @@ pub fn codex_args(
         toml_string(effort(spec.effort))
     ));
     config(format!("approval_policy={}", toml_string("never")));
-    if resuming && !caps.codex_resume_takes_sandbox {
-        config(format!("sandbox_mode={}", toml_string(&spec.codex_sandbox)));
-    } else {
-        args.extend(["-s".into(), spec.codex_sandbox.clone()]);
-    }
-    for pin in CODEX_SANDBOX_PINS {
-        args.extend(["-c".into(), pin.to_string()]);
-    }
-    if !spec.codex_writable_roots.is_empty() {
-        let roots: Vec<String> = spec
-            .codex_writable_roots
-            .iter()
-            .map(|p| p.display().to_string())
-            .collect();
-        args.extend([
-            "-c".into(),
-            format!(
-                "sandbox_workspace_write.writable_roots={}",
-                toml_array(&roots)
-            ),
-        ]);
+    match caps
+        .codex_dialect()
+        .render(&codex_plan(spec), resuming, caps.codex_resume_takes_sandbox)
+    {
+        Ok(sandbox) => args.extend(sandbox),
+        // Task 5 never hands a dialect a plan it cannot express; if one arrives, the
+        // narrowest built-in mode runs rather than a widened one.
+        Err(unsupported) => {
+            tracing::error!(
+                reason = unsupported.0,
+                "Codex sandbox plan not expressible; read-only"
+            );
+            let narrow = SandboxPlan::new(Mode::ReadOnly, spec.cwd.clone(), vec![], vec![]);
+            args.extend(
+                caps.codex_dialect()
+                    .render(&narrow, resuming, caps.codex_resume_takes_sandbox)
+                    .expect("every dialect expresses read-only"),
+            );
+        }
     }
     if !spec.model.is_empty() {
         args.extend(["-m".into(), spec.model.clone()]);

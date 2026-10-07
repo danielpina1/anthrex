@@ -272,6 +272,9 @@ fn scouts_pass_the_user_settings_flags_and_codex_pins() {
     for flag in [Some(&["--flag"][..]), None] {
         let caps = CliCaps {
             codex_user_config_only: flag,
+            codex_sandbox: crate::headless::codex_sandbox::DialectChoice::Fixed(
+                crate::headless::codex_sandbox::CodexSandboxDialect::Legacy,
+            ),
             ..CLI_CAPS
         };
         let args = codex_args(&codex, &session, "go", exe, 7, socket, &caps);

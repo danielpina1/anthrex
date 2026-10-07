@@ -175,6 +175,7 @@ pub fn spec(cwd: &Path, run_ref: RunRef) -> HeadlessSpec {
         claude_sandbox: None,
         codex_sandbox: "workspace-write".into(),
         codex_writable_roots: Vec::new(),
+        codex_read_only: Vec::new(),
         env: Vec::new(),
         claude_auth: config::ClaudeAuth::Login,
         api_key_helper: None,
