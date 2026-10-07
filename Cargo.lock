@@ -183,6 +183,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "anthrex-testexec"
+version = "0.1.2"
+dependencies = [
+ "libc",
+ "tempfile",
+]
+
+[[package]]
 name = "anthrex-tui"
 version = "0.1.2"
 dependencies = [
