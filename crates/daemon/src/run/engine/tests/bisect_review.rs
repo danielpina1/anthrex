@@ -168,7 +168,17 @@ fn an_overlapping_open_task_keeps_the_fix_task_on_the_culprits_runtime() {
     fx.send(since + 120, EventKind::Tick);
     let (op, _) = full_job(&fx);
     fx.done(op, tier(outcome(3, &[TEST])));
+    // Review minor 3: the overlap skip holds the fallback off up front (BR-15), not a
+    // rule-9 refusal and a fallback afterwards.
+    let i = (fx.run().tasks.iter())
+        .position(|t| t.id() == "t2")
+        .unwrap();
+    let mover = crate::run::model_roles::Mover::Worker;
+    let up = crate::run::route_pick::escalate_for(fx.run(), i, &route, mover);
+    assert_eq!(up, route, "the premise: the overlap skip leaves no step");
     answer(&mut fx, 2);
+    let refused = (fx.run().log.iter()).any(|e| e.text.starts_with("bisect fix for "));
+    assert!(!refused, "{:#?}", fx.run().log);
     let fix = fx.task("fix1");
     assert_eq!(fix.route, route, "the culprit's own route on its runtime");
     assert!(matches!(&fix.fixes, Some(FixOf::Bisect { culprit, .. }) if culprit == "t2"));

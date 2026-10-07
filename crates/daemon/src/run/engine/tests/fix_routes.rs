@@ -68,16 +68,32 @@ fn arrange(fx: &mut Fixture, culprit: &str, skip: Skip) {
         step,
         "the premise: the row's step"
     );
-    match skip {
-        Skip::Uninstalled => fx.run_mut().orch.installed = [("claude".to_string(), false)].into(),
+    let want = match skip {
+        Skip::Uninstalled => {
+            fx.run_mut().orch.installed = [("claude".to_string(), false)].into();
+            route.clone()
+        }
         Skip::Failed => {
             let mut r = crate::run::orch::test_support::round(1, 0, Default::default());
-            r.route = route;
+            r.route = route.clone();
             r.ended = true;
             r.environment_failed = true;
             fx.task_mut(culprit).rounds.push(r);
+            at(OPUS, "")
         }
-    }
+    };
+    // Review minor 3: the skip itself, up front, not a refusal and a fallback later.
+    let i = (fx.run().tasks.iter())
+        .position(|t| t.id() == culprit)
+        .unwrap();
+    let up = escalate_for(fx.run(), i, &route, Mover::Worker);
+    assert_eq!(up, want, "the premise: escalate_for skips the step");
+}
+
+/// No fix task of the run was refused on its first route (the bisect's line).
+fn none_refused(fx: &Fixture) {
+    let refused = (fx.run().log.iter()).any(|e| e.text.starts_with("bisect fix for "));
+    assert!(!refused, "{:#?}", fx.run().log);
 }
 
 /// A tier-3 red bisected to `t2`: its fix task's route.
@@ -87,6 +103,7 @@ fn bisect_fix_route(skip: Skip) -> Route {
     arrange(&mut fx, "t2", skip);
     red_full(&mut fx);
     answer(&mut fx, 2);
+    none_refused(&fx);
     fx.task("fix1").route.clone()
 }
 
@@ -232,5 +249,32 @@ fn a_ci_culprit_fix_task_refused_by_rule_9_falls_back_to_the_culprits_own_route(
         key(&fx.task(&fixes[0]).route),
         key(&culprit),
         "the culprit's own route"
+    );
+}
+
+/// M9.8.8 fix round 1 (review minor 2): a culprit on a model the roster does not list
+/// (a catalog model the user chose): its step up and its own route are refused by the
+/// roster check (`validate::resolve_route`, until M9.8.13), so the bisect fix takes the
+/// row's route, as the CI fix's last resort does, and the run log says why.
+#[test]
+fn a_bisect_fix_task_off_the_roster_takes_the_row_and_says_so() {
+    let mut fx = merged(&["t1", "t2", "t3"], "");
+    with_orchestrator(&mut fx);
+    let sol = "codex:gpt-6-sol";
+    row(&mut fx, "t2", (sol, "codex:gpt-6-luna"), at(sol, "medium"));
+    assert!(fx.run().roster.iter().all(|e| e.model != "gpt-6-sol"));
+    red_full(&mut fx);
+    answer(&mut fx, 2);
+    assert_eq!(
+        key(&fx.task("fix1").route),
+        key(&at(sol, "")),
+        "the row's route"
+    );
+    let line = (fx.run().log.iter()).find(|e| e.text.starts_with("bisect fix for t2: "));
+    let line = line.map(|e| e.text.as_str()).unwrap_or_default();
+    assert!(
+        line.contains("codex/gpt-6-sol at high was refused") && line.ends_with("its row's route"),
+        "{:#?}",
+        fx.run().log
     );
 }

@@ -185,7 +185,8 @@ fn escalation_never_names_a_model_outside_the_row() {
 
 #[test]
 fn a_route_outside_the_row_climbs_its_own_list_then_takes_the_rows_fallback() {
-    // A user's route (decision 10) on Opus, which the row names nowhere.
+    // A user's route (decision 10) on Sonnet, which the row names nowhere (Opus is its
+    // fallback).
     let r = models(
         SOL,
         Some("medium"),

@@ -101,3 +101,24 @@ fn rung_two_raises_the_effort_then_takes_the_fallback() {
     let pool: Vec<_> = d.candidates.iter().map(|c| c.route.clone()).collect();
     assert_eq!(pool[..2], [at(OPUS, ""), at(SOL, "high")], "{pool:#?}");
 }
+
+/// M9.8.8 fix round 1 (controller ruling): the built-in table frozen with no catalog
+/// in memory (a first run, discovery lazy, decision 20) takes the built-in effort
+/// lists, so a stalled `implementer.medium` task climbs Sonnet's effort.
+#[test]
+fn a_default_table_with_no_catalog_climbs_effort() {
+    let plan = plan_with(PROFILE, &[task("t1", "M", "a", ROOMY)]);
+    let mut fx = Fixture::new(&plan);
+    fx.ready(true);
+    let mut models = RunModels::resolve(&ModelTable::default(), None);
+    assert!(
+        models.validate(&[]).is_empty(),
+        "nothing to validate against"
+    );
+    fx.run_mut().limits.models = Some(models);
+    let window = fx.launch_all()[0].1;
+    let sonnet = "claude:claude-sonnet-5";
+    assert_eq!(fx.task("t1").rounds[0].route, at(sonnet, "medium"));
+    stall(&mut fx, window);
+    assert_eq!(fx.task("t1").rounds[1].route, at(sonnet, "high"));
+}

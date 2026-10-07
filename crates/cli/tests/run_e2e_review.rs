@@ -14,7 +14,9 @@ fn blocked_question(reason: &str) -> Value {
 }
 
 /// Milestone 9.8 decision 29: the small row (Sonnet) falls back to Codex's default, so
-/// rung 2 past Sonnet's top effort (or with no effort list) moves to Codex.
+/// rung 2 past Sonnet's top effort moves to Codex. The plan starts the task at `high`,
+/// the built-in list's top, so on the default table (no fallback) it would stay on
+/// Sonnet: the peer runtime needs the fallback row (D2).
 const SMALL_FALLS_BACK_TO_CODEX: &str = "[models.implementer.small]\nmodel = \"claude:claude-sonnet-5\"\neffort = \"low\"\nfallback = \"codex:default\"";
 
 #[test]

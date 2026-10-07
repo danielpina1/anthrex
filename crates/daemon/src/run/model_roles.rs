@@ -70,20 +70,31 @@ impl RunModels {
         }
     }
 
-    /// Decision 21: fills `efforts` from the `Live` and `Cached` catalogs (a `Builtin`
-    /// list validates nothing) and replaces a row's effort its model does not offer
+    /// Decision 21: fills `efforts` from the `Live` and `Cached` catalogs, else, for a
+    /// runtime with neither, from its `Builtin` catalog or the built-in list (M9.8.8
+    /// fix round 1; a `Builtin` list validates nothing), and replaces a row's effort its model does not offer
     /// with the model's default effort; the run-log lines, one per replaced row. A model
     /// the catalog does not list, or lists without efforts, keeps its row as configured.
     pub fn validate(&mut self, catalogs: &[ModelCatalog]) -> Vec<String> {
-        let known = |m: &ModelRef| {
-            (catalogs.iter())
-                .filter(|c| matches!(c.source, CatalogSource::Live | CatalogSource::Cached))
-                .find_map(|c| c.find(m))
-        };
+        let discovered =
+            |c: &&ModelCatalog| matches!(c.source, CatalogSource::Live | CatalogSource::Cached);
+        let known = |m: &ModelRef| catalogs.iter().filter(discovered).find_map(|c| c.find(m));
+        // M9.8.8 fix round 1 (controller ruling): a runtime with no discovered catalog
+        // takes its `Builtin` catalog's lists, else the built-in list's, for escalation
+        // only (decision 29); they validate nothing.
+        let builtin: Vec<ModelCatalog> = [Runtime::Claude, Runtime::Codex]
+            .into_iter()
+            .filter(|r| !catalogs.iter().filter(discovered).any(|c| c.runtime == *r))
+            .map(|r| match catalogs.iter().find(|c| c.runtime == r) {
+                Some(c) => c.clone(),
+                None => crate::models::builtin::catalog(r, String::new(), 0, String::new()),
+            })
+            .collect();
+        let listed = |m: &ModelRef| known(m).or_else(|| builtin.iter().find_map(|c| c.find(m)));
         let mut lines = Vec::new();
         for choice in self.rows.values_mut() {
             for m in std::iter::once(&choice.model).chain(&choice.fallback) {
-                if let Some(found) = known(m) {
+                if let Some(found) = listed(m) {
                     let efforts = ModelEfforts {
                         efforts: found.efforts.clone(),
                         default: found.default_effort.clone(),
@@ -363,3 +374,7 @@ fn lane_or_own(run: &Run, i: usize, route: Route) -> Route {
 #[cfg(test)]
 #[path = "model_roles_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "model_roles_tests_efforts.rs"]
+mod tests_efforts;

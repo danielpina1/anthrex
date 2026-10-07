@@ -135,7 +135,7 @@ fn brief(run: &Run, n: u16, rec: &CiRecord, repro: &Repro, culprit: Option<&Culp
     out
 }
 
-pub(super) fn route_spec(route: &Route) -> RouteSpec {
+pub(crate) fn route_spec(route: &Route) -> RouteSpec {
     RouteSpec {
         runtime: Some(route.runtime),
         model: Some(route.model.clone()),

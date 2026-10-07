@@ -22,6 +22,7 @@ mod ci;
 mod ci_repro;
 mod ci_trigger;
 mod fix;
+pub(crate) use fix::route_spec;
 pub(super) mod land;
 pub(super) mod land_judge;
 mod open;

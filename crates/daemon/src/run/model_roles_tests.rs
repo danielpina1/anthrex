@@ -303,7 +303,7 @@ fn a_run_from_before_the_role_table_gets_the_current_one() {
     let frozen = build_models::freeze(&global, &run.project, data.path(), &[]);
     build_models::fill(&mut run, frozen, 9_000);
     let models = run.limits.models.as_ref().expect("filled");
-    assert_eq!(*models, RunModels::resolve(&global, None));
+    assert_eq!(*models, validated(&global));
     assert_eq!(
         run.log.last().map(|e| e.text.as_str()),
         Some("models: this run predates the role table; using the current one")
@@ -315,7 +315,15 @@ fn a_run_from_before_the_role_table_gets_the_current_one() {
     let again = build_models::freeze(&ModelTable::default(), &run.project, data.path(), &[]);
     build_models::fill(&mut run, again, 9_001);
     assert_eq!(run.log.len(), len);
-    assert_eq!(*run.limits.models(), RunModels::resolve(&global, None));
+    assert_eq!(*run.limits.models(), validated(&global));
+}
+
+/// `global` resolved and validated with no catalog in memory: the built-in effort lists
+/// (M9.8.8 fix round 1).
+fn validated(global: &ModelTable) -> RunModels {
+    let mut models = RunModels::resolve(global, None);
+    assert!(models.validate(&[]).is_empty());
+    models
 }
 
 /// Decision 28: a paired hub task's test writer takes the `test_writer` row, unless an
@@ -410,7 +418,7 @@ fn a_broken_repository_file_falls_back_to_the_global_table() {
         brainstorm: None,
     };
     let (models, lines) = build_models::freeze(&global, project, data.path(), &[]);
-    assert_eq!(models, RunModels::resolve(&global, None));
+    assert_eq!(models, validated(&global));
     let prefix = format!("{}: not valid TOML", path.display());
     assert!(
         lines.len() == 1 && lines[0].starts_with(&prefix),

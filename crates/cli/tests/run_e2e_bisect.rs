@@ -15,10 +15,6 @@ use support::run_orch::{ORCH_LINES, triage_plan};
 use support::run_plans::*;
 use support::run_tiers::*;
 
-/// Milestone 9.8: the small row (every task here is S) falls back to Opus, so the
-/// culprit's route has a rung above it whatever the catalog reports.
-const SMALL_ROW: &str = "[models.implementer.small]\nmodel = \"claude:claude-sonnet-5\"\neffort = \"low\"\nfallback = \"claude:claude-opus-5-5\"";
-
 fn green(h: &RunHarness, id: &str, steps: &[Value]) {
     h.script(&format!("worker-{id}-1"), steps);
     h.script(&format!("reviewer-{id}-1"), &[approve()]);
@@ -62,7 +58,7 @@ fn in_full(line: &Value) -> bool {
 
 #[test]
 fn e2e_red_tier3_is_bisected_to_the_culprit_and_fixed() {
-    let h = RunHarness::with_config("", SMALL_ROW, &tier_repo_files());
+    let h = RunHarness::with_config("", "", &tier_repo_files());
     green(&h, "t1", &[commit("mods/a/src.txt", "a2\n"), done("a")]);
     // Only the whole suite (and the single test `b::full`) reads the marker: t2's
     // tier 1 and tier 2 run b's module tests, which pass.
@@ -134,7 +130,9 @@ fn e2e_red_tier3_is_bisected_to_the_culprit_and_fixed() {
     let failed = daemon::run::model_roles::failed_routes(culprit);
     let models = engine.limits.models();
     let up = daemon::run::role_step::escalate(models, role, &t2.route, &failed);
-    let up = up.expect("the harness's row has a rung above the culprit's route");
+    // The default table: the built-in effort lists (no catalog at the start) give
+    // Sonnet a rung above the culprit's route (M9.8.8 fix round 1).
+    let up = up.expect("the default row has a rung above the culprit's route");
     let key = |r: &proto::Route| (r.runtime, r.model.clone(), r.effort.clone());
     assert_eq!(
         key(&fix.route),
