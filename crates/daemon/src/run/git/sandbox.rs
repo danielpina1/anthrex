@@ -44,8 +44,8 @@ pub const WORKTREE_GIT_DIRS: [&str; 3] = ["rebase-merge", "rebase-apply", "seque
 pub enum GrantShape {
     /// macOS Seatbelt: a path rule lets a missing file be created at a granted path, so
     /// the grant names exactly [`WORKTREE_GIT_FILES`] (with their `.lock`s) and
-    /// [`WORKTREE_GIT_DIRS`], and denies nothing. Also every Codex worker's (its
-    /// writable roots take no denial).
+    /// [`WORKTREE_GIT_DIRS`], and denies nothing. Also a Codex worker's under the
+    /// legacy sandbox dialect, whose writable roots take no denial.
     Files,
     /// Linux bubblewrap (Claude Code's sandbox-runtime): each granted path is
     /// bind-mounted, which works only for a path that exists, and a lock file never

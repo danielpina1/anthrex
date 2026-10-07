@@ -13,6 +13,7 @@ use proto::{AgentRole, LaneState, RaceLane};
 use serde_json::json;
 
 use crate::headless::HeadlessSpec;
+use crate::headless::codex_sandbox::{CodexSandboxDialect, DialectChoice};
 use crate::manager::{ManagerConfig, WindowManager};
 use crate::run::driver::{EventKind, GitRoots, Msg, OpCtx, RunContext, RunService};
 use crate::run::git;
@@ -69,7 +70,18 @@ struct Rig {
 }
 
 impl Rig {
+    /// A rig whose Codex CLI speaks the profiles dialect.
     fn new(prepared: &[&str], change: impl FnOnce(&mut Run)) -> Rig {
+        Rig::with_dialect(prepared, CodexSandboxDialect::Profiles, change)
+    }
+
+    /// A rig whose Codex CLI speaks `dialect`, fixed so no other test's probe of the
+    /// process-wide recorded version can change it.
+    fn with_dialect(
+        prepared: &[&str],
+        dialect: CodexSandboxDialect,
+        change: impl FnOnce(&mut Run),
+    ) -> Rig {
         let tmp = tempfile::tempdir().unwrap();
         let top = tmp.path().canonicalize().unwrap();
         let root = top.join("repo");
@@ -110,7 +122,8 @@ impl Rig {
         }
         change(&mut run);
 
-        let config = ManagerConfig::for_tests("/tmp/ax-unused.sock".into(), "/bin/sh".into());
+        let mut config = ManagerConfig::for_tests("/tmp/ax-unused.sock".into(), "/bin/sh".into());
+        config.cli_caps.codex_sandbox = DialectChoice::Fixed(dialect);
         let (manager, _events) = WindowManager::new(config);
         let run_ctx = RunContext::new(
             top.join("data"),
@@ -217,13 +230,11 @@ fn a_racers_sandbox_covers_its_own_lanes_git_dir_only() {
             "{lane:?}: {roots:?}"
         );
         // Task 18 review m1: exactly a worker's grant, computed for the lane's checkout,
-        // in its runtime's shape (lane a is Claude's: the host's; lane b Codex's: the
-        // exact files).
-        let shape = if spec.claude_sandbox.is_some() {
-            git::GrantShape::host()
-        } else {
-            git::GrantShape::Files
-        };
+        // in its runtime's shape (lane a is Claude's, lane b Codex's on the profiles
+        // dialect: both the host's).
+        let shape =
+            super::grant_shape(spec.claude_sandbox.is_some(), CodexSandboxDialect::Profiles);
+        assert_eq!(shape, git::GrantShape::host(), "{lane:?}");
         let (git_common, own_path) =
             rig.run(|run| (run.git_common_dir.clone(), run.task_path(own)));
         let roots_of_own = worker_git_roots(&rig.data_dir, own);
@@ -238,7 +249,12 @@ fn a_racers_sandbox_covers_its_own_lanes_git_dir_only() {
             denied.extend(worker.deny.iter().cloned());
             assert_eq!(sandbox.deny_write, denied, "{lane:?}");
         } else {
-            assert!(worker.deny.is_empty(), "{lane:?}");
+            // Ruling R3: the checkout's `.git` (the rig's checkouts have none of the
+            // protected agent-config paths), then the grant's denials, read-only.
+            let mut read_only = vec![own_path.join(".git")];
+            read_only.extend(worker.deny.iter().cloned());
+            assert!(own_path.join(".git").exists(), "{lane:?}");
+            assert_eq!(spec.codex_read_only, read_only, "{lane:?}");
         }
         let (other_path, task_path) = rig.run(|run| (run.task_path(other), run.task_path("t1")));
         for forbidden in [
@@ -258,6 +274,29 @@ fn a_racers_sandbox_covers_its_own_lanes_git_dir_only() {
             );
         }
     }
+}
+
+/// Ruling R3: under the legacy Codex dialect, which cannot keep a path read-only inside
+/// a writable one, a Codex racer keeps the exact files and gets no read-only entry
+/// (one would turn its whole session read-only), on every host.
+#[test]
+fn a_legacy_codex_racer_gets_the_files_grant_and_no_read_only_entries() {
+    let rig = Rig::with_dialect(&["t1", "t1.a", "t1.b"], CodexSandboxDialect::Legacy, |_| {});
+    let mut spec = rig.racer(RaceLane::B);
+    assert!(spec.claude_sandbox.is_none(), "lane b is Codex's");
+    rig.complete(&mut spec).unwrap();
+    let (git_common, own_path) = rig.run(|run| (run.git_common_dir.clone(), run.task_path("t1.b")));
+    let roots = worker_git_roots(&rig.data_dir, "t1.b");
+    let files = git::worker_git_grant(&git_common, &own_path, &roots, git::GrantShape::Files);
+    let (mut want, mut got) = (files.unwrap().writable, spec.codex_writable_roots.clone());
+    want.sort();
+    got.sort();
+    assert_eq!(got, want);
+    assert!(
+        spec.codex_read_only.is_empty(),
+        "{:?}",
+        spec.codex_read_only
+    );
 }
 
 /// A test writer's sandbox is completed on the task's own checkout, as a worker's.

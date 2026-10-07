@@ -130,11 +130,15 @@ fn e2e_workers_get_their_own_tmpdir_and_pinned_sandbox_settings() {
         "{sandbox}"
     );
 
-    // Codex (0.160 profiles, what the fake agent reports): network off, and the task's
-    // own temporary directory among the profile's writable entries.
+    // Codex (fake-agent reports 0.160.1, so the profiles dialect): network off, no
+    // legacy flags, the task's own temporary directory writable, its checkout's `.git`
+    // read-only (Codex's legacy `workspace-write` protected it silently; a profile does
+    // not), and on Linux the same git entries read-only as Claude's. The fixture's
+    // checkout has none of the five protected agent-config paths, so none is listed.
     let argv: Vec<String> = serde_json::from_str(&h.io_lines("worker-t2-1", "args")[0]).unwrap();
     for want in [
         "default_permissions=\"anthrex\"",
+        "permissions.anthrex.extends=\":read-only\"",
         "permissions.anthrex.network.enabled=false",
     ] {
         assert!(
@@ -150,5 +154,26 @@ fn e2e_workers_get_their_own_tmpdir_and_pinned_sandbox_settings() {
         .iter()
         .find(|a| a.starts_with("permissions.anthrex.filesystem="))
         .unwrap();
-    assert!(fs.contains(&format!("{:?}=\"write\"", tmps[1])), "{fs}");
+    assert!(fs.contains(&format!("\"{}\"=\"write\"", tmps[1])), "{fs}");
+    // The profile's first entry is the session's working directory, the checkout.
+    let cwd = fs
+        .split_once("={\"")
+        .and_then(|(_, rest)| rest.split_once("\"=\"write\""))
+        .map(|(cwd, _)| cwd)
+        .unwrap();
+    assert!(
+        fs.contains(&format!("\"{cwd}/.git\"=\"read\"")),
+        "{cwd}: {fs}"
+    );
+    for tail in protected {
+        assert!(!fs.contains(&format!("{tail}\"=")), "{tail}: {fs}");
+    }
+    for tail in git_denied {
+        assert!(fs.contains(&format!("{tail}\"=\"read\"")), "{tail}: {fs}");
+    }
+    assert_eq!(
+        fs.matches("\"=\"read\"").count(),
+        1 + git_denied.len(),
+        "{fs}"
+    );
 }
