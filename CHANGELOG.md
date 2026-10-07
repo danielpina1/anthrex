@@ -36,6 +36,11 @@ daemon (`anthrex daemon stop`) after upgrading.
   checkout's `config` before every git call, waits for a merged task's worker to exit
   before removing its checkout, and runs its git with `rerere` and submodule recursion
   off.
+- **A retired session's exit no longer kills its successor.** When a paired task's test
+  writer was retired before its turn-end reached the engine, its exit counted as a
+  crash: the engine resumed it, then declared the task stalled and killed the
+  implementer that had just started. A retiring session's exit now simply ends it, for
+  workers, reviewers and research sessions alike.
 - **A headless agent that dies at startup now says why.** A scout's or run task's
   failure reason includes the agent's own error, such as Claude's sandbox needing
   `bubblewrap` and `socat`, or Ubuntu's AppArmor blocking it (with a pointer to the fix),

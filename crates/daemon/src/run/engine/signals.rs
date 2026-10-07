@@ -440,7 +440,7 @@ fn exited(
     // prompt (ruling T12-later).
     // Ruling T12-R4 (N3-1): still interrupted after activity ended the grace.
     let interrupted = round.interrupted || matches!(round.stall, StallState::Interrupted { .. });
-    if !killed && working && round.turn_open && interrupted {
+    if !killed && working && round.turn_open && interrupted && !round.retiring {
         round.interrupted = false;
         if round.session_id.is_none() {
             end_round(round, now);
@@ -459,7 +459,12 @@ fn exited(
         }
         return;
     }
-    if killed || !working || !round.turn_open {
+    // A retiring round's exit ends it, mid-turn too: its late `TurnEnded` was ignored
+    // (the round was already retiring), so its turn can look open here. Counting this
+    // as a death resumed the retired session and, at the second exit, stalled the task,
+    // whose rung 2 killed the session that had just replaced it (a test writer's exit
+    // after its red check landed first killed the implementer, macOS CI 2026-10-07).
+    if killed || !working || !round.turn_open || round.retiring {
         let between_turns = !killed && working && !round.turn_open;
         end_round(round, now);
         // M8a.25: a hand-back that came before this kill's exit resumes it now.

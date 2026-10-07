@@ -348,7 +348,7 @@ pub(super) fn exited(
     let owes = owes_report(run, i, r);
     let round = &mut run.tasks[i].rounds[r];
     let interrupted = round.interrupted || matches!(round.stall, StallState::Interrupted { .. });
-    if !killed && owes && round.turn_open && interrupted {
+    if !killed && owes && round.turn_open && interrupted && !round.retiring {
         round.interrupted = false;
         if round.session_id.is_none() {
             end_round(round, now);
@@ -365,7 +365,8 @@ pub(super) fn exited(
         }
         return;
     }
-    if killed || !owes || !round.turn_open {
+    // A retiring round's exit ends it, mid-turn too (see `signals::exited`).
+    if killed || !owes || !round.turn_open || round.retiring {
         return end_round(round, now);
     }
     round.deaths = round.deaths.saturating_add(1);
