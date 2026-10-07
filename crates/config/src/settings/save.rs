@@ -75,7 +75,7 @@ pub fn save(path: &Path, doc: &SettingsDoc, cancel: &AtomicBool) -> Result<Saved
 
 /// `<dir>/.<name>.anthrex-<pid>-<nanos>.tmp`, beside the original so the rename stays on
 /// one filesystem.
-fn temp_path(dir: &Path, path: &Path) -> PathBuf {
+pub(crate) fn temp_path(dir: &Path, path: &Path) -> PathBuf {
     let name = path
         .file_name()
         .map_or_else(|| "config.toml".into(), |n| n.to_string_lossy());
@@ -88,7 +88,7 @@ fn temp_path(dir: &Path, path: &Path) -> PathBuf {
     ))
 }
 
-fn write_temp(temp: &Path, text: &str, mode: Option<u32>) -> Result<(), String> {
+pub(crate) fn write_temp(temp: &Path, text: &str, mode: Option<u32>) -> Result<(), String> {
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]

@@ -9,6 +9,7 @@ use std::str::FromStr;
 mod conversation;
 mod delivery;
 mod git;
+pub mod models;
 mod orchestrator;
 pub mod reserved_env;
 mod runtimes;
@@ -28,6 +29,7 @@ pub use git::{
     GIT_DEBOUNCE_MS_RANGE, GIT_IGNORE_MAX_CHARS, GIT_IGNORE_MAX_ENTRIES, GIT_POLL_SECS_RANGE, Git,
 };
 use git::{KNOWN_GIT_KEYS, read_git};
+pub use models::{ModelRef, ModelTable, Role, RoleChoice};
 pub use orchestrator::{
     AgentConfig, Candidate, ClaudeAuth, ClaudeHeadless, ConfiguredBudgets, Deciders, DesignBudget,
     DesignConfig, Metering, Onboarding, Orchestrator, Pick, RouteList, RouteLists, Scouts, Tuning,
@@ -213,6 +215,11 @@ pub fn parse(text: &str) -> (Config, Vec<Problem>) {
     read_git(&table, &mut config, &mut problems);
     read_conversation(&table, &mut config, &mut problems);
     config.orchestrator = orchestrator::read(&table, &mut problems);
+    // Milestone 9.8: the explicit `[models]` rows; M9.8.3 overlays them on the migrated keys.
+    let explicit = table
+        .get("models")
+        .map(|v| models::read_table(v, &mut problems));
+    config.orchestrator.roles = explicit.unwrap_or_default();
     read_testing(&table, &mut config, &mut problems);
     read_delivery(&table, &mut config, &mut problems);
     read_theme(&table, &mut config, &mut problems);
@@ -517,6 +524,8 @@ fn report_unknown_keys(table: &toml::Table, problems: &mut Vec<Problem>) {
             "runtimes" => report_unknown_runtimes(value, problems),
             "conversation" => report_unknown_conversation(value, problems),
             "orchestrator" => orchestrator::report_unknown(value, problems),
+            // Its own unknown keys are `models::read_table`'s problems.
+            "models" => {}
             "testing" => report_unknown_nested(value, "testing", KNOWN_TESTING_KEYS, problems),
             "delivery" => report_unknown_delivery(value, problems),
             "theme" => report_unknown_nested(value, "theme", KNOWN_THEME_KEYS, problems),

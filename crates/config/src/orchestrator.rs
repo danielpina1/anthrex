@@ -109,6 +109,9 @@ pub struct Orchestrator {
     pub tuning: TuningConfig,
     /// Milestone 9.6: `[orchestrator.design]`, the design flow (DF §1, §2.2).
     pub design: DesignConfig,
+    /// Milestone 9.8: the global role table (decision 19) and the migration's notes.
+    pub roles: crate::ModelTable,
+    pub roles_notes: Vec<String>,
 }
 
 /// `[orchestrator.claude] auth`, decision 50: whether a headless Claude session reads
@@ -180,6 +183,8 @@ impl Default for Orchestrator {
             agent: agent::AgentSettings::default(),
             tuning: TuningConfig::default(),
             design: DesignConfig::default(),
+            roles: crate::ModelTable::default(),
+            roles_notes: Vec::new(),
         }
     }
 }

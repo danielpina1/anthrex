@@ -146,6 +146,7 @@ pub mod delivery;
 pub mod design;
 pub mod history;
 pub mod messages;
+pub mod models;
 pub mod orch;
 pub mod paths;
 pub mod planner;
@@ -188,6 +189,11 @@ pub use history::{
     TaskRecord, TierRunRecord,
 };
 pub use messages::{ClientMsg, DaemonMsg, HookSource};
+// `models::Role` stays under `models::`: the crate root's `Role` is the conversation's.
+pub use models::{
+    BrainstormChoice, CatalogModel, CatalogSource, EFFORT_MAX_CHARS, HelperKind,
+    MODEL_ID_MAX_CHARS, ModelCatalog, ModelRef, ModelTable, RoleChoice, valid_effort,
+};
 pub use orch::{
     HoldInfo, HoldKind, HoldState, IntegrationInfo, IntegrationState, MessageKind, MessageTarget,
     OrchestratorChoice, OrchestratorInfo, TaskNoteInfo, TaskNoteKind,
@@ -253,6 +259,10 @@ mod orch_tests;
 #[cfg(test)]
 #[path = "run_title_tests.rs"]
 mod run_title_tests;
+
+#[cfg(test)]
+#[path = "models_tests.rs"]
+mod models_tests;
 
 #[cfg(test)]
 mod tests {
