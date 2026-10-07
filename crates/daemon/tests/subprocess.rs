@@ -15,11 +15,9 @@ fn write_script(dir: &Path, name: &str, body: &str) -> PathBuf {
     script
 }
 
-/// Runs `script` as `/bin/sh <script>` rather than exec'ing the file itself. Linux
-/// refuses to exec a file some process still holds open for writing (ETXTBSY), and
-/// with tests running in parallel, a fork on another test thread can briefly inherit
-/// the descriptor `write_script` just wrote through. `sh` only reads the script, so
-/// it is immune, and these tests still pin the runner, not the exec.
+/// Runs `script` as `/bin/sh <script>` rather than exec'ing the file itself: these
+/// tests pin the runner, not the exec. (This once also kept them clear of ETXTBSY;
+/// `testexec` now does that for every stand-in.)
 fn sh(script: &Path) -> Command {
     let mut command = Command::new("/bin/sh");
     command.arg(script);
