@@ -1,6 +1,7 @@
 //! The argv branches that depend on `CliCaps`, auth and the TOML strings.
 
 use super::*;
+use crate::headless::codex_sandbox::{CodexSandboxDialect, DialectChoice};
 use crate::launch::codex::toml_string;
 
 /// Flags that take a variable number of values, so the next argument must be a flag.
@@ -425,4 +426,14 @@ fn mcp_args_for_a_planner() {
             "/tmp/a.sock"
         ]
     );
+}
+
+#[test]
+fn production_caps_detect_the_codex_dialect() {
+    assert_eq!(CLI_CAPS.codex_sandbox, DialectChoice::Detected);
+    let legacy = CliCaps {
+        codex_sandbox: DialectChoice::Fixed(CodexSandboxDialect::Legacy),
+        ..CLI_CAPS
+    };
+    assert_eq!(legacy.codex_dialect(), CodexSandboxDialect::Legacy);
 }

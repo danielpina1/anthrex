@@ -107,6 +107,26 @@ impl CodexSandboxDialect {
     }
 }
 
+/// How a `CliCaps` picks its dialect: production reads the startup probe; tests fix one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DialectChoice {
+    Detected,
+    Fixed(CodexSandboxDialect),
+}
+
+impl DialectChoice {
+    pub fn resolve(self) -> CodexSandboxDialect {
+        self.resolve_with(recorded_version())
+    }
+
+    pub fn resolve_with(self, version: Option<(u64, u64, u64)>) -> CodexSandboxDialect {
+        match self {
+            DialectChoice::Detected => CodexSandboxDialect::for_version(version),
+            DialectChoice::Fixed(dialect) => dialect,
+        }
+    }
+}
+
 static VERSION: OnceLock<(u64, u64, u64)> = OnceLock::new();
 
 /// The startup probe's answer (`lifecycle::codex_version`); the first call wins.

@@ -38,6 +38,8 @@ pub struct CliCaps {
     pub claude_no_session_persistence: bool,
     /// `codex exec --ephemeral` exists (ruling T8-4; the decider's cap).
     pub codex_ephemeral: bool,
+    /// Which Codex sandbox dialect argv uses (`headless::codex_sandbox`).
+    pub codex_sandbox: crate::headless::codex_sandbox::DialectChoice,
 }
 
 // Milestone 9.5 decision 28's `CodexFilter` lives with the filter it selects (task 19
@@ -134,6 +136,7 @@ pub const CLI_CAPS: CliCaps = CliCaps {
     codex_filter: CodexFilter::Instruction,
     claude_no_session_persistence: DECIDER_CAPS.claude_no_session_persistence,
     codex_ephemeral: DECIDER_CAPS.codex_ephemeral,
+    codex_sandbox: crate::headless::codex_sandbox::DialectChoice::Detected,
 };
 
 /// Which of decision 53's three Codex branches a run started under (ruling T23-C1):
@@ -148,6 +151,11 @@ pub enum CodexProjectConfig {
 }
 
 impl CliCaps {
+    /// The Codex sandbox dialect these caps select.
+    pub fn codex_dialect(&self) -> crate::headless::codex_sandbox::CodexSandboxDialect {
+        self.codex_sandbox.resolve()
+    }
+
     /// The decision-53 Codex branch these caps name.
     pub fn codex_project_config(&self) -> CodexProjectConfig {
         match (self.codex_loads_project_config, self.codex_user_config_only) {

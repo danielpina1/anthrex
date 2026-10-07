@@ -7,12 +7,12 @@
 //!
 //! Every file here except `session.rs` and its `session/pipes.rs` (M8a.17) is pure
 //! (decision 2): no filesystem, process, thread, async runtime or wall-clock access,
-//! which decision 2's grep checks.
+//! which decision 2's grep checks. `codex_sandbox` also holds the one Codex version the
+//! startup probe recorded (a `OnceLock`, set once, never I/O).
 
 pub mod argv;
 pub mod claude_stream;
 pub mod codex_guard;
-#[allow(dead_code)] // wired in by the next tasks
 pub mod codex_sandbox;
 pub mod codex_stream;
 pub mod conversation;

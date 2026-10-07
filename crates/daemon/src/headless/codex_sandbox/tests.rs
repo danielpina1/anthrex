@@ -186,3 +186,27 @@ fn legacy_refuses_read_only_paths() {
     assert!(!CodexSandboxDialect::Legacy.expresses_read_only());
     assert!(CodexSandboxDialect::Profiles.expresses_read_only());
 }
+
+#[test]
+fn fixed_choice_ignores_the_recorded_version() {
+    assert_eq!(
+        DialectChoice::Fixed(CodexSandboxDialect::Legacy).resolve(),
+        CodexSandboxDialect::Legacy
+    );
+}
+
+#[test]
+fn recorded_version_drives_the_detected_dialect() {
+    assert_eq!(
+        DialectChoice::Detected.resolve_with(None),
+        CodexSandboxDialect::Profiles
+    );
+    assert_eq!(
+        DialectChoice::Detected.resolve_with(Some((0, 160, 0))),
+        CodexSandboxDialect::Profiles
+    );
+    assert_eq!(
+        DialectChoice::Detected.resolve_with(Some((0, 155, 0))),
+        CodexSandboxDialect::Legacy
+    );
+}
