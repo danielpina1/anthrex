@@ -7,6 +7,40 @@ release is a pre-release and any release may change behaviour or the protocol.
 
 ## [Unreleased]
 
+## [0.1.2] — 2026-10-07
+
+The protocol version is now 18: a 0.1.2 client needs a 0.1.2 daemon. Stop the old
+daemon (`anthrex daemon stop`) after upgrading.
+
+### Added
+
+- **Run titles.** A run started from a goal gets a short title and a readable id
+  (`status-bar-usage-version-a415` rather than the goal's first 32 characters), written
+  by a quick decider call with a 15-second bound. The run view, the runs tree, the
+  inspector and alerts show the title; the inspector keeps the full goal. When the
+  call fails or times out, the run is named from its goal as before.
+- **Esc no longer interrupts a working orchestrator.** In the orchestrator window of a
+  live run, a bare Esc is held back while the orchestrator is working, with a notice to
+  use Ctrl-C. Esc still passes when it is idle or waiting on you.
+
+### Fixed
+
+- **Claude workers could not commit on Linux.** The worker sandbox granted exact git
+  files, including lock files that do not exist yet, which Linux's sandbox cannot grant.
+  On Linux a worker now gets its checkout's git directory whole, with the entries it
+  must never change (`config`, `gitdir`, `refs/`, `hooks/` and others) denied. macOS is
+  unchanged. Codex workers on Linux keep the old grant and are still affected; use
+  Claude workers there for now.
+- **Sandbox hardening found in review:** the daemon no longer stages files in a
+  directory a worker can write, never renames over a denied entry, verifies a task
+  checkout's `config` before every git call, waits for a merged task's worker to exit
+  before removing its checkout, and runs its git with `rerere` and submodule recursion
+  off.
+- **A headless agent that dies at startup now says why.** A scout's or run task's
+  failure reason includes the agent's own error, such as Claude's sandbox needing
+  `bubblewrap` and `socat`, or Ubuntu's AppArmor blocking it (with a pointer to the fix),
+  instead of "ended two turns without a report".
+
 ## [0.1.1] — 2026-10-06
 
 ### Fixed
@@ -72,6 +106,7 @@ see [docs/install.md](https://github.com/danielpina1/anthrex/blob/main/docs/inst
 - macOS and Linux only. anthrex runs `claude` and `codex` as installed on your
   machine; it does not ship or install them.
 
-[Unreleased]: https://github.com/danielpina1/anthrex/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/danielpina1/anthrex/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/danielpina1/anthrex/releases/tag/v0.1.2
 [0.1.1]: https://github.com/danielpina1/anthrex/releases/tag/v0.1.1
 [0.1.0]: https://github.com/danielpina1/anthrex/releases/tag/v0.1.0
