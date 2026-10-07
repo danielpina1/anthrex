@@ -19,6 +19,7 @@ fn assert_not_down(from: &Route, to: &Route) {
 }
 
 #[test]
+#[ignore = "M9.8.7a: tasks take their role-table rows, so no model list picks a worker, reviewer or rung-2 step; deleted with route_pick.rs in M9.8.13"]
 fn rung_2_never_steps_down() {
     // A listed route whose plan names an effort: found by runtime and model.
     let lists = RouteLists {
@@ -101,6 +102,7 @@ fn rung_2_never_steps_down() {
 }
 
 #[test]
+#[ignore = "M9.8.7a: tasks take their role-table rows, so no model list picks a worker, reviewer or rung-2 step; deleted with route_pick.rs in M9.8.13"]
 fn spread_gives_a_runtime_only_route_its_runtimes_first_candidate_and_no_slot() {
     let lists = RouteLists {
         m: list(
@@ -146,6 +148,7 @@ fn spread_gives_a_runtime_only_route_its_runtimes_first_candidate_and_no_slot() 
 }
 
 #[test]
+#[ignore = "M9.8.7a: tasks take their role-table rows, so no model list picks a worker, reviewer or rung-2 step; deleted with route_pick.rs in M9.8.13"]
 fn an_amend_that_changes_the_class_picks_from_the_new_classs_list() {
     let lists = RouteLists {
         s: list(Pick::First, vec![cand(Runtime::Codex, LUNA, None)]),
@@ -181,6 +184,7 @@ fn an_amend_that_changes_the_class_picks_from_the_new_classs_list() {
 }
 
 #[test]
+#[ignore = "M9.8.7a: tasks take their role-table rows, so no model list picks a worker, reviewer or rung-2 step; deleted with route_pick.rs in M9.8.13"]
 fn a_workers_decision_records_a_candidate_not_installed() {
     let lists = RouteLists {
         m: m_example(Pick::First),
@@ -239,6 +243,7 @@ fn substitute_run() -> Run {
 /// Ruling T10a-3: a route that failed in this task is substituted, not escalated: the
 /// next list candidate that has not failed, whatever its strength.
 #[test]
+#[ignore = "M9.8.7a: tasks take their role-table rows, so no model list picks a worker, reviewer or rung-2 step; deleted with route_pick.rs in M9.8.13"]
 fn a_failed_route_is_substituted_by_the_next_unfailed_candidate() {
     let mut run = substitute_run();
     assert_eq!(task(&run, "t1").route, opus(Effort::MEDIUM));
@@ -258,6 +263,7 @@ fn a_failed_route_is_substituted_by_the_next_unfailed_candidate() {
 /// Ruling T10a-3: with every route failed, the original is retried and the run log
 /// says so (also when the roster escalation has nothing left but the failed route).
 #[test]
+#[ignore = "M9.8.7a: tasks take their role-table rows, so no model list picks a worker, reviewer or rung-2 step; deleted with route_pick.rs in M9.8.13"]
 fn with_every_route_failed_the_original_is_retried_and_said() {
     let mut run = substitute_run();
     let gpt6 = route(Runtime::Codex, GPT6_SOL, Strength::Standard, Effort::MEDIUM);
@@ -389,6 +395,7 @@ fn a_gate_path_rung_2_keeps_to_installed_and_overlap_free_runtimes() {
 /// dependent. `x` waits on `t1` alone and overlaps `t2`, so the group {t1, t2} stays off
 /// Codex, where `t2` would run beside `x`.
 #[test]
+#[ignore = "M9.8.7a: tasks take their role-table rows, so no model list picks a worker, reviewer or rung-2 step; deleted with route_pick.rs in M9.8.13"]
 fn a_dependent_of_one_member_still_holds_the_group_by_another() {
     let lists = RouteLists {
         m: m_example(Pick::First),
@@ -419,6 +426,7 @@ fn a_dependent_of_one_member_still_holds_the_group_by_another() {
 /// Claude and overlaps `a`, so `a` stays off the list's Codex candidate and the build
 /// passes.
 #[test]
+#[ignore = "M9.8.7a: tasks take their role-table rows, so no model list picks a worker, reviewer or rung-2 step; deleted with route_pick.rs in M9.8.13"]
 fn a_dependent_on_claude_holds_its_dependency_off_codex() {
     let lists = RouteLists {
         m: m_example(Pick::First),
@@ -444,6 +452,7 @@ fn a_dependent_on_claude_holds_its_dependency_off_codex() {
 /// Ruling FW-5 (O-1): rung 2's list step for a worker exempts no dependent. `t3` waits
 /// on `t1` and overlaps it on Codex, so `t1` keeps to Codex.
 #[test]
+#[ignore = "M9.8.7a: tasks take their role-table rows, so no model list picks a worker, reviewer or rung-2 step; deleted with route_pick.rs in M9.8.13"]
 fn a_dependent_holds_rung_2s_list_step() {
     let run = built(&[m("t1", "[\"crates/a/**\"]", "")], ladder_lists());
     let run = add(&run, &[m("t3", "[\"crates/a/x/**\"]", "deps = [\"t1\"]")]);

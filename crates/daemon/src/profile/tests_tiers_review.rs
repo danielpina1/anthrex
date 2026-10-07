@@ -79,6 +79,8 @@ fn assert_confirmable(kept: &RepoProfile) {
             wt_dir: PathBuf::from("/tmp/wt"),
             data_dir: PathBuf::from(format!("/tmp/data/runs/{RUN_ID}")),
             config: &config,
+            models: crate::run::model_roles::RunModels::resolve(&config.roles, None),
+            models_log: Vec::new(),
             testing: &config::Testing::default(),
             now: 1_000,
             yes: false,

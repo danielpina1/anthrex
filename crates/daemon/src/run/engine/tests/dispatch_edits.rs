@@ -353,6 +353,19 @@ fn an_edit_that_reaches_an_unchecked_runtime_is_refused() {
             entry(Runtime::Codex, "gpt-5-codex-mini", Strength::Fast),
         ],
         review_small: false,
+        // Milestone 9.8 decision 27: a Claude reviewer row keeps it on Claude.
+        roles: proto::models::ModelTable {
+            rows: [(
+                proto::models::Role::Reviewer,
+                proto::models::RoleChoice {
+                    model: proto::models::ModelRef::parse("claude:claude-opus-5").unwrap(),
+                    effort: None,
+                    fallback: None,
+                },
+            )]
+            .into(),
+            brainstorm: None,
+        },
         ..config::Orchestrator::default()
     };
     let route = "[task.route]\nruntime = \"claude\"\nmodel = \"claude-sonnet-5\"";

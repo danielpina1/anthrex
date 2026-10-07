@@ -5,7 +5,6 @@
 use proto::{Effort, Route, Runtime, Strength};
 
 use super::*;
-use crate::run::roster::pick_reviewer;
 use crate::run::validate::combined_cycles;
 
 fn task_mut<'a>(run: &'a mut Run, id: &str) -> &'a mut crate::run::model::Task {
@@ -118,8 +117,10 @@ fn an_escalated_route_survives_a_test_mode_amend() {
     assert_eq!(t2.test_mode, TestMode::Check);
     // The reviewer is picked for the route the task keeps: a Codex author gets a
     // Claude reviewer, where the planned Claude route would have had a Codex one.
-    let level = t2.review_level.expect("reviewed");
-    let for_kept = pick_reviewer(&edited.roster, &escalated, level);
+    // Milestone 9.8 decision 27: the reviewer row (`codex:default`) against its own
+    // model takes the row's fallback (Opus).
+    assert!(t2.review_level.is_some(), "reviewed");
+    let (for_kept, _) = edited.limits.models().reviewer_route(&escalated);
     assert_eq!(for_kept.runtime, Runtime::Claude);
     assert_eq!(t2.review_route, Some(for_kept));
 
@@ -552,12 +553,14 @@ fn an_engine_escalation_to_the_peer_runtime_does_not_block_later_edits() {
     );
     applied(&run, vec![PlanEdit::Pause]);
 
-    // Naming the other runtime for the overlapping task is still rule 9.
+    // Naming the other runtime for the overlapping task is still rule 9. Milestone 9.8
+    // decision 10: a route names a model to leave the row (`codex:default`'s is "").
     let to_codex = amend(
         "t2",
         Amend {
             route: Some(RouteSpec {
                 runtime: Some(Runtime::Codex),
+                model: Some(String::new()),
                 ..RouteSpec::default()
             }),
             ..Amend::default()

@@ -5,6 +5,7 @@
 use super::*;
 
 #[test]
+#[ignore = "M9.8.7a: tasks take their role-table rows, so no model list picks a worker, reviewer or rung-2 step; deleted with route_pick.rs in M9.8.13"]
 fn lists_are_frozen_into_the_run() {
     let lists = RouteLists {
         m: m_example(Pick::Spread),
@@ -42,6 +43,7 @@ fn an_old_run_json_has_no_lists() {
 /// Pinning: with no list, every route is exactly the class resolution and the
 /// roster's reviewer, and nothing new is written.
 #[test]
+#[ignore = "M9.8.7a: tasks take their role-table rows, so no model list picks a worker, reviewer or rung-2 step; deleted with route_pick.rs in M9.8.13"]
 fn no_lists_reproduce_today() {
     let text = plan_with(
         PROFILE,
@@ -131,6 +133,7 @@ fn targets_are_the_named_unfinished_tasks() {
 /// Rule 9 sees a list's pick as the plan's runtime: a task added on another runtime
 /// over a listed task's `owns` is refused, as it would be over a planned one.
 #[test]
+#[ignore = "M9.8.7a: tasks take their role-table rows, so no model list picks a worker, reviewer or rung-2 step; deleted with route_pick.rs in M9.8.13"]
 fn the_overlap_rule_sees_a_lists_runtime() {
     let lists = RouteLists {
         m: list(Pick::First, vec![cand(Runtime::Codex, SOL, None)]),
@@ -152,6 +155,7 @@ fn the_overlap_rule_sees_a_lists_runtime() {
 /// guard (ruling T10a-1) keeps opus from stepping down to luna, but a pick by a later
 /// edit could take it.
 #[test]
+#[ignore = "M9.8.7a: tasks take their role-table rows, so no model list picks a worker, reviewer or rung-2 step; deleted with route_pick.rs in M9.8.13"]
 fn a_class_lists_runtimes_are_reachable() {
     let mut config = config::Orchestrator::default();
     config.models.push(ModelEntry {

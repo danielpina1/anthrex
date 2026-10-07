@@ -18,8 +18,9 @@ use crate::run::contract_patterns::{
     writer_paths_unlimited_line,
 };
 use crate::run::model::{Pair, ProofRecord, Run, Task};
+use crate::run::model_roles::writer_route;
 use crate::run::phases::set_state;
-use crate::run::route_pick::{writer_route, writer_route_failed, writer_step};
+use crate::run::route_pick::{writer_route_failed, writer_step};
 
 /// Whether task `task` is a paired task whose test writer is (or will be) at work.
 pub(crate) fn writing(task: &Task) -> bool {
@@ -36,9 +37,9 @@ fn handed(task: &Task) -> Option<(&str, &str)> {
 }
 
 /// Decision 25, at dispatch: a paired task starts in `Writing`, its test writer on the
-/// peer runtime at the task's strength and effort when the roster has one, after the
-/// workers' installed and overlap skips (ruling T16-2, `route_pick::writer_route`),
-/// else on the task's own route. A task already paired keeps its pair (a retry that
+/// `test_writer` row (milestone 9.8 decision 28), unless the row's runtime is not
+/// installed or the overlap rule holds it off (ruling T16-2,
+/// `model_roles::writer_route`); then on the task's own route. A task already paired keeps its pair (a retry that
 /// dispatches it again resumes the phase it was in).
 pub(super) fn begin(run: &mut Run, i: usize) {
     let task = &run.tasks[i];

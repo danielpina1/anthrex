@@ -8,12 +8,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use proto::{
-    Budget, Effort, ModelEntry, PlanTask, Route, Runtime, Size, Strength, TaskKind, TaskState,
-    TestMode,
+    Budget, ModelEntry, PlanTask, Route, Runtime, Size, Strength, TaskKind, TaskState, TestMode,
 };
 
 use super::globs::{ModuleSpan, OwnsMatcher, any_intersect, modules_spanned, validate_glob};
 use super::model::{Profile, ReviewLevel, RunLimits, Task};
+use super::model_roles::RunModels;
 use super::plan::PlanError;
 use super::roster;
 use super::validate_kinds::{READER_TEST_MODE_NOTE, check_reader_fields, is_reader};
@@ -63,17 +63,17 @@ pub(crate) fn is_valid_id(id: &str) -> bool {
 /// (M8a.13), which a runner that does not echo test names never shows.
 pub const NO_TEST_PASSED_NOTE: &str = "the profile has no test_passed: the test proof will require the test's name in the single-test command's output (rule 8.1)";
 
-/// Resolves one planned task: size rules (decision 9), route (decision 8), budget
-/// (decision 40), test mode (decision 10) and review (decision 35). `branch` and
+/// Resolves one planned task: size rules (decision 9), route (milestone 9.8 decision
+/// 10: the task's row of the run's role table), budget (decision 40), test mode
+/// (decision 10) and review (decision 35; its reviewer is the reviewer row's). `branch` and
 /// `worktree` are left empty for the caller, which knows the run id.
 pub fn resolve_task(
     spec: PlanTask,
     profile: &Profile,
     limits: &RunLimits,
     roster: &[ModelEntry],
-    default_runtime: Runtime,
 ) -> Result<Task, Vec<PlanError>> {
-    let (task, errors) = resolve_task_lenient(spec, profile, limits, roster, default_runtime);
+    let (task, errors) = resolve_task_lenient(spec, profile, limits, roster);
     if errors.is_empty() {
         Ok(task)
     } else {
@@ -89,7 +89,6 @@ pub(super) fn resolve_task_lenient(
     profile: &Profile,
     limits: &RunLimits,
     roster: &[ModelEntry],
-    default_runtime: Runtime,
 ) -> (Task, Vec<PlanError>) {
     let id = spec.id.clone();
     let mut errors = Vec::new();
@@ -189,22 +188,10 @@ pub(super) fn resolve_task_lenient(
         notes.push(NO_TEST_PASSED_NOTE.to_string());
     }
 
-    // Route, decision 8, by the class's frozen default (milestone 9.5 decision 12).
-    let routes = &limits.class_routes;
-    let class = match (hub, size) {
-        (true, _) => routes.hub.clone(),
-        (false, Size::S) => routes.s.clone(),
-        _ => routes.m.clone(),
-    };
-    let (class_strength, class_effort) = (class.strength, class.effort);
-    let route = resolve_route(
-        &spec,
-        roster,
-        default_runtime,
-        class_strength,
-        class_effort,
-        &mut errors,
-    );
+    // Route, milestone 9.8 decision 10: the task's row of the run's role table.
+    let models = limits.models();
+    let row = models.route(RunModels::role_of(spec.kind, hub, size));
+    let route = resolve_route(&spec, roster, row, &mut errors);
 
     // Budget, decision 40.
     let budget = match spec.budget {
@@ -230,7 +217,9 @@ pub(super) fn resolve_task_lenient(
     let level = if raise { base.raised() } else { base };
     let skipped = !limits.review_small && !hub && size == Size::S && level == ReviewLevel::Small;
     let review_level = (!skipped).then_some(level);
-    let review_route = review_level.map(|l| super::route_pick::forecast(limits, roster, &route, l));
+    // Milestone 9.8 decision 27: the reviewer row against the route (the level only
+    // decides whether the task is reviewed).
+    let review_route = review_level.map(|_| models.reviewer_route(&route).0);
 
     let task = new_task(
         spec,
@@ -334,70 +323,57 @@ fn check_budget(id: &str, b: &Budget, errors: &mut Vec<PlanError>) {
     }
 }
 
-/// Decision 8: the planner's value wins when valid; policy fills the rest. On an error
-/// the returned route is a best effort (the policy's model, or `""`).
+/// Milestone 9.8 decision 10: the task's row (`row`), unless the plan's route names a
+/// model (until M9.8.9 clears plan routes; a user's amend keeps its route): then that
+/// model on the route's runtime (the row's when it names none), checked against the
+/// roster as before. Either way at the route's effort when it names one (the task edit
+/// form's effort over the row's model), else the row's.
 fn resolve_route(
     spec: &PlanTask,
     roster: &[ModelEntry],
-    default_runtime: Runtime,
-    class_strength: Strength,
-    class_effort: Effort,
+    row: Route,
     errors: &mut Vec<PlanError>,
 ) -> Route {
     let id = spec.id.as_str();
     let e = |field: &str, message: String| PlanError::new(Some(id), field, "route", message);
     let given = &spec.route;
-    let mut runtime = given.runtime.unwrap_or(default_runtime);
-    if runtime == Runtime::Shell {
+    if given.runtime == Some(Runtime::Shell) {
         errors.push(e("route.runtime", "must be claude or codex".to_string()));
-        runtime = default_runtime;
     }
-    let effort = given.effort.clone().unwrap_or(class_effort);
-    let (model, strength) = match &given.model {
-        Some(model) => match roster::find(roster, runtime, model) {
-            Some(entry) => {
-                if let Some(s) = given.strength
-                    && s != entry.strength
-                {
-                    errors.push(e(
-                        "route.strength",
-                        format!(
-                            "{model} is {} in the roster, not {}",
-                            strength_label(entry.strength),
-                            strength_label(s)
-                        ),
-                    ));
-                }
-                (model.clone(), entry.strength)
-            }
-            None => {
+    let effort = given.effort.clone().unwrap_or(row.effort.clone());
+    let Some(model) = &given.model else {
+        return Route { effort, ..row };
+    };
+    let runtime = (given.runtime)
+        .filter(|r| *r != Runtime::Shell)
+        .unwrap_or(row.runtime);
+    let strength = match roster::find(roster, runtime, model) {
+        Some(entry) => {
+            if let Some(s) = given.strength
+                && s != entry.strength
+            {
                 errors.push(e(
-                    "route.model",
-                    format!("{model} is not in the roster for {runtime}"),
+                    "route.strength",
+                    format!(
+                        "{model} is {} in the roster, not {}",
+                        strength_label(entry.strength),
+                        strength_label(s)
+                    ),
                 ));
-                (model.clone(), given.strength.unwrap_or(class_strength))
             }
-        },
+            entry.strength
+        }
         None => {
-            let strength = given.strength.unwrap_or(class_strength);
-            match roster::first_at(roster, runtime, strength) {
-                Some(entry) => (entry.model.clone(), strength),
-                None => {
-                    errors.push(e(
-                        "route",
-                        format!(
-                            "the roster has no {runtime} model at {} strength",
-                            strength_label(strength)
-                        ),
-                    ));
-                    (String::new(), strength)
-                }
-            }
+            errors.push(e(
+                "route.model",
+                format!("{model} is not in the roster for {runtime}"),
+            ));
+            given.strength.unwrap_or(Strength::Standard)
         }
     };
     Route {
         runtime,
-        model,
+        model: model.clone(),
         strength,
         effort,
     }

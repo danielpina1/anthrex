@@ -109,8 +109,10 @@ fn hub_uses_its_own_budget_else_m() {
     assert_eq!(task(&run, "m").budget, configured.budget_m);
 }
 
+/// Milestone 9.8 (task M9.8.7a): a tuned class route is still frozen and logged (the
+/// route refit goes in M9.8.13), but no longer fills a route: each task takes its row.
 #[test]
-fn class_routes_fill_the_policy() {
+fn class_routes_are_frozen_but_the_rows_fill_the_routes() {
     let config = config::Orchestrator::default();
     let route = |strength, effort| ClassRoute { strength, effort };
     let mut file = TuningFile::default();
@@ -135,13 +137,9 @@ fn class_routes_fill_the_policy() {
         let r = &task(&run, id).route;
         (r.strength, r.effort.clone())
     };
-    assert_eq!(of("s1"), (Strength::Standard, Effort::MEDIUM));
-    assert_eq!(of("m1"), (Strength::Frontier, Effort::MEDIUM));
-    assert_eq!(
-        of("h1"),
-        (Strength::Frontier, Effort::HIGH),
-        "hub is never tuned"
-    );
+    assert_eq!(of("s1"), (Strength::Standard, Effort::LOW));
+    assert_eq!(of("m1"), (Strength::Standard, Effort::MEDIUM));
+    assert_eq!(of("h1"), (Strength::Standard, Effort::HIGH));
     assert_eq!(of("e1").1, Effort::HIGH);
     assert_eq!(
         run.limits.class_routes,

@@ -206,5 +206,7 @@ fn refit_excludes_race_records_it_wrote() {
         strength: run.tasks[1].route.strength,
         effort: run.tasks[1].route.effort.clone(),
     };
-    assert_eq!(ids(route_samples(&lines, SizeClass::S, &t, at)), single);
+    // Milestone 9.8 (ruling F16): a worker on its row records `role_table`, which the
+    // route refit (removed in M9.8.13) never counts as a class default.
+    assert!(ids(route_samples(&lines, SizeClass::S, &t, at)).is_empty());
 }

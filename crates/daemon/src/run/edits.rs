@@ -98,7 +98,7 @@ pub fn apply_edits(
         Some(&added_deps),
         scope,
         (edited.limits.max_tasks, edited.round()),
-        edited.limits.default_runtime,
+        edited.limits.models(),
         (&run.roster, &run.orch.installed),
     ));
     errors.extend(super::validate_stages::single_layout_rule(&edited));
@@ -243,13 +243,7 @@ impl Batch {
     /// Resolves a spec exactly as `build_run` resolves a plan task, keeping its errors.
     fn resolve(&mut self, spec: PlanTask) -> Task {
         let run = &self.run;
-        let (mut task, errors) = resolve_task_lenient(
-            spec,
-            &run.profile,
-            &run.limits,
-            &run.roster,
-            run.limits.default_runtime,
-        );
+        let (mut task, errors) = resolve_task_lenient(spec, &run.profile, &run.limits, &run.roster);
         self.errors.extend(errors);
         task.branch = task_branch(&run.id, task.id());
         task.worktree = task_path(&run.wt_dir, &run.id, &task.checkout_name());

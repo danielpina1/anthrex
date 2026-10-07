@@ -13,6 +13,8 @@ fn route(runtime: Runtime, model: &str, strength: Strength, effort: Effort) -> R
     }
 }
 
+/// Milestone 9.8 decision 10: each task's row (the built-ins here); every route a row
+/// gives is `standard` until M9.8.14 removes the strength.
 #[test]
 fn policy_fills_routes_by_class() {
     let text = plan_with(
@@ -48,7 +50,7 @@ fn policy_fills_routes_by_class() {
         route(
             Runtime::Claude,
             "claude-opus-5-5",
-            Strength::Frontier,
+            Strength::Standard,
             Effort::HIGH
         )
     );
@@ -59,16 +61,17 @@ fn policy_fills_routes_by_class() {
     assert_eq!(task(&run, "hub").budget, config.budget_m);
 }
 
+/// Milestone 9.8: `default_runtime` reaches a route through the role table its
+/// migration writes (decision 14), so the config is read as a file is.
 #[test]
 fn default_runtime_comes_from_config() {
     let text = plan_with(
         PROFILE,
         &[task_toml("s", "S", r#"["crates/a/src/lib.rs"]"#, "")],
     );
-    let config = config::Orchestrator {
-        default_runtime: Runtime::Codex,
-        ..config::Orchestrator::default()
-    };
+    let (parsed, problems) = config::parse("[orchestrator]\ndefault_runtime = \"codex\"\n");
+    assert!(problems.is_empty(), "{problems:?}");
+    let config = parsed.orchestrator;
     let run = build_with(&text, &config).unwrap_or_else(|e| panic!("{}", show(&e)));
     assert_eq!(
         task(&run, "s").route,
@@ -139,6 +142,8 @@ fn route_problems_are_errors() {
                 r#"["crates/b/src/lib.rs"]"#,
                 "[task.route]\nruntime = \"shell\"",
             ),
+            // Milestone 9.8 decision 10: a route that names no model takes the row, so
+            // a strength with no roster model at it is no longer an error.
             task_toml(
                 "c",
                 "S",
@@ -161,12 +166,6 @@ fn route_problems_are_errors() {
                 "route.runtime",
                 "route",
                 "must be claude or codex"
-            ),
-            err(
-                Some("c"),
-                "route",
-                "route",
-                "the roster has no codex model at frontier strength"
             ),
         ]
     );

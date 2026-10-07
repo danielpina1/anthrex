@@ -451,13 +451,19 @@ async fn an_edit_of_a_run_started_with_trust_project_is_not_refused() {
         ..run.roster[0].clone()
     });
     run.trusted_project.clear();
+    // Milestone 9.8: Claude rows keep it on Claude; the added task names Codex's model.
+    crate::run::test_support::claude_rows(&mut run);
     assert_eq!(
         crate::run::reach::reachable_runtimes(&run),
         vec![Runtime::Claude]
     );
-    let edits = vec![proto::PlanEdit::AddTask {
-        task: run.tasks[0].spec.clone(),
-    }];
+    let mut on_codex = run.tasks[0].spec.clone();
+    on_codex.route = proto::RouteSpec {
+        runtime: Some(Runtime::Codex),
+        model: Some("codex-mini".into()),
+        ..Default::default()
+    };
+    let edits = vec![proto::PlanEdit::AddTask { task: on_codex }];
     let id = run.id.clone();
     crate::lock(&service.state).runs.insert(id.clone(), run);
     let refusals = |trust: bool| {

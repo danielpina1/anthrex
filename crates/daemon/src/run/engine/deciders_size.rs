@@ -19,7 +19,7 @@ use crate::decider::fallback::{OFF_REASON, SIZE_FALLBACK_REASON};
 use crate::decider::{DeciderRequest, Decision, SizeCheckInput, SizeCheckTask, SizeVerdict};
 use crate::run::contract::size_label;
 use crate::run::model::{Run, SizeCheckState, Task};
-use crate::run::route_pick::{pick_named, repicks, review_route};
+use crate::run::route_pick::{pick_named, repicks};
 use crate::scout::report::ONBOARDING_ALIAS;
 
 /// The note of a task the check cannot be asked about.
@@ -220,10 +220,9 @@ pub(crate) fn apply_raise(run: &mut Run, task_id: &str, size: Size, reason: &str
     if repicks(&old, &run.tasks[i]) {
         run.tasks[i].route = resolved.clone();
         pick_named(run, &BTreeSet::from([task_id.to_string()]));
-        let (task, lists, installed) =
-            (&run.tasks[i], &run.limits.route_lists, &run.orch.installed);
-        let review = (task.review_level)
-            .map(|level| review_route(lists, &run.roster, &task.route, level, installed));
+        let task = &run.tasks[i];
+        let models = run.limits.models();
+        let review = (task.review_level).map(|_| models.reviewer_route(&task.route).0);
         run.tasks[i].review_route = review;
     }
     let task = &mut run.tasks[i];
@@ -231,9 +230,8 @@ pub(crate) fn apply_raise(run: &mut Run, task_id: &str, size: Size, reason: &str
     let listed = task.list_pick.as_ref().and_then(|p| p.chosen_route()) == Some(&task.route);
     if task.spec.route.effort.is_none() && !listed {
         task.route.effort = resolved.effort;
-        let (lists, installed) = (&run.limits.route_lists, &run.orch.installed);
-        task.review_route = (task.review_level)
-            .map(|level| review_route(lists, &run.roster, &task.route, level, installed));
+        let models = run.limits.models();
+        task.review_route = (task.review_level).map(|_| models.reviewer_route(&task.route).0);
     }
     let note = format!(
         "size raised from {} to {}: decider cross-check (rule 7.2.5): {reason}",

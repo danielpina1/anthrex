@@ -109,7 +109,7 @@ fn model(route: &Route) -> String {
 const PROFILE: &str = "goal = \"golden\"\n\n[profile]\ncheck = \"true\"\nhub = [\"hub/**\"]\n";
 
 /// A one-task plan built with `cfg`: the task's route is today's whole resolution
-/// (`resolve_task_lenient`, then `route_pick::pick_all`). Built with what a start
+/// (`resolve_task_lenient`; since M9.8.7a the task's row). Built with what a start
 /// with no history freezes (`driver::tuning::tune_for_start` -> `refit::tuned`), so
 /// the run carries `cfg`'s `[orchestrator.routes]` lists; `build_with`'s
 /// `Tuned::default()` would drop them.
@@ -172,7 +172,10 @@ pub(crate) fn today(cfg: &config::Orchestrator) -> BTreeMap<String, String> {
             "planner",
             launch::planner_route(&run).expect("an orchestrator is set"),
         ),
-        ("test_writer", route_pick::writer_route(&run, 0)),
+        (
+            "test_writer",
+            crate::run::model_roles::writer_route(&run, 0),
+        ),
         (
             "reviewer",
             run.tasks[0]
@@ -191,6 +194,10 @@ pub(crate) fn today(cfg: &config::Orchestrator) -> BTreeMap<String, String> {
     out
 }
 
+/// Task M9.8.7a: the workers, the test writer and the reviewer now take their rows, so
+/// a cell today's code left `unresolved` (decision 16: the plan did not validate)
+/// resolves to the row's built-in, as `the_role_table_resolves_every_old_config_as_today`
+/// expects; every other cell is unchanged.
 #[test]
 fn todays_resolution_matches_the_golden_file() {
     let golden = golden();
@@ -200,10 +207,17 @@ fn todays_resolution_matches_the_golden_file() {
         matrix.len(),
         "one golden entry per matrix config"
     );
+    let builtin = resolved(&config::Orchestrator::default());
     for (name, text) in &matrix {
         let (config, problems) = config::parse(text);
         assert!(problems.is_empty(), "{name}: {problems:?}");
-        assert_eq!(today(&config.orchestrator), golden[*name], "{name}");
+        let want: BTreeMap<String, String> = (golden[*name].iter())
+            .map(|(row, model)| match model.as_str() {
+                UNRESOLVED => (row.clone(), builtin[row].clone()),
+                _ => (row.clone(), model.clone()),
+            })
+            .collect();
+        assert_eq!(today(&config.orchestrator), want, "{name}");
     }
 }
 

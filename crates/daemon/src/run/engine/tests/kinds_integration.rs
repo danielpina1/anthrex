@@ -14,7 +14,6 @@ use super::planners::{epic, planning_mail, submit_epic, task_in};
 use crate::run::engine::{Effect, OpKind, OpResult};
 use crate::run::model::ReviewLevel;
 use crate::run::orch::contract::integration_review_prompt;
-use crate::run::roster::pick_reviewer;
 
 pub(super) const C1: &str = "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1";
 pub(super) const C2: &str = "c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2";
@@ -269,29 +268,34 @@ fn plan_path_has_no_integration_review() {
     assert_eq!(verify_refs(&fx.log), 1);
 }
 
+/// Milestone 9.8 decision 27: an integration review runs on the reviewer row (its
+/// level stays frontier), here a model on the epic author's peer runtime.
 #[test]
-fn integration_reviewer_route_is_the_peer_at_frontier() {
+fn integration_reviewer_route_is_the_reviewer_row() {
     let mut fx = mail_epic(&["m1"]);
-    // The built-in roster has no frontier Codex model; this one has.
     let peer = if fx.task("m1").route.runtime == proto::Runtime::Claude {
         proto::Runtime::Codex
     } else {
         proto::Runtime::Claude
     };
-    fx.run_mut().roster.push(proto::ModelEntry {
-        runtime: peer,
-        model: "peer-frontier".into(),
-        strength: proto::Strength::Frontier,
-        note: String::new(),
-    });
+    let row = proto::models::RoleChoice {
+        model: proto::models::ModelRef {
+            runtime: peer,
+            id: Some("peer-frontier".into()),
+        },
+        effort: Some("high".into()),
+        fallback: None,
+    };
+    let models = fx.run_mut().limits.models.as_mut().expect("frozen");
+    models.rows.insert(proto::models::Role::Reviewer, row);
     merge_real(&mut fx, "m1", C1);
     let author = fx.task("m1").route.clone();
     let task = fx.task("mail-int1").clone();
-    let expected = pick_reviewer(&fx.run().roster, &author, ReviewLevel::Frontier);
+    let (expected, _) = fx.run().limits.models().reviewer_route(&author);
     assert_eq!(task.route, expected);
     assert_eq!(task.route.runtime, peer, "the peer runtime");
     assert_eq!(task.route.model, "peer-frontier");
-    assert_eq!(task.route.strength, proto::Strength::Frontier);
+    assert_eq!(task.review_level, Some(ReviewLevel::Frontier));
     // Its session runs on that route, with the integration prompt.
     let window = reviewer_window(&mut fx, "mail-int1", "+x\n");
     assert!(window > 0);

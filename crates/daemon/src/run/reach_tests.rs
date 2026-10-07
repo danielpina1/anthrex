@@ -25,6 +25,18 @@ fn config(models: Vec<ModelEntry>, review_small: bool) -> config::Orchestrator {
     }
 }
 
+/// `config` whose reviewer row is `model` (milestone 9.8 decision 27: the reviewer is
+/// the row's, not the roster's), with no fallback.
+fn reviewed_by(mut config: config::Orchestrator, model: &str) -> config::Orchestrator {
+    let row = proto::models::RoleChoice {
+        model: proto::models::ModelRef::parse(model).unwrap(),
+        effort: None,
+        fallback: None,
+    };
+    (config.roles.rows).insert(proto::models::Role::Reviewer, row);
+    config
+}
+
 /// One `size` task owning `owns`, routed to `model` at `effort` on `runtime`.
 fn run_of(
     config: &config::Orchestrator,
@@ -98,7 +110,7 @@ fn the_escalated_route_is_reached() {
         entry(Runtime::Codex, "gpt-5-codex", Strength::Standard),
     ];
     let run = run_of(
-        &config(roster, true),
+        &reviewed_by(config(roster, true), "claude:claude-sonnet-5"),
         "M",
         HUB,
         "claude",
@@ -143,6 +155,7 @@ fn rung_3s_reviewer_is_reached_when_the_task_is_unreviewed() {
 
 /// A one-runtime roster: every escalation and every reviewer falls back to that
 /// runtime, so the set holds it alone (the brief's Claude-only and Codex-only cases).
+/// Milestone 9.8: with a reviewer row on that runtime.
 #[test]
 fn a_one_runtime_roster_reaches_that_runtime_alone() {
     let claude = vec![
@@ -150,7 +163,7 @@ fn a_one_runtime_roster_reaches_that_runtime_alone() {
         entry(Runtime::Claude, "claude-opus-5", Strength::Frontier),
     ];
     let run = run_of(
-        &config(claude, true),
+        &reviewed_by(config(claude, true), "claude:claude-opus-5"),
         "M",
         DOCS,
         "claude",
@@ -161,7 +174,7 @@ fn a_one_runtime_roster_reaches_that_runtime_alone() {
 
     let codex = vec![entry(Runtime::Codex, "gpt-5-codex", Strength::Standard)];
     let run = run_of(
-        &config(codex, true),
+        &reviewed_by(config(codex, true), "codex:gpt-5-codex"),
         "M",
         DOCS,
         "codex",
@@ -182,7 +195,7 @@ fn a_peer_entry_no_rung_can_reach_is_not_counted() {
         entry(Runtime::Codex, "gpt-5-codex-mini", Strength::Fast),
     ];
     let run = run_of(
-        &config(roster, false),
+        &reviewed_by(config(roster, false), "claude:claude-opus-5"),
         "S",
         DOCS,
         "claude",
@@ -358,7 +371,7 @@ fn reach_drops_an_uninstalled_runtime() {
         entry(Runtime::Codex, "gpt-5-codex", Strength::Standard),
     ];
     let mut run = run_of(
-        &config(roster, true),
+        &reviewed_by(config(roster, true), "claude:claude-sonnet-5"),
         "M",
         HUB,
         "claude",

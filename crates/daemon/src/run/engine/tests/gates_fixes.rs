@@ -331,11 +331,8 @@ fn rung_3_re_resolves_review_and_budget_for_the_raised_size() {
         t1.review_level,
         Some(crate::run::model::ReviewLevel::Medium)
     );
-    let route = crate::run::roster::pick_reviewer(
-        &fx.run().roster,
-        &t1.route,
-        crate::run::model::ReviewLevel::Medium,
-    );
+    // Milestone 9.8 decision 27: the reviewer row against the task's route.
+    let (route, _) = fx.run().limits.models().reviewer_route(&t1.route);
     assert_eq!(t1.review_route, Some(route));
     assert_eq!(t1.budget, fx.run().limits.budget_m);
 }

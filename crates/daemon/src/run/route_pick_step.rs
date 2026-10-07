@@ -5,6 +5,7 @@
 use proto::{Route, RoutingCandidate};
 
 use super::*;
+use crate::run::model_roles::runtime_open;
 use crate::run::roster::{escalate_skipping, peer};
 
 /// Decision 9a's rung 2 (and `run retry`'s) for task `i` whose list has two or more
@@ -101,27 +102,6 @@ pub fn rung2_route(run: &Run, i: usize) -> (Route, Option<ListPick>) {
     (escalate_skipping(&roster, &task.route, &failed), None)
 }
 
-/// Milestone 9.5 decision 25 (ruling T16-2): a paired task's test writer's route at
-/// dispatch: the peer runtime's first entry at the task's strength and effort among
-/// those [`open_roster`] leaves open (installed, and no overlapping task on another
-/// runtime), else the task's own route.
-pub fn writer_route(run: &Run, i: usize) -> Route {
-    let task = &run.tasks[i];
-    let roster = open_roster(run, i, Some(Mover::Transient));
-    crate::run::validate_patterns::peer_route(&roster, &task.route, &run.orch.installed)
-        .unwrap_or_else(|| task.route.clone())
-}
-
-/// Decision 19 (the final fix wave, review B's M9): a racing task's second racer's
-/// route: the peer route over the roster entries [`open_roster`] leaves open (installed,
-/// and no overlapping task on another runtime), as the test writer's is. `None` when
-/// there is none.
-pub fn racer_route(run: &Run, i: usize) -> Option<Route> {
-    let task = &run.tasks[i];
-    let roster = open_roster(run, i, Some(Mover::Transient));
-    crate::run::validate_patterns::peer_route(&roster, &task.route, &run.orch.installed)
-}
-
 /// Ruling T16-2: rung 2's and `run retry`'s step for a test writer on `current`: the
 /// roster half of [`rung2_route`] from the writer's route (a model list picks the
 /// task's route, which the implementer keeps): a substitute when `current` failed in
@@ -153,12 +133,11 @@ pub(crate) fn escalate_for(run: &Run, culprit: usize, current: &Route, mover: Mo
 /// on another runtime, rung 2 escalates within its own.
 fn open_roster(run: &Run, i: usize, rule: Option<Mover>) -> Vec<ModelEntry> {
     let task = &run.tasks[i];
-    let held = |runtime: Runtime, mover: Mover| {
-        alongside(&run.tasks, i, mover).any(|(_, t)| t.route.runtime != runtime && overlap(t, task))
-    };
-    let open = |runtime: Runtime| {
-        runtime == task.route.runtime
-            || !(missing(&run.orch.installed, runtime) || rule.is_some_and(|m| held(runtime, m)))
+    // Ruling F40: the one copy of the predicate, `model_roles::runtime_open`; without a
+    // mover only the installed skip applies.
+    let open = |runtime: Runtime| match rule {
+        Some(mover) => runtime_open(run, i, runtime, mover),
+        None => runtime == task.route.runtime || !missing(&run.orch.installed, runtime),
     };
     (run.roster.iter())
         .filter(|e| open(e.runtime))

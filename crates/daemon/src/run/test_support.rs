@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use super::model::{Run, Task};
+use super::model_roles::RunModels;
 use super::plan::{BuildContext, PlanError, Preflight, build_run, parse_plan};
 
 /// Decision 7's example plan, verbatim in every value it sets. Its limits (4, 2, 3)
@@ -122,6 +123,35 @@ fn build_full_tuned(
     pre: Preflight,
     tuning: super::refit::Tuned,
 ) -> Result<Run, Vec<PlanError>> {
+    // Milestone 9.8: the role table as a start with no repository file freezes it.
+    let models = (RunModels::resolve(&config.roles, None), Vec::new());
+    build_frozen(text, config, pre, tuning, models)
+}
+
+/// [`build_with`], with the role table (and its start lines) a start froze
+/// (`driver::build_models::freeze`).
+pub fn build_with_models(
+    text: &str,
+    config: &config::Orchestrator,
+    models: RunModels,
+    models_log: Vec<String>,
+) -> Result<Run, Vec<PlanError>> {
+    build_frozen(
+        text,
+        config,
+        preflight(),
+        Default::default(),
+        (models, models_log),
+    )
+}
+
+fn build_frozen(
+    text: &str,
+    config: &config::Orchestrator,
+    pre: Preflight,
+    tuning: super::refit::Tuned,
+    (models, models_log): (RunModels, Vec<String>),
+) -> Result<Run, Vec<PlanError>> {
     let plan = parse_plan(text).unwrap_or_else(|e| panic!("fixture plan must parse: {e}"));
     build_run(
         plan,
@@ -136,6 +166,8 @@ fn build_full_tuned(
             yes: false,
             delivery: &config::Delivery::default(),
             tuning,
+            models,
+            models_log,
         },
     )
 }
@@ -168,6 +200,32 @@ pub fn show(errors: &[PlanError]) -> String {
         .map(|e| format!("[{}] {e}", e.rule))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Milestone 9.8: `run`'s role table with a Claude reviewer and test writer (no
+/// fallbacks), each task's reviewer picked again from it: with Claude implementer rows
+/// (the built-ins), a run whose sessions stay on Claude.
+pub fn claude_rows(run: &mut Run) {
+    use proto::models::{ModelRef, Role, RoleChoice};
+    let mut models = run.limits.models().clone();
+    for (role, model) in [
+        (Role::Reviewer, "claude:claude-opus-5-5"),
+        (Role::TestWriter, "claude:claude-sonnet-5"),
+    ] {
+        let model = ModelRef::parse(model).expect("a model");
+        let row = RoleChoice {
+            model,
+            effort: None,
+            fallback: None,
+        };
+        models.rows.insert(role, row);
+    }
+    for t in &mut run.tasks {
+        if t.review_route.is_some() {
+            t.review_route = Some(models.reviewer_route(&t.route).0);
+        }
+    }
+    run.limits.models = Some(models);
 }
 
 pub fn task<'a>(run: &'a Run, id: &str) -> &'a Task {

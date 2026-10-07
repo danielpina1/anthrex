@@ -186,7 +186,8 @@ fn an_atomic_task_is_a_hub_task_that_keeps_its_size() {
     assert_eq!(t1.spec.kind, TaskKind::Code);
     assert_eq!(t1.test_mode, TestMode::Tdd);
     assert_eq!(t1.review_level, Some(ReviewLevel::Frontier));
-    assert_eq!(t1.route.strength, proto::Strength::Frontier);
+    // Milestone 9.8 decision 10: the hub row's model.
+    assert_eq!(t1.route.model, "claude-opus-5-5");
 
     // The control: the same task, not atomic, is raised to L and refused.
     let errors = errors_of(&plan_with(PROFILE, &[task_toml("t1", "S", owns, extra)]));

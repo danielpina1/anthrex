@@ -15,7 +15,6 @@ use crate::run::contract::{
 };
 use crate::run::engine::{AgentSignal, Effect, EventKind, OpKind, OpResult};
 use crate::run::model::{OpId, ReviewLevel};
-use crate::run::roster::pick_reviewer;
 
 pub(super) const CODEX_AUTHOR: &str = "[task.route]\nruntime = \"codex\"\nmodel = \"\"";
 
@@ -98,8 +97,9 @@ fn review_round_uses_a_fresh_session_and_worktree() {
             }
         );
         assert_eq!(t1.gate_op, Some(op));
-        let level = t1.review_level.unwrap();
-        let route = pick_reviewer(&fx.run().roster, &t1.route, level);
+        assert!(t1.review_level.is_some());
+        // Milestone 9.8 decision 27: the reviewer row against the author.
+        let (route, _) = fx.run().limits.models().reviewer_route(&t1.route);
         let (_, kind) = reviewer(&mut fx, op, "diff --git a/x b/x");
         let OpKind::CreateWindow {
             name,
@@ -590,7 +590,14 @@ fn a_review_after_rung_2_is_picked_against_the_new_author() {
     let OpKind::CreateWindow { spec, .. } = kind else {
         unreachable!()
     };
-    let route = pick_reviewer(&fx.run().roster, &fx.task("t1").route, level);
+    // Milestone 9.8 decision 27: the reviewer row (`codex:default`) against a Codex
+    // default author takes the row's fallback, on Claude.
+    let _ = level;
+    let (route, _) = fx
+        .run()
+        .limits
+        .models()
+        .reviewer_route(&fx.task("t1").route);
     assert_eq!(spec.runtime, Runtime::Claude);
     assert_eq!(spec.model, route.model);
     let _ = delivers;

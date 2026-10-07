@@ -20,6 +20,7 @@
 mod adapt;
 mod book;
 pub(crate) mod build;
+pub(crate) mod build_models;
 mod build_name;
 mod cleanup;
 mod context;

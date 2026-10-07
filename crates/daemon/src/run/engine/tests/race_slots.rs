@@ -59,7 +59,7 @@ fn held_single() -> Fixture {
         on_codex("t4", "M", "e", "deps = [\"t0\"]"),
         task("t1", "M", "a", RACING),
     ];
-    let mut fx = Fixture::new(&plan_with(&profile_with("max_writers = 3"), &tasks));
+    let mut fx = super::race::racers(&plan_with(&profile_with("max_writers = 3"), &tasks));
     fx.start_with(true, claude_capped);
     let (op, _) = fx.op("CreateRunBranch");
     fx.done(op, OpResult::Worktree { head: BASE.into() });
@@ -110,7 +110,7 @@ fn the_slot_wait_gives_up_once() {
         on_codex("t3", "S", "c", "deps = [\"tdep\"]"),
         task("t4", "M", "e", "deps = [\"t1\"]"),
     ];
-    let mut fx = Fixture::new(&plan_with(&profile_with("max_writers = 3"), &tasks));
+    let mut fx = super::race::racers(&plan_with(&profile_with("max_writers = 3"), &tasks));
     fx.start_with(true, claude_capped);
     let (op, _) = fx.op("CreateRunBranch");
     fx.done(op, OpResult::Worktree { head: BASE.into() });

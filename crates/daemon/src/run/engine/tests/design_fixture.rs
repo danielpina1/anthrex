@@ -88,6 +88,8 @@ pub(super) fn design_planned(yes: bool) -> Fixture {
             wt_dir: WT.into(),
             data_dir: format!("/tmp/data/runs/{RUN_ID}").into(),
             config: &fx.config,
+            models: crate::run::model_roles::RunModels::resolve(&fx.config.roles, None),
+            models_log: Vec::new(),
             testing: &config::Testing::default(),
             now: 1_000,
             yes: false,

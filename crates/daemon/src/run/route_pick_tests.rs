@@ -128,6 +128,7 @@ fn installed(claude: bool, codex: bool) -> Installed {
 }
 
 #[test]
+#[ignore = "M9.8.7a: tasks take their role-table rows, so no model list picks a worker, reviewer or rung-2 step; deleted with route_pick.rs in M9.8.13"]
 fn first_gives_every_task_the_first_candidate() {
     let lists = RouteLists {
         s: list(Pick::First, vec![cand(Runtime::Codex, LUNA, None)]),
@@ -162,6 +163,7 @@ fn first_gives_every_task_the_first_candidate() {
 }
 
 #[test]
+#[ignore = "M9.8.7a: tasks take their role-table rows, so no model list picks a worker, reviewer or rung-2 step; deleted with route_pick.rs in M9.8.13"]
 fn spread_round_robins_overlap_groups_in_plan_order() {
     let lists = RouteLists {
         m: m_example(Pick::Spread),
@@ -198,6 +200,7 @@ fn spread_round_robins_overlap_groups_in_plan_order() {
 }
 
 #[test]
+#[ignore = "M9.8.7a: tasks take their role-table rows, so no model list picks a worker, reviewer or rung-2 step; deleted with route_pick.rs in M9.8.13"]
 fn an_explicit_route_wins_and_a_runtime_only_route_takes_that_runtimes_first_candidate() {
     let lists = RouteLists {
         m: m_example(Pick::First),
@@ -246,6 +249,7 @@ fn an_explicit_route_wins_and_a_runtime_only_route_takes_that_runtimes_first_can
 }
 
 #[test]
+#[ignore = "M9.8.7a: tasks take their role-table rows, so no model list picks a worker, reviewer or rung-2 step; deleted with route_pick.rs in M9.8.13"]
 fn an_added_task_joins_its_overlap_group() {
     let lists = RouteLists {
         m: m_example(Pick::Spread),
@@ -320,6 +324,7 @@ fn ladder_lists() -> RouteLists {
 }
 
 #[test]
+#[ignore = "M9.8.7a: tasks take their role-table rows, so no model list picks a worker, reviewer or rung-2 step; deleted with route_pick.rs in M9.8.13"]
 fn rung_2_takes_the_next_candidate_and_never_breaks_the_overlap_rule() {
     let run = built(
         &[
@@ -437,6 +442,7 @@ fn the_reviewer_is_the_first_qualifying_candidate() {
 }
 
 #[test]
+#[ignore = "M9.8.7a: tasks take their role-table rows, so no model list picks a worker, reviewer or rung-2 step; deleted with route_pick.rs in M9.8.13"]
 fn a_candidate_not_installed_is_skipped() {
     let lists = RouteLists {
         s: list(
@@ -503,6 +509,7 @@ fn a_candidate_not_installed_is_skipped() {
 }
 
 #[test]
+#[ignore = "M9.8.7a: tasks take their role-table rows, so no model list picks a worker, reviewer or rung-2 step; deleted with route_pick.rs in M9.8.13"]
 fn task_routing_history_keeps_the_list_and_choice() {
     let lists = RouteLists {
         m: m_example(Pick::First),

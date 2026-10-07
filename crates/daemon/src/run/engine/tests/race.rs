@@ -19,11 +19,31 @@ pub(super) const RACING: &str = "race = true";
 /// The second lane's runtime, and a task on it.
 const CODEX: &str = "[task.route]\nruntime = \"codex\"\nmodel = \"\"";
 
-/// A running run of `tasks` on `profile` (with `config`), every dispatched session
-/// launched.
+/// `config` with its small and medium implementer rows racing on Codex: milestone 9.8
+/// decision 28's second racer is the row's fallback (`codex:default`, the peer route
+/// milestone 9.5's racer took), else the task's own route.
+pub(super) fn with_racers(mut config: config::Orchestrator) -> config::Orchestrator {
+    use proto::models::{ModelRef, Role};
+    for role in [Role::ImplementerSmall, Role::ImplementerMedium] {
+        let row = (config.roles.rows)
+            .entry(role)
+            .or_insert_with(|| config::models::builtin_choice(role));
+        row.fallback
+            .get_or_insert_with(|| ModelRef::default_of(Runtime::Codex));
+    }
+    config
+}
+
+/// [`Fixture::new`] with [`with_racers`].
+pub(super) fn racers(plan: &str) -> Fixture {
+    Fixture::with_config(plan, with_racers(config::Orchestrator::default()))
+}
+
+/// A running run of `tasks` on `profile` (with `config` and [`with_racers`]), every
+/// dispatched session launched.
 pub(super) fn launched(profile: &str, tasks: &[String], config: config::Orchestrator) -> Fixture {
     let plan = plan_with(profile, tasks);
-    let mut fx = Fixture::with_config(&plan, config);
+    let mut fx = Fixture::with_config(&plan, with_racers(config));
     fx.ready(true);
     fx.launch_all();
     fx
@@ -121,7 +141,7 @@ pub(super) fn all_ops(fx: &Fixture) -> Vec<OpKind> {
 #[test]
 fn a_race_prepares_two_lane_checkouts_on_two_runtimes() {
     let plan = plan_with(PROFILE, &[task("t1", "M", "a", RACING)]);
-    let mut fx = Fixture::new(&plan);
+    let mut fx = racers(&plan);
     let effects = fx.ready(true);
     let prepares = ops_in(&effects, "PrepareWorktree");
     let shown: Vec<_> = (prepares.iter())
@@ -247,21 +267,22 @@ fn max_writers_1_runs_single() {
 }
 
 /// Task M9.5.14's review: a plan file is validated against nothing installed, so the
-/// second racer's runtime may turn out not installed at dispatch.
+/// second racer's runtime may turn out not installed at dispatch. Milestone 9.8
+/// decision 28: lane b then races on the task's own route.
 #[test]
-fn a_race_whose_peer_is_not_installed_runs_single() {
+fn a_race_whose_fallback_is_not_installed_races_on_the_tasks_route() {
     let plan = plan_with(PROFILE, &[task("t1", "M", "a", RACING)]);
-    let mut fx = Fixture::new(&plan);
+    let mut fx = racers(&plan);
     fx.start_with(true, |run| {
         run.orch.installed.insert("codex".into(), false);
     });
     let (op, _) = fx.op("CreateRunBranch");
     fx.done(op, OpResult::Worktree { head: BASE.into() });
     fx.launch_all();
-    single(
-        &fx,
-        "race skipped: no installed codex model at strength standard for the second racer",
-    );
+    let t1 = fx.task("t1");
+    let lanes = &t1.race.as_ref().expect("it races").lanes;
+    assert_eq!(lanes[1].route, t1.route);
+    assert_eq!(lanes[1].route.runtime, Runtime::Claude);
 }
 
 /// `tdep` (S) and `t0` (M) start first; `t1` races once `tdep` merges ([`unblock`]),

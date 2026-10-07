@@ -81,6 +81,8 @@ pub fn build_tuned(
             wt_dir: PathBuf::from(WT),
             data_dir: PathBuf::from(format!("/tmp/data/runs/{RUN_ID}")),
             config,
+            models: crate::run::model_roles::RunModels::resolve(&config.roles, None),
+            models_log: Vec::new(),
             testing: &config::Testing::default(),
             now: 1_000,
             yes,

@@ -33,6 +33,7 @@ fn config() -> config::Orchestrator {
 }
 
 #[test]
+#[ignore = "M9.8.7a: tasks take their role-table rows, so no model list picks a worker, reviewer or rung-2 step; deleted with route_pick.rs in M9.8.13"]
 fn retry_reroutes_a_reviewer_that_failed_in_this_task() {
     let (mut fx, window) = working_with(PROFILE, CHECK_MODE, config());
     let (op, _) = in_review(&mut fx, window);
@@ -142,6 +143,7 @@ fn the_retry_preview_names_the_route_a_retry_takes() {
 /// Ruling RL-4 through `run retry`: a review task whose reviewer failed in this task
 /// takes its `review` list's next candidate, and that review records the list.
 #[test]
+#[ignore = "M9.8.7a: tasks take their role-table rows, so no model list picks a worker, reviewer or rung-2 step; deleted with route_pick.rs in M9.8.13"]
 fn a_retried_review_task_takes_and_records_its_lists_next_candidate() {
     use super::kinds::{review, reviewer_window};
     use config::{Candidate, Pick, RouteList, RouteLists};

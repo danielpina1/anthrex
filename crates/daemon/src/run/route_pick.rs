@@ -16,8 +16,8 @@ use super::model::{
     FrozenList, ListPick, ListPolicy, ReviewLevel, RouteListsFrozen, Run, RunLimits, Task,
 };
 use super::model_roles::{
-    FAILED_IN_TASK, Installed, Mover, NOT_INSTALLED, alongside, failed_in, failed_routes, missing,
-    overlap,
+    FAILED_IN_TASK, Installed, Mover, NOT_INSTALLED, OVERLAPPING_OWNS, alongside, failed_in,
+    failed_routes, missing, overlap,
 };
 use super::orch::roles::EARLIER_TAKEN;
 use super::roster::pick_reviewer;
@@ -27,7 +27,6 @@ pub const LIST_POLICY: &str = "m9.5-list-v1";
 /// A reviewer list's `pick_policy`.
 pub const FIRST_QUALIFYING: &str = "first_qualifying";
 /// Skip reasons, as the routing history records them.
-pub const OVERLAPPING_OWNS: &str = "overlapping owns";
 pub const BELOW_STRENGTH: &str = "below the author's strength";
 pub const AUTHOR_RUNTIME: &str = "the author's runtime";
 pub const CURRENT_ROUTE: &str = "the current route";
@@ -174,7 +173,9 @@ fn snapshot(
 }
 
 /// The indexes of the unfinished tasks `ids` names: an edit batch's added tasks and
-/// re-routed amends.
+/// re-routed amends. Used only by its test since [`pick_named`] became a no-op
+/// (M9.8.7a); deleted with it in M9.8.13.
+#[cfg(test)]
 fn targets(tasks: &[Task], ids: &BTreeSet<String>) -> BTreeSet<usize> {
     (tasks.iter().enumerate())
         .filter(|(_, t)| ids.contains(t.id()) && !t.state.is_finished())
@@ -336,26 +337,13 @@ pub fn pick(
     }
 }
 
-/// [`pick`] over every task of a build. What is installed is not known yet (the
-/// start's probe is recorded on the run later, `run.orch.installed`).
-pub fn pick_all(limits: &RunLimits, roster: &[ModelEntry], tasks: &mut [Task]) {
-    let all = (0..tasks.len()).collect();
-    pick(limits, roster, tasks, &all, &Installed::new());
-}
+/// [`pick`] over every task of a build. Milestone 9.8 (task M9.8.7a): a no-op, left for
+/// M9.8.13 to delete; a task's route is its row's (`validate::resolve_task`).
+pub fn pick_all(_limits: &RunLimits, _roster: &[ModelEntry], _tasks: &mut [Task]) {}
 
-/// [`pick`] for the unfinished tasks of `run` that `ids` names (an edit batch's added
-/// tasks and re-routed amends), over what the run's start found installed.
-pub fn pick_named(run: &mut Run, ids: &BTreeSet<String>) {
-    let targets = targets(&run.tasks, ids);
-    let installed = &run.orch.installed;
-    pick(
-        &run.limits,
-        &run.roster,
-        &mut run.tasks,
-        &targets,
-        installed,
-    );
-}
+/// [`pick`] for the unfinished tasks of `run` that `ids` names. Milestone 9.8 (task
+/// M9.8.7a): a no-op, left for M9.8.13 to delete; an edit's task takes its row.
+pub fn pick_named(_run: &mut Run, _ids: &BTreeSet<String>) {}
 
 /// `get_context`'s `limits.routes` (decision 9a: the planners see the lists): each
 /// non-empty list by its table name, with its `pick` and candidates (an `effort` only
@@ -466,10 +454,7 @@ pub fn forecast(
 #[path = "route_pick_step.rs"]
 mod step;
 pub(crate) use step::escalate_for;
-pub use step::{
-    every_route_failed, next_candidate, racer_route, rung2_route, writer_route,
-    writer_route_failed, writer_step,
-};
+pub use step::{every_route_failed, next_candidate, rung2_route, writer_route_failed, writer_step};
 
 #[cfg(test)]
 #[path = "route_pick_tests.rs"]

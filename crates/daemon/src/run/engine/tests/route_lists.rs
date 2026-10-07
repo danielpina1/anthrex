@@ -78,6 +78,7 @@ fn sol_low() -> Route {
 }
 
 #[test]
+#[ignore = "M9.8.7a: tasks take their role-table rows, so no model list picks a worker, reviewer or rung-2 step; deleted with route_pick.rs in M9.8.13"]
 fn a_listed_worker_records_its_list_and_rung_2_takes_the_next_candidate() {
     let (mut fx, window) = working();
     let t1 = fx.task("t1");
@@ -138,6 +139,7 @@ fn a_listed_worker_records_its_list_and_rung_2_takes_the_next_candidate() {
 }
 
 #[test]
+#[ignore = "M9.8.7a: tasks take their role-table rows, so no model list picks a worker, reviewer or rung-2 step; deleted with route_pick.rs in M9.8.13"]
 fn the_reviewer_comes_from_the_review_list_and_records_it() {
     let (mut fx, window) = working();
     let (op, _) = in_review(&mut fx, window);
@@ -190,6 +192,7 @@ fn the_reviewer_comes_from_the_review_list_and_records_it() {
 /// Ruling T10a-4: a decider's S -> M raise re-picks from the M list, as an amend's
 /// class change does; with an empty M list the task takes the plain M resolution.
 #[test]
+#[ignore = "M9.8.7a: tasks take their role-table rows, so no model list picks a worker, reviewer or rung-2 step; deleted with route_pick.rs in M9.8.13"]
 fn a_decider_raise_repicks_from_the_new_classes_list() {
     let s_list = RouteList {
         candidates: vec![cand(

@@ -73,10 +73,15 @@ fn the_writers_rung_2_skips_a_runtime_that_is_not_installed() {
         .filter(|d| d.role == AgentRole::TestWriter)
         .collect();
     assert_eq!(writers.len(), 2, "{writers:#?}");
-    // Minor m1: the first pick's source is the task's own route (no peer installed).
+    // Minor m1: the first pick is the task's own route (no peer installed); milestone
+    // 9.8 (ruling F16): recorded against the `test_writer` row, its Codex model held off.
     assert_eq!(
         (writers[0].trigger.as_str(), writers[0].source.as_str()),
-        ("test_writer", "explicit_task")
+        ("test_writer", "role_table")
+    );
+    assert_eq!(
+        writers[0].candidates[0].skipped_reason.as_deref(),
+        Some("not installed")
     );
     assert_eq!(
         (writers[1].role, writers[1].session),

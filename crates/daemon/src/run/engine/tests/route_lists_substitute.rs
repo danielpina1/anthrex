@@ -90,6 +90,7 @@ fn client_error(fx: &mut Fixture, window: u32) {
 }
 
 #[test]
+#[ignore = "M9.8.7a: tasks take their role-table rows, so no model list picks a worker, reviewer or rung-2 step; deleted with route_pick.rs in M9.8.13"]
 fn run_retry_substitutes_a_failed_route_with_a_weaker_candidate() {
     let (mut fx, window) = working(false);
     client_error(&mut fx, window);
@@ -98,6 +99,7 @@ fn run_retry_substitutes_a_failed_route_with_a_weaker_candidate() {
 }
 
 #[test]
+#[ignore = "M9.8.7a: tasks take their role-table rows, so no model list picks a worker, reviewer or rung-2 step; deleted with route_pick.rs in M9.8.13"]
 fn rung_2_substitutes_a_failed_route_with_a_weaker_candidate() {
     let (mut fx, _) = working(false);
     let t1 = fx.task_mut("t1");
@@ -110,6 +112,7 @@ fn rung_2_substitutes_a_failed_route_with_a_weaker_candidate() {
 }
 
 #[test]
+#[ignore = "M9.8.7a: tasks take their role-table rows, so no model list picks a worker, reviewer or rung-2 step; deleted with route_pick.rs in M9.8.13"]
 fn with_every_route_failed_a_retry_takes_the_original_and_logs_it() {
     let (mut fx, window) = working(true);
     client_error(&mut fx, window);

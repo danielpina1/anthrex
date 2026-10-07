@@ -324,6 +324,8 @@ async fn promote_repeats_the_project_settings_check() {
     });
     run.trusted_project.clear();
     run.trust_project = false;
+    // Milestone 9.8: Claude rows keep it on Claude.
+    crate::run::test_support::claude_rows(&mut run);
     assert_eq!(
         crate::run::reach::reachable_runtimes(&run),
         vec![proto::Runtime::Claude]

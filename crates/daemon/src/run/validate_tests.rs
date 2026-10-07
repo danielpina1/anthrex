@@ -141,8 +141,13 @@ fn raises_are_recorded_as_notes() {
         &proto::ProfileSpec::default(),
     );
     let config = config::Orchestrator::default();
-    let limits =
+    let mut limits =
         crate::run::plan::run_limits(&config, &config::Testing::default(), None, None, None);
+    // Milestone 9.8 decision 9: what `build_run` freezes before any task resolves.
+    limits.models = Some(crate::run::model_roles::RunModels::resolve(
+        &config.roles,
+        None,
+    ));
     let spec = crate::run::plan::parse_plan(&plan_with(
         PROFILE,
         &[task_toml(
@@ -155,14 +160,8 @@ fn raises_are_recorded_as_notes() {
     .unwrap()
     .tasks
     .remove(0);
-    let big = resolve_task(
-        spec,
-        &profile,
-        &limits,
-        &config.models,
-        config.default_runtime,
-    )
-    .unwrap_or_else(|e| panic!("{}", show(&e)));
+    let big = resolve_task(spec, &profile, &limits, &config.models)
+        .unwrap_or_else(|e| panic!("{}", show(&e)));
     assert_eq!(big.size, Size::L);
     assert_eq!(
         big.notes,
@@ -436,18 +435,18 @@ fn cross_runtime_overlap_is_rejected_on_the_later_task() {
                 "t2",
                 "M",
                 r#"["crates/proto/src/run.rs"]"#,
-                "[task.route]\nruntime = \"codex\"\nstrength = \"standard\"",
+                "[task.route]\nruntime = \"codex\"\nmodel = \"\"",
             ),
         ],
     );
-    // Codex has no frontier model, so t2 (a hub task) names standard explicitly.
+    // Milestone 9.8 decision 10: t2 (a hub task) leaves its row by naming Codex's model.
     assert_eq!(
         errors_of(&text),
         vec![err(
             Some("t2"),
             "owns",
             "9",
-            "overlaps task t1's owns (crates/proto/**) and the two tasks run on different runtimes (claude, codex) (rule 9)"
+            "overlaps task t1's owns (crates/proto/**) and the two tasks run on different runtimes (claude, codex): the role table runs size hub on claude and size hub on codex; give them the same size or separate owns (rule 9)"
         )]
     );
 }

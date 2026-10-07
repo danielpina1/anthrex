@@ -3,6 +3,7 @@
 //! racing task races (task M9.5.17a) and a paired one starts with its test writer (task
 //! M9.5.16, `pair.rs`).
 
+use proto::models::{ModelRef, Role, RoleChoice};
 use proto::{AgentRole, ModelEntry, PlanEdit, Runtime, Strength};
 use serde_json::json;
 
@@ -82,6 +83,18 @@ fn a_racing_task_that_widens_the_reach_is_refused_by_the_trust_check() {
             entry(Runtime::Codex, "gpt-5-codex", Strength::Standard),
         ],
         review_small: false,
+        // Milestone 9.8: a Claude reviewer row, and the small row's racer on Codex.
+        roles: proto::models::ModelTable {
+            rows: [
+                (Role::Reviewer, choice("claude:claude-opus-5", None)),
+                (
+                    Role::ImplementerSmall,
+                    choice("claude:claude-sonnet-5", Some("codex:gpt-5-codex")),
+                ),
+            ]
+            .into(),
+            brainstorm: None,
+        },
         ..config::Orchestrator::default()
     };
     let route = "[task.route]\nruntime = \"claude\"\nmodel = \"claude-opus-5\"";
@@ -146,4 +159,13 @@ fn race_tasks_race_and_paired_tasks_start_their_test_writer() {
     );
     assert!(fx.task("t1").race.is_some());
     assert!(fx.task("t2").pair.is_some());
+}
+
+/// A row of `model`, falling back to `fallback`.
+fn choice(model: &str, fallback: Option<&str>) -> RoleChoice {
+    RoleChoice {
+        model: ModelRef::parse(model).unwrap(),
+        effort: None,
+        fallback: fallback.map(|f| ModelRef::parse(f).unwrap()),
+    }
 }

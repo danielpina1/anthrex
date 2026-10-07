@@ -10,7 +10,7 @@ use super::dispatch::{block, history, launch_fresh};
 use super::schedule::op_in_flight;
 use super::{Effect, OpKind, OpResult, done, emit_op, next_op, outbox};
 use crate::run::model::{AgentRound, FreshSession, Run, Task, writes};
-use crate::run::route_pick::{every_route_failed, review_route, rung2_route};
+use crate::run::route_pick::{every_route_failed, rung2_route};
 use crate::run::validate::resolve_task_lenient;
 
 pub(super) use super::ladder_budget::{breached, ceiling, check_budget, reached};
@@ -329,18 +329,12 @@ pub(super) fn rung3(run: &mut Run, i: usize, text: String, now: u64, fx: &mut Ve
 pub(crate) fn reresolve(run: &mut Run, i: usize) -> proto::Route {
     let mut spec = run.tasks[i].spec.clone();
     spec.size = spec.size.max(run.tasks[i].size);
-    let (resolved, _) = resolve_task_lenient(
-        spec,
-        &run.profile,
-        &run.limits,
-        &run.roster,
-        run.limits.default_runtime,
-    );
+    let (resolved, _) = resolve_task_lenient(spec, &run.profile, &run.limits, &run.roster);
     let task = &mut run.tasks[i];
     task.review_level = resolved.review_level;
-    let (lists, installed) = (&run.limits.route_lists, &run.orch.installed);
-    task.review_route = (resolved.review_level)
-        .map(|level| review_route(lists, &run.roster, &task.route, level, installed));
+    // Milestone 9.8 decision 27: the reviewer row against the task's route.
+    let models = run.limits.models();
+    task.review_route = (resolved.review_level).map(|_| models.reviewer_route(&task.route).0);
     task.budget = resolved.budget;
     resolved.route
 }

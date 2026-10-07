@@ -168,8 +168,9 @@ fn approve_starts_dispatch_and_yes_skips_the_gate() {
     assert!(round.turn_open, "the first turn is open from dispatch");
     assert_eq!(round.launch_op, *op);
 
-    // --yes on a Codex task: no gate, a fresh worktree, then the window.
-    let codex = "[task.route]\nruntime = \"codex\"";
+    // --yes on a Codex task: no gate, a fresh worktree, then the window. Milestone 9.8
+    // decision 10: a route leaves the row by naming a model (`codex:default`'s is "").
+    let codex = "[task.route]\nruntime = \"codex\"\nmodel = \"\"";
     let mut fx = Fixture::new(&plan_with(PROFILE, &[task("t1", "S", "a", codex)]));
     fx.ready(true);
     assert_eq!(fx.run().state, RunState::Running);

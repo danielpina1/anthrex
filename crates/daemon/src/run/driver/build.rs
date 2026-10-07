@@ -354,6 +354,7 @@ impl RunService {
         let repo_dir = crate::profile::repo_dir(&self.ctx.data_dir, &pre.project);
         let tune = super::tuning::tune_for_start(&config, &self.tuning, &repo_dir, now);
         let tuning = once.tuned.get_or_init(|| tune).await.clone();
+        let (models, models_log) = self.freeze_models(&config.roles, &pre.project).await;
         let ctx = BuildContext {
             id: id.clone(),
             wt_dir,
@@ -364,6 +365,8 @@ impl RunService {
             now,
             yes,
             tuning,
+            models,
+            models_log,
         };
         let mut run = crate::run::plan::build_run(plan, pre, ctx).map_err(BuildError::Plan)?;
         run.title = named.title;

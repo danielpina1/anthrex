@@ -4,14 +4,19 @@
 //! the selector's own order and each skipped one with its reason, and the task as it
 //! stood at dispatch. Nothing here changes a route: the engine's selectors
 //! (`validate::resolve_route`, `roster::escalate`, `roster::pick_reviewer`) choose, and
-//! this module only records. Pure (M8b decision 1).
+//! this module only records. Pure (M8b decision 1). Milestone 9.8 (preflight ruling
+//! F16): a first worker's, a racer's, a test writer's and a reviewer's decision records
+//! the role table's row (source `role_table`, policy `m9.8-roles-v1`): the row's model,
+//! then its fallback; an escalation keeps milestone 8a's pool until M9.8.8.
 
 use proto::{
     AgentRole, Effort, ModelEntry, Route, RoutingCandidate, RoutingDecision, RoutingInput, Strength,
 };
 
 use super::model::{ReviewLevel, Run, Task};
+use super::model_roles::{NOT_INSTALLED, OVERLAPPING_OWNS, RunModels, missing};
 use super::roster::peer;
+use proto::models::Role;
 
 #[path = "routing_lists.rs"]
 mod lists;
@@ -23,6 +28,10 @@ pub const REVIEW_POLICY: &str = "m8a-review-v1";
 pub const ESCALATE_POLICY: &str = "m8a-escalate-v1";
 /// A decision's `source` when the task took its class's default route (decision 33a).
 pub const CLASS_DEFAULT: &str = "class_default";
+/// Milestone 9.8 (preflight ruling F16): a worker's, racer's, test writer's or
+/// reviewer's decision from the run's role table, its `source` and policy version.
+pub const ROLE_TABLE: &str = "role_table";
+pub const ROLES_POLICY: &str = "m9.8-roles-v1";
 
 /// The reason given to a selectable candidate after the chosen one.
 pub const RANKED_AFTER: &str = "ranked after the selected route";
@@ -45,6 +54,19 @@ fn route_of(entry: &ModelEntry, effort: Effort) -> Route {
 
 fn strength_label(strength: Strength) -> String {
     format!("{strength:?}").to_lowercase()
+}
+
+/// Ruling F16: a row's candidates, its model at its effort then its fallback at its
+/// default effort, each with the reason `skip` gives it.
+fn row_pool(run: &Run, role: Role, skip: impl Fn(&Route) -> Option<String>) -> Vec<Raw> {
+    let models = run.limits.models();
+    let fallback = (models.choice(role).fallback.as_ref()).map(|f| RunModels::route_of(f, None));
+    (std::iter::once(models.route(role)).chain(fallback))
+        .map(|route| {
+            let reason = skip(&route);
+            (route, reason)
+        })
+        .collect()
 }
 
 /// The task as it stands now: decision 33a's input, frozen into the decision.
@@ -336,19 +358,35 @@ pub fn record_worker(run: &mut Run, i: usize, now: u64) {
             now,
         ),
         None if first => {
+            // Milestone 9.8 (ruling F16): the task's row; a racer's lane is its fallback.
+            // The row's model at the route's effort when the route is that model (a
+            // plan's or a user's effort, decision 10).
             let explicit = task.spec.route.model.is_some();
             let source = if explicit {
                 "explicit_task"
             } else {
-                CLASS_DEFAULT
+                ROLE_TABLE
             };
+            let same = |r: &Route| r.runtime == chosen.runtime && r.model == chosen.model;
+            let names = |r: &Route| {
+                (explicit && !same(r)).then(|| format!("the task names the model {}", chosen.model))
+            };
+            let pool = (row_pool(run, RunModels::task_role(task), names).into_iter())
+                .map(|(r, why)| {
+                    if same(&r) {
+                        (chosen.clone(), why)
+                    } else {
+                        (r, why)
+                    }
+                })
+                .collect();
             decision(
                 run,
                 task,
                 id,
-                ("initial", source, WORKER_POLICY),
+                ("initial", source, ROLES_POLICY),
                 &chosen,
-                worker_pool(&run.roster, &chosen, explicit),
+                pool,
                 now,
             )
         }
@@ -390,18 +428,21 @@ pub fn record_test_writer(run: &mut Run, i: usize, chosen: &Route, now: u64) {
             if let Some(d) = listed {
                 return push(&mut run.tasks[i], d);
             }
-            let explicit = task.spec.route.model.is_some();
-            let source = match (*chosen != task.route, explicit) {
-                (true, _) => "peer_route",
-                (false, true) => "explicit_task",
-                (false, false) => CLASS_DEFAULT,
+            // Milestone 9.8 (ruling F16): the `test_writer` row; a candidate the
+            // overlap rule held off says why (decision 28).
+            let held = |route: &Route| {
+                let open = *route == *chosen || route.runtime == task.route.runtime;
+                (!open).then(|| match missing(&run.orch.installed, route.runtime) {
+                    true => NOT_INSTALLED.to_string(),
+                    false => OVERLAPPING_OWNS.to_string(),
+                })
             };
-            let pool = worker_pool(&run.roster, chosen, explicit);
+            let pool = row_pool(run, Role::TestWriter, held);
             decision(
                 run,
                 task,
                 id,
-                ("test_writer", source, WORKER_POLICY),
+                ("test_writer", ROLE_TABLE, ROLES_POLICY),
                 chosen,
                 pool,
                 now,
@@ -412,12 +453,14 @@ pub fn record_test_writer(run: &mut Run, i: usize, chosen: &Route, now: u64) {
     push(&mut run.tasks[i], d);
 }
 
-/// Review round `round` of task `i` is being launched on `chosen`, which
-/// `pick_reviewer` gave against `author` at `level`. Nothing for a run without history.
+/// Review round `round` of task `i` is being launched on `chosen`, which the reviewer
+/// row gave against `author` (milestone 9.8 decision 27; the level no longer chooses).
+/// Ruling F16: the row's candidates, the author's own model skipped as such. Nothing for
+/// a run without history.
 pub fn record_reviewer(
     run: &mut Run,
     i: usize,
-    (author, level): (&Route, ReviewLevel),
+    (author, _level): (&Route, ReviewLevel),
     chosen: &Route,
     round: u32,
     now: u64,
@@ -426,13 +469,18 @@ pub fn record_reviewer(
         return;
     }
     let task = &run.tasks[i];
+    let own = |route: &Route| {
+        let same = route.runtime == author.runtime && route.model == author.model;
+        (same && route != chosen).then(|| "the author's own model".to_string())
+    };
+    let pool = mark_failed(row_pool(run, Role::Reviewer, own), task, chosen);
     let decision = decision(
         run,
         task,
         (AgentRole::Reviewer, round, Some(round)),
-        ("review", "review_policy", REVIEW_POLICY),
+        ("review", ROLE_TABLE, ROLES_POLICY),
         chosen,
-        mark_failed(reviewer_pool(&run.roster, author, level), task, chosen),
+        pool,
         now,
     );
     push(&mut run.tasks[i], decision);

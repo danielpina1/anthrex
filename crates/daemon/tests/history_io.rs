@@ -240,6 +240,8 @@ fn run_appending(data: &Path, history: &Path) -> (Run, OpKind) {
         wt_dir: PathBuf::from("/tmp/nowhere-wt"),
         data_dir: data.join("runs").join("history-5a1e"),
         config: &config,
+        models: daemon::run::model_roles::RunModels::resolve(&config.roles, None),
+        models_log: Vec::new(),
         testing: &config::Testing::default(),
         now: 1_000,
         yes: true,

@@ -7,7 +7,7 @@ use super::{Batch, EditConsequence};
 use crate::run::contract::amend_message;
 use crate::run::edits_state::{has_live_worker, has_started, is_paused, not_started};
 use crate::run::plan::PlanError;
-use crate::run::route_pick::{repicks, review_route};
+use crate::run::route_pick::repicks;
 use crate::run::validate::resolve_task_lenient;
 use crate::run::validate_patterns;
 
@@ -98,6 +98,21 @@ impl Batch {
         if race_or_pair_refused {
             return;
         }
+        // Preflight ruling F24: a route's effort reaches `--effort` as given (decision 10
+        // keeps a user's route), so it must be an effort name (decision 5), or the
+        // model's default.
+        if let Some(effort) = route.as_ref().and_then(|r| r.effort.as_ref())
+            && !(effort.is_default() || proto::models::valid_effort(effort.as_str()))
+        {
+            let text = format!(
+                "{:?} is not an effort name (1 to {} characters of a-z, 0-9, _ and -)",
+                effort.as_str(),
+                proto::models::EFFORT_MAX_CHARS
+            );
+            let error = PlanError::new(Some(task_id), "route.effort", "route", text);
+            self.errors.push(error);
+            return;
+        }
 
         let mut spec = self.run.tasks[i].spec.clone();
         let mut changed = Vec::new();
@@ -180,13 +195,8 @@ impl Batch {
     fn reresolve(&mut self, i: usize, spec: PlanTask, route_named: bool) {
         let run = &self.run;
         let old = &run.tasks[i];
-        let (planned, _) = resolve_task_lenient(
-            old.spec.clone(),
-            &run.profile,
-            &run.limits,
-            &run.roster,
-            run.limits.default_runtime,
-        );
+        let (planned, _) =
+            resolve_task_lenient(old.spec.clone(), &run.profile, &run.limits, &run.roster);
         // The recorded rung-3 raise, never a guess from the spec (fix round 2, N1).
         let floor = old.raised_size.unwrap_or(Size::S);
         let escalated = (old.route != planned.route).then(|| old.route.clone());
@@ -211,10 +221,9 @@ impl Batch {
         if repick {
             self.picks.insert(spec.id.clone());
         }
-        let (lists, roster) = (&self.run.limits.route_lists, &self.run.roster);
-        let installed = &self.run.orch.installed;
-        let review_route = (resolved.review_level)
-            .map(|level| review_route(lists, roster, &route, level, installed));
+        // Milestone 9.8 decision 27: the reviewer row against the task's route.
+        let models = self.run.limits.models();
+        let review_route = (resolved.review_level).map(|_| models.reviewer_route(&route).0);
         let task = &mut self.run.tasks[i];
         task.review_route = review_route;
         task.spec = spec;

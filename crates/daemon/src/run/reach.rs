@@ -14,15 +14,22 @@
 //! peer route escalation reaches too, so naming them changes no reach today.
 //! A run's sessions change routes only by those steps, so the set does not grow
 //! while the run goes on; it grows only by a plan edit.
+//!
+//! Milestone 9.8 (task M9.8.7a): a reviewer, a second racer and a test writer come from
+//! the run's role table (decisions 27, 28), so each reviewed route counts the reviewer
+//! row's model and its fallback, a racing task its row's fallback, and a paired task the
+//! `test_writer` row; escalation stays the roster's until M9.8.8.
 
 use proto::{Route, Runtime, Size};
 
 use super::model::{ReviewLevel, Run, Task};
+use super::model_roles::RunModels;
 use super::model_roles::installed_roster;
 use super::roster::escalate;
-use super::route_pick::{review_route, task_list};
+use super::route_pick::task_list;
 use super::validate::resolve_task_lenient;
 use super::validate_patterns::peer_route;
+use proto::models::Role;
 
 /// Whether `edits` can widen [`reachable_runtimes`] (T22-P2, F4): only a task added,
 /// split or amended can; a pause, resume, finish, cancel, answer or dependency cannot,
@@ -41,24 +48,32 @@ pub fn edits_may_widen(edits: &[proto::PlanEdit]) -> bool {
 /// Every runtime `run` can launch a session on, in `[Claude, Codex]` order.
 pub fn reachable_runtimes(run: &Run) -> Vec<Runtime> {
     let mut found = Vec::new();
+    let models = run.limits.models();
+    // Milestone 9.8 decision 27: a reviewer is the reviewer row's model, or its
+    // fallback (against the author's model, or past a route that failed, RL-1).
+    let reviewer = models.choice(Role::Reviewer);
+    let reviewers: Vec<Runtime> = (std::iter::once(&reviewer.model).chain(&reviewer.fallback))
+        .map(|m| m.runtime)
+        .collect();
     for t in &run.tasks {
-        let levels = review_levels(run, t);
+        let reviewed = !review_levels(run, t).is_empty();
         found.extend(t.review_route.as_ref().map(|r| r.runtime));
         // Milestone 9.5 decision 9a: rung 2 can take any candidate of its list.
-        let (lists, installed) = (&run.limits.route_lists, &run.orch.installed);
+        let lists = &run.limits.route_lists;
         let listed =
             (task_list(lists, t).candidates.iter()).map(|c| c.route(t.route.effort.clone()));
-        // Milestone 9.5 ruling RR-6: lane b's route, and the test writer's.
-        let peer = (t.spec.race || t.spec.pair)
-            .then(|| peer_route(&run.roster, &t.route, installed))
-            .flatten();
-        let starts: Vec<Route> =
-            (std::iter::once(t.route.clone()).chain(listed).chain(peer)).collect();
+        // Milestone 9.8 decision 28: lane b's route (the row's fallback), and the test
+        // writer's (its row); each may be the task's own route instead.
+        let racer = (t.spec.race).then(|| models.racer_route(RunModels::task_role(t), &t.route));
+        let writer = (t.spec.pair).then(|| models.route(Role::TestWriter));
+        let starts: Vec<Route> = (std::iter::once(t.route.clone()).chain(listed))
+            .chain(racer)
+            .chain(writer)
+            .collect();
         for route in starts.iter().flat_map(|r| escalations(run, r)) {
             found.push(route.runtime);
-            for &level in &levels {
-                let reviewer = review_route(lists, &run.roster, &route, level, installed);
-                found.push(reviewer.runtime);
+            if reviewed {
+                found.extend(reviewers.iter().copied());
             }
         }
     }
@@ -115,13 +130,7 @@ fn review_levels(run: &Run, t: &Task) -> Vec<ReviewLevel> {
         }
         let mut spec = t.spec.clone();
         spec.size = spec.size.max(size);
-        let (resolved, _) = resolve_task_lenient(
-            spec,
-            &run.profile,
-            &run.limits,
-            &run.roster,
-            run.limits.default_runtime,
-        );
+        let (resolved, _) = resolve_task_lenient(spec, &run.profile, &run.limits, &run.roster);
         if let Some(level) = resolved.review_level
             && !levels.contains(&level)
         {

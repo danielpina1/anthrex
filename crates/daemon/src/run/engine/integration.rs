@@ -7,7 +7,6 @@ use proto::{IntegrationState, PlanEdit, PlanTask, RouteSpec, Size, TaskKind, Tas
 use super::kinds::is_integration;
 use super::requests::log;
 use crate::run::model::{ReviewLevel, Run, TaskEvent, task_branch, task_path};
-use crate::run::route_pick::review_route;
 use crate::run::validate::{is_valid_id, resolve_task_lenient};
 
 /// Decision 37: the orchestrator may not amend, split or cancel an integration review.
@@ -169,25 +168,12 @@ fn add_round(run: &mut Run, k: usize, now: u64) {
         pair: false,
         covers: Vec::new(),
     };
-    let (mut task, _) = resolve_task_lenient(
-        spec,
-        &run.profile,
-        &run.limits,
-        &run.roster,
-        run.limits.default_runtime,
-    );
+    let (mut task, _) = resolve_task_lenient(spec, &run.profile, &run.limits, &run.roster);
     task.branch = task_branch(&run.id, &id);
     task.worktree = task_path(&run.wt_dir, &run.id, &task.checkout_name());
     let author = author.unwrap_or_else(|| task.route.clone());
-    // Milestone 9.5 ruling RL-4: the `review` list's first qualifying candidate.
-    let (lists, installed) = (&run.limits.route_lists, &run.orch.installed);
-    task.route = review_route(
-        lists,
-        &run.roster,
-        &author,
-        ReviewLevel::Frontier,
-        installed,
-    );
+    // Milestone 9.8 decision 27: the reviewer row against the epic's author.
+    task.route = run.limits.models().reviewer_route(&author).0;
     task.review_level = Some(ReviewLevel::Frontier);
     task.orch.integration_of = Some(epic.clone());
     // Milestone 9.3 decision 13: the round of the stage it reviews.

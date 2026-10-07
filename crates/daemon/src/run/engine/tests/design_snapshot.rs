@@ -23,7 +23,38 @@ fn a_non_design_run_has_no_design_state_and_an_unchanged_snapshot() {
     assert_eq!((info.design, &info.doc_gate), (DesignMode::Off, &None));
     assert!(info.docs.is_empty());
     let written = serde_json::to_string_pretty(info).expect("a RunInfo is JSON");
-    assert_eq!(written.trim_end(), M95_RUN_INFO.trim_end());
+    assert_eq!(written.trim_end(), m95_with_role_table().trim_end());
+}
+
+/// [`M95_RUN_INFO`] with milestone 9.8's intended changes (task M9.8.7a), and nothing
+/// else: the reviewer row's effort (`high`, decision 27: the review level no longer
+/// sets it), and racer b on the row's fallback at its default effort (decision 28).
+fn m95_with_role_table() -> String {
+    let route = |indent: &str, effort: &str| {
+        let pad = format!("\n{indent}");
+        format!(
+            "\"runtime\": \"codex\",{pad}\"model\": \"\",{pad}\"strength\": \"standard\",{pad}\"effort\": \"{effort}\""
+        )
+    };
+    let mut text = M95_RUN_INFO.to_string();
+    for (head, indent, effort) in [
+        ("\"review_route\": {\n        ", "        ", "high"),
+        (
+            "\"window_id\": 2,\n          \"route\": {\n            ",
+            "            ",
+            "",
+        ),
+        (
+            "\"lane\": \"b\",\n            \"route\": {\n              ",
+            "              ",
+            "",
+        ),
+    ] {
+        let old = format!("{head}{}", route(indent, "medium"));
+        assert_eq!(text.matches(&old).count(), 1, "{old}");
+        text = text.replace(&old, &format!("{head}{}", route(indent, effort)));
+    }
+    text
 }
 
 #[test]

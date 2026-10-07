@@ -19,11 +19,9 @@ use crate::run::contract::{
     APPROVE_WITH_BLOCKING, REVIEW_RECORDED, review_changes_message, reviewer_prompt,
 };
 use crate::run::model::{AgentRound, ReviewLevel, ReviewRecord, Run};
-use crate::run::model_roles::failed_routes;
+use crate::run::model_roles::{failed_routes, reviewer_at_launch};
 use crate::run::orch::contract::worker_messages_for_review;
 use crate::run::role_launch::{jitter_ms, reviewer_spec, session_uuid_of};
-use crate::run::roster::pick_reviewer_skipping;
-use crate::run::route_pick::reviewer;
 use crate::run::routing;
 
 pub(super) use super::review_session::{exited, resume_failed, turn_ended, watch};
@@ -144,6 +142,7 @@ pub(super) fn review_ready(
         task.id()
     );
     let listed;
+    let mut same_model = None;
     let (author, level, route) = if reader {
         // Milestone 9 decisions 36, 37: a review task's own route and level; milestone
         // 9.5 ruling RL-4: a route the `review` list gave it records that list.
@@ -168,13 +167,12 @@ pub(super) fn review_ready(
             .rfind(|r| r.role != AgentRole::TestWriter && crate::run::model::writes(task, r))
             .map_or(&task.route, |r| &r.route)
             .clone();
-        // Milestone 9.5 decision 9a: the `review` list's first qualifying candidate.
+        // Milestone 9.8 decision 27: the reviewer row against the author, past a route
+        // that failed in this task (ruling RL-1).
         let failed = failed_routes(task);
-        let (lists, installed) = (&run.limits.route_lists, &run.orch.installed);
-        listed = reviewer(lists, &author, level, installed, &failed);
-        let first = listed.as_ref().and_then(|(route, _)| route.clone());
-        let route =
-            first.unwrap_or_else(|| pick_reviewer_skipping(&run.roster, &author, level, &failed));
+        let (route, line) = reviewer_at_launch(run.limits.models(), &author, &failed);
+        same_model = line;
+        listed = None;
         (author, level, route)
     };
     let mut spec = if reader {
@@ -209,6 +207,10 @@ pub(super) fn review_ready(
     round.lane = task.lane_view;
     let id = task.id().to_string();
     let worktree = run.review_path(&task.checkout_name());
+    // Decision 27's line, once per run.
+    if let Some(line) = same_model.filter(|l| !run.log.iter().any(|e| e.text == *l)) {
+        super::requests::log(run, now, line);
+    }
     // M8b decision 33a: decided before the session-start op.
     match listed {
         Some((_, list)) => routing::record_listed_reviewer(run, i, list, &route, round_no, now),

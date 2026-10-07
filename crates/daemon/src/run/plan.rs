@@ -102,6 +102,12 @@ pub struct BuildContext<'a> {
     /// Milestone 9.5 decision 12: what the start learned from history, frozen into the
     /// run's limits; `Tuned::default()` builds exactly what milestone 9.3 built.
     pub tuning: super::refit::Tuned,
+    /// Milestone 9.8 decision 9: the role table the start resolved and validated
+    /// (`driver/build_models.rs`), frozen into the run's limits.
+    pub models: super::model_roles::RunModels,
+    /// The start's lines about it (a broken repository file, an effort replaced),
+    /// logged after the tuning lines.
+    pub models_log: Vec<String>,
 }
 
 /// Parses a plan file. The error is the `toml` crate's, which names the line and the
@@ -213,6 +219,8 @@ pub fn run_limits(
         halve_hold_secs: config.tuning.table.halve_hold_secs,
         race_slot_wait_secs: config.tuning.table.race_slot_wait_secs,
         design_tuning: Default::default(),
+        // Milestone 9.8 decision 9: set by `build_run` from `BuildContext.models`.
+        models: None,
     }
 }
 
@@ -344,18 +352,14 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         plan.max_bounces,
     );
     limits.freeze(&ctx.tuning, config);
+    // Milestone 9.8 decision 9: before any task resolves its route from it.
+    limits.models = Some(ctx.models.clone());
     let mut errors = Vec::new();
     check_plan(&plan, &profile, &mut errors);
 
     let mut tasks = Vec::with_capacity(plan.tasks.len());
     for spec in plan.tasks {
-        let (mut task, task_errors) = resolve_task_lenient(
-            spec,
-            &profile,
-            &limits,
-            &config.models,
-            limits.default_runtime,
-        );
+        let (mut task, task_errors) = resolve_task_lenient(spec, &profile, &limits, &config.models);
         errors.extend(task_errors);
         errors.extend(super::validate::reserved_new_id(task.id()));
         task.branch = task_branch(&ctx.id, task.id());
@@ -367,9 +371,6 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         tasks.push(task);
     }
 
-    // Milestone 9.5 decision 9a: the class lists route the tasks that leave it to them.
-    super::route_pick::pick_all(&limits, &config.models, &mut tasks);
-
     let touched: BTreeSet<String> = tasks.iter().map(|t| t.spec.id.clone()).collect();
     errors.extend(validate_tasks(
         &tasks,
@@ -377,7 +378,7 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         &EditScope::Run,
         // Milestone 9.3 decision 14: a new plan is round 1's.
         (limits.max_tasks, proto::first_round()),
-        limits.default_runtime,
+        limits.models(),
         // What is installed is recorded on the run after the build (`make_planned`).
         (&config.models, &Default::default()),
     ));
@@ -443,7 +444,8 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         // Decision 12's tuning lines open the run's log. In a design run, milestone
         // 9.6's design tuning lines follow them once the run enters the flow
         // (`engine::design_spend::tuned`, ruling T13-5).
-        log: (ctx.tuning.log.iter())
+        // Milestone 9.8: the role table's start lines follow them.
+        log: (ctx.tuning.log.iter().chain(&ctx.models_log))
             .map(|text| super::model::LogEntry {
                 at: ctx.now,
                 text: text.clone(),

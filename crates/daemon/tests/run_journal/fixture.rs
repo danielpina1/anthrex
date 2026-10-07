@@ -58,6 +58,8 @@ pub fn run_at(data_dir: &Path, root: &Path, wt_dir: &Path, base_sha: &str) -> Ru
         wt_dir: wt_dir.to_path_buf(),
         data_dir: data_dir.join("runs").join(RUN_ID),
         config: &config,
+        models: daemon::run::model_roles::RunModels::resolve(&config.roles, None),
+        models_log: Vec::new(),
         testing: &config::Testing::default(),
         now: 1_000,
         yes: true,

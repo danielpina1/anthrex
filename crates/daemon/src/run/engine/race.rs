@@ -11,8 +11,6 @@ use super::race_view::{Exit, address_lane, in_lane, live, view_lane};
 use super::{Effect, OpKind, concurrency, requests, schedule};
 use crate::run::model::{Lane, Race, RaceDecision, Run, Task, lane_checkout};
 use crate::run::phases::set_state;
-use crate::run::validate::strength_label;
-use crate::run::validate_patterns::peer_route;
 
 /// What dispatch does with a task the scheduler would start (decision 18).
 pub(super) enum Start {
@@ -25,7 +23,8 @@ pub(super) enum Start {
 }
 
 /// Decision 18: whether task `i`, which the scheduler would start now, races. It races
-/// only on the critical path, with `max_writers >= 2`, a second racer's route, and two
+/// only on the critical path, with `max_writers >= 2` (its second racer's route, milestone
+/// 9.8 decision 28, always exists: the row's fallback, else its own route), and two
 /// writer slots within the runtimes' caps (decision 16); with one, it waits up to
 /// `race_slot_wait_secs` from when it first waited. Ruling T17a-1: the first decision
 /// is latched (`Task.race_decision`), so a fallback to one worker is noted and logged
@@ -60,21 +59,9 @@ pub(super) fn start(run: &mut Run, i: usize, now: u64) -> Start {
         return single(run, i, "race skipped: max_writers is 1", now);
     }
     let task = &run.tasks[i];
-    // Review B's M9: the second racer keeps the overlap rule too (`racer_route`).
-    let Some(peer) = crate::run::route_pick::racer_route(run, i) else {
-        let runtime = crate::run::roster::peer(task.route.runtime).label();
-        let text = match peer_route(&run.roster, &task.route, &run.orch.installed) {
-            Some(_) => {
-                format!("race skipped: a {runtime} racer would overlap an unfinished task's owns")
-            }
-            // Task M9.5.14's review: a plan file is validated against nothing installed.
-            None => format!(
-                "race skipped: no installed {runtime} model at strength {} for the second racer",
-                strength_label(task.route.strength)
-            ),
-        };
-        return single(run, i, &text, now);
-    };
+    // Milestone 9.8 decision 28: the second racer takes the row's fallback, else the
+    // task's own route, and keeps the overlap rule (review B's M9).
+    let peer = crate::run::model_roles::racer_route(run, i);
     let free = usize::from(run.limits.max_writers).saturating_sub(schedule::writers_busy(run));
     let runtime = task.route.runtime;
     if free >= 2 && concurrency::has_room(run, runtime) && concurrency::has_room(run, peer.runtime)
@@ -151,12 +138,9 @@ pub(super) fn dispatch_race(
 ) {
     let head = super::propagate::start_of(run, &run.tasks[i]);
     let task = &run.tasks[i];
-    let (lists, installed) = (&run.limits.route_lists, &run.orch.installed);
-    let reviewer = |route: &Route| {
-        (task.review_level).map(|level| {
-            crate::run::route_pick::review_route(lists, &run.roster, route, level, installed)
-        })
-    };
+    // Milestone 9.8 decision 27: each lane's reviewer is the reviewer row against it.
+    let models = run.limits.models();
+    let reviewer = |route: &Route| (task.review_level).map(|_| models.reviewer_route(route).0);
     let lanes = vec![
         new_lane(
             task.id(),

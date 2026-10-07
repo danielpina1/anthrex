@@ -493,6 +493,8 @@ mod tests {
             wt_dir: PathBuf::from("/tmp/wt"),
             data_dir: PathBuf::from("/tmp/data/runs/g-0001"),
             config: &config,
+            models: crate::run::model_roles::RunModels::resolve(&config.roles, None),
+            models_log: Vec::new(),
             testing: &config::Testing::default(),
             now: 1,
             yes: false,

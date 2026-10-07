@@ -35,6 +35,7 @@ fn frozen(lists: RouteLists) -> RouteListsFrozen {
 }
 
 #[test]
+#[ignore = "M9.8.7a: tasks take their role-table rows, so no model list picks a worker, reviewer or rung-2 step; deleted with route_pick.rs in M9.8.13"]
 fn retry_skips_the_route_that_just_failed_in_this_task() {
     let none = Installed::new();
     // The reviewer from the list: haiku's session ended blocked(environment).
@@ -124,6 +125,7 @@ fn retry_skips_the_route_that_just_failed_in_this_task() {
 }
 
 #[test]
+#[ignore = "M9.8.7a: tasks take their role-table rows, so no model list picks a worker, reviewer or rung-2 step; deleted with route_pick.rs in M9.8.13"]
 fn escalation_and_review_history_keep_skips() {
     // Rung 2's list step: the current route, an overlap and a failure.
     let mut run = built(
@@ -299,6 +301,7 @@ fn reader(id: &str, kind: &str) -> String {
 }
 
 #[test]
+#[ignore = "M9.8.7a: tasks take their role-table rows, so no model list picks a worker, reviewer or rung-2 step; deleted with route_pick.rs in M9.8.13"]
 fn research_routes_by_the_scout_list_and_review_tasks_by_the_review_list() {
     let lists = RouteLists {
         scout: list(

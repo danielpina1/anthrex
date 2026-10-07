@@ -7,7 +7,6 @@ use super::*;
 use crate::run::env::profile_env;
 use crate::run::model::ReviewLevel;
 use crate::run::model::Run;
-use crate::run::roster::pick_reviewer;
 use crate::run::test_support::*;
 
 #[test]
@@ -55,7 +54,8 @@ fn the_brief_example_builds_a_run() {
         }
     );
     assert_eq!(t1.review_level, Some(ReviewLevel::Medium));
-    let reviewer = pick_reviewer(&config.models, &expected_route, ReviewLevel::Medium);
+    // Milestone 9.8 decision 27: the reviewer row against the task's route.
+    let (reviewer, _) = run.limits.models().reviewer_route(&expected_route);
     assert_eq!(t1.review_route, Some(reviewer));
     assert_eq!(t1.notes, Vec::<String>::new());
     assert_eq!(t1.implicit_deps, Vec::<String>::new());

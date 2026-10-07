@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::adapt;
 use super::tuning::{ClassRoutes, RouteListsFrozen};
+use crate::run::model_roles::RunModels;
 use crate::run::refit::{SizeClass, Tuned};
 
 /// `[orchestrator.claude] auth`, mirrored here with serde because `config::ClaudeAuth`
@@ -125,6 +126,10 @@ pub struct RunLimits {
     /// taken in the start's own build.
     #[serde(skip)]
     pub design_tuning: DesignTuning,
+    /// Milestone 9.8 decision 9: the role table, resolved and frozen at start; filled
+    /// at restore for a run recorded before (`driver/build_models.rs`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub models: Option<RunModels>,
 }
 
 /// [`RunLimits::design_tuning`].
@@ -166,6 +171,12 @@ impl RunLimits {
         self.thresholds = tuned.thresholds;
         // Ruling T9-2: the lists against the roster the run freezes (`Run.roster`).
         self.route_lists = RouteListsFrozen::freeze(&tuned.lists, &config.models);
+    }
+
+    /// Decision 9: the run's frozen role table. A run always has one: `build_run` sets
+    /// it and the restore fills it for a run recorded before milestone 9.8.
+    pub fn models(&self) -> &RunModels {
+        (self.models.as_ref()).expect("the run's models are frozen at start and filled at restore")
     }
 
     /// Ruling T13-5 (m5): a run entering the design flow takes the design classes'
