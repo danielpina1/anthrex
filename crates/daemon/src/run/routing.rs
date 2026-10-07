@@ -248,13 +248,13 @@ pub fn reviewer_pool(roster: &[ModelEntry], author: &Route, level: ReviewLevel) 
 /// except at the `chosen` model (every entry failed: the selector fell back to it, and
 /// the record must not call its own choice skipped).
 fn mark_failed(mut raw: Vec<Raw>, task: &Task, chosen: &Route) -> Vec<Raw> {
-    use super::route_pick::{failed_in, failed_routes};
+    use super::model_roles::{failed_in, failed_routes};
     let failed = (failed_routes(task).into_iter())
         .filter(|f| !failed_in(std::slice::from_ref(chosen), f))
         .collect::<Vec<_>>();
     for (route, reason) in raw.iter_mut() {
         if failed_in(&failed, route) {
-            *reason = Some(super::route_pick::FAILED_IN_TASK.to_string());
+            *reason = Some(super::model_roles::FAILED_IN_TASK.to_string());
         }
     }
     raw

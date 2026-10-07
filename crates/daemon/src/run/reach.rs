@@ -18,8 +18,9 @@
 use proto::{Route, Runtime, Size};
 
 use super::model::{ReviewLevel, Run, Task};
+use super::model_roles::installed_roster;
 use super::roster::escalate;
-use super::route_pick::{installed_roster, review_route, task_list};
+use super::route_pick::{review_route, task_list};
 use super::validate::resolve_task_lenient;
 use super::validate_patterns::peer_route;
 

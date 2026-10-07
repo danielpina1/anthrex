@@ -19,8 +19,9 @@ use crate::headless::{SessionEvent, TurnOutcome, claude_stream, credential_scrub
 use crate::manager::ManagerConfig;
 use crate::run::driver::build::installed::installed_now;
 use crate::run::model::FrozenList;
+use crate::run::model_roles::Installed;
 use crate::run::roster::{lowest_at_or_above, peer};
-use crate::run::route_pick::{Installed, RolePick, role};
+use crate::run::route_pick::{RolePick, role};
 use anyhow::Context;
 use proto::{DeciderMode, DeciderSource, Effort, ModelEntry, Route, Runtime, Strength, TokenUsage};
 use serde_json::Value;

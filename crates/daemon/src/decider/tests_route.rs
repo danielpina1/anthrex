@@ -12,7 +12,7 @@ use proto::{DeciderMode, Effort, ModelEntry, Runtime, Strength};
 use super::DeciderContext;
 use super::call::{route_over, routed};
 use crate::manager::ManagerConfig;
-use crate::run::route_pick::Installed;
+use crate::run::model_roles::Installed;
 
 const NO_CLAUDE: &str = "/nonexistent/anthrex-test/claude";
 const NO_CODEX: &str = "/nonexistent/anthrex-test/codex";

@@ -8,13 +8,16 @@
 //! session takes [`role`], and rung 2, `run retry` and the reviewer skip a route that
 //! failed in this task ([`failed_routes`], ruling RL-1). Pure (design decision 1).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use proto::{Effort, ModelEntry, Route, RoutingCandidate, Runtime, Size, Strength, TaskKind};
 
-use super::globs::any_intersect;
 use super::model::{
     FrozenList, ListPick, ListPolicy, ReviewLevel, RouteListsFrozen, Run, RunLimits, Task,
+};
+use super::model_roles::{
+    FAILED_IN_TASK, Installed, Mover, NOT_INSTALLED, alongside, failed_in, failed_routes, missing,
+    overlap,
 };
 use super::orch::roles::EARLIER_TAKEN;
 use super::roster::pick_reviewer;
@@ -26,38 +29,11 @@ pub const FIRST_QUALIFYING: &str = "first_qualifying";
 /// Skip reasons, as the routing history records them.
 pub const OVERLAPPING_OWNS: &str = "overlapping owns";
 pub const BELOW_STRENGTH: &str = "below the author's strength";
-pub const NOT_INSTALLED: &str = super::orch::roles::NOT_INSTALLED;
 pub const AUTHOR_RUNTIME: &str = "the author's runtime";
 pub const CURRENT_ROUTE: &str = "the current route";
 /// Ruling T10a-1: rung 2 never steps to a weaker strength, nor to a lower effort at the
 /// same strength.
 pub const BELOW_CURRENT: &str = "below the current route";
-/// Ruling RL-1: the route of a session of this task that ended for an environment reason.
-pub const FAILED_IN_TASK: &str = "failed in this task";
-
-/// What a run's start found installed (`run.orch.installed`, by runtime label). A
-/// runtime it does not name (a plan-file run records nothing) counts as installed.
-pub type Installed = BTreeMap<String, bool>;
-
-fn missing(installed: &Installed, runtime: Runtime) -> bool {
-    installed.get(runtime.label()) == Some(&false)
-}
-
-/// Ruling RL-1: the routes of this task's sessions that ended for an environment reason
-/// (`AgentRound::environment_failed`), which rung 2 and `run retry` skip.
-pub fn failed_routes(task: &Task) -> Vec<Route> {
-    (task.rounds.iter())
-        .filter(|r| r.environment_failed)
-        .map(|r| r.route.clone())
-        .collect()
-}
-
-/// Whether `route` is, by runtime and model, one of `failed` (an effort changes nothing
-/// about a model that cannot run).
-pub fn failed_in(failed: &[Route], route: &Route) -> bool {
-    (failed.iter()).any(|f| f.runtime == route.runtime && f.model == route.model)
-}
-
 /// The list a task takes (decision 9a, ruling RL-4): research by `scout`, review by
 /// `review`, any other task by its class's.
 pub fn task_list<'a>(lists: &'a RouteListsFrozen, task: &Task) -> &'a FrozenList {
@@ -204,50 +180,6 @@ fn targets(tasks: &[Task], ids: &BTreeSet<String>) -> BTreeSet<usize> {
         .filter(|(_, t)| ids.contains(t.id()) && !t.state.is_finished())
         .map(|(i, _)| i)
         .collect()
-}
-
-fn overlap(a: &Task, b: &Task) -> bool {
-    any_intersect(&a.spec.owns, &b.spec.owns)
-}
-
-/// Whose route the overlap rule checks (ruling FW-5).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Mover {
-    /// A task's worker. Validation rule 9 refuses overlapping tasks on different
-    /// runtimes whatever their deps, so every unfinished overlapping task counts.
-    Worker,
-    /// A racer or a test writer: a transient session rule 9 never sees. A task that
-    /// waits on the routed one never runs beside it and does not count (ruling FW-1).
-    Transient,
-}
-
-/// Ruling FW-5: the tasks that declare they wait on task `i`, directly or through other
-/// declared deps. An implicit `owns` dependency is left out: it links tasks on one
-/// runtime only, so the move it would allow dissolves it.
-fn declared_dependents(tasks: &[Task], i: usize) -> BTreeSet<usize> {
-    let mut found = BTreeSet::new();
-    let mut frontier = vec![i];
-    while let Some(k) = frontier.pop() {
-        let id = tasks[k].id();
-        for (j, t) in tasks.iter().enumerate() {
-            if j != i && t.spec.deps.iter().any(|d| d == id) && found.insert(j) {
-                frontier.push(j);
-            }
-        }
-    }
-    found
-}
-
-/// The tasks the overlap rule counts against task `i` for `mover`: every other
-/// unfinished one, but for a racer or a test writer not those that declare they wait on
-/// it (rulings FW-1, FW-5).
-fn alongside(tasks: &[Task], i: usize, mover: Mover) -> impl Iterator<Item = (usize, &Task)> {
-    let waiting = match mover {
-        Mover::Worker => BTreeSet::new(),
-        Mover::Transient => declared_dependents(tasks, i),
-    };
-    (tasks.iter().enumerate())
-        .filter(move |(j, t)| *j != i && !t.state.is_finished() && !waiting.contains(j))
 }
 
 /// The targets that take their class list, grouped by `owns` intersection within a
@@ -533,7 +465,7 @@ pub fn forecast(
 
 #[path = "route_pick_step.rs"]
 mod step;
-pub(crate) use step::{escalate_for, installed_roster};
+pub(crate) use step::escalate_for;
 pub use step::{
     every_route_failed, next_candidate, racer_route, rung2_route, writer_route,
     writer_route_failed, writer_step,

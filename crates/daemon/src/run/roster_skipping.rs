@@ -5,7 +5,7 @@ use proto::{Effort, ModelEntry, Route};
 
 use super::{escalate, pick_reviewer, route_from};
 use crate::run::model::ReviewLevel;
-use crate::run::route_pick::failed_in;
+use crate::run::model_roles::failed_in;
 
 /// Milestone 9.5 ruling RL-1: [`pick_reviewer`] and [`escalate`] with no roster entry
 /// that failed in this task (`failed`, by runtime and model). A route that failed

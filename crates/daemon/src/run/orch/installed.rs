@@ -7,8 +7,8 @@ use proto::{ModelEntry, OrchestratorChoice, Route, RoutingCandidate, Runtime};
 use super::launch::{Resolved, resolve_orchestrator};
 use super::roles::NOT_INSTALLED;
 use crate::run::model::Run;
+use crate::run::model_roles::Installed;
 use crate::run::roster::peer;
-use crate::run::route_pick::Installed;
 
 /// A runtime's configured binary when that binary is not installed, `None` when it is.
 pub type Missing<'a> = &'a dyn Fn(Runtime) -> Option<String>;

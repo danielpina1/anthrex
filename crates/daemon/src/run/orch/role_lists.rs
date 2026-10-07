@@ -7,9 +7,10 @@ use proto::{Effort, OrchestratorChoice, RoleRoutingDecision, Route, RoutingCandi
 
 use crate::decider::DeciderCaps;
 use crate::run::model::{FrozenList, ListPolicy, Run};
+use crate::run::model_roles::Installed;
 use crate::run::orch::launch::{Resolved, scout_routing};
 use crate::run::roster::strongest_of;
-use crate::run::route_pick::{Installed, LIST_POLICY, RolePick, role};
+use crate::run::route_pick::{LIST_POLICY, RolePick, role};
 
 /// A role record's source when the role's list chose its route.
 pub const LIST_SOURCE: &str = "configured_list";

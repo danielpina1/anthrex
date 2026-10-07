@@ -8,10 +8,11 @@ use std::collections::BTreeMap;
 use proto::{DeciderMode, Route, Runtime, TuningFile};
 
 use crate::run::model::{FrozenList, Run};
+use crate::run::model_roles::Installed;
 use crate::run::orch::test_support as orch_support;
 use crate::run::orch::{launch, roles};
 use crate::run::refit;
-use crate::run::route_pick::{self, Installed};
+use crate::run::route_pick;
 use crate::run::test_support::{build_tuned, plan_with, show, task_toml};
 
 /// A cell whose plan does not validate today (decision 16).

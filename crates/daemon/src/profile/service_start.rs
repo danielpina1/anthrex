@@ -216,7 +216,7 @@ pub(super) fn onboarding_route(
     ctx: &crate::scout::spec::ScoutContext,
     list: &config::RouteList,
     rotation: u32,
-    installed: &crate::run::route_pick::Installed,
+    installed: &crate::run::model_roles::Installed,
 ) -> Route {
     let roster = ctx.roster.current();
     let list = crate::run::model::FrozenList::freeze(list, &roster);

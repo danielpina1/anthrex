@@ -19,10 +19,11 @@ use crate::run::contract::{
     APPROVE_WITH_BLOCKING, REVIEW_RECORDED, review_changes_message, reviewer_prompt,
 };
 use crate::run::model::{AgentRound, ReviewLevel, ReviewRecord, Run};
+use crate::run::model_roles::failed_routes;
 use crate::run::orch::contract::worker_messages_for_review;
 use crate::run::role_launch::{jitter_ms, reviewer_spec, session_uuid_of};
 use crate::run::roster::pick_reviewer_skipping;
-use crate::run::route_pick::{failed_routes, reviewer};
+use crate::run::route_pick::reviewer;
 use crate::run::routing;
 
 pub(super) use super::review_session::{exited, resume_failed, turn_ended, watch};

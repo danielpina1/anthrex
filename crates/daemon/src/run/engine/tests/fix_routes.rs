@@ -12,9 +12,10 @@ use super::fixture::*;
 use super::full::{full_job, outcome, tier};
 use super::merge::{commit, doc_task, start_on};
 use crate::run::engine::EventKind;
+use crate::run::model_roles::Mover;
 use crate::run::proof::proof_command;
 use crate::run::roster::escalate;
-use crate::run::route_pick::{Mover, escalate_for};
+use crate::run::route_pick::escalate_for;
 use crate::run::test_support::task_toml;
 
 const SINGLE: &str = "cargo test -- --exact {test}";

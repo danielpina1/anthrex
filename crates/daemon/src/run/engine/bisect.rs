@@ -17,8 +17,9 @@ use crate::run::contract::{
 };
 use crate::run::env::profile_env;
 use crate::run::model::{BisectRecord, FixOf, Probe, Run, StageMerge, StageRecord};
+use crate::run::model_roles::Mover;
 use crate::run::proof::proof_command;
-use crate::run::route_pick::{Mover, escalate_for};
+use crate::run::route_pick::escalate_for;
 use crate::run::tiers::{RETRY_NAMES_MAX, TestAtSpec, TierOutcome};
 use proto::{Route, RouteSpec, TaskOrigin, TestMode};
 

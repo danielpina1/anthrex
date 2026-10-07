@@ -145,15 +145,6 @@ pub(crate) fn escalate_for(run: &Run, culprit: usize, current: &Route, mover: Mo
     escalate_skipping(&roster, current, &failed_routes(&run.tasks[culprit]))
 }
 
-/// Milestone 9.7 decision 16: the `roster` entries whose runtime `installed` does not
-/// record as missing (the installed skip alone; `reach`'s forecast has no task).
-pub(crate) fn installed_roster(roster: &[ModelEntry], installed: &Installed) -> Vec<ModelEntry> {
-    (roster.iter())
-        .filter(|e| !missing(installed, e.runtime))
-        .cloned()
-        .collect()
-}
-
 /// Ruling T10a-6: the roster entries task `i` may move to: those on its own runtime,
 /// and those on a runtime installed for the run that no unfinished task on another
 /// runtime holds by overlapping the task's `owns` (M8a decision 11, contract rule 22: as

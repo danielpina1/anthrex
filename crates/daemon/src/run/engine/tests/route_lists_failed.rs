@@ -12,8 +12,8 @@ use super::turns::killed_exit;
 use crate::headless::FailureKind;
 use crate::run::engine::{OpKind, OpResult, TurnOutcome};
 use crate::run::model::ReviewLevel;
+use crate::run::model_roles::FAILED_IN_TASK;
 use crate::run::roster::{pick_reviewer, pick_reviewer_skipping};
-use crate::run::route_pick::FAILED_IN_TASK;
 
 /// The default roster with two more Codex rows, so a reviewer has another to go to.
 fn config() -> config::Orchestrator {
