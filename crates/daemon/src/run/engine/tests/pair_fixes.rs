@@ -55,7 +55,7 @@ fn the_writers_rung_2_skips_a_runtime_that_is_not_installed() {
             run.orch.installed.insert("codex".into(), false);
         });
     assert_eq!(launch.spec.runtime, Runtime::Claude);
-    assert_eq!(launch.spec.effort, Effort::High);
+    assert_eq!(launch.spec.effort, Effort::HIGH);
     rung2(&mut fx, writer);
     let launch = fresh_launch(&mut fx);
     assert_eq!(role_of(&launch), AgentRole::TestWriter);

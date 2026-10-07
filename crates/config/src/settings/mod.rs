@@ -52,6 +52,8 @@ pub fn doc_of(o: &Orchestrator) -> SettingsDoc {
         },
         // Ruling T18-2: read-only in the settings; a save never writes it.
         design_default: Some(o.design.default),
+        // M9.8.12 fills this from `o.roles` when the settings screen edits the table.
+        roles: Default::default(),
     }
 }
 

@@ -24,7 +24,7 @@ fn reply_both_ways(reply: RunReply) {
 fn a_lane(lane: RaceLane, state: LaneState) -> LaneInfo {
     LaneInfo {
         lane,
-        route: a_route(Runtime::Codex, Strength::Standard, Effort::Medium, "gpt-6"),
+        route: a_route(Runtime::Codex, Strength::Standard, Effort::MEDIUM, "gpt-6"),
         state,
         checkout: format!("t1.{}", lane.label()),
         head: Some("d1d1d1d".into()),
@@ -86,7 +86,7 @@ fn a_tuning_report() -> TuningReport {
                     class: "M".into(),
                     route: ClassRoute {
                         strength: Strength::Frontier,
-                        effort: Effort::High,
+                        effort: Effort::HIGH,
                     },
                 },
             },
@@ -174,7 +174,7 @@ fn every_new_or_changed_message_round_trips() {
     });
     task.pair = Some(PairInfo {
         phase: PairPhase::Implementing,
-        writer_route: a_route(Runtime::Claude, Strength::Standard, Effort::Low, "s"),
+        writer_route: a_route(Runtime::Claude, Strength::Standard, Effort::LOW, "s"),
         test: Some("a::works".into()),
         red: Some("abcdef1".into()),
         red_checked: Some(true),

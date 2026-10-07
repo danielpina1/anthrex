@@ -18,7 +18,7 @@ fn route() -> Route {
         runtime: Runtime::Claude,
         model: "m".into(),
         strength: Strength::Standard,
-        effort: Effort::Medium,
+        effort: Effort::MEDIUM,
     }
 }
 

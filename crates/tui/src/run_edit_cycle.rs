@@ -21,11 +21,19 @@ pub(super) fn next_strength(value: Option<Strength>, forward: bool) -> Option<St
 pub(super) fn next_effort(value: Option<Effort>, forward: bool) -> Option<Effort> {
     let order = [
         None,
-        Some(Effort::Low),
-        Some(Effort::Medium),
-        Some(Effort::High),
+        Some(Effort::LOW),
+        Some(Effort::MEDIUM),
+        Some(Effort::HIGH),
     ];
-    step(&order, value, forward)
+    // `Effort` is not `Copy` (a string since 9.8): step by position, then clone.
+    let at = order.iter().position(|v| *v == value);
+    let len = order.len();
+    let next = match at {
+        Some(at) if forward => (at + 1) % len,
+        Some(at) => (at + len - 1) % len,
+        None => 0,
+    };
+    order[next].clone()
 }
 
 pub(super) fn next_test_mode(value: TestMode, forward: bool) -> TestMode {

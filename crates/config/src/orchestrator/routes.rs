@@ -200,9 +200,9 @@ fn read_candidate(
     };
     let effort = match t.get("effort").map(|v| v.as_str()) {
         None => None,
-        Some(Some("low")) => Some(Effort::Low),
-        Some(Some("medium")) => Some(Effort::Medium),
-        Some(Some("high")) => Some(Effort::High),
+        Some(Some("low")) => Some(Effort::LOW),
+        Some(Some("medium")) => Some(Effort::MEDIUM),
+        Some(Some("high")) => Some(Effort::HIGH),
         Some(_) => return fail(".effort", "must be low, medium or high"),
     };
     if !roster

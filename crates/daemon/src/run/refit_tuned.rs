@@ -138,7 +138,7 @@ pub fn tuned_with(lines: &[HistoryLine], file: &TuningFile, cfg: &config::Orches
             log.push(format!(
                 "tuning: route {} {} (applied)",
                 class.label(),
-                route_text(*r)
+                route_text(r.clone())
             ));
         }
     }
@@ -266,7 +266,7 @@ pub fn report(
         })
         .collect();
     let orchestrator_list = (cfg.tuning.routes.orchestrator.candidates.first()).map(|c| {
-        let effort = c.effort.map(|e| format!(" {}", effort_label(e)));
+        let effort = c.effort.clone().map(|e| format!(" {}", effort_label(e)));
         format!(
             "{}/{}{}",
             c.runtime.label(),

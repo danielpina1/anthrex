@@ -176,7 +176,9 @@ pub(super) fn puts(effects: &[Effect]) -> Vec<(u64, SettingsDoc)> {
         .into_iter()
         .filter_map(|(id, r)| match r {
             SettingsRequest::Put { settings } => Some((id, settings)),
-            SettingsRequest::Get => None,
+            SettingsRequest::Get
+            | SettingsRequest::RepoModels { .. }
+            | SettingsRequest::PutRepoModels { .. } => None,
         })
         .collect()
 }

@@ -71,7 +71,7 @@ fn codex_route(strength: Strength) -> Route {
         runtime: Runtime::Codex,
         model: String::new(),
         strength,
-        effort: proto::Effort::High,
+        effort: proto::Effort::HIGH,
     }
 }
 
@@ -92,7 +92,7 @@ fn a_codex_only_planner_records_claude_as_not_installed() {
         runtime: Runtime::Claude,
         model: "claude-opus-5-5".into(),
         strength: Strength::Frontier,
-        effort: proto::Effort::High,
+        effort: proto::Effort::HIGH,
     };
     let run = run_on(installed(true), opus);
     let d = planner_record(&run, 0, 1, 2_000);

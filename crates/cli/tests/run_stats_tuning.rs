@@ -223,10 +223,10 @@ fn apply_yes_skips_the_question() {
         "{}",
         stdout(&out)
     );
-    let route = tuning(&h).routes["s"];
+    let route = tuning(&h).routes["s"].clone();
     assert_eq!(
         (route.strength, route.effort),
-        (proto::Strength::Standard, proto::Effort::Medium)
+        (proto::Strength::Standard, proto::Effort::MEDIUM)
     );
 }
 

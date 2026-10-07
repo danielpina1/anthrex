@@ -209,7 +209,7 @@ pub fn worker_spec(run: &Run, task: &Task) -> HeadlessSpec {
     HeadlessSpec {
         runtime: route.runtime,
         model: route.model.clone(),
-        effort: route.effort,
+        effort: route.effort.clone(),
         cwd: task.worktree.clone(),
         instructions: WORKER_CONTRACT.to_string(),
         mcp: Some(McpTarget {
@@ -283,7 +283,7 @@ pub fn reviewer_spec(run: &Run, task: &Task, route: &Route) -> HeadlessSpec {
     HeadlessSpec {
         runtime: route.runtime,
         model: route.model.clone(),
-        effort: route.effort,
+        effort: route.effort.clone(),
         cwd: path.clone(),
         instructions: REVIEWER_CONTRACT.to_string(),
         mcp: Some(McpTarget {

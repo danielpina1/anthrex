@@ -161,7 +161,7 @@ impl RunLimits {
             doc_reviewer: tuned.budget_doc_review,
             lines: tuned.design_lines.clone(),
         };
-        self.class_routes = tuned.routes;
+        self.class_routes = tuned.routes.clone();
         self.path_weights = tuned.weights.clone();
         self.thresholds = tuned.thresholds;
         // Ruling T9-2: the lists against the roster the run freezes (`Run.roster`).

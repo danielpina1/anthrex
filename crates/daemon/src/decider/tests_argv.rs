@@ -19,7 +19,7 @@ fn ctx(runtime: Runtime, model: &str, caps: CliCaps) -> DeciderContext {
             runtime,
             model: model.into(),
             strength: Strength::Fast,
-            effort: Effort::Low,
+            effort: Effort::LOW,
         },
         timeout: Duration::from_secs(90),
         cwd: PathBuf::from("/data/deciders/cwd"),
@@ -285,5 +285,26 @@ fn decider_credential_scrub_removes_every_api_credential() {
     assert_eq!(
         credential_scrub_for(Runtime::Codex, config::ClaudeAuth::ApiKey),
         all
+    );
+}
+
+#[test]
+fn a_decider_at_the_default_effort_passes_no_flag() {
+    let mut claude_ctx = ctx(Runtime::Claude, "claude-haiku-4-5", CLI_CAPS);
+    claude_ctx.route.effort = Effort::DEFAULT;
+    let args = claude_decider_args(
+        &claude_ctx,
+        &DECIDER_CAPS,
+        &schema(DeciderKind::BlockedReason),
+    );
+    assert!(!args.iter().any(|a| a == "--effort"), "{args:?}");
+
+    let mut codex_ctx = ctx(Runtime::Codex, "gpt-5-mini", CLI_CAPS);
+    codex_ctx.route.effort = Effort::DEFAULT;
+    let file = Path::new("/data/deciders/schemas/triage-0123456789abcdef.json");
+    let args = codex_decider_args(&codex_ctx, &DECIDER_CAPS, file, "PROMPT");
+    assert!(
+        !args.iter().any(|a| a.starts_with("model_reasoning_effort")),
+        "{args:?}"
     );
 }

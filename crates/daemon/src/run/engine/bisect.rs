@@ -559,7 +559,7 @@ fn add_fix(
             runtime: Some(route.runtime),
             model: Some(route.model.clone()),
             strength: Some(route.strength),
-            effort: Some(route.effort),
+            effort: Some(route.effort.clone()),
         },
         test_mode: TestMode::Check,
         test_mode_reason: Some(FIX_TEST_MODE_REASON.to_string()),

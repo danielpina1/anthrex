@@ -31,7 +31,7 @@ fn policy_fills_routes_by_class() {
             Runtime::Claude,
             "claude-sonnet-5",
             Strength::Standard,
-            Effort::Low
+            Effort::LOW
         )
     );
     assert_eq!(
@@ -40,7 +40,7 @@ fn policy_fills_routes_by_class() {
             Runtime::Claude,
             "claude-sonnet-5",
             Strength::Standard,
-            Effort::Medium
+            Effort::MEDIUM
         )
     );
     assert_eq!(
@@ -49,7 +49,7 @@ fn policy_fills_routes_by_class() {
             Runtime::Claude,
             "claude-opus-5-5",
             Strength::Frontier,
-            Effort::High
+            Effort::HIGH
         )
     );
     // Budgets by class: S the S budget, M and hub the M budget.
@@ -72,7 +72,7 @@ fn default_runtime_comes_from_config() {
     let run = build_with(&text, &config).unwrap_or_else(|e| panic!("{}", show(&e)));
     assert_eq!(
         task(&run, "s").route,
-        route(Runtime::Codex, "", Strength::Standard, Effort::Low)
+        route(Runtime::Codex, "", Strength::Standard, Effort::LOW)
     );
 }
 
@@ -95,7 +95,7 @@ fn a_given_model_fixes_the_strength() {
             Runtime::Claude,
             "claude-haiku-4-5",
             Strength::Fast,
-            Effort::Low
+            Effort::LOW
         )
     );
 }

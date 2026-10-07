@@ -31,7 +31,7 @@ fn report(id: &str, summary: &str) -> ScoutReport {
             runtime: Runtime::Codex,
             model: String::new(),
             strength: Strength::Standard,
-            effort: Effort::Medium,
+            effort: Effort::MEDIUM,
         },
         window_id: None,
         started_at: 0,

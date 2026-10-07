@@ -16,12 +16,12 @@ fn reviewer_spec_is_read_only() {
             runtime,
             model: "m".into(),
             strength: Strength::Standard,
-            effort: Effort::Medium,
+            effort: Effort::MEDIUM,
         };
         let spec = reviewer_spec(&run, task, &route);
         assert_eq!(spec.cwd, review);
         assert_eq!(spec.runtime, runtime);
-        assert_eq!(spec.effort, Effort::Medium);
+        assert_eq!(spec.effort, Effort::MEDIUM);
         assert_eq!(spec.instructions, crate::run::contract::REVIEWER_CONTRACT);
         assert_eq!(
             spec.allowed_tools,
@@ -127,7 +127,7 @@ fn codex_sessions_carry_the_base_codex_config_guard() {
         runtime,
         model: "m".into(),
         strength: Strength::Standard,
-        effort: Effort::Medium,
+        effort: Effort::MEDIUM,
     };
     let mut task = run.tasks[0].clone();
     for branch in [None, Some(CodexProjectConfig::Loaded)] {
@@ -194,7 +194,7 @@ fn claude_sessions_deny_writes_to_protected_agent_config() {
         runtime: Runtime::Claude,
         model: "m".into(),
         strength: Strength::Standard,
-        effort: Effort::Medium,
+        effort: Effort::MEDIUM,
     };
     let review = reviewer_spec(&run, &owner, &route).claude_sandbox.unwrap();
     let path = run.review_path(owner.id());

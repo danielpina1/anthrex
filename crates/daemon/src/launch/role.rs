@@ -108,8 +108,8 @@ pub fn claude_role_args(role: &RoleLaunch, ctx: &LaunchContext<'_>, caps: &CliCa
         "--append-system-prompt".into(),
         role.instructions.clone(),
     ]);
-    if caps.claude_effort_flag {
-        args.extend(["--effort".into(), effort(role.effort).into()]);
+    if let (true, Some(e)) = (caps.claude_effort_flag, effort(&role.effort)) {
+        args.extend(["--effort".into(), e.into()]);
     }
     args
 }
@@ -137,10 +137,9 @@ pub fn codex_role_args(role: &RoleLaunch, ctx: &LaunchContext<'_>, caps: &CliCap
         "developer_instructions={}",
         toml_string(&role.instructions)
     ));
-    config(format!(
-        "model_reasoning_effort={}",
-        toml_string(effort(role.effort))
-    ));
+    if let Some(e) = effort(&role.effort) {
+        config(format!("model_reasoning_effort={}", toml_string(e)));
+    }
     if let Some(flags) = caps.codex_user_config_only {
         args.extend(flags.iter().map(|f| f.to_string()));
     }

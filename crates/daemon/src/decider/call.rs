@@ -153,12 +153,12 @@ pub fn route_over(ctx: &DeciderContext, installed: &Installed) -> Routed {
         true => 0,
         false => r.rotation.fetch_add(1, Ordering::Relaxed),
     };
-    let pick = role(&r.list, rotation, ctx.route.effort, installed);
+    let pick = role(&r.list, rotation, ctx.route.effort.clone(), installed);
     let missing = |rt: Runtime| installed.get(rt.label()) == Some(&false);
     let (runtime, other) = (ctx.route.runtime, peer(ctx.route.runtime));
     let peer_route = (missing(runtime) && !missing(other)).then(|| {
         let strength = r.strength.unwrap_or(ctx.route.strength);
-        ladder_route(&r.models, other, strength, ctx.route.effort)
+        ladder_route(&r.models, other, strength, ctx.route.effort.clone())
     });
     let listed = pick.as_ref().and_then(|p| p.route.clone());
     let moved = (listed.is_none() && peer_route.is_some()).then(|| ctx.route.clone());

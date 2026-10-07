@@ -70,7 +70,7 @@ fn gpt6() -> Route {
         runtime: Runtime::Codex,
         model: GPT6_SOL.into(),
         strength: Strength::Standard,
-        effort: Effort::Low,
+        effort: Effort::LOW,
     }
 }
 
@@ -150,7 +150,7 @@ fn opus() -> Route {
         runtime: Runtime::Claude,
         model: "claude-opus-5-5".into(),
         strength: Strength::Frontier,
-        effort: Effort::Medium,
+        effort: Effort::MEDIUM,
     }
 }
 
@@ -160,7 +160,7 @@ fn codex_default() -> Route {
         runtime: Runtime::Codex,
         model: String::new(),
         strength: Strength::Standard,
-        effort: Effort::High,
+        effort: Effort::HIGH,
     }
 }
 
@@ -201,7 +201,7 @@ fn with_every_roster_route_failed_a_retry_takes_the_original_and_logs_it() {
             runtime: e.runtime,
             model: e.model.clone(),
             strength: e.strength,
-            effort: Effort::Low,
+            effort: Effort::LOW,
         };
         fx.task_mut("t1").rounds.push(earlier);
     }

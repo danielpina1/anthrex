@@ -287,7 +287,7 @@ fn race_and_pair_widen_reach() {
         (
             Runtime::Codex,
             run.tasks[0].route.strength,
-            run.tasks[0].route.effort
+            run.tasks[0].route.effort.clone()
         )
     );
     let none = [("codex".to_string(), false)].into();
@@ -307,7 +307,7 @@ fn a_started_racing_task_on_a_moved_route_still_takes_a_brief() {
         runtime: Runtime::Claude,
         model: "claude-opus-5-5".into(),
         strength: proto::Strength::Frontier,
-        effort: proto::Effort::High,
+        effort: proto::Effort::HIGH,
     };
     let brief = json!({"op": "amend_task", "task_id": "t1", "brief": "New brief"});
     let accept = json!({"op": "amend_task", "task_id": "t1", "acceptance": ["New"]});

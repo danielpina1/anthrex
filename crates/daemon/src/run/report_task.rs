@@ -330,7 +330,7 @@ fn route_line(route: &Route) -> String {
         runtime_label(route.runtime),
         route.model,
         strength_label(route.strength),
-        effort_label(route.effort)
+        effort_label(route.effort.clone())
     )
 }
 
@@ -350,10 +350,6 @@ pub(super) fn strength_label(strength: Strength) -> &'static str {
     }
 }
 
-fn effort_label(effort: Effort) -> &'static str {
-    match effort {
-        Effort::Low => "low",
-        Effort::Medium => "medium",
-        Effort::High => "high",
-    }
+fn effort_label(effort: Effort) -> String {
+    effort.to_string()
 }

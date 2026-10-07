@@ -508,6 +508,7 @@ async fn pre_run_triage_writes_a_record_even_when_no_run_is_created() {
         orchestrator: Some(proto::OrchestratorChoice {
             runtime: proto::Runtime::Codex,
             model: None,
+            effort: None,
         }),
         delivery: None,
         continue_from: None,

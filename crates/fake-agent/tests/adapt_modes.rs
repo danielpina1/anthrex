@@ -36,7 +36,7 @@ fn ctx(runtime: Runtime) -> DeciderContext {
             runtime,
             model: "fast-model".into(),
             strength: Strength::Fast,
-            effort: Effort::Low,
+            effort: Effort::LOW,
         },
         timeout: Duration::from_secs(90),
         cwd: PathBuf::from("/tmp/unused"),

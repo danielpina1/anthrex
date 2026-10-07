@@ -46,7 +46,7 @@ impl Default for Deciders {
             mode: DeciderMode::Claude,
             timeout_secs: 90,
             strength: Strength::Fast,
-            effort: Effort::Low,
+            effort: Effort::LOW,
             slot_wait_secs: 30,
         }
     }
@@ -67,7 +67,7 @@ impl Default for Scouts {
         Scouts {
             runtime: None,
             strength: Strength::Fast,
-            effort: Effort::Low,
+            effort: Effort::LOW,
             timeout_secs: 900,
             max_tool_calls: 120,
         }
@@ -275,16 +275,16 @@ pub(super) fn read_effort(
         return;
     };
     match v.as_str() {
-        Some("low") => *field = Effort::Low,
-        Some("medium") => *field = Effort::Medium,
-        Some("high") => *field = Effort::High,
+        Some("low") => *field = Effort::LOW,
+        Some("medium") => *field = Effort::MEDIUM,
+        Some("high") => *field = Effort::HIGH,
         _ => problems.push(Problem {
             key: format!("{prefix}.effort"),
             message: "must be low, medium or high".to_string(),
-            default: match field {
-                Effort::Low => "low",
-                Effort::Medium => "medium",
-                Effort::High => "high",
+            default: match field.as_str() {
+                "low" => "low",
+                "medium" => "medium",
+                _ => "high",
             }
             .to_string(),
         }),

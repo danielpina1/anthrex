@@ -331,7 +331,7 @@ fn apply_owned_copies_only_owned_fields() {
     assert_eq!(doc_of(&live), doc_of(&from));
     assert!(!live.builtin_models);
     assert_eq!(live.git_timeout_secs, 60, "not owned");
-    assert_eq!(live.agent.agent.effort, proto::Effort::High, "not owned");
+    assert_eq!(live.agent.agent.effort, proto::Effort::HIGH, "not owned");
     assert_eq!(live.budget_s.tokens, None, "budget tokens are not owned");
 }
 

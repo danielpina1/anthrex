@@ -58,6 +58,7 @@ fn a_doc() -> SettingsDoc {
             max_bounces: 2,
         },
         design_default: None,
+        roles: Default::default(),
     }
 }
 

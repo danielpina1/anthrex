@@ -130,12 +130,8 @@ pub fn strength_word(strength: Strength) -> &'static str {
     }
 }
 
-pub fn effort_word(effort: Effort) -> &'static str {
-    match effort {
-        Effort::Low => "low",
-        Effort::Medium => "medium",
-        Effort::High => "high",
-    }
+pub fn effort_word(effort: Effort) -> String {
+    effort.to_string()
 }
 
 pub fn size_word(size: Size) -> &'static str {
@@ -203,7 +199,7 @@ impl TaskEditForm {
             runtime: spec.runtime,
             model: TextInput::new(&model),
             strength: spec.strength,
-            effort: spec.effort,
+            effort: spec.effort.clone(),
             size: task.size,
             test_mode: task.test_mode,
             reason: TextInput::new(&reason),
@@ -307,7 +303,7 @@ impl TaskEditForm {
                 self.model.clear();
             }
             EditField::Strength => self.strength = next_strength(self.strength, forward),
-            EditField::Effort => self.effort = next_effort(self.effort, forward),
+            EditField::Effort => self.effort = next_effort(self.effort.clone(), forward),
             EditField::Size => self.size = next_size(self.size, forward),
             EditField::TestMode => self.test_mode = next_test_mode(self.test_mode, forward),
             EditField::Stage => {
@@ -431,7 +427,7 @@ impl TaskEditForm {
             route.strength = self.strength;
         }
         if effort_changed {
-            route.effort = self.effort;
+            route.effort = self.effort.clone();
         }
         let route_changed = runtime_changed || model_changed || strength_changed || effort_changed;
 
@@ -503,9 +499,9 @@ impl TaskEditForm {
                 Some(strength) => (choice(strength_word(strength)), None),
                 None => policy(strength_word(self.resolved.strength)),
             },
-            EditField::Effort => match self.effort {
-                Some(effort) => (choice(effort_word(effort)), None),
-                None => policy(effort_word(self.resolved.effort)),
+            EditField::Effort => match &self.effort {
+                Some(effort) => (choice(&effort_word(effort.clone())), None),
+                None => policy(&effort_word(self.resolved.effort.clone())),
             },
             EditField::Size => (choice(size_word(self.size)), None),
             EditField::TestMode => (choice(test_mode_word(self.test_mode)), None),

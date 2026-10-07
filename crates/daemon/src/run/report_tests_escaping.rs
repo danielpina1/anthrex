@@ -342,11 +342,7 @@ fn route_and_review_route_content_is_asserted_m2() {
             proto::Strength::Standard => "standard",
             proto::Strength::Frontier => "frontier",
         },
-        match rr.effort {
-            proto::Effort::Low => "low",
-            proto::Effort::Medium => "medium",
-            proto::Effort::High => "high",
-        },
+        rr.effort.as_str(),
     );
     assert!(out.contains(&expected), "missing {expected:?} in:\n{out}");
 }

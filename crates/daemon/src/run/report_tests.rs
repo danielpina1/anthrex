@@ -24,7 +24,7 @@ fn round(role: AgentRole, session: u32, turns: u32, tool_calls: u32, denials: u3
             runtime: Runtime::Claude,
             model: "claude-sonnet-5".to_string(),
             strength: Strength::Standard,
-            effort: proto::Effort::High,
+            effort: proto::Effort::HIGH,
         },
         launch_op: 1,
         session_id: Some("sess-1".to_string()),

@@ -43,7 +43,7 @@ pub(crate) fn round_inspection(
         "{label}  {} · {} · {}",
         route.runtime.label(),
         strength_text(route.strength),
-        effort_text(route.effort)
+        effort_text(route.effort.clone())
     );
     let fields = match info.role {
         AgentRole::Reviewer => reviewer_fields(task, round, app),

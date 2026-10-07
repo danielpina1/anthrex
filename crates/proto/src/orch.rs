@@ -20,6 +20,10 @@ pub struct OrchestratorChoice {
     pub runtime: Runtime,
     #[serde(default)]
     pub model: Option<String>,
+    /// Milestone 9.8: the goal form's effort; `None` is the row's (same model) or the
+    /// model's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
 }
 
 /// Decision 28: what an approval hold waits on.

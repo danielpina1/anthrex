@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::models::ModelTable;
 use crate::run::ModelEntry;
 use crate::types::Runtime;
 
@@ -86,6 +87,9 @@ pub struct SettingsDoc {
     /// that did not say; left out while `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub design_default: Option<crate::design::DesignMode>,
+    /// Milestone 9.8: the global role table (`Orchestrator.roles`).
+    #[serde(default, skip_serializing_if = "ModelTable::is_empty")]
+    pub roles: ModelTable,
 }
 
 /// Whether a key's value came from the file or is the built-in default.
@@ -99,7 +103,17 @@ pub enum Origin {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SettingsRequest {
     Get,
-    Put { settings: SettingsDoc },
+    Put {
+        settings: SettingsDoc,
+    },
+    /// Milestone 9.8 decision 36: the repository's own role table.
+    RepoModels {
+        project: PathBuf,
+    },
+    PutRepoModels {
+        project: PathBuf,
+        table: ModelTable,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -115,5 +129,14 @@ pub enum SettingsReply {
     },
     Refused {
         problems: Vec<String>,
+    },
+    RepoModels {
+        project: PathBuf,
+        table: ModelTable,
+        path: PathBuf,
+    },
+    RepoSaved {
+        project: PathBuf,
+        table: ModelTable,
     },
 }

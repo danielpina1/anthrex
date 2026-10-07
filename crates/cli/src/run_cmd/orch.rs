@@ -35,6 +35,7 @@ pub(super) fn parse_orchestrator(spec: &str) -> anyhow::Result<OrchestratorChoic
     Ok(OrchestratorChoice {
         runtime,
         model: model.filter(|m| !m.is_empty()).map(str::to_string),
+        effort: None,
     })
 }
 

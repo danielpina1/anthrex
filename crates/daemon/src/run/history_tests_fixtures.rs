@@ -48,7 +48,7 @@ pub(super) fn round(
 ) -> AgentRound {
     let json = serde_json::json!({
         "role": role, "session": session, "round": session, "window_id": 7,
-        "route": route(Runtime::Claude, "claude-sonnet-5", Strength::Standard, Effort::High),
+        "route": route(Runtime::Claude, "claude-sonnet-5", Strength::Standard, Effort::HIGH),
         "launch_op": 1, "session_id": "s", "pid": null, "ended": true, "started_at": 1_000,
         "ended_at": 1_500, "turn_open": false, "turns": 1, "turn_had_task_done": true,
         "last_event": 1_500, "tool_calls": tool_calls, "rate_limited_until": null,
@@ -106,7 +106,7 @@ pub(super) fn finding(severity: Severity) -> Finding {
 pub(super) fn review(round: u32, verdict: Verdict, findings: Vec<Finding>) -> ReviewRecord {
     ReviewRecord {
         round,
-        route: route(Runtime::Codex, "", Strength::Standard, Effort::Low),
+        route: route(Runtime::Codex, "", Strength::Standard, Effort::LOW),
         base: "b".into(),
         head: "h".into(),
         verdict: Some(verdict),
@@ -128,7 +128,7 @@ pub(super) fn candidates(d: &RoutingDecision) -> Vec<(String, Effort, Option<Str
         .iter()
         .map(|c| {
             let name = format!("{}:{}", c.route.runtime, c.route.model);
-            (name, c.route.effort, c.skipped_reason.clone())
+            (name, c.route.effort.clone(), c.skipped_reason.clone())
         })
         .collect()
 }

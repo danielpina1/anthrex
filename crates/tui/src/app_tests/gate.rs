@@ -346,7 +346,7 @@ fn the_edit_form_sends_only_what_changed() {
                 runtime: Some(Runtime::Claude),
                 model: None,
                 strength: None,
-                effort: Some(Effort::High),
+                effort: Some(Effort::HIGH),
             }),
             Some(Size::S)
         )])
@@ -410,7 +410,7 @@ fn policy_is_a_choice() {
                 runtime: None,
                 model: None,
                 strength: None,
-                effort: Some(Effort::Medium),
+                effort: Some(Effort::MEDIUM),
             }),
             None
         )])

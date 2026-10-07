@@ -156,7 +156,7 @@ fn task_record_from_a_merged_task() {
     task.phase_since = 900;
     let task = run.tasks[0].clone();
     let record = task_record(&run, &task, TaskOutcome::Merged, 1_000);
-    let reviewer = route(Runtime::Codex, "", Strength::Standard, Effort::Low);
+    let reviewer = route(Runtime::Codex, "", Strength::Standard, Effort::LOW);
     let want = TaskRecord {
         v: HISTORY_VERSION,
         record_id: format!("{}/t1", run.id),
@@ -237,7 +237,7 @@ fn routing_history_keeps_choice_time_candidates() {
         Runtime::Claude,
         "claude-sonnet-5",
         Strength::Standard,
-        Effort::Medium,
+        Effort::MEDIUM,
     );
     assert_eq!(run.tasks[0].route, sonnet);
 
@@ -317,18 +317,18 @@ fn routing_history_keeps_choice_time_candidates() {
         vec![
             (
                 format!("{claude}claude-haiku-4-5"),
-                Effort::Medium,
+                Effort::MEDIUM,
                 medium_std
             ),
-            (format!("{claude}claude-sonnet-5"), Effort::Medium, None),
+            (format!("{claude}claude-sonnet-5"), Effort::MEDIUM, None),
             (
                 format!("{claude}claude-opus-5-5"),
-                Effort::Medium,
+                Effort::MEDIUM,
                 s("strength frontier, the task needs standard")
             ),
             (
                 codex.to_string(),
-                Effort::Medium,
+                Effort::MEDIUM,
                 s("runtime codex, the task runs on claude")
             ),
         ]
@@ -337,21 +337,21 @@ fn routing_history_keeps_choice_time_candidates() {
     assert_eq!(
         candidates(&decisions[1]),
         vec![
-            (format!("{claude}claude-sonnet-5"), Effort::High, None),
-            (codex.to_string(), Effort::High, after.clone()),
+            (format!("{claude}claude-sonnet-5"), Effort::HIGH, None),
+            (codex.to_string(), Effort::HIGH, after.clone()),
             (
                 format!("{claude}claude-opus-5-5"),
-                Effort::High,
+                Effort::HIGH,
                 after.clone()
             ),
             (
                 format!("{claude}claude-sonnet-5"),
-                Effort::Medium,
+                Effort::MEDIUM,
                 after.clone()
             ),
             (
                 format!("{claude}claude-haiku-4-5"),
-                Effort::High,
+                Effort::HIGH,
                 s("not an escalation step from claude-sonnet-5")
             ),
         ]
@@ -360,20 +360,20 @@ fn routing_history_keeps_choice_time_candidates() {
     assert_eq!(
         candidates(&decisions[2]),
         vec![
-            (codex.to_string(), Effort::Medium, None),
+            (codex.to_string(), Effort::MEDIUM, None),
             (
                 format!("{claude}claude-opus-5-5"),
-                Effort::Medium,
+                Effort::MEDIUM,
                 after.clone()
             ),
             (
                 format!("{claude}claude-sonnet-5"),
-                Effort::Medium,
+                Effort::MEDIUM,
                 s("the author's own model")
             ),
             (
                 format!("{claude}claude-haiku-4-5"),
-                Effort::Medium,
+                Effort::MEDIUM,
                 s("below the required standard strength")
             ),
         ]
@@ -382,18 +382,18 @@ fn routing_history_keeps_choice_time_candidates() {
     assert_eq!(
         candidates(&decisions[3]),
         vec![
-            (format!("{claude}claude-opus-5-5"), Effort::High, None),
+            (format!("{claude}claude-opus-5-5"), Effort::HIGH, None),
             (
                 format!("{claude}claude-sonnet-5"),
-                Effort::High,
+                Effort::HIGH,
                 s("the author's own model")
             ),
             (
                 format!("{claude}claude-haiku-4-5"),
-                Effort::High,
+                Effort::HIGH,
                 below.clone()
             ),
-            (codex.to_string(), Effort::High, below),
+            (codex.to_string(), Effort::HIGH, below),
         ]
     );
     for d in &decisions {

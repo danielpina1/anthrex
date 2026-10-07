@@ -53,7 +53,7 @@ fn amend_route_on_a_rung3_l_task_is_rejected() {
         "t1",
         Amend {
             route: Some(RouteSpec {
-                effort: Some(Effort::High),
+                effort: Some(Effort::HIGH),
                 ..RouteSpec::default()
             }),
             ..Amend::default()
@@ -106,7 +106,7 @@ fn an_escalated_route_survives_a_test_mode_amend() {
         runtime: Runtime::Codex,
         model: String::new(),
         strength: Strength::Standard,
-        effort: Effort::High,
+        effort: Effort::HIGH,
     };
     let t2 = task_mut(&mut run, "t2");
     t2.route = escalated.clone();
@@ -128,7 +128,7 @@ fn an_escalated_route_survives_a_test_mode_amend() {
         "t2",
         Amend {
             route: Some(RouteSpec {
-                effort: Some(Effort::Medium),
+                effort: Some(Effort::MEDIUM),
                 ..RouteSpec::default()
             }),
             ..Amend::default()
@@ -137,8 +137,8 @@ fn an_escalated_route_survives_a_test_mode_amend() {
     let (edited, _) = applied(&run, vec![named]);
     let route = &task(&edited, "t2").route;
     assert_eq!(
-        (route.model.as_str(), route.effort),
-        ("claude-sonnet-5", Effort::Medium)
+        (route.model.as_str(), route.effort.clone()),
+        ("claude-sonnet-5", Effort::MEDIUM)
     );
 }
 
@@ -539,7 +539,7 @@ fn an_engine_escalation_to_the_peer_runtime_does_not_block_later_edits() {
         runtime: Runtime::Codex,
         model: String::new(),
         strength: Strength::Standard,
-        effort: Effort::High,
+        effort: Effort::HIGH,
     };
     t1.rung = 2;
 

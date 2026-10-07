@@ -115,7 +115,7 @@ async fn a_missing_or_changed_pack_is_unreadable() {
                 runtime: proto::Runtime::Claude,
                 model: "m".into(),
                 strength: proto::Strength::Frontier,
-                effort: proto::Effort::High,
+                effort: proto::Effort::HIGH,
             },
             session: 1,
             window_id: None,

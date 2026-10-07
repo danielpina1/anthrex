@@ -13,13 +13,13 @@ pub(crate) fn edit_fixture_task() -> TaskInfo {
         runtime: Some(Runtime::Claude),
         model: None,
         strength: None,
-        effort: Some(Effort::Medium),
+        effort: Some(Effort::MEDIUM),
     };
     t1.route = Route {
         runtime: Runtime::Claude,
         model: "claude-sonnet-5".into(),
         strength: Strength::Standard,
-        effort: Effort::Medium,
+        effort: Effort::MEDIUM,
     };
     t1.brief = "Line one\nLine two".into();
     t1
@@ -136,16 +136,32 @@ fn choices_cycle_both_ways() {
     let mut seen = vec![];
     for _ in 0..4 {
         form.on_key(key(KeyCode::Right));
-        seen.push(form.effort);
+        seen.push(form.effort.clone());
     }
-    use proto::Effort::*;
-    assert_eq!(seen, vec![Some(High), None, Some(Low), Some(Medium)]);
+    use proto::Effort;
+    assert_eq!(
+        seen,
+        vec![
+            Some(Effort::HIGH),
+            None,
+            Some(Effort::LOW),
+            Some(Effort::MEDIUM)
+        ]
+    );
     let mut seen = vec![];
     for _ in 0..4 {
         form.on_key(key(KeyCode::Left));
-        seen.push(form.effort);
+        seen.push(form.effort.clone());
     }
-    assert_eq!(seen, vec![Some(Low), None, Some(High), Some(Medium)]);
+    assert_eq!(
+        seen,
+        vec![
+            Some(Effort::LOW),
+            None,
+            Some(Effort::HIGH),
+            Some(Effort::MEDIUM)
+        ]
+    );
 
     focus(&mut form, EditField::Size);
     form.on_key(key(KeyCode::Right));
@@ -464,7 +480,7 @@ fn a_pinned_model_is_kept_byte_for_byte_through_a_strength_or_effort_change() {
                 runtime: Some(Runtime::Claude),
                 model: Some(pinned.into()),
                 strength: Some(Strength::Fast),
-                effort: Some(Effort::High),
+                effort: Some(Effort::HIGH),
             }),
             "an untouched model is the plan's own, hostile {hostile}"
         );
@@ -569,7 +585,7 @@ fn the_largest_edit_fits_one_frame() {
             runtime: Some(proto::Runtime::Codex),
             model: Some(wide(TEXT_MAX_CHARS)),
             strength: Some(proto::Strength::Frontier),
-            effort: Some(proto::Effort::High),
+            effort: Some(proto::Effort::HIGH),
         }),
         test_mode: Some(proto::TestMode::None),
         test_mode_reason: Some(wide(TEXT_MAX_CHARS)),

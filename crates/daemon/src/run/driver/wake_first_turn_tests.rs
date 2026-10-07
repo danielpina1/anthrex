@@ -67,7 +67,7 @@ fn role(run_id: &str) -> RoleLaunch {
             agent_label: None,
         },
         instructions: "the orchestrator contract".into(),
-        effort: Effort::High,
+        effort: Effort::HIGH,
         claude_allowed_tools: Vec::new(),
         claude_disallowed_tools: Vec::new(),
         env: Vec::new(),

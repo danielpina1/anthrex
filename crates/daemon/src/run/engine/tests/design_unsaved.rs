@@ -153,9 +153,10 @@ fn a_same_runtime_reviewers_record_states_its_reason() {
     assert_eq!(reviewer.route.runtime, Runtime::Claude);
     started(&mut fx, "spec-r1", REVIEWER);
     let orchestrator = fx.run_mut().orch.orchestrator.as_mut().unwrap();
-    orchestrator.route.effort = match orchestrator.route.effort {
-        proto::Effort::Low => proto::Effort::High,
-        _ => proto::Effort::Low,
+    orchestrator.route.effort = if orchestrator.route.effort == proto::Effort::LOW {
+        proto::Effort::HIGH
+    } else {
+        proto::Effort::LOW
     };
     let reason = crate::scout::machine::unsubmitted(&DOC_REVIEWER_TEXTS);
     reviewer_ended(&mut fx, "spec-r1", 1, ScoutEnd::Unsubmitted { reason });

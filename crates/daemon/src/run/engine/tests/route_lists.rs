@@ -30,15 +30,15 @@ fn lists() -> RouteLists {
     RouteLists {
         s: RouteList {
             candidates: vec![
-                cand(Runtime::Codex, SOL, Some(Effort::Low)),
-                cand(Runtime::Claude, "claude-opus-5-5", Some(Effort::Medium)),
+                cand(Runtime::Codex, SOL, Some(Effort::LOW)),
+                cand(Runtime::Claude, "claude-opus-5-5", Some(Effort::MEDIUM)),
             ],
             pick: Pick::First,
         },
         review: RouteList {
             candidates: vec![
                 cand(Runtime::Claude, "claude-haiku-4-5", None),
-                cand(Runtime::Claude, "claude-opus-5-5", Some(Effort::High)),
+                cand(Runtime::Claude, "claude-opus-5-5", Some(Effort::HIGH)),
                 cand(Runtime::Codex, SOL, None),
             ],
             pick: Pick::First,
@@ -73,7 +73,7 @@ fn sol_low() -> Route {
         runtime: Runtime::Codex,
         model: SOL.into(),
         strength: Strength::Frontier,
-        effort: Effort::Low,
+        effort: Effort::LOW,
     }
 }
 
@@ -107,7 +107,7 @@ fn a_listed_worker_records_its_list_and_rung_2_takes_the_next_candidate() {
         runtime: Runtime::Claude,
         model: "claude-opus-5-5".into(),
         strength: Strength::Frontier,
-        effort: Effort::Medium,
+        effort: Effort::MEDIUM,
     };
     assert_eq!(fx.task("t1").route, next);
     let effects = super::turns::killed_exit(&mut fx, window);
@@ -153,7 +153,7 @@ fn the_reviewer_comes_from_the_review_list_and_records_it() {
         runtime: Runtime::Claude,
         model: "claude-opus-5-5".into(),
         strength: Strength::Frontier,
-        effort: Effort::High,
+        effort: Effort::HIGH,
     };
     let (_, kind) = only_op(&effects, "CreateWindow");
     assert!(format!("{kind:?}").contains("claude-opus-5-5"), "{kind:?}");
@@ -195,7 +195,7 @@ fn a_decider_raise_repicks_from_the_new_classes_list() {
         candidates: vec![cand(
             Runtime::Claude,
             "claude-haiku-4-5",
-            Some(Effort::High),
+            Some(Effort::HIGH),
         )],
         pick: Pick::First,
     };
@@ -216,8 +216,8 @@ fn a_decider_raise_repicks_from_the_new_classes_list() {
         let mut run = build_tuned(&plan, &config::Orchestrator::default(), true, tuning);
         let listed = &run.tasks[0].route;
         assert_eq!(
-            (listed.model.as_str(), listed.effort),
-            ("claude-haiku-4-5", Effort::High)
+            (listed.model.as_str(), listed.effort.clone()),
+            ("claude-haiku-4-5", Effort::HIGH)
         );
         super::super::deciders_size::apply_raise(&mut run, "t1", proto::Size::M, "evidence");
         assert_eq!(run.tasks[0].size, proto::Size::M);

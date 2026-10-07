@@ -129,7 +129,7 @@ fn route_down_needs_no_escalation_and_no_quality_failure() {
         down[0].change,
         TuningChange::Route {
             class: "s".into(),
-            route: route(Strength::Fast, Effort::Medium)
+            route: route(Strength::Fast, Effort::MEDIUM)
         }
     );
     assert_eq!(
@@ -215,19 +215,19 @@ fn route_ladders_stop_at_their_ends() {
     assert_eq!(
         S_ROUTE_LADDER,
         [
-            route(Strength::Fast, Effort::Low),
-            route(Strength::Fast, Effort::Medium),
-            route(Strength::Standard, Effort::Low),
-            route(Strength::Standard, Effort::Medium),
+            route(Strength::Fast, Effort::LOW),
+            route(Strength::Fast, Effort::MEDIUM),
+            route(Strength::Standard, Effort::LOW),
+            route(Strength::Standard, Effort::MEDIUM),
         ]
     );
     assert_eq!(
         M_ROUTE_LADDER,
         [
-            route(Strength::Standard, Effort::Medium),
-            route(Strength::Standard, Effort::High),
-            route(Strength::Frontier, Effort::Medium),
-            route(Strength::Frontier, Effort::High),
+            route(Strength::Standard, Effort::MEDIUM),
+            route(Strength::Standard, Effort::HIGH),
+            route(Strength::Frontier, Effort::MEDIUM),
+            route(Strength::Frontier, Effort::HIGH),
         ]
     );
     let cfg = config::Orchestrator::default();
@@ -238,23 +238,26 @@ fn route_ladders_stop_at_their_ends() {
     };
     // All quiet at the bottom of S, run there: no step down (only its threshold).
     let quiet = fixture_records("quality");
-    let bottom = S_ROUTE_LADDER[0];
+    let bottom = S_ROUTE_LADDER[0].clone();
     assert_eq!(
-        ids(&ran_on(&quiet, bottom), &at(bottom), &cfg),
+        ids(&ran_on(&quiet, bottom.clone()), &at(bottom), &cfg),
         ["thresholds.s"]
     );
     // Escalating at the top of S, run there: no step up.
     let busy = fixture_records("refit");
-    let top = S_ROUTE_LADDER[3];
-    assert_eq!(ids(&ran_on(&busy, top), &at(top), &cfg), ["thresholds.s"]);
+    let top = S_ROUTE_LADDER[3].clone();
+    assert_eq!(
+        ids(&ran_on(&busy, top.clone()), &at(top), &cfg),
+        ["thresholds.s"]
+    );
     // A route outside the ladder (a hand edit) proposes nothing.
-    let outside = route(Strength::Frontier, Effort::High);
-    let on_outside = ran_on(&busy, outside);
+    let outside = route(Strength::Frontier, Effort::HIGH);
+    let on_outside = ran_on(&busy, outside.clone());
     assert_eq!(ids(&on_outside, &at(outside), &cfg), ["thresholds.s"]);
     // From an applied step, the next one once samples ran on it (whole-branch review
     // B, I2); the samples of the step before are no evidence about it.
-    let middle = S_ROUTE_LADDER[1];
-    let p = proposals(&ran_on(&busy, middle), &at(middle), &cfg);
+    let middle = S_ROUTE_LADDER[1].clone();
+    let p = proposals(&ran_on(&busy, middle.clone()), &at(middle.clone()), &cfg);
     assert_eq!(p[1].proposed, "standard/low");
     assert_eq!(p[1].current, "fast/medium");
     assert_eq!(ids(&busy, &at(middle), &cfg), ["thresholds.s"]);
@@ -266,7 +269,7 @@ fn ran_on(lines: &[HistoryLine], route: ClassRoute) -> Vec<HistoryLine> {
     for line in &mut lines {
         if let HistoryLine::Task(r) = line {
             for d in &mut r.routing_decisions {
-                (d.chosen.strength, d.chosen.effort) = (route.strength, route.effort);
+                (d.chosen.strength, d.chosen.effort) = (route.strength, route.effort.clone());
             }
         }
     }
@@ -308,7 +311,7 @@ fn a_listed_class_gets_no_route_proposal() {
             Candidate {
                 runtime: Runtime::Codex,
                 model: "gpt-6.1-sol".into(),
-                effort: Some(Effort::High),
+                effort: Some(Effort::HIGH),
             },
             Candidate {
                 runtime: Runtime::Claude,
@@ -363,7 +366,7 @@ fn apply_writes_only_the_named_change() {
     let mut expected = file.clone();
     expected
         .routes
-        .insert("s".into(), route(Strength::Standard, Effort::Medium));
+        .insert("s".into(), route(Strength::Standard, Effort::MEDIUM));
     assert_eq!(applied, expected);
     let applied = apply(&file, &current, &["thresholds.s".to_string()]).unwrap();
     let mut expected = file.clone();

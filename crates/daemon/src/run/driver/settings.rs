@@ -53,6 +53,10 @@ impl RunService {
                 })
             }
             SettingsRequest::Put { settings } => self.put_settings(settings).await,
+            // M9.8.12 serves these; until then every request still gets an answer.
+            SettingsRequest::RepoModels { .. } | SettingsRequest::PutRepoModels { .. } => {
+                refused(vec!["repository models are not available yet".into()])
+            }
         }
     }
 

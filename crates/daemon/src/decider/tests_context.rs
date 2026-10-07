@@ -32,7 +32,7 @@ fn context(
     let mut cfg = config::Orchestrator::default();
     cfg.deciders.mode = mode;
     cfg.deciders.strength = strength;
-    cfg.deciders.effort = Effort::Medium;
+    cfg.deciders.effort = Effort::MEDIUM;
     cfg.deciders.timeout_secs = 42;
     if let Some(models) = models {
         cfg.models = models;
@@ -46,7 +46,7 @@ fn the_context_takes_its_timeout_paths_and_effort_from_the_config() {
     assert_eq!(ctx.timeout, Duration::from_secs(42));
     assert_eq!(ctx.cwd, Path::new("/data/deciders/cwd"));
     assert_eq!(ctx.schema_dir, Path::new("/data/deciders/schemas"));
-    assert_eq!(ctx.route.effort, Effort::Medium);
+    assert_eq!(ctx.route.effort, Effort::MEDIUM);
     assert_eq!(ctx.program, "/nonexistent/anthrex-test/claude");
     assert_eq!(
         context(DeciderMode::Codex, None, Strength::Fast).program,
@@ -64,7 +64,7 @@ fn the_context_takes_its_timeout_paths_and_effort_from_the_config() {
             default.route.strength,
             default.route.effort
         ),
-        ("claude-haiku-4-5", Strength::Fast, Effort::Low)
+        ("claude-haiku-4-5", Strength::Fast, Effort::LOW)
     );
     assert_eq!(default.timeout, Duration::from_secs(90));
 }

@@ -75,6 +75,7 @@ fn planned(choice: Option<Runtime>) -> Shape {
         choice: choice.map(|runtime| OrchestratorChoice {
             runtime,
             model: None,
+            effort: None,
         }),
         design: None,
     }))
@@ -230,6 +231,7 @@ async fn promoting_to_a_missing_runtime_is_refused_without_side_effects() {
     let choice = |runtime| OrchestratorChoice {
         runtime,
         model: None,
+        effort: None,
     };
     let claude_missing = format!(
         "the orchestrator's runtime claude is not installed ({NO_CLAUDE} is not an executable file); install it, or choose another runtime with --orchestrator"
@@ -326,6 +328,7 @@ async fn run_promote_records_what_its_check_found() {
     let codex = OrchestratorChoice {
         runtime: Runtime::Codex,
         model: None,
+        effort: None,
     };
     let promote = service.promote(id.clone(), Some(codex));
     let reply = tokio::time::timeout(std::time::Duration::from_secs(30), promote)

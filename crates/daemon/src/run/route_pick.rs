@@ -119,7 +119,7 @@ pub fn role(
     let chosen = (0..n).map(|d| (start + d) % n).find(|&k| usable(k));
     let candidates: Vec<RoutingCandidate> = (0..n)
         .map(|k| RoutingCandidate {
-            route: list.candidates[k].route(effort),
+            route: list.candidates[k].route(effort.clone()),
             skipped_reason: match (usable(k), Some(k) == chosen) {
                 (false, _) => Some(NOT_INSTALLED.to_string()),
                 (true, false) => Some(EARLIER_TAKEN.to_string()),
@@ -163,7 +163,7 @@ fn class(task: &Task) -> usize {
 /// The class's frozen default effort, for a candidate that names none.
 fn class_effort(limits: &RunLimits, task: &Task) -> Effort {
     let r = &limits.class_routes;
-    [r.s.effort, r.m.effort, r.hub.effort][class(task)]
+    [r.s.effort.clone(), r.m.effort.clone(), r.hub.effort.clone()][class(task)].clone()
 }
 
 /// Whether the plan leaves the task's route to its class list: its route names no
@@ -177,8 +177,8 @@ fn takes_list(task: &Task) -> bool {
 /// the class's.
 fn route_for(limits: &RunLimits, task: &Task, list: &FrozenList, k: usize) -> Route {
     let mut route = list.candidates[k].route(class_effort(limits, task));
-    if let Some(effort) = task.spec.route.effort {
-        route.effort = effort;
+    if let Some(effort) = &task.spec.route.effort {
+        route.effort = effort.clone();
     }
     route
 }
@@ -437,7 +437,7 @@ pub fn context_routes(lists: &RouteListsFrozen) -> Option<serde_json::Value> {
                     let mut entry = serde_json::json!({
                         "runtime": c.runtime, "model": c.model, "strength": c.strength,
                     });
-                    if let Some(effort) = c.effort {
+                    if let Some(effort) = &c.effort {
                         entry["effort"] = serde_json::json!(effort);
                     }
                     entry
@@ -468,15 +468,15 @@ pub fn reviewer(
         return None;
     }
     let (floor, effort) = match level {
-        ReviewLevel::Small => (Strength::Fast, Effort::Low),
-        ReviewLevel::Medium => (author.strength, Effort::Medium),
-        ReviewLevel::Frontier => (Strength::Frontier, Effort::High),
+        ReviewLevel::Small => (Strength::Fast, Effort::LOW),
+        ReviewLevel::Medium => (author.strength, Effort::MEDIUM),
+        ReviewLevel::Frontier => (Strength::Frontier, Effort::HIGH),
     };
     let required = floor.max(author.strength);
     let mut chosen = None;
     let candidates = (list.candidates.iter())
         .map(|c| {
-            let route = c.route(effort);
+            let route = c.route(effort.clone());
             let reason = if missing(installed, c.runtime) {
                 Some(NOT_INSTALLED)
             } else if failed_in(failed, &route) {

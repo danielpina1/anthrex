@@ -205,7 +205,7 @@ fn amend_route_on_a_working_task_is_refused() {
     let mut run = flat();
     set_state(&mut run, "t1", TaskState::Working, None);
     let high = RouteSpec {
-        effort: Some(Effort::High),
+        effort: Some(Effort::HIGH),
         ..RouteSpec::default()
     };
     let with_route = |id: &str| {
@@ -249,11 +249,11 @@ fn amend_route_on_a_working_task_is_refused() {
 
     // The same route on a queued task applies and re-resolves the route.
     set_state(&mut run, "t3", TaskState::Queued, None);
-    assert_eq!(task(&run, "t3").route.effort, Effort::Low);
+    assert_eq!(task(&run, "t3").route.effort, Effort::LOW);
     let (edited, consequences) = applied(&run, vec![with_route("t3")]);
     assert_eq!(consequences, vec![]);
-    assert_eq!(task(&edited, "t3").route.effort, Effort::High);
-    assert_eq!(task(&edited, "t1").route.effort, Effort::Low);
+    assert_eq!(task(&edited, "t3").route.effort, Effort::HIGH);
+    assert_eq!(task(&edited, "t1").route.effort, Effort::LOW);
 }
 
 #[test]

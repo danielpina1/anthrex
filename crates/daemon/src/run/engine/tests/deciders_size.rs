@@ -86,7 +86,7 @@ pub(super) fn prepared(effects: &[Effect]) -> Vec<String> {
 fn size_check_raises_s_to_m_and_rederives_route_budget_and_review() {
     let mut fx = evidenced(&[task("t1", "S", "a", "")], true, Default::default());
     let t1 = fx.task("t1");
-    assert_eq!((t1.size, t1.route.effort), (Size::S, Effort::Low));
+    assert_eq!((t1.size, t1.route.effort.clone()), (Size::S, Effort::LOW));
     let (op, task_ids, input) = size_check_op(&fx);
     assert_eq!(task_ids, vec!["t1".to_string()]);
     assert_eq!(input.evidence_refs, vec!["onboarding".to_string()]);
@@ -98,7 +98,7 @@ fn size_check_raises_s_to_m_and_rederives_route_budget_and_review() {
     let t1 = fx.task("t1");
     assert_eq!(t1.size, Size::M);
     assert_eq!(t1.raised_size, Some(Size::M));
-    assert_eq!(t1.route.effort, Effort::Medium, "the plan set no effort");
+    assert_eq!(t1.route.effort, Effort::MEDIUM, "the plan set no effort");
     assert_eq!(t1.budget, fx.run().limits.budget_m);
     assert_eq!(
         t1.review_level,
@@ -133,12 +133,12 @@ fn size_check_raises_s_to_m_and_rederives_route_budget_and_review() {
 fn a_planner_set_effort_survives_a_raise() {
     let route = "[task.route]\neffort = \"high\"";
     let mut fx = evidenced(&[task("t1", "S", "a", route)], true, Default::default());
-    assert_eq!(fx.task("t1").route.effort, Effort::High);
+    assert_eq!(fx.task("t1").route.effort, Effort::HIGH);
     let (op, ..) = size_check_op(&fx);
     fx.decided(op, verdicts(&[("t1", Size::M, "bigger")]));
     let t1 = fx.task("t1");
     assert_eq!(t1.size, Size::M);
-    assert_eq!(t1.route.effort, Effort::High);
+    assert_eq!(t1.route.effort, Effort::HIGH);
 }
 
 #[test]

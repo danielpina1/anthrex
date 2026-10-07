@@ -55,7 +55,7 @@ fn spread() -> RouteList {
     RouteList {
         candidates: vec![
             cand(Runtime::Codex, "gpt-6-luna", None),
-            cand(Runtime::Claude, "claude-haiku-4-5", Some(Effort::Low)),
+            cand(Runtime::Claude, "claude-haiku-4-5", Some(Effort::LOW)),
         ],
         pick: Pick::Spread,
     }

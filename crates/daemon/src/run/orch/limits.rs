@@ -87,7 +87,7 @@ impl AgentLimits {
         config::AgentConfig {
             runtime: self.runtime,
             model: self.model.clone(),
-            effort: self.effort,
+            effort: self.effort.clone(),
         }
     }
 }
@@ -119,7 +119,7 @@ impl OrchLimits {
             planners: PlannerLimits {
                 runtime: p.runtime,
                 strength: p.strength,
-                effort: p.effort,
+                effort: p.effort.clone(),
                 max_tool_calls: p.max_tool_calls,
                 timeout_secs: p.timeout_secs,
                 max_rejections: p.max_rejections,
@@ -127,7 +127,7 @@ impl OrchLimits {
             agent: AgentLimits {
                 runtime: a.agent.runtime,
                 model: a.agent.model.clone(),
-                effort: a.agent.effort,
+                effort: a.agent.effort.clone(),
             },
             scouts: Some(crate::scout::spec::ScoutRouting::from_config(config)),
             design: DesignLimits::from_config(&config.design),

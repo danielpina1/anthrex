@@ -43,7 +43,7 @@ fn the_brief_example_builds_a_run() {
         runtime: Runtime::Claude,
         model: "claude-sonnet-5".to_string(),
         strength: Strength::Standard,
-        effort: Effort::High,
+        effort: Effort::HIGH,
     };
     assert_eq!(t1.route, expected_route);
     assert_eq!(
@@ -511,7 +511,7 @@ fn limits_are_frozen_at_run_start() {
         planners: PlannerLimits {
             runtime: Some(Runtime::Codex),
             strength: Strength::Frontier,
-            effort: Effort::High,
+            effort: Effort::HIGH,
             max_tool_calls: 200,
             timeout_secs: 600,
             max_rejections: 5,
@@ -520,14 +520,14 @@ fn limits_are_frozen_at_run_start() {
         agent: AgentLimits {
             runtime: None,
             model: "claude-sonnet-5".into(),
-            effort: Effort::High,
+            effort: Effort::HIGH,
         },
         // Whole-branch review, item 1: the run scouts' route keys are frozen too.
         scouts: Some(crate::scout::spec::ScoutRouting {
             runtime: None,
             default_runtime: Runtime::Claude,
             strength: Strength::Fast,
-            effort: Effort::Low,
+            effort: Effort::LOW,
         }),
         // Milestone 9.6 (task M9.6.3): `[orchestrator.design]` is frozen too.
         design: DesignLimits {

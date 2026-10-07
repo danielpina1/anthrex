@@ -183,7 +183,7 @@ pub fn ladder_candidates(
     strength: Strength,
     effort: Effort,
 ) -> Vec<RoutingCandidate> {
-    let mut out = runtime_ladder(roster, runtime, strength, effort);
+    let mut out = runtime_ladder(roster, runtime, strength, effort.clone());
     out.extend(runtime_ladder(roster, peer(runtime), strength, effort));
     out
 }
@@ -222,7 +222,7 @@ fn runtime_ladder(
                 runtime: e.runtime,
                 model: e.model.clone(),
                 strength: e.strength,
-                effort,
+                effort: effort.clone(),
             },
             skipped_reason: None,
         })
@@ -275,7 +275,7 @@ pub fn planner_record(run: &Run, k: usize, session: u32, now: u64) -> RoleRoutin
     let p = &run.limits.orch.planners;
     let orchestrator = run.orch.orchestrator.as_ref().map(|o| o.route.runtime);
     let runtime = p.runtime.or(orchestrator).unwrap_or(epic.route.runtime);
-    let ladder = ladder_candidates(&run.roster, runtime, p.strength, p.effort);
+    let ladder = ladder_candidates(&run.roster, runtime, p.strength, p.effort.clone());
     let mut candidates = mark_not_installed(ladder, &run.orch.installed);
     let pick = lists::planner_pick(run, k);
     if let Some(pick) = &pick {
@@ -351,7 +351,7 @@ pub fn design_agent_record(
     let list = &run.limits.route_lists.brainstorm;
     let listed = (list.candidates.iter())
         .map(|c| RoutingCandidate {
-            route: c.route(agent.route.effort),
+            route: c.route(agent.route.effort.clone()),
             skipped_reason: None,
         })
         .collect();
@@ -382,7 +382,12 @@ pub fn scout_record(run: &Run, scout_id: &str, now: u64) -> RoleRoutingDecision 
     let chosen = crate::run::orch::launch::scout_route_of(run, scout_id);
     let routing = crate::run::orch::launch::scout_routing(run);
     let runtime = routing.runtime.unwrap_or(routing.default_runtime);
-    let ladder = ladder_candidates(&run.roster, runtime, routing.strength, chosen.effort);
+    let ladder = ladder_candidates(
+        &run.roster,
+        runtime,
+        routing.strength,
+        chosen.effort.clone(),
+    );
     let mut candidates = mark_not_installed(ladder, &run.orch.installed);
     let pick = lists::scout_pick(run, scout_id);
     if let Some(pick) = &pick {
@@ -419,7 +424,7 @@ pub fn decider_candidates(
     route: &Route,
     strength: Strength,
 ) -> Vec<RoutingCandidate> {
-    runtime_ladder(roster, route.runtime, strength, route.effort)
+    runtime_ladder(roster, route.runtime, strength, route.effort.clone())
 }
 
 /// A decider's record (`run`: a run-bound decider; `None`: pre-run triage, whose

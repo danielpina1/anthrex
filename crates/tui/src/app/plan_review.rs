@@ -160,7 +160,7 @@ pub(crate) fn stacked(
 /// `<runtime> · <model> · <strength> · <effort> effort` (decision 12).
 /// A blank model (the policy's default) is left out.
 fn route_line(route: &Route) -> String {
-    let effort = format!("{} effort", effort_text(route.effort));
+    let effort = format!("{} effort", effort_text(route.effort.clone()));
     [
         route.runtime.label(),
         route.model.as_str(),

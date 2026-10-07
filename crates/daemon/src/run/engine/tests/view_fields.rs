@@ -282,8 +282,8 @@ fn snapshot_carries_the_view_fields() {
     let spec = &fx.task("t1").spec.route;
     assert_eq!(&t1.route_spec, spec);
     assert_eq!(t1.route_spec.strength, None, "unset in the plan: policy");
-    assert_eq!(t1.route_spec.effort, Some(proto::Effort::Low));
-    assert_eq!(t1.route.effort, proto::Effort::Low);
+    assert_eq!(t1.route_spec.effort, Some(proto::Effort::LOW));
+    assert_eq!(t1.route.effort, proto::Effort::LOW);
     assert_eq!(t1.history.len(), 10);
     assert_eq!(t1.history[0].at, base + 11);
     assert_eq!(t1.history[0].text, "event 11");

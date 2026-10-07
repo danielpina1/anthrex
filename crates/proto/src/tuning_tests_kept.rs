@@ -7,7 +7,7 @@ use super::*;
 fn lane(lane: RaceLane, state: LaneState, kept: bool) -> LaneInfo {
     LaneInfo {
         lane,
-        route: a_route(Runtime::Codex, Strength::Standard, Effort::Medium, "gpt-6"),
+        route: a_route(Runtime::Codex, Strength::Standard, Effort::MEDIUM, "gpt-6"),
         state,
         checkout: format!("t1.{}", lane.label()),
         head: Some("d1d1d1d".into()),

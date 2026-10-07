@@ -225,6 +225,7 @@ fn continue_sends_continue_from() {
     let choice = OrchestratorChoice {
         runtime: Runtime::Codex,
         model: None,
+        effort: None,
     };
     let fresh = adapt::goal_request(
         "g".into(),

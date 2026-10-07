@@ -311,6 +311,7 @@ impl SettingsScreen {
                 max_bounces: 0,
             },
             design_default: None,
+            roles: Default::default(),
         };
         let mut s = Self {
             section: SettingsSection::Claude,
@@ -424,6 +425,8 @@ impl SettingsScreen {
             limits,
             // Ruling T18-2: read-only here; the screen carries what the daemon said.
             design_default: self.base.design_default,
+            // M9.8.10 edits the table here; until then a save sends back what was read.
+            roles: self.base.roles.clone(),
         }
     }
 

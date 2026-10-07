@@ -128,7 +128,7 @@ pub fn scout_route(ctx: &ScoutContext) -> Route {
         &ctx.roster.current(),
         runtime,
         ctx.scouts.strength,
-        ctx.scouts.effort,
+        ctx.scouts.effort.clone(),
     )
 }
 
@@ -150,7 +150,7 @@ impl ScoutRouting {
             runtime: config.scouts.runtime,
             default_runtime: config.default_runtime,
             strength: config.scouts.strength,
-            effort: config.scouts.effort,
+            effort: config.scouts.effort.clone(),
         }
     }
 
@@ -160,7 +160,7 @@ impl ScoutRouting {
             runtime: ctx.scouts.runtime,
             default_runtime: ctx.default_runtime,
             strength: ctx.scouts.strength,
-            effort: ctx.scouts.effort,
+            effort: ctx.scouts.effort.clone(),
         }
     }
 }
@@ -186,7 +186,7 @@ pub fn run_scout_route(
         roster,
         runtime,
         routing.strength,
-        routing.effort,
+        routing.effort.clone(),
         peer_allowed,
     )
 }
@@ -219,7 +219,7 @@ pub fn headless_spec_on(scout: &ScoutSpec, ctx: &ScoutContext, route: &Route) ->
     HeadlessSpec {
         runtime: route.runtime,
         model: route.model.clone(),
-        effort: route.effort,
+        effort: route.effort.clone(),
         cwd: scout.cwd.clone(),
         instructions: instructions.to_string(),
         mcp: Some(McpTarget {

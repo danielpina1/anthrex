@@ -39,10 +39,10 @@ fn rung_2_never_steps_down() {
         )],
         lists,
     );
-    assert_eq!(task(&run, "t1").route, sol(Effort::High));
+    assert_eq!(task(&run, "t1").route, sol(Effort::HIGH));
     let (next, step) = rung2_route(&run, 0);
-    assert_eq!(next, opus(Effort::High));
-    assert_not_down(&sol(Effort::High), &next);
+    assert_eq!(next, opus(Effort::HIGH));
+    assert_not_down(&sol(Effort::HIGH), &next);
     let step = step.expect("the list's step");
     assert_eq!(reasons(&step.candidates)[0], Some(CURRENT_ROUTE));
 
@@ -58,16 +58,16 @@ fn rung_2_never_steps_down() {
         ..Default::default()
     };
     let mut run = built(&[m("t1", "[\"crates/a/**\"]", "")], lists);
-    run.tasks[0].route = opus(Effort::Medium);
+    run.tasks[0].route = opus(Effort::MEDIUM);
     let none = Installed::new();
     assert_eq!(next_candidate(&run.limits, &run.tasks, 0, &none), None);
     let (next, step) = rung2_route(&run, 0);
     assert_eq!(
         (next.clone(), step),
-        (opus(Effort::High), None),
+        (opus(Effort::HIGH), None),
         "roster::escalate"
     );
-    assert_not_down(&opus(Effort::Medium), &next);
+    assert_not_down(&opus(Effort::MEDIUM), &next);
 
     // An explicit route the list does not hold: `roster::escalate`, never the first
     // candidate.
@@ -83,11 +83,11 @@ fn rung_2_never_steps_down() {
     };
     let explicit = "[task.route]\nruntime = \"claude\"\nmodel = \"claude-opus-5-5\"";
     let run = built(&[m("t1", "[\"crates/a/**\"]", explicit)], lists);
-    assert_eq!(task(&run, "t1").route, opus(Effort::Medium));
+    assert_eq!(task(&run, "t1").route, opus(Effort::MEDIUM));
     assert_eq!(next_candidate(&run.limits, &run.tasks, 0, &none), None);
     let (next, step) = rung2_route(&run, 0);
-    assert_eq!((next.clone(), step), (opus(Effort::High), None));
-    assert_not_down(&opus(Effort::Medium), &next);
+    assert_eq!((next.clone(), step), (opus(Effort::HIGH), None));
+    assert_not_down(&opus(Effort::MEDIUM), &next);
 
     // A one-candidate list: `roster::escalate`.
     let lists = RouteLists {
@@ -96,8 +96,8 @@ fn rung_2_never_steps_down() {
     };
     let run = built(&[m("t1", "[\"crates/a/**\"]", "")], lists);
     let (next, step) = rung2_route(&run, 0);
-    assert_eq!((next.clone(), step), (sol(Effort::High), None));
-    assert_not_down(&sol(Effort::Medium), &next);
+    assert_eq!((next.clone(), step), (sol(Effort::HIGH), None));
+    assert_not_down(&sol(Effort::MEDIUM), &next);
 }
 
 #[test]
@@ -133,13 +133,13 @@ fn spread_gives_a_runtime_only_route_its_runtimes_first_candidate_and_no_slot() 
             (t.route.clone(), t.list_pick.as_ref().and_then(|p| p.slot))
         })
         .collect();
-    let medium = Effort::Medium;
+    let medium = Effort::MEDIUM;
     assert_eq!(
         got,
         [
-            (sol(medium), Some(0)),
-            (opus(medium), Some(1)),
-            (opus(medium), None),
+            (sol(medium.clone()), Some(0)),
+            (opus(medium.clone()), Some(1)),
+            (opus(medium.clone()), None),
             (sonnet(medium), Some(2)),
         ]
     );
@@ -175,7 +175,7 @@ fn an_amend_that_changes_the_class_picks_from_the_new_classs_list() {
         .unwrap_or_else(|e| panic!("{}", show(&e)))
         .0;
     let t1 = task(&amended, "t1");
-    assert_eq!(t1.route, opus(Effort::Medium));
+    assert_eq!(t1.route, opus(Effort::MEDIUM));
     let pick = t1.list_pick.as_ref().expect("picked again");
     assert_eq!(pick.chosen_route(), Some(&t1.route));
 }
@@ -198,7 +198,7 @@ fn a_workers_decision_records_a_candidate_not_installed() {
         ("configured_list", LIST_POLICY)
     );
     assert_eq!(reasons(&d.candidates), [Some(NOT_INSTALLED), None]);
-    assert_eq!(d.chosen, opus(Effort::Medium));
+    assert_eq!(d.chosen, opus(Effort::MEDIUM));
 }
 
 /// Fix round 2: an ended worker round on `route`, failed for an environment reason.
@@ -241,14 +241,14 @@ fn substitute_run() -> Run {
 #[test]
 fn a_failed_route_is_substituted_by_the_next_unfailed_candidate() {
     let mut run = substitute_run();
-    assert_eq!(task(&run, "t1").route, opus(Effort::Medium));
+    assert_eq!(task(&run, "t1").route, opus(Effort::MEDIUM));
     // Not failed: never weaker, so gpt-6-sol is below and the roster escalates.
     let (next, step) = rung2_route(&run, 0);
     assert_eq!((next.model.as_str(), step), (OPUS, None));
     // Failed: gpt-6-sol, standard, is taken.
-    run.tasks[0].rounds = vec![failed_round(opus(Effort::Medium))];
+    run.tasks[0].rounds = vec![failed_round(opus(Effort::MEDIUM))];
     let (next, step) = rung2_route(&run, 0);
-    let gpt6 = route(Runtime::Codex, GPT6_SOL, Strength::Standard, Effort::Medium);
+    let gpt6 = route(Runtime::Codex, GPT6_SOL, Strength::Standard, Effort::MEDIUM);
     assert_eq!(next, gpt6);
     let step = step.expect("the list's step");
     assert_eq!(reasons(&step.candidates), [Some(CURRENT_ROUTE), None]);
@@ -260,15 +260,15 @@ fn a_failed_route_is_substituted_by_the_next_unfailed_candidate() {
 #[test]
 fn with_every_route_failed_the_original_is_retried_and_said() {
     let mut run = substitute_run();
-    let gpt6 = route(Runtime::Codex, GPT6_SOL, Strength::Standard, Effort::Medium);
+    let gpt6 = route(Runtime::Codex, GPT6_SOL, Strength::Standard, Effort::MEDIUM);
     run.tasks[0].rounds = vec![
-        failed_round(opus(Effort::Medium)),
+        failed_round(opus(Effort::MEDIUM)),
         failed_round(gpt6.clone()),
     ];
     run.roster
         .retain(|e| [OPUS, GPT6_SOL].contains(&e.model.as_str()));
     let (next, step) = rung2_route(&run, 0);
-    assert_eq!((next.clone(), step), (opus(Effort::Medium), None));
+    assert_eq!((next.clone(), step), (opus(Effort::MEDIUM), None));
     assert_eq!(
         every_route_failed(&run, 0, &next).as_deref(),
         Some("every route for task t1 failed in this task; retrying claude/claude-opus-5-5")
@@ -282,25 +282,25 @@ fn with_every_route_failed_the_original_is_retried_and_said() {
 #[test]
 fn with_no_list_a_failed_route_is_substituted_from_the_roster() {
     let mut run = built(&[m("t1", "[\"crates/a/**\"]", "")], RouteLists::default());
-    run.tasks[0].route = opus(Effort::Medium);
+    run.tasks[0].route = opus(Effort::MEDIUM);
     // Not failed: rung 2 escalates, never weaker.
-    assert_eq!(rung2_route(&run, 0), (opus(Effort::High), None));
+    assert_eq!(rung2_route(&run, 0), (opus(Effort::HIGH), None));
     // Failed: the peer runtime at the same strength.
-    run.tasks[0].rounds = vec![failed_round(opus(Effort::Medium))];
-    assert_eq!(rung2_route(&run, 0), (sol(Effort::High), None));
+    run.tasks[0].rounds = vec![failed_round(opus(Effort::MEDIUM))];
+    assert_eq!(rung2_route(&run, 0), (sol(Effort::HIGH), None));
     // That failed too: the strongest left, the peer runtime's (Codex's default) first.
-    run.tasks[0].rounds.push(failed_round(sol(Effort::High)));
-    let codex_default = route(Runtime::Codex, "", Strength::Standard, Effort::High);
+    run.tasks[0].rounds.push(failed_round(sol(Effort::HIGH)));
+    let codex_default = route(Runtime::Codex, "", Strength::Standard, Effort::HIGH);
     let (next, _) = rung2_route(&run, 0);
     assert_eq!(next, codex_default);
     assert_eq!(every_route_failed(&run, 0, &next), None);
     // Every roster route failed: the original, said.
     for e in run.roster.clone() {
-        let r = route(e.runtime, &e.model, e.strength, Effort::Low);
+        let r = route(e.runtime, &e.model, e.strength, Effort::LOW);
         run.tasks[0].rounds.push(failed_round(r));
     }
     let (next, _) = rung2_route(&run, 0);
-    assert_eq!(next, opus(Effort::Medium));
+    assert_eq!(next, opus(Effort::MEDIUM));
     assert_eq!(
         every_route_failed(&run, 0, &next).as_deref(),
         Some("every route for task t1 failed in this task; retrying claude/claude-opus-5-5")
@@ -325,7 +325,7 @@ fn a_failed_unlisted_explicit_route_is_substituted_from_the_roster() {
     let mut run = built(&[m("t1", "[\"crates/a/**\"]", extra)], lists);
     assert_eq!(task(&run, "t1").route.model, OPUS);
     run.tasks[0].rounds = vec![failed_round(task(&run, "t1").route.clone())];
-    assert_eq!(rung2_route(&run, 0), (sol(Effort::High), None));
+    assert_eq!(rung2_route(&run, 0), (sol(Effort::HIGH), None));
 }
 
 /// Ruling T10a-6: the roster's substitute keeps the overlap rule (M8a decision 11,
@@ -340,16 +340,16 @@ fn a_roster_substitute_keeps_the_overlap_rule() {
     ];
     let mut run = built(&tasks, RouteLists::default());
     assert_eq!(task(&run, "t2").implicit_deps, ["t1"]);
-    run.tasks[0].route = opus(Effort::Medium);
-    run.tasks[1].route = sonnet(Effort::Medium);
-    run.tasks[0].rounds = vec![failed_round(opus(Effort::Medium))];
-    assert_eq!(rung2_route(&run, 0), (sonnet(Effort::High), None));
+    run.tasks[0].route = opus(Effort::MEDIUM);
+    run.tasks[1].route = sonnet(Effort::MEDIUM);
+    run.tasks[0].rounds = vec![failed_round(opus(Effort::MEDIUM))];
+    assert_eq!(rung2_route(&run, 0), (sonnet(Effort::HIGH), None));
     // Every Claude route failed: the original is retried, and the line says why.
-    run.tasks[0].rounds.push(failed_round(sonnet(Effort::High)));
-    let haiku = route(Runtime::Claude, HAIKU, Strength::Fast, Effort::High);
+    run.tasks[0].rounds.push(failed_round(sonnet(Effort::HIGH)));
+    let haiku = route(Runtime::Claude, HAIKU, Strength::Fast, Effort::HIGH);
     run.tasks[0].rounds.push(failed_round(haiku));
     let (next, _) = rung2_route(&run, 0);
-    assert_eq!(next, opus(Effort::Medium));
+    assert_eq!(next, opus(Effort::MEDIUM));
     assert_eq!(
         every_route_failed(&run, 0, &next).as_deref(),
         Some(
@@ -359,7 +359,7 @@ fn a_roster_substitute_keeps_the_overlap_rule() {
     );
     // `t2` merged: the overlap no longer holds `t1` to Claude.
     run.tasks[1].state = proto::TaskState::Merged;
-    assert_eq!(rung2_route(&run, 0).0, sol(Effort::High));
+    assert_eq!(rung2_route(&run, 0).0, sol(Effort::HIGH));
 }
 
 /// Ruling T10a-6: a rung 2 that did not fail (the gate path) skips a runtime not
@@ -367,11 +367,11 @@ fn a_roster_substitute_keeps_the_overlap_rule() {
 #[test]
 fn a_gate_path_rung_2_keeps_to_installed_and_overlap_free_runtimes() {
     let mut run = built(&[m("t1", "[\"crates/a/**\"]", "")], RouteLists::default());
-    run.tasks[0].route = sonnet(Effort::High);
-    let codex_default = route(Runtime::Codex, "", Strength::Standard, Effort::High);
+    run.tasks[0].route = sonnet(Effort::HIGH);
+    let codex_default = route(Runtime::Codex, "", Strength::Standard, Effort::HIGH);
     assert_eq!(rung2_route(&run, 0), (codex_default, None));
     run.orch.installed = installed(true, false);
-    assert_eq!(rung2_route(&run, 0), (opus(Effort::High), None));
+    assert_eq!(rung2_route(&run, 0), (opus(Effort::HIGH), None));
     // Codex installed, but an unfinished overlapping task holds `t1` to Claude (ruling
     // FW-5: for a worker, even one that waits on `t1`, here by an implicit dependency).
     let tasks = [
@@ -380,9 +380,9 @@ fn a_gate_path_rung_2_keeps_to_installed_and_overlap_free_runtimes() {
     ];
     let mut run = built(&tasks, RouteLists::default());
     assert_eq!(task(&run, "t2").implicit_deps, ["t1"]);
-    run.tasks[0].route = sonnet(Effort::High);
-    run.tasks[1].route = sonnet(Effort::Medium);
-    assert_eq!(rung2_route(&run, 0), (opus(Effort::High), None));
+    run.tasks[0].route = sonnet(Effort::HIGH);
+    run.tasks[1].route = sonnet(Effort::MEDIUM);
+    assert_eq!(rung2_route(&run, 0), (opus(Effort::HIGH), None));
 }
 
 /// Ruling FW-3 (re-review N-1), narrowed by FW-5: a worker's group pick exempts no
@@ -408,7 +408,7 @@ fn a_dependent_of_one_member_still_holds_the_group_by_another() {
     );
     for id in ["t1", "t2"] {
         let t = task(&run, id);
-        assert_eq!(t.route, opus(Effort::Medium), "{id}");
+        assert_eq!(t.route, opus(Effort::MEDIUM), "{id}");
         let pick = t.list_pick.as_ref().expect("a list pick");
         assert_eq!(reasons(&pick.candidates)[0], Some(OVERLAPPING_OWNS), "{id}");
     }
@@ -436,7 +436,7 @@ fn a_dependent_on_claude_holds_its_dependency_off_codex() {
         lists,
     );
     let a = task(&run, "a");
-    assert_eq!(a.route, opus(Effort::Medium));
+    assert_eq!(a.route, opus(Effort::MEDIUM));
     let pick = a.list_pick.as_ref().expect("a list pick");
     assert_eq!(reasons(&pick.candidates)[0], Some(OVERLAPPING_OWNS));
 }
@@ -450,7 +450,7 @@ fn a_dependent_holds_rung_2s_list_step() {
     assert_eq!(task(&run, "t3").route.runtime, Runtime::Codex);
     let (next, step) =
         next_candidate(&run.limits, &run.tasks, 0, &Installed::new()).expect("a step");
-    assert_eq!(next, sol(Effort::High));
+    assert_eq!(next, sol(Effort::HIGH));
     assert_eq!(
         reasons(&step.candidates),
         [Some(CURRENT_ROUTE), Some(OVERLAPPING_OWNS), None]
@@ -466,7 +466,7 @@ fn a_dependent_holds_rung_2s_roster_step() {
         m("t2", "[\"crates/a/src/**\"]", "deps = [\"t1\"]"),
     ];
     let mut run = built(&tasks, RouteLists::default());
-    run.tasks[0].route = sonnet(Effort::High);
-    run.tasks[1].route = sonnet(Effort::Medium);
-    assert_eq!(rung2_route(&run, 0), (opus(Effort::High), None));
+    run.tasks[0].route = sonnet(Effort::HIGH);
+    run.tasks[1].route = sonnet(Effort::MEDIUM);
+    assert_eq!(rung2_route(&run, 0), (opus(Effort::HIGH), None));
 }

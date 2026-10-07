@@ -124,9 +124,9 @@ fn size_serializes_as_a_capital_letter() {
 fn strength_and_effort_order() {
     assert!(Strength::Fast < Strength::Standard);
     assert!(Strength::Standard < Strength::Frontier);
-    assert!(Effort::Low < Effort::Medium);
-    assert!(Effort::Medium < Effort::High);
-    assert_eq!(Effort::High.raised(), None);
+    assert!(Effort::LOW < Effort::MEDIUM);
+    assert!(Effort::MEDIUM < Effort::HIGH);
+    assert_eq!(Effort::HIGH.raised(), None);
     assert_eq!(Size::M.raised(), Size::L);
 }
 
@@ -181,7 +181,7 @@ fn plan_edits_parse_from_an_edit_file() {
                 runtime: Some(Runtime::Codex),
                 model: None,
                 strength: Some(Strength::Frontier),
-                effort: Some(Effort::High),
+                effort: Some(Effort::HIGH),
             }),
             test_mode: Some(TestMode::Check),
             test_mode_reason: Some("no single_test configured".into()),

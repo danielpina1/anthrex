@@ -182,7 +182,7 @@ pub struct Pair {
 
 /// The class default routes a run is frozen with (decisions 9 and 12): M8a's defaults,
 /// or a route applied from `tuning.toml`. Hub is never proposed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClassRoutes {
     pub s: ClassRoute,
     pub m: ClassRoute,
@@ -193,9 +193,9 @@ impl Default for ClassRoutes {
     fn default() -> Self {
         let route = |strength, effort| ClassRoute { strength, effort };
         ClassRoutes {
-            s: route(Strength::Standard, Effort::Low),
-            m: route(Strength::Standard, Effort::Medium),
-            hub: route(Strength::Frontier, Effort::High),
+            s: route(Strength::Standard, Effort::LOW),
+            m: route(Strength::Standard, Effort::MEDIUM),
+            hub: route(Strength::Frontier, Effort::HIGH),
         }
     }
 }
@@ -225,7 +225,7 @@ impl ListCandidate {
             runtime: self.runtime,
             model: self.model.clone(),
             strength: self.strength,
-            effort: self.effort.unwrap_or(effort),
+            effort: self.effort.clone().unwrap_or(effort),
         }
     }
 }
@@ -271,7 +271,7 @@ impl FrozenList {
                     runtime: c.runtime,
                     model: c.model.clone(),
                     strength: entry.strength,
-                    effort: c.effort,
+                    effort: c.effort.clone(),
                 })
             })
             .collect();

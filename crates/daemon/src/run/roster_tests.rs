@@ -14,13 +14,13 @@ fn route(runtime: Runtime, model: &str, strength: Strength, effort: Effort) -> R
 #[test]
 fn pick_reviewer_prefers_the_other_runtime_at_or_above_the_author() {
     let roster = config::default_roster();
-    let author = route(Runtime::Codex, "", Strength::Standard, Effort::Medium);
+    let author = route(Runtime::Codex, "", Strength::Standard, Effort::MEDIUM);
 
     let reviewer = pick_reviewer(&roster, &author, ReviewLevel::Medium);
 
     assert_eq!(reviewer.runtime, Runtime::Claude);
     assert_eq!(reviewer.model, "claude-sonnet-5");
-    assert_eq!(reviewer.effort, Effort::Medium);
+    assert_eq!(reviewer.effort, Effort::MEDIUM);
 }
 
 #[test]
@@ -30,36 +30,36 @@ fn small_level_takes_the_cheapest_other_runtime() {
         Runtime::Claude,
         "claude-haiku-4-5",
         Strength::Fast,
-        Effort::Low,
+        Effort::LOW,
     );
 
     let reviewer = pick_reviewer(&roster, &author, ReviewLevel::Small);
 
     assert_eq!(reviewer.runtime, Runtime::Codex);
     assert_eq!(reviewer.model, "");
-    assert_eq!(reviewer.effort, Effort::Low);
+    assert_eq!(reviewer.effort, Effort::LOW);
 }
 
 #[test]
 fn frontier_level_falls_back_to_the_same_runtime() {
     let roster = config::default_roster();
 
-    let codex_author = route(Runtime::Codex, "", Strength::Standard, Effort::High);
+    let codex_author = route(Runtime::Codex, "", Strength::Standard, Effort::HIGH);
     let reviewer = pick_reviewer(&roster, &codex_author, ReviewLevel::Frontier);
     assert_eq!(reviewer.runtime, Runtime::Claude);
     assert_eq!(reviewer.model, "claude-opus-5-5");
-    assert_eq!(reviewer.effort, Effort::High);
+    assert_eq!(reviewer.effort, Effort::HIGH);
 
     let claude_author = route(
         Runtime::Claude,
         "claude-opus-5-5",
         Strength::Frontier,
-        Effort::High,
+        Effort::HIGH,
     );
     let reviewer = pick_reviewer(&roster, &claude_author, ReviewLevel::Frontier);
     assert_eq!(reviewer.runtime, Runtime::Claude);
     assert_eq!(reviewer.model, "claude-opus-5-5");
-    assert_eq!(reviewer.effort, Effort::High);
+    assert_eq!(reviewer.effort, Effort::HIGH);
 }
 
 /// Pins review finding 2 / ruling I2: decision 35's "preferring a model different from
@@ -81,14 +81,14 @@ fn pick_reviewer_prefers_a_stronger_model_over_the_authors_own() {
         Runtime::Claude,
         "claude-sonnet-5",
         Strength::Standard,
-        Effort::Medium,
+        Effort::MEDIUM,
     );
 
     let reviewer = pick_reviewer(&claude_only, &author, ReviewLevel::Medium);
 
     assert_eq!(reviewer.runtime, Runtime::Claude);
     assert_eq!(reviewer.model, "claude-opus-5");
-    assert_eq!(reviewer.effort, Effort::Medium);
+    assert_eq!(reviewer.effort, Effort::MEDIUM);
 }
 
 fn s(entries: &[(Runtime, &str, Strength)]) -> Vec<ModelEntry> {
@@ -112,24 +112,24 @@ fn escalate_raises_effort_then_changes_runtime() {
         Runtime::Claude,
         "claude-sonnet-5",
         Strength::Standard,
-        Effort::Medium,
+        Effort::MEDIUM,
     );
     let escalated = escalate(&default_roster, &r);
     assert_eq!(escalated.runtime, Runtime::Claude);
     assert_eq!(escalated.model, "claude-sonnet-5");
-    assert_eq!(escalated.effort, Effort::High);
+    assert_eq!(escalated.effort, Effort::HIGH);
 
     // high Claude standard -> Codex "" high.
     let r = route(
         Runtime::Claude,
         "claude-sonnet-5",
         Strength::Standard,
-        Effort::High,
+        Effort::HIGH,
     );
     let escalated = escalate(&default_roster, &r);
     assert_eq!(escalated.runtime, Runtime::Codex);
     assert_eq!(escalated.model, "");
-    assert_eq!(escalated.effort, Effort::High);
+    assert_eq!(escalated.effort, Effort::HIGH);
 
     // high Claude claude-haiku-4-5 on a Claude-only roster -> claude-sonnet-5 high
     // (no peer, one strength up).
@@ -142,12 +142,12 @@ fn escalate_raises_effort_then_changes_runtime() {
         Runtime::Claude,
         "claude-haiku-4-5",
         Strength::Fast,
-        Effort::High,
+        Effort::HIGH,
     );
     let escalated = escalate(&claude_only, &r);
     assert_eq!(escalated.runtime, Runtime::Claude);
     assert_eq!(escalated.model, "claude-sonnet-5");
-    assert_eq!(escalated.effort, Effort::High);
+    assert_eq!(escalated.effort, Effort::HIGH);
 
     // high Claude claude-opus-5-5 on the default roster -> unchanged (no Codex frontier
     // entry, nothing above frontier).
@@ -155,7 +155,7 @@ fn escalate_raises_effort_then_changes_runtime() {
         Runtime::Claude,
         "claude-opus-5-5",
         Strength::Frontier,
-        Effort::High,
+        Effort::HIGH,
     );
     let escalated = escalate(&default_roster, &r);
     assert_eq!(escalated, r);

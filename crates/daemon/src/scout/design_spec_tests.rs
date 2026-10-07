@@ -21,7 +21,7 @@ fn route(runtime: Runtime) -> Route {
         runtime,
         model: "m".into(),
         strength: Strength::Frontier,
-        effort: Effort::High,
+        effort: Effort::HIGH,
     }
 }
 

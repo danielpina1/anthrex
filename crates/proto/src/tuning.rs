@@ -209,7 +209,7 @@ impl Default for SizeThresholds {
 }
 
 /// A class's applied route: its strength and effort.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClassRoute {
     pub strength: Strength,

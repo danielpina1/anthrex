@@ -280,7 +280,12 @@ impl DeciderContext {
             DeciderMode::Claude | DeciderMode::Off => Runtime::Claude,
         };
         let routing = call::Routing::new(cfg, manager);
-        let route = call::ladder_route(&cfg.models, runtime, deciders.strength, deciders.effort);
+        let route = call::ladder_route(
+            &cfg.models,
+            runtime,
+            deciders.strength,
+            deciders.effort.clone(),
+        );
         let root = data_dir.join("deciders");
         DeciderContext {
             mode: deciders.mode,

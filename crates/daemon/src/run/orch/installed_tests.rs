@@ -7,7 +7,7 @@ fn agent(runtime: Option<Runtime>) -> config::AgentConfig {
     config::AgentConfig {
         runtime,
         model: String::new(),
-        effort: Effort::High,
+        effort: Effort::HIGH,
     }
 }
 
@@ -49,7 +49,7 @@ fn a_default_runtime_that_is_not_installed_is_skipped_for_its_peer() {
     for (c, e) in got.candidates.iter().zip(&claude) {
         assert_eq!(c.route.runtime, Runtime::Claude);
         assert_eq!(c.route.model, e.model);
-        assert_eq!(c.route.effort, Effort::High);
+        assert_eq!(c.route.effort, Effort::HIGH);
         assert_eq!(c.skipped_reason.as_deref(), Some(NOT_INSTALLED));
     }
     assert_eq!(got.candidates[claude.len()..], peer.candidates[..]);
@@ -67,6 +67,7 @@ fn a_chosen_or_configured_runtime_that_is_not_installed_refuses_the_start() {
     let choice = OrchestratorChoice {
         runtime: Runtime::Codex,
         model: None,
+        effort: None,
     };
     let refused = |r: Result<Resolved, String>| r.expect_err("the start is refused");
     for text in [

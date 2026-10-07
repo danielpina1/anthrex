@@ -102,6 +102,7 @@ impl PromoteOption {
             choice: Some(OrchestratorChoice {
                 runtime,
                 model: (!model.is_empty()).then(|| model.to_string()),
+                effort: None,
             }),
         }
     }

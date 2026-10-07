@@ -326,6 +326,7 @@ fn an_orchestrator_below_the_frontier_tier_is_reported() {
     let codex = proto::OrchestratorChoice {
         runtime: proto::Runtime::Codex,
         model: None,
+        effort: None,
     };
     let run = fx.run();
     let resolved = crate::run::orch::launch::resolve_orchestrator(

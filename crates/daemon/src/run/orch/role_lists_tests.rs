@@ -61,7 +61,7 @@ fn lists() -> RouteListsFrozen {
         scout: RouteList {
             candidates: vec![
                 cand(Runtime::Codex, LUNA, None),
-                cand(Runtime::Claude, HAIKU, Some(Effort::Low)),
+                cand(Runtime::Claude, HAIKU, Some(Effort::LOW)),
             ],
             pick: Pick::Spread,
         },
@@ -93,9 +93,9 @@ fn run_scouts_spread_over_their_list_in_start_order() {
         .orch
         .scouts
         .as_ref()
-        .map_or(Effort::Medium, |s| s.effort);
+        .map_or(Effort::MEDIUM, |s| s.effort.clone());
     let luna = route(Runtime::Codex, LUNA, Strength::Fast, effort);
-    let haiku = route(Runtime::Claude, HAIKU, Strength::Fast, Effort::Low);
+    let haiku = route(Runtime::Claude, HAIKU, Strength::Fast, Effort::LOW);
     let routes: Vec<Route> = ["s1", "s2", "s3"]
         .into_iter()
         .map(|id| scout_route_of(&run, id))
@@ -187,19 +187,19 @@ fn resolve(
         .map(|r| (r.label().to_string(), missing(r).is_none()))
         .collect();
     let today = || resolve_installed(choice, agent, Runtime::Claude, &run.roster, missing);
-    orchestrator(choice, list, agent.effort, &installed, today)
+    orchestrator(choice, list, agent.effort.clone(), &installed, today)
 }
 
 #[test]
 fn the_orchestrator_precedence() {
     let run = listed_run();
-    let sol = route(Runtime::Codex, SOL, Strength::Frontier, Effort::High);
+    let sol = route(Runtime::Codex, SOL, Strength::Frontier, Effort::HIGH);
     let nothing_missing = |_: Runtime| None;
     // The list beats `[orchestrator.agent]`, even one that names a runtime and model.
     let agent = config::AgentConfig {
         runtime: Some(Runtime::Claude),
         model: "claude-opus-5-5".into(),
-        effort: Effort::High,
+        effort: Effort::HIGH,
     };
     let got = resolve(None, &run, &agent, &nothing_missing).unwrap();
     assert_eq!((got.route, got.source.as_str()), (sol, LIST_SOURCE));
@@ -208,6 +208,7 @@ fn the_orchestrator_precedence() {
     let choice = OrchestratorChoice {
         runtime: Runtime::Claude,
         model: Some("claude-sonnet-5".into()),
+        effort: None,
     };
     let got = resolve(Some(&choice), &run, &agent, &nothing_missing).unwrap();
     assert_eq!(got.route.model, "claude-sonnet-5");
@@ -272,7 +273,7 @@ fn a_route_list_picks_two_entries_on_different_runtimes_first() {
     let run = brainstorm_run(vec![
         cand(Runtime::Claude, HAIKU, None),
         cand(Runtime::Claude, sonnet, None),
-        cand(Runtime::Codex, LUNA, Some(Effort::Low)),
+        cand(Runtime::Codex, LUNA, Some(Effort::LOW)),
     ]);
     assert_eq!(
         picked(&run),
@@ -282,8 +283,8 @@ fn a_route_list_picks_two_entries_on_different_runtimes_first() {
         ]
     );
     let picks = brainstorm_picks(&run);
-    assert_eq!(picks[1].route.effort, Effort::Low, "the candidate's effort");
-    let orchestrator = run.orch.orchestrator.as_ref().unwrap().route.effort;
+    assert_eq!(picks[1].route.effort, Effort::LOW, "the candidate's effort");
+    let orchestrator = run.orch.orchestrator.as_ref().unwrap().route.effort.clone();
     assert_eq!(
         picks[0].route.effort, orchestrator,
         "else the orchestrator's"

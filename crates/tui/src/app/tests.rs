@@ -29,6 +29,9 @@ mod lifecycle;
 #[path = "../app_tests/settings.rs"]
 mod settings_tests;
 
+#[path = "../app_tests/models.rs"]
+mod models;
+
 #[path = "../app_tests/reconnect.rs"]
 mod reconnect;
 

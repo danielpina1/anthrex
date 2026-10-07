@@ -29,7 +29,7 @@ pub(super) fn claude_route() -> Route {
     a_route(
         Runtime::Claude,
         Strength::Standard,
-        Effort::High,
+        Effort::HIGH,
         "claude-sonnet-5",
     )
 }
@@ -242,7 +242,7 @@ pub(super) fn a_routing_decision() -> RoutingDecision {
     let codex = a_route(
         Runtime::Codex,
         Strength::Standard,
-        Effort::High,
+        Effort::HIGH,
         "gpt-5-codex",
     );
     RoutingDecision {

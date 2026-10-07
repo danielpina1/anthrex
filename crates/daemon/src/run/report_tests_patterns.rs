@@ -12,7 +12,7 @@ fn route(runtime: Runtime, model: &str) -> Route {
         runtime,
         model: model.into(),
         strength: Strength::Standard,
-        effort: Effort::Medium,
+        effort: Effort::MEDIUM,
     }
 }
 

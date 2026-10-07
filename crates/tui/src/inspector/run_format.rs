@@ -258,12 +258,8 @@ pub(crate) fn strength_text(strength: Strength) -> &'static str {
     }
 }
 
-pub(crate) fn effort_text(effort: Effort) -> &'static str {
-    match effort {
-        Effort::Low => "low",
-        Effort::Medium => "medium",
-        Effort::High => "high",
-    }
+pub(crate) fn effort_text(effort: Effort) -> String {
+    effort.to_string()
 }
 
 pub(super) fn severity_text(severity: Severity) -> &'static str {

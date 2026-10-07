@@ -121,6 +121,9 @@ pub struct GoalForm {
     pub discarding: bool,
 }
 
+// Protocol 19 grew `ClientMsg`/`RunRequest` (the role table, `OrchestratorChoice.effort`); these
+// values are built once per key press, so boxing would only add noise.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum GoalOutcome {
     Stay,
@@ -481,6 +484,7 @@ impl GoalForm {
             .map(|runtime| OrchestratorChoice {
                 runtime,
                 model: self.chosen_model(),
+                effort: None,
             });
         Ok(RunRequest::StartGoal {
             goal: goal.trim().to_string(),

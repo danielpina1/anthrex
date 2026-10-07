@@ -70,9 +70,9 @@ fn run() -> Run {
         task.spec.brief = format!("Do {id}.\nFiles:\n- a.rs\r\nVerify:\ncargo test");
         task.size = size;
         task.test_mode = mode;
-        task.route = route(Runtime::Claude, "claude-sonnet-5", Effort::High);
+        task.route = route(Runtime::Claude, "claude-sonnet-5", Effort::HIGH);
     }
-    task_mut(&mut run, "t2").route = route(Runtime::Codex, "", Effort::Medium);
+    task_mut(&mut run, "t2").route = route(Runtime::Codex, "", Effort::MEDIUM);
     task_mut(&mut run, "t4").state = TaskState::Cancelled;
     run
 }

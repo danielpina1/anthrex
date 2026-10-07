@@ -65,15 +65,7 @@ pub enum Strength {
     Frontier,
 }
 
-/// How much reasoning effort a route asks the model for. Ordered for the same reason as
-/// [`Strength`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Effort {
-    Low,
-    Medium,
-    High,
-}
+pub use crate::effort::Effort;
 
 /// How large a task is expected to be. Serializes as a capital letter (`"S"`, `"M"`,
 /// `"L"`), not a word, because the plan author writes it that way.
@@ -571,17 +563,6 @@ impl Size {
             Size::S => Size::M,
             Size::M => Size::L,
             Size::L => Size::L,
-        }
-    }
-}
-
-impl Effort {
-    /// Raises an effort one step, or `None` when already at the top (`High`).
-    pub fn raised(self) -> Option<Effort> {
-        match self {
-            Effort::Low => Some(Effort::Medium),
-            Effort::Medium => Some(Effort::High),
-            Effort::High => None,
         }
     }
 }

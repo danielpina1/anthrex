@@ -449,7 +449,7 @@ fn lane(lane: RaceLane, runtime: Runtime, state: LaneState) -> Lane {
         runtime,
         model: String::new(),
         strength: Strength::Standard,
-        effort: Effort::Medium,
+        effort: Effort::MEDIUM,
     };
     Lane {
         lane,

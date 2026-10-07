@@ -29,7 +29,7 @@ pick = "spread"
         vec![Candidate {
             runtime: proto::Runtime::Claude,
             model: "claude-sonnet-5".to_string(),
-            effort: Some(proto::Effort::High),
+            effort: Some(proto::Effort::HIGH),
         }]
     );
 }

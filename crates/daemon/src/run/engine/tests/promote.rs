@@ -60,6 +60,7 @@ fn promote_creates_an_orchestrator_and_leaves_t1_running() {
     let choice = OrchestratorChoice {
         runtime: Runtime::Codex,
         model: None,
+        effort: None,
     };
     let effects = promote(&mut fx, Some(choice));
     assert_eq!(

@@ -277,6 +277,8 @@ async fn handle_client(
         }
         let reply = match msg {
             ClientMsg::Hello { .. } => Some(error("hello", "already greeted")),
+            // M9.8.6 answers with the discovered catalogs.
+            ClientMsg::ListModels { .. } => Some(DaemonMsg::Models { catalogs: vec![] }),
             ClientMsg::ListWindows => Some(DaemonMsg::WindowsChanged {
                 windows: manager.list(),
             }),

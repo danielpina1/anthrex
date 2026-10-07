@@ -262,7 +262,7 @@ fn reachable_runtimes_include_the_orchestrator_and_planners() {
                 runtime,
                 model: String::new(),
                 strength: Strength::Frontier,
-                effort: proto::Effort::High,
+                effort: proto::Effort::HIGH,
             },
             0,
         )
@@ -310,7 +310,7 @@ fn a_design_runs_brainstormers_and_reviewer_reach_their_runtimes() {
             runtime: Runtime::Claude,
             model: "claude-opus-5".into(),
             strength: Strength::Frontier,
-            effort: proto::Effort::High,
+            effort: proto::Effort::HIGH,
         },
         0,
     ));

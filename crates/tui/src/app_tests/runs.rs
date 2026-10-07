@@ -78,7 +78,7 @@ fn round(until: Option<u64>, flag: bool) -> AgentRoundInfo {
             runtime: Runtime::Claude,
             model: String::new(),
             strength: Strength::Standard,
-            effort: Effort::Medium,
+            effort: Effort::MEDIUM,
         },
         session_id: None,
         started_at: 0,

@@ -45,7 +45,7 @@ pub fn scout_pick(run: &Run, scout_id: &str) -> Option<RolePick> {
 pub fn planner_pick(run: &Run, k: usize) -> Option<RolePick> {
     let (list, effort) = (
         &run.limits.route_lists.planner,
-        run.limits.orch.planners.effort,
+        run.limits.orch.planners.effort.clone(),
     );
     role(list, k as u32, effort, &run.orch.installed)
 }
@@ -153,14 +153,14 @@ pub fn unsaved_missing(run: &Run, caps: &DeciderCaps) -> Vec<Runtime> {
 /// run a brainstormer unsaved: there is no fallback to one that saves its session
 /// (ruling WB-A-W2).
 pub fn brainstorm_picks_with(run: &Run, caps: &DeciderCaps) -> Option<Vec<BrainstormPick>> {
-    let effort = (run.orch.orchestrator.as_ref()).map_or(Effort::High, |o| o.route.effort);
+    let effort = (run.orch.orchestrator.as_ref()).map_or(Effort::HIGH, |o| o.route.effort.clone());
     let usable = |runtime: Runtime| {
         run.orch.installed.get(runtime.label()) != Some(&false) && runs_unsaved(runtime, caps)
     };
     let list = &run.limits.route_lists.brainstorm;
     let listed: Vec<Route> = (list.candidates.iter())
         .filter(|c| usable(c.runtime))
-        .map(|c| c.route(effort))
+        .map(|c| c.route(effort.clone()))
         .collect();
     let (routes, from_list) = match listed.first() {
         Some(first) => {
@@ -237,7 +237,7 @@ fn default_pair(
             runtime: e.runtime,
             model: e.model.clone(),
             strength: e.strength,
-            effort,
+            effort: effort.clone(),
         })
         .collect();
     match &strongest[..] {

@@ -85,6 +85,12 @@ pub enum ClientMsg {
         id: u64,
         request: RunRequest,
     },
+    /// Milestone 9.8 (MR §4.3): the discovered models; `runtime: None` is both.
+    /// `refresh` forces a live probe.
+    ListModels {
+        runtime: Option<crate::types::Runtime>,
+        refresh: bool,
+    },
 }
 
 /// Daemon → client.
@@ -170,6 +176,10 @@ pub enum DaemonMsg {
         reason: String,
     },
     Run(RunReply),
+    /// The answer to `ListModels`, one catalog per runtime asked.
+    Models {
+        catalogs: Vec<crate::models::ModelCatalog>,
+    },
 }
 
 impl DaemonMsg {

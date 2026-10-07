@@ -135,7 +135,7 @@ pub(super) fn brainstormer(label: &str, runtime: Runtime) -> DesignAgent {
             runtime,
             model: "m".into(),
             strength: Strength::Frontier,
-            effort: Effort::High,
+            effort: Effort::HIGH,
         },
         session: 1,
         window_id: None,

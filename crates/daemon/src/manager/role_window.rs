@@ -101,7 +101,7 @@ pub(super) fn placeholder_spec(
     crate::headless::HeadlessSpec {
         runtime,
         model: String::new(),
-        effort: proto::Effort::Medium,
+        effort: proto::Effort::MEDIUM,
         cwd: cwd.to_path_buf(),
         instructions: String::new(),
         mcp: None,

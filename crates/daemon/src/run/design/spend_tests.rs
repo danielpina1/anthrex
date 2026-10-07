@@ -10,7 +10,7 @@ fn route(model: &str) -> Route {
         runtime: Runtime::Codex,
         model: model.into(),
         strength: Strength::Frontier,
-        effort: Effort::High,
+        effort: Effort::HIGH,
     }
 }
 

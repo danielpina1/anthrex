@@ -14,12 +14,8 @@ use super::{
     route_samples, threshold_samples,
 };
 
-pub(super) fn effort_label(e: Effort) -> &'static str {
-    match e {
-        Effort::Low => "low",
-        Effort::Medium => "medium",
-        Effort::High => "high",
-    }
+pub(super) fn effort_label(e: Effort) -> String {
+    e.to_string()
 }
 
 pub(super) fn route_text(r: ClassRoute) -> String {
@@ -42,7 +38,7 @@ pub(super) fn list_of(lists: &RouteLists, class: SizeClass) -> Option<&RouteList
 pub(super) fn list_text(list: &RouteList, default: Effort) -> String {
     let candidates: Vec<String> = (list.candidates.iter())
         .map(|c| {
-            let effort = effort_label(c.effort.unwrap_or(default));
+            let effort = effort_label(c.effort.clone().unwrap_or(default.clone()));
             format!("{}/{} {effort}", c.runtime.label(), c.model)
         })
         .collect();
@@ -103,8 +99,8 @@ fn threshold_proposal(
 pub(super) fn current_route(file: &TuningFile, class: SizeClass) -> Option<ClassRoute> {
     let defaults = ClassRoutes::default();
     match class {
-        SizeClass::S => Some(file.routes.get("s").copied().unwrap_or(defaults.s)),
-        SizeClass::M => Some(file.routes.get("m").copied().unwrap_or(defaults.m)),
+        SizeClass::S => Some(file.routes.get("s").cloned().unwrap_or(defaults.s)),
+        SizeClass::M => Some(file.routes.get("m").cloned().unwrap_or(defaults.m)),
         SizeClass::Hub => Some(defaults.hub),
         SizeClass::Brainstorm | SizeClass::DocReview => None,
     }
@@ -128,7 +124,7 @@ fn route_proposal(
         return None;
     }
     let cur = current_route(file, class)?;
-    let samples = route_samples(lines, class, t, cur);
+    let samples = route_samples(lines, class, t, cur.clone());
     if !qualifies(&samples, t) {
         return None;
     }
@@ -150,14 +146,14 @@ fn route_proposal(
         id: format!("route.{}", class.key()),
         text: format!(
             "{c} route {} → {} ({why})",
-            route_text(cur),
-            route_text(*to)
+            route_text(cur.clone()),
+            route_text(to.clone())
         ),
         current: route_text(cur),
-        proposed: route_text(*to),
+        proposed: route_text(to.clone()),
         change: TuningChange::Route {
             class: class.key().to_string(),
-            route: *to,
+            route: to.clone(),
         },
     })
 }
@@ -212,7 +208,7 @@ pub fn apply(
                 out.thresholds = Some(t);
             }
             TuningChange::Route { class, route } => {
-                out.routes.insert(class.clone(), *route);
+                out.routes.insert(class.clone(), route.clone());
             }
         }
     }

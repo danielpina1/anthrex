@@ -60,6 +60,7 @@ fn codex_with_no_model_is_its_configured_default() {
             orchestrator: Some(OrchestratorChoice {
                 runtime: Runtime::Codex,
                 model: None,
+                effort: None,
             }),
             delivery: None,
             continue_from: None,

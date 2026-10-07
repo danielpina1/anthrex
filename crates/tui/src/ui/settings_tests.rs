@@ -50,6 +50,7 @@ pub(crate) fn sample() -> SettingsDoc {
             max_bounces: 3,
         },
         design_default: None,
+        roles: Default::default(),
     }
 }
 

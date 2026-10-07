@@ -81,7 +81,7 @@ pub fn route() -> Route {
         runtime: Runtime::Claude,
         model: "claude-sonnet-5".into(),
         strength: Strength::Standard,
-        effort: Effort::High,
+        effort: Effort::HIGH,
     }
 }
 
@@ -165,7 +165,7 @@ pub fn spec(cwd: &Path, run_ref: RunRef) -> HeadlessSpec {
     HeadlessSpec {
         runtime: Runtime::Claude,
         model: "claude-sonnet-5".into(),
-        effort: Effort::High,
+        effort: Effort::HIGH,
         cwd: cwd.to_path_buf(),
         instructions: "the contract".into(),
         mcp: None,

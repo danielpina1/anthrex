@@ -24,7 +24,7 @@ fn agent(label: &str, role: AgentRole, window: u32) -> DesignAgent {
             runtime: Runtime::Codex,
             model: "gpt-5.5".into(),
             strength: Strength::Frontier,
-            effort: Effort::High,
+            effort: Effort::HIGH,
         },
         session: 1,
         window_id: Some(window),

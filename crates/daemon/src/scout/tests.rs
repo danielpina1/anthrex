@@ -78,7 +78,7 @@ fn area_scout_spec_is_read_only() {
     let spec = headless_spec(&scout(ScoutKind::Area), &ctx(Runtime::Claude));
     assert_eq!(spec.runtime, Runtime::Claude);
     assert_eq!(spec.model, "claude-haiku-4-5");
-    assert_eq!(spec.effort, Effort::Low);
+    assert_eq!(spec.effort, Effort::LOW);
     assert_eq!(spec.cwd, PathBuf::from("/wt/runs/r1/integration"));
     assert_eq!(spec.instructions, super::contract::SCOUT_CONTRACT);
     assert_eq!(
@@ -302,7 +302,7 @@ fn decider_ctx(caps: CliCaps) -> crate::decider::DeciderContext {
             runtime: Runtime::Codex,
             model: String::new(),
             strength: Strength::Standard,
-            effort: Effort::Low,
+            effort: Effort::LOW,
         },
         timeout: std::time::Duration::from_secs(90),
         cwd: PathBuf::from("/data/deciders/cwd"),
@@ -338,7 +338,7 @@ fn a_codex_scout_carries_the_codex_config_guard_when_codex_loads_project_config(
 #[test]
 fn route_picks_the_lowest_strength_at_or_above() {
     let roster = config::default_roster();
-    let fast = route(&roster, Runtime::Claude, Strength::Fast, Effort::Low);
+    let fast = route(&roster, Runtime::Claude, Strength::Fast, Effort::LOW);
     assert_eq!(
         (
             fast.runtime,
@@ -350,32 +350,32 @@ fn route_picks_the_lowest_strength_at_or_above() {
             Runtime::Claude,
             "claude-haiku-4-5",
             Strength::Fast,
-            Effort::Low
+            Effort::LOW
         )
     );
-    let standard = route(&roster, Runtime::Claude, Strength::Standard, Effort::High);
+    let standard = route(&roster, Runtime::Claude, Strength::Standard, Effort::HIGH);
     assert_eq!(standard.model, "claude-sonnet-5");
-    assert_eq!(standard.effort, Effort::High);
-    let codex = route(&roster, Runtime::Codex, Strength::Fast, Effort::Low);
+    assert_eq!(standard.effort, Effort::HIGH);
+    let codex = route(&roster, Runtime::Codex, Strength::Fast, Effort::LOW);
     assert_eq!(
         (codex.runtime, codex.model.as_str(), codex.strength),
         (Runtime::Codex, "", Strength::Standard)
     );
     // Nothing on Codex at or above frontier: the peer's frontier entry.
-    let peer = route(&roster, Runtime::Codex, Strength::Frontier, Effort::Low);
+    let peer = route(&roster, Runtime::Codex, Strength::Frontier, Effort::LOW);
     assert_eq!(
         (peer.runtime, peer.model.as_str()),
         (Runtime::Claude, "claude-opus-5-5")
     );
     // Nothing at or above on either runtime: the runtime's first entry.
     let only_fast = vec![roster[0].clone(), roster[3].clone()];
-    let first = route(&only_fast, Runtime::Claude, Strength::Frontier, Effort::Low);
+    let first = route(&only_fast, Runtime::Claude, Strength::Frontier, Effort::LOW);
     assert_eq!(
         (first.runtime, first.model.as_str()),
         (Runtime::Claude, "claude-haiku-4-5")
     );
     // An empty roster: the runtime with no model.
-    let none = route(&[], Runtime::Codex, Strength::Fast, Effort::Low);
+    let none = route(&[], Runtime::Codex, Strength::Fast, Effort::LOW);
     assert_eq!(
         (none.runtime, none.model.as_str(), none.strength),
         (Runtime::Codex, "", Strength::Fast)

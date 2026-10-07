@@ -331,8 +331,8 @@ fn gemini_t2(now: u64) -> TaskInfo {
     t2.deps = vec!["t0".into(), "t6".into()];
     t2.on_critical_path = true;
     t2.wave = 1;
-    t2.route = routed(Runtime::Codex, Strength::Standard, Effort::High);
-    let mut review_route = routed(Runtime::Claude, Strength::Frontier, Effort::High);
+    t2.route = routed(Runtime::Codex, Strength::Standard, Effort::HIGH);
+    let mut review_route = routed(Runtime::Claude, Strength::Frontier, Effort::HIGH);
     review_route.model = "claude-opus-5".into();
     t2.review_route = Some(review_route.clone());
     t2.budget = proto::Budget {
@@ -496,7 +496,7 @@ pub(crate) fn gemini_fixture() -> (RunsSnapshot, Vec<WindowInfo>) {
     t7.route = routed(
         Runtime::Codex,
         proto::Strength::Standard,
-        proto::Effort::Medium,
+        proto::Effort::MEDIUM,
     );
     let mut limited = worker(1, None, Runtime::Codex, now - 900);
     limited.rate_limited = true;

@@ -23,7 +23,7 @@ fn two_modules_raise_s_to_m() {
     assert_eq!(t1.size, Size::M);
     assert!(!t1.hub);
     // Everything derived from the size follows the raised size, not the planned one.
-    assert_eq!(t1.route.effort, proto::Effort::Medium);
+    assert_eq!(t1.route.effort, proto::Effort::MEDIUM);
     assert_eq!(t1.budget, config::Orchestrator::default().budget_m);
     assert_eq!(t1.review_level, Some(ReviewLevel::Medium));
 }

@@ -192,9 +192,9 @@ pub(super) fn resolve_task_lenient(
     // Route, decision 8, by the class's frozen default (milestone 9.5 decision 12).
     let routes = &limits.class_routes;
     let class = match (hub, size) {
-        (true, _) => routes.hub,
-        (false, Size::S) => routes.s,
-        _ => routes.m,
+        (true, _) => routes.hub.clone(),
+        (false, Size::S) => routes.s.clone(),
+        _ => routes.m.clone(),
     };
     let (class_strength, class_effort) = (class.strength, class.effort);
     let route = resolve_route(
@@ -352,7 +352,7 @@ fn resolve_route(
         errors.push(e("route.runtime", "must be claude or codex".to_string()));
         runtime = default_runtime;
     }
-    let effort = given.effort.unwrap_or(class_effort);
+    let effort = given.effort.clone().unwrap_or(class_effort);
     let (model, strength) = match &given.model {
         Some(model) => match roster::find(roster, runtime, model) {
             Some(entry) => {

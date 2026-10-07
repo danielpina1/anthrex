@@ -45,7 +45,8 @@ pub fn reachable_runtimes(run: &Run) -> Vec<Runtime> {
         found.extend(t.review_route.as_ref().map(|r| r.runtime));
         // Milestone 9.5 decision 9a: rung 2 can take any candidate of its list.
         let (lists, installed) = (&run.limits.route_lists, &run.orch.installed);
-        let listed = (task_list(lists, t).candidates.iter()).map(|c| c.route(t.route.effort));
+        let listed =
+            (task_list(lists, t).candidates.iter()).map(|c| c.route(t.route.effort.clone()));
         // Milestone 9.5 ruling RR-6: lane b's route, and the test writer's.
         let peer = (t.spec.race || t.spec.pair)
             .then(|| peer_route(&run.roster, &t.route, installed))

@@ -223,7 +223,7 @@ impl RunHarness {
                 runtime: Runtime::Claude,
                 model: "fake".into(),
                 strength: Strength::Fast,
-                effort: Effort::Low,
+                effort: Effort::LOW,
             },
             window_id: None,
             started_at: unix_now(),

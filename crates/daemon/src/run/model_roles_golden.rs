@@ -128,9 +128,10 @@ fn helpers_today(cfg: &config::Orchestrator) -> Route {
     } else {
         Runtime::Claude
     };
-    let base = crate::decider::call::ladder_route(&cfg.models, runtime, d.strength, d.effort);
+    let base =
+        crate::decider::call::ladder_route(&cfg.models, runtime, d.strength, d.effort.clone());
     let list = FrozenList::freeze(&cfg.tuning.routes.decider, &cfg.models);
-    route_pick::role(&list, 0, base.effort, &Installed::new())
+    route_pick::role(&list, 0, base.effort.clone(), &Installed::new())
         .and_then(|pick| pick.route)
         .unwrap_or(base)
 }
@@ -154,7 +155,7 @@ pub(crate) fn today(cfg: &config::Orchestrator) -> BTreeMap<String, String> {
     let orchestrator = roles::lists::orchestrator(
         None,
         &run.limits.route_lists.orchestrator,
-        agent.effort,
+        agent.effort.clone(),
         &none,
         || launch::resolve_orchestrator(None, agent, cfg.default_runtime, &run.roster),
     )

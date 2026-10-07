@@ -80,7 +80,7 @@ pub fn resolve_orchestrator(
                     runtime,
                     model: String::new(),
                     strength: Strength::Standard,
-                    effort: agent.effort,
+                    effort: agent.effort.clone(),
                 };
                 let candidates = vec![RoutingCandidate {
                     route: route.clone(),
@@ -98,7 +98,7 @@ pub fn resolve_orchestrator(
         runtime: e.runtime,
         model: e.model.clone(),
         strength: e.strength,
-        effort: agent.effort,
+        effort: agent.effort.clone(),
     };
     let skipped = if named.is_some() {
         "not in the configured list"
@@ -142,7 +142,7 @@ pub fn orchestrator_role(run: &Run, route: &Route) -> RoleLaunch {
             agent_label: None,
         },
         instructions: ORCHESTRATOR_CONTRACT.to_string(),
-        effort: route.effort,
+        effort: route.effort.clone(),
         claude_allowed_tools: strings(ORCHESTRATOR_ALLOWED_TOOLS),
         claude_disallowed_tools: strings(ORCHESTRATOR_DISALLOWED_TOOLS),
         env: Vec::new(),
@@ -226,7 +226,7 @@ pub fn planner_route(run: &Run) -> Option<Route> {
         &run.roster,
         runtime,
         p.strength,
-        p.effort,
+        p.effort.clone(),
         peer_allowed,
     ))
 }
@@ -388,7 +388,7 @@ pub(crate) fn read_only(
     HeadlessSpec {
         runtime: route.runtime,
         model: route.model.clone(),
-        effort: route.effort,
+        effort: route.effort.clone(),
         cwd: run.root.clone(),
         instructions: instructions.to_string(),
         mcp: Some(mcp),

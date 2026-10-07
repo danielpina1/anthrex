@@ -303,8 +303,8 @@ candidates = [
         t.routes.m,
         RouteList {
             candidates: vec![
-                candidate(Runtime::Codex, "gpt-6.1-sol", Some(Effort::High)),
-                candidate(Runtime::Claude, "claude-opus-5-5", Some(Effort::Medium)),
+                candidate(Runtime::Codex, "gpt-6.1-sol", Some(Effort::HIGH)),
+                candidate(Runtime::Claude, "claude-opus-5-5", Some(Effort::MEDIUM)),
             ],
             pick: Pick::Spread,
         }
@@ -314,7 +314,7 @@ candidates = [
         RouteList {
             candidates: vec![
                 candidate(Runtime::Codex, "gpt-6-luna", None),
-                candidate(Runtime::Claude, "claude-sonnet-5", Some(Effort::Low)),
+                candidate(Runtime::Claude, "claude-sonnet-5", Some(Effort::LOW)),
             ],
             pick: Pick::First,
         }

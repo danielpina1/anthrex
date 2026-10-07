@@ -220,7 +220,7 @@ pub(super) fn onboarding_route(
 ) -> Route {
     let roster = ctx.roster.current();
     let list = crate::run::model::FrozenList::freeze(list, &roster);
-    let pick = crate::run::route_pick::role(&list, rotation, ctx.scouts.effort, installed);
+    let pick = crate::run::route_pick::role(&list, rotation, ctx.scouts.effort.clone(), installed);
     let today = || run_scout_route(&roster, &ScoutRouting::of(ctx), installed);
     pick.and_then(|p| p.route).unwrap_or_else(today)
 }

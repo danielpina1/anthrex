@@ -155,7 +155,7 @@ fn a_retried_review_task_takes_and_records_its_lists_next_candidate() {
         review: RouteList {
             candidates: vec![
                 cand(Runtime::Codex, "gpt-6.1-sol", None),
-                cand(Runtime::Claude, "claude-opus-5-5", Some(Effort::High)),
+                cand(Runtime::Claude, "claude-opus-5-5", Some(Effort::HIGH)),
             ],
             pick: Pick::First,
         },
@@ -182,8 +182,8 @@ fn a_retried_review_task_takes_and_records_its_lists_next_candidate() {
     reviewer_window(&mut fx, "v1", "diff --git a/x b/x");
     let v1 = fx.task("v1");
     assert_eq!(
-        (v1.route.model.as_str(), v1.route.effort),
-        ("claude-opus-5-5", Effort::High)
+        (v1.route.model.as_str(), v1.route.effort.clone()),
+        ("claude-opus-5-5", Effort::HIGH)
     );
     let d = v1.routing_decisions.last().expect("the second review's");
     assert_eq!(

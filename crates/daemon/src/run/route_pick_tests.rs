@@ -63,8 +63,8 @@ fn m_example(pick: Pick) -> RouteList {
     list(
         pick,
         vec![
-            cand(Runtime::Codex, SOL, Some(Effort::High)),
-            cand(Runtime::Claude, OPUS, Some(Effort::Medium)),
+            cand(Runtime::Codex, SOL, Some(Effort::HIGH)),
+            cand(Runtime::Claude, OPUS, Some(Effort::MEDIUM)),
         ],
     )
 }
@@ -143,11 +143,11 @@ fn first_gives_every_task_the_first_candidate() {
         lists,
     );
     // No effort in the S list: the class's (S: low).
-    let luna = route(Runtime::Codex, LUNA, Strength::Fast, Effort::Low);
+    let luna = route(Runtime::Codex, LUNA, Strength::Fast, Effort::LOW);
     assert_eq!(task(&run, "t1").route, luna);
     for id in ["t2", "t3"] {
         let t = task(&run, id);
-        assert_eq!(t.route, sol(Effort::High), "{id}");
+        assert_eq!(t.route, sol(Effort::HIGH), "{id}");
         let pick = t.list_pick.as_ref().expect("a list pick");
         assert_eq!(
             (pick.chosen, pick.pick),
@@ -184,10 +184,10 @@ fn spread_round_robins_overlap_groups_in_plan_order() {
     assert_eq!(
         routes,
         [
-            &sol(Effort::High),
-            &opus(Effort::Medium),
-            &sol(Effort::High),
-            &sol(Effort::High)
+            &sol(Effort::HIGH),
+            &opus(Effort::MEDIUM),
+            &sol(Effort::HIGH),
+            &sol(Effort::HIGH)
         ]
     );
     let slots: Vec<Option<u32>> = ["t1", "t2", "t3", "t4"]
@@ -223,16 +223,16 @@ fn an_explicit_route_wins_and_a_runtime_only_route_takes_that_runtimes_first_can
         ],
         lists,
     );
-    let sonnet = route(Runtime::Claude, SONNET, Strength::Standard, Effort::Medium);
+    let sonnet = route(Runtime::Claude, SONNET, Strength::Standard, Effort::MEDIUM);
     assert_eq!(task(&run, "t1").route, sonnet, "the plan's model wins");
     assert_eq!(
         task(&run, "t2").route,
-        opus(Effort::Medium),
+        opus(Effort::MEDIUM),
         "claude's first"
     );
     assert_eq!(
         task(&run, "t3").route,
-        sol(Effort::Low),
+        sol(Effort::LOW),
         "a named strength is the plan's"
     );
     let t1 = task(&run, "t1").list_pick.as_ref().expect("snapshotted");
@@ -258,7 +258,7 @@ fn an_added_task_joins_its_overlap_group() {
         ],
         lists,
     );
-    assert_eq!(task(&run, "t2").route, opus(Effort::Medium));
+    assert_eq!(task(&run, "t2").route, opus(Effort::MEDIUM));
     let edited = add(
         &run,
         &[
@@ -268,14 +268,14 @@ fn an_added_task_joins_its_overlap_group() {
     );
     assert_eq!(
         task(&edited, "t3").route,
-        opus(Effort::Medium),
+        opus(Effort::MEDIUM),
         "joins t2's"
     );
     let t3 = task(&edited, "t3").list_pick.as_ref().expect("picked");
     assert_eq!(t3.slot, Some(1));
     assert_eq!(
         task(&edited, "t4").route,
-        sol(Effort::High),
+        sol(Effort::HIGH),
         "the next slot"
     );
     let t4 = task(&edited, "t4").list_pick.as_ref().expect("picked");
@@ -301,7 +301,7 @@ fn an_added_task_joins_its_overlap_group() {
     let amended = apply_edits(&edited, &[amend], &EditScope::Run, &EditSource::User, 6_000)
         .unwrap_or_else(|e| panic!("{}", show(&e)))
         .0;
-    assert_eq!(task(&amended, "t1").route, opus(Effort::Medium));
+    assert_eq!(task(&amended, "t1").route, opus(Effort::MEDIUM));
 }
 
 /// The list of the rung-2 tests: [sol medium, opus high, sol high].
@@ -310,9 +310,9 @@ fn ladder_lists() -> RouteLists {
         m: list(
             Pick::First,
             vec![
-                cand(Runtime::Codex, SOL, Some(Effort::Medium)),
-                cand(Runtime::Claude, OPUS, Some(Effort::High)),
-                cand(Runtime::Codex, SOL, Some(Effort::High)),
+                cand(Runtime::Codex, SOL, Some(Effort::MEDIUM)),
+                cand(Runtime::Claude, OPUS, Some(Effort::HIGH)),
+                cand(Runtime::Codex, SOL, Some(Effort::HIGH)),
             ],
         ),
         ..Default::default()
@@ -329,9 +329,9 @@ fn rung_2_takes_the_next_candidate_and_never_breaks_the_overlap_rule() {
         ladder_lists(),
     );
     let none = Installed::new();
-    assert_eq!(task(&run, "t1").route, sol(Effort::Medium));
+    assert_eq!(task(&run, "t1").route, sol(Effort::MEDIUM));
     let (next, step) = next_candidate(&run.limits, &run.tasks, 0, &none).expect("a next one");
-    assert_eq!(next, opus(Effort::High));
+    assert_eq!(next, opus(Effort::HIGH));
     assert_eq!(step.chosen, Some(1));
     assert_eq!(reasons(&step.candidates)[0], Some(CURRENT_ROUTE));
 
@@ -342,7 +342,7 @@ fn rung_2_takes_the_next_candidate_and_never_breaks_the_overlap_rule() {
     assert_eq!(task(&overlapped, "t3").route.runtime, Runtime::Codex);
     let (next, step) =
         next_candidate(&overlapped.limits, &overlapped.tasks, 0, &none).expect("the codex step");
-    assert_eq!(next, sol(Effort::High));
+    assert_eq!(next, sol(Effort::HIGH));
     assert_eq!(
         reasons(&step.candidates),
         [Some(CURRENT_ROUTE), Some(OVERLAPPING_OWNS), None]
@@ -351,14 +351,14 @@ fn rung_2_takes_the_next_candidate_and_never_breaks_the_overlap_rule() {
     // From the last candidate it cycles, past one below it (ruling T10a-1), to opus;
     // with the overlap, nothing is left and rung 2 is `roster::escalate`'s.
     let mut cycled = run.clone();
-    cycled.tasks[0].route = sol(Effort::High);
+    cycled.tasks[0].route = sol(Effort::HIGH);
     let (next, step) = next_candidate(&cycled.limits, &cycled.tasks, 0, &none).expect("cycles");
-    assert_eq!(next, opus(Effort::High));
+    assert_eq!(next, opus(Effort::HIGH));
     assert_eq!(
         reasons(&step.candidates),
         [Some(BELOW_CURRENT), None, Some(CURRENT_ROUTE)]
     );
-    overlapped.tasks[0].route = sol(Effort::High);
+    overlapped.tasks[0].route = sol(Effort::HIGH);
     assert_eq!(
         next_candidate(&overlapped.limits, &overlapped.tasks, 0, &none),
         None
@@ -381,7 +381,7 @@ fn the_reviewer_is_the_first_qualifying_candidate() {
                 Pick::First,
                 vec![
                     cand(Runtime::Claude, HAIKU, None),
-                    cand(Runtime::Claude, OPUS, Some(Effort::High)),
+                    cand(Runtime::Claude, OPUS, Some(Effort::HIGH)),
                     cand(Runtime::Codex, SOL, None),
                 ],
             ),
@@ -390,17 +390,17 @@ fn the_reviewer_is_the_first_qualifying_candidate() {
         &config().models,
     );
     let none = Installed::new();
-    let codex_author = sol(Effort::Medium);
+    let codex_author = sol(Effort::MEDIUM);
     let (chosen, candidates) =
         reviewer(&lists, &codex_author, ReviewLevel::Medium, &none, &[]).expect("a list");
-    assert_eq!(chosen, Some(opus(Effort::High)));
+    assert_eq!(chosen, Some(opus(Effort::HIGH)));
     assert_eq!(reasons(&candidates)[0], Some(BELOW_STRENGTH));
 
-    let claude_author = route(Runtime::Claude, SONNET, Strength::Standard, Effort::Medium);
+    let claude_author = route(Runtime::Claude, SONNET, Strength::Standard, Effort::MEDIUM);
     let (chosen, candidates) =
         reviewer(&lists, &claude_author, ReviewLevel::Medium, &none, &[]).expect("a list");
     // No effort in the list: the review level's (medium).
-    assert_eq!(chosen, Some(sol(Effort::Medium)));
+    assert_eq!(chosen, Some(sol(Effort::MEDIUM)));
     assert_eq!(
         reasons(&candidates),
         [Some(AUTHOR_RUNTIME), Some(AUTHOR_RUNTIME), None]
@@ -485,7 +485,7 @@ fn a_candidate_not_installed_is_skipped() {
     // Rung 2 and the reviewer skip it too.
     let step = next_candidate(&all.limits, &all.tasks, 1, &all.orch.installed);
     assert_eq!(step, None, "only codex is left after opus");
-    let author = opus(Effort::Medium);
+    let author = opus(Effort::MEDIUM);
     let installed = &all.orch.installed;
     let (chosen, candidates) = reviewer(
         &all.limits.route_lists,
@@ -521,7 +521,7 @@ fn task_routing_history_keeps_the_list_and_choice() {
         lists,
     );
     // t2 overlaps t1 (claude, explicit): codex is skipped for it.
-    assert_eq!(task(&run, "t2").route, opus(Effort::Medium));
+    assert_eq!(task(&run, "t2").route, opus(Effort::MEDIUM));
     run.tasks[1].session = 1;
     record_worker(&mut run, 1, 100);
     let d = &task(&run, "t2").routing_decisions[0];
@@ -535,14 +535,14 @@ fn task_routing_history_keeps_the_list_and_choice() {
     );
     assert_eq!(d.pick_policy.as_deref(), Some("first"));
     assert_eq!(d.selected_index, 1);
-    assert_eq!(d.chosen, opus(Effort::Medium));
+    assert_eq!(d.chosen, opus(Effort::MEDIUM));
     assert_eq!(
         reasons(&d.candidates),
         [Some(OVERLAPPING_OWNS), None],
         "the entire list, in order"
     );
     let routes: Vec<&Route> = d.candidates.iter().map(|c| &c.route).collect();
-    assert_eq!(routes, [&sol(Effort::High), &opus(Effort::Medium)]);
+    assert_eq!(routes, [&sol(Effort::HIGH), &opus(Effort::MEDIUM)]);
 
     // An explicit route records `explicit_task`, appended to the list.
     run.tasks[0].session = 1;

@@ -129,7 +129,15 @@
 /// a model gave the run at its start (empty when it has none), `#[serde(default)]` and
 /// left out while empty, so a protocol-17 snapshot and `run.json` still load
 /// (`HISTORY_VERSION` stays 5: no history record changes).
-pub const PROTO_VERSION: u32 = 18;
+///
+/// Milestone 9.8 bumps this to 19: `Effort` becomes a string (a protocol-18 value decodes
+/// unchanged), and the model roles append `ClientMsg::ListModels`, `DaemonMsg::Models`,
+/// `SettingsRequest::{RepoModels, PutRepoModels}`, `SettingsReply::{RepoModels,
+/// RepoSaved}`, `OrchestratorChoice.effort`, `SettingsDoc.roles` and
+/// `ModelCatalog.problem`, each defaulted and left out while empty, so an older
+/// `run.json` and snapshot still load. Derivation: 18 at `lib.rs:132` before this
+/// change; 18 + 1 = 19.
+pub const PROTO_VERSION: u32 = 19;
 
 /// How long the daemon waits for a freshly connected client's `Hello`, and how long a
 /// client waits for the daemon's `Welcome`, before giving up on the handshake. Design
@@ -144,6 +152,7 @@ pub mod codec;
 pub mod conversation;
 pub mod delivery;
 pub mod design;
+pub mod effort;
 pub mod history;
 pub mod messages;
 pub mod models;
@@ -267,8 +276,8 @@ mod models_tests;
 #[cfg(test)]
 mod tests {
     #[test]
-    fn proto_version_is_eighteen() {
-        assert_eq!(super::PROTO_VERSION, 18);
+    fn proto_version_is_nineteen() {
+        assert_eq!(super::PROTO_VERSION, 19);
     }
 
     #[test]

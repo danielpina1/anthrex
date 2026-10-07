@@ -23,12 +23,12 @@ pub fn pick_reviewer_skipping(
 pub fn escalate_skipping(roster: &[ModelEntry], route: &Route, failed: &[Route]) -> Route {
     let mut from = route.clone();
     if failed_in(failed, route) {
-        from.effort = Effort::High;
+        from.effort = Effort::HIGH;
     }
     escalate(&without(roster, failed), &from)
 }
 
 fn without(roster: &[ModelEntry], failed: &[Route]) -> Vec<ModelEntry> {
-    let kept = |e: &&ModelEntry| !failed_in(failed, &route_from(e, Effort::Low));
+    let kept = |e: &&ModelEntry| !failed_in(failed, &route_from(e, Effort::LOW));
     roster.iter().filter(kept).cloned().collect()
 }

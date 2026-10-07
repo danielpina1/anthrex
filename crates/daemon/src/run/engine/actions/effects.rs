@@ -245,10 +245,6 @@ fn has_worker(task: &Task) -> bool {
         .any(|r| crate::run::model::writes(task, r) && !r.ended)
 }
 
-fn effort_label(effort: Effort) -> &'static str {
-    match effort {
-        Effort::Low => "low",
-        Effort::Medium => "medium",
-        Effort::High => "high",
-    }
+fn effort_label(effort: Effort) -> String {
+    effort.to_string()
 }

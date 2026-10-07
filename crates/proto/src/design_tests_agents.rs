@@ -91,6 +91,7 @@ fn a_settings_doc() -> SettingsDoc {
             max_bounces: 2,
         },
         design_default: None,
+        roles: Default::default(),
     }
 }
 
@@ -121,4 +122,49 @@ fn settings_carry_the_design_default() {
         };
         assert_eq!(json["design_default"], want);
     }
+}
+
+fn two_rows() -> crate::models::ModelTable {
+    use crate::models::{ModelRef, Role, RoleChoice};
+    let mut table = crate::models::ModelTable::default();
+    table.rows.insert(
+        Role::Reviewer,
+        RoleChoice {
+            model: ModelRef::parse("codex:gpt-6.1-sol").unwrap(),
+            effort: Some("high".into()),
+            fallback: Some(ModelRef::parse("claude:claude-opus-5-5").unwrap()),
+        },
+    );
+    table.rows.insert(
+        Role::ImplementerSmall,
+        RoleChoice {
+            model: ModelRef::default_of(Runtime::Claude),
+            effort: None,
+            fallback: None,
+        },
+    );
+    table
+}
+
+#[test]
+fn settings_doc_without_roles_decodes() {
+    let doc = a_settings_doc();
+    let mut value = serde_json::to_value(&doc).unwrap();
+    assert!(value.get("roles").is_none(), "empty: not written");
+    value.as_object_mut().unwrap().remove("roles");
+    let back: SettingsDoc = serde_json::from_value(value.clone()).unwrap();
+    assert!(back.roles.is_empty());
+    let back: SettingsDoc = rmp_serde::from_slice(&p16_bytes(&value)).unwrap();
+    assert!(back.roles.is_empty());
+}
+
+#[test]
+fn settings_doc_roles_round_trip() {
+    let doc = SettingsDoc {
+        roles: two_rows(),
+        ..a_settings_doc()
+    };
+    both_ways(&doc);
+    let json = serde_json::to_value(&doc).unwrap();
+    assert_eq!(json["roles"]["rows"]["reviewer"]["effort"], "high");
 }

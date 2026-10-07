@@ -200,12 +200,12 @@ fn reproduced_with_a_culprit_adds_a_ci_fix_with_the_culprits_owns_one_rung_up() 
 /// The roster's weakest and strongest routes, at `effort`.
 fn routes(fx: &Fixture) -> (Route, Route) {
     let roster = &fx.run().roster;
-    let effort = fx.task("t1").route.effort;
+    let effort = fx.task("t1").route.effort.clone();
     let route = |e: &proto::ModelEntry| Route {
         runtime: e.runtime,
         model: e.model.clone(),
         strength: e.strength,
-        effort,
+        effort: effort.clone(),
     };
     let weak = roster.iter().min_by_key(|e| e.strength).unwrap();
     let strong = roster.iter().max_by_key(|e| e.strength).unwrap();

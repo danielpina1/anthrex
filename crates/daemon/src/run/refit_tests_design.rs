@@ -18,7 +18,7 @@ fn route() -> Route {
         runtime: Runtime::Codex,
         model: "gpt-6".into(),
         strength: Strength::Frontier,
-        effort: Effort::High,
+        effort: Effort::HIGH,
     }
 }
 

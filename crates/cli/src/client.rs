@@ -172,8 +172,9 @@ impl CliClient {
         Ok(())
     }
 
-    /// Sends one request and returns the first reply that is not a `WindowsChanged` or
-    /// `Git` broadcast.
+    /// Sends one request and returns the first reply that is not a `WindowsChanged`,
+    /// `Git` or `Models` broadcast (M9.8.4: no CLI command lists models; one that does
+    /// must read the reply itself).
     pub async fn request(&mut self, msg: ClientMsg) -> anyhow::Result<DaemonMsg> {
         self.request_with_timeout(msg, REQUEST_TIMEOUT).await
     }
@@ -192,7 +193,9 @@ impl CliClient {
                     // for, and either can land between the request and its reply: a
                     // fresh client's git snapshot arrives right after `Welcome`, and a
                     // window's own creation can trigger both at once.
-                    Some(DaemonMsg::WindowsChanged { .. }) | Some(DaemonMsg::Git { .. }) => {
+                    Some(DaemonMsg::WindowsChanged { .. })
+                    | Some(DaemonMsg::Git { .. })
+                    | Some(DaemonMsg::Models { .. }) => {
                         continue;
                     }
                     Some(reply) => return Ok(reply),

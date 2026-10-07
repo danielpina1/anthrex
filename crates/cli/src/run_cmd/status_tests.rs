@@ -21,7 +21,7 @@ fn round(window: u32) -> AgentRoundInfo {
         session: 1,
         round: 1,
         window_id: Some(window),
-        route: route(Runtime::Claude, "", Effort::Low),
+        route: route(Runtime::Claude, "", Effort::LOW),
         session_id: None,
         started_at: 0,
         ended_at: None,
@@ -154,7 +154,7 @@ pub(in crate::run_cmd) fn example() -> RunInfo {
             TaskState::Merged,
             0,
             none,
-            route(Runtime::Claude, "claude-opus-5", Effort::High),
+            route(Runtime::Claude, "claude-opus-5", Effort::HIGH),
             &[4, 5],
         ),
         task(
@@ -165,7 +165,7 @@ pub(in crate::run_cmd) fn example() -> RunInfo {
             TaskState::Review,
             1,
             review_1,
-            route(Runtime::Codex, "", Effort::Medium),
+            route(Runtime::Codex, "", Effort::MEDIUM),
             &[6, 9, 6],
         ),
         task(
@@ -176,7 +176,7 @@ pub(in crate::run_cmd) fn example() -> RunInfo {
             TaskState::Queued,
             0,
             none,
-            route(Runtime::Claude, "claude-sonnet-5", Effort::Low),
+            route(Runtime::Claude, "claude-sonnet-5", Effort::LOW),
             &[],
         ),
         task(
@@ -187,7 +187,7 @@ pub(in crate::run_cmd) fn example() -> RunInfo {
             TaskState::Blocked,
             3,
             check_3,
-            route(Runtime::Claude, "claude-sonnet-5", Effort::Low),
+            route(Runtime::Claude, "claude-sonnet-5", Effort::LOW),
             &[7],
         ),
     ];
@@ -492,7 +492,7 @@ fn status_shows_orchestrator_planners_holds_summary_and_paused_lines() {
     assert!(!run_block(&run, 0).contains("orchestrator:"));
     run.state = RunState::Planning;
     run.orchestrator = Some(OrchestratorInfo {
-        route: route(Runtime::Claude, "", Effort::High),
+        route: route(Runtime::Claude, "", Effort::HIGH),
         window_id: Some(12),
         live: true,
         started_at: 1,
@@ -506,7 +506,7 @@ fn status_shows_orchestrator_planners_holds_summary_and_paused_lines() {
         epic: epic.into(),
         title: epic.into(),
         area: vec![],
-        route: route(Runtime::Codex, "", Effort::Medium),
+        route: route(Runtime::Codex, "", Effort::MEDIUM),
         window_id: None,
         state,
         started_at: 1,
@@ -574,7 +574,7 @@ fn status_shows_orchestrator_planners_holds_summary_and_paused_lines() {
     o.live = false;
     o.window_id = None;
     o.summary = Some("All done.".into());
-    o.route = route(Runtime::Codex, "gpt-5", Effort::High);
+    o.route = route(Runtime::Codex, "gpt-5", Effort::HIGH);
     run.planners.clear();
     run.holds.clear();
     let text = run_block(&run, 0);

@@ -293,7 +293,7 @@ fn a_codex_orchestrator_is_reported_not_metered() {
             runtime,
             model: String::new(),
             strength: proto::Strength::Frontier,
-            effort: proto::Effort::High,
+            effort: proto::Effort::HIGH,
         };
         run.orch.orchestrator = Some(crate::run::orch::OrchestratorRecord::new(route, 1));
     };

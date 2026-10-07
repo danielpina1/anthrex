@@ -94,7 +94,7 @@ fn decider_dispatched(fx: &mut Fixture, op: u64) -> String {
         runtime: proto::Runtime::Claude,
         model: "claude-haiku-4-5".into(),
         strength: Strength::Fast,
-        effort: proto::Effort::Low,
+        effort: proto::Effort::LOW,
     };
     let input = roles::input_of(run);
     let d = roles::decider_record(
@@ -203,7 +203,7 @@ fn each_role_keeps_its_dispatch_snapshot_after_a_config_change() {
     let run = fx.run_mut();
     run.roster.retain(|e| e.strength == Strength::Frontier);
     run.limits.orch.planners.strength = Strength::Fast;
-    run.limits.orch.agent.effort = proto::Effort::Low;
+    run.limits.orch.agent.effort = proto::Effort::LOW;
     if let Some(o) = run.orch.orchestrator.as_mut() {
         o.routing.candidates.clear();
     }

@@ -8,6 +8,10 @@ use proto::DaemonMsg;
 impl App {
     pub fn on_daemon(&mut self, msg: DaemonMsg) -> Vec<Effect> {
         match msg {
+            DaemonMsg::Models { catalogs } => {
+                self.catalogs.absorb(catalogs);
+                vec![]
+            }
             DaemonMsg::Welcome { windows, .. } | DaemonMsg::WindowsChanged { windows } => {
                 self.replace_windows(windows)
             }

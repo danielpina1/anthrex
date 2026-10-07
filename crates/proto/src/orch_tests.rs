@@ -31,7 +31,7 @@ fn a_route(runtime: Runtime, model: &str) -> Route {
         runtime,
         model: model.into(),
         strength: Strength::Frontier,
-        effort: Effort::High,
+        effort: Effort::HIGH,
     }
 }
 
@@ -54,10 +54,12 @@ fn orch_types_round_trip() {
         OrchestratorChoice {
             runtime: Runtime::Claude,
             model: Some("claude-opus-5".into()),
+            effort: None,
         },
         OrchestratorChoice {
             runtime: Runtime::Codex,
             model: None,
+            effort: Some("high".into()),
         },
     ] {
         both_ways(&choice);
@@ -396,6 +398,7 @@ fn new_requests_round_trip() {
     let choice = OrchestratorChoice {
         runtime: Runtime::Codex,
         model: Some("gpt-5-codex".into()),
+        effort: None,
     };
     let requests = [
         RunRequest::ApproveHold {

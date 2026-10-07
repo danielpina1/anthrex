@@ -158,7 +158,7 @@ fn route_text(task: &TaskInfo) -> String {
         "{} · {} · {} effort",
         route.runtime.label(),
         strength_text(route.strength),
-        effort_text(route.effort)
+        effort_text(route.effort.clone())
     );
     if let Some(reviewer) = &task.review_route {
         text.push_str(&format!(

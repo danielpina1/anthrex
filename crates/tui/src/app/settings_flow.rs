@@ -195,7 +195,9 @@ impl App {
             SettingsReply::Refused { problems } => {
                 s.outcome = Some(SaveOutcome::Refused(problems.clone()));
             }
-            SettingsReply::Current { .. } => {}
+            SettingsReply::Current { .. }
+            | SettingsReply::RepoModels { .. }
+            | SettingsReply::RepoSaved { .. } => {}
         }
     }
 

@@ -55,7 +55,7 @@ pub fn resolve_installed(
                 runtime: e.runtime,
                 model: e.model.clone(),
                 strength: e.strength,
-                effort: agent.effort,
+                effort: agent.effort.clone(),
             },
             skipped_reason: Some(NOT_INSTALLED.to_string()),
         })
@@ -68,7 +68,7 @@ pub fn resolve_installed(
                 runtime,
                 model: String::new(),
                 strength: proto::Strength::Standard,
-                effort: agent.effort,
+                effort: agent.effort.clone(),
             },
             skipped_reason: Some(NOT_INSTALLED.to_string()),
         });
@@ -91,7 +91,7 @@ pub fn resolve_planned(
     let (agent, runtime) = (run.limits.orch.agent.config(), run.limits.default_runtime);
     let today = || resolve_installed(choice, &agent, runtime, &run.roster, missing);
     let list = &run.limits.route_lists.orchestrator;
-    super::roles::lists::orchestrator(choice, list, agent.effort, window, today)
+    super::roles::lists::orchestrator(choice, list, agent.effort.clone(), window, today)
 }
 
 /// Rulings RH-5 and RL-3: decision 29's route for `run`'s promotion
@@ -105,7 +105,7 @@ pub fn resolve_promoted(
     let (agent, runtime) = (run.limits.orch.agent.config(), run.limits.default_runtime);
     let today = || resolve_orchestrator(choice, &agent, runtime, &run.roster);
     let list = &run.limits.route_lists.orchestrator;
-    super::roles::lists::orchestrator(choice, list, agent.effort, installed, today)
+    super::roles::lists::orchestrator(choice, list, agent.effort.clone(), installed, today)
 }
 
 /// The start's refusal when `who`'s `runtime` is not installed; `hint` says what else

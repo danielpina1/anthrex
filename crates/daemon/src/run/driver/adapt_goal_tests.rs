@@ -228,6 +228,7 @@ fn planned(runtime: proto::Runtime) -> Shape {
         choice: Some(proto::OrchestratorChoice {
             runtime,
             model: None,
+            effort: None,
         }),
         design: None,
     }))
@@ -336,6 +337,7 @@ async fn promote_repeats_the_project_settings_check() {
     let choice = proto::OrchestratorChoice {
         runtime: proto::Runtime::Codex,
         model: None,
+        effort: None,
     };
     let (codex, claude) = (Some(&choice), None);
     let refusal = service.promote_refusal(&id, codex).await.unwrap_err();

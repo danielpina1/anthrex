@@ -24,7 +24,7 @@ fn lists_are_frozen_into_the_run() {
     let back: Run = serde_json::from_str(&json).expect("deserializes");
     assert_eq!(back.limits.route_lists, *frozen);
     let edited = add(&back, &[m("t2", "[\"crates/b/**\"]", "")]);
-    assert_eq!(task(&edited, "t2").route, opus(Effort::Medium));
+    assert_eq!(task(&edited, "t2").route, opus(Effort::MEDIUM));
 }
 
 #[test]
@@ -59,10 +59,10 @@ fn no_lists_reproduce_today() {
     let run = build_tuned(&text, &config(), Tuned::default()).expect("builds");
     let sonnet = |effort| route(Runtime::Claude, SONNET, Strength::Standard, effort);
     let expected = [
-        sonnet(Effort::Low),
-        sonnet(Effort::Medium),
-        opus(Effort::High),
-        route(Runtime::Codex, "", Strength::Standard, Effort::Medium),
+        sonnet(Effort::LOW),
+        sonnet(Effort::MEDIUM),
+        opus(Effort::HIGH),
+        route(Runtime::Codex, "", Strength::Standard, Effort::MEDIUM),
     ];
     for (t, want) in run.tasks.iter().zip(&expected) {
         assert_eq!(&t.route, want, "{}", t.id());
@@ -76,7 +76,7 @@ fn no_lists_reproduce_today() {
     assert!(!json.contains("route_lists") && !json.contains("list_pick"));
     // An edit too.
     let edited = add(&run, &[m("t5", "[\"crates/d/**\"]", "")]);
-    assert_eq!(task(&edited, "t5").route, sonnet(Effort::Medium));
+    assert_eq!(task(&edited, "t5").route, sonnet(Effort::MEDIUM));
     assert_eq!(task(&edited, "t5").list_pick, None);
 }
 
@@ -164,7 +164,7 @@ fn a_class_lists_runtimes_are_reachable() {
         m: list(
             Pick::First,
             vec![
-                cand(Runtime::Claude, OPUS, Some(Effort::High)),
+                cand(Runtime::Claude, OPUS, Some(Effort::HIGH)),
                 cand(Runtime::Codex, LUNA, None),
             ],
         ),
@@ -172,7 +172,7 @@ fn a_class_lists_runtimes_are_reachable() {
     };
     let text = plan_with(PROFILE, &[m("t1", "[\"crates/a/**\"]", "")]);
     let run = build_tuned(&text, &config, tuned(lists)).expect("builds");
-    assert_eq!(task(&run, "t1").route, opus(Effort::High));
+    assert_eq!(task(&run, "t1").route, opus(Effort::HIGH));
     let reachable = crate::run::reach::reachable_runtimes(&run);
     assert_eq!(reachable, [Runtime::Claude, Runtime::Codex]);
 }

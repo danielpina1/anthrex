@@ -78,7 +78,7 @@ fn a_design_run_round_trips() {
     };
     run.limits.route_lists.brainstorm = FrozenList {
         candidates: vec![
-            candidate("claude-opus-5-5", Strength::Frontier, Some(Effort::High)),
+            candidate("claude-opus-5-5", Strength::Frontier, Some(Effort::HIGH)),
             candidate("claude-sonnet-5", Strength::Standard, None),
         ],
         pick: ListPolicy::First,
@@ -114,7 +114,7 @@ candidates = [
         frozen.brainstorm,
         FrozenList {
             candidates: vec![
-                candidate("claude-opus-5-5", Strength::Frontier, Some(Effort::High)),
+                candidate("claude-opus-5-5", Strength::Frontier, Some(Effort::HIGH)),
                 candidate("claude-sonnet-5", Strength::Standard, None),
             ],
             pick: ListPolicy::First,
@@ -178,7 +178,7 @@ fn the_state_survives_save_and_load() {
         runtime: Runtime::Codex,
         model: "gpt-6".into(),
         strength: Strength::Frontier,
-        effort: Effort::High,
+        effort: Effort::HIGH,
     };
     let design = DesignState {
         phase_started: Some(3_100),
@@ -313,7 +313,7 @@ fn the_state_survives_save_and_load() {
                     runtime: Runtime::Codex,
                     model: "gpt-6".into(),
                     strength: Strength::Frontier,
-                    effort: Effort::High,
+                    effort: Effort::HIGH,
                 },
                 sessions: 2,
                 calls: 11,

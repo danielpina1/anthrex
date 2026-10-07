@@ -15,7 +15,7 @@ fn a_run_without_history_records_no_routing_decisions() {
         Runtime::Claude,
         "claude-sonnet-5",
         Strength::Standard,
-        Effort::Medium,
+        Effort::MEDIUM,
     );
     for history in [false, true] {
         let mut run = run_of(&["t1"]);

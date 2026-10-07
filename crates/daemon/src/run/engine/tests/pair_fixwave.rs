@@ -115,7 +115,7 @@ fn the_retry_preview_names_the_writers_route() {
         true => "default".to_string(),
         false => next.model.clone(),
     };
-    let effort = format!("{:?}", next.effort).to_lowercase();
+    let effort = next.effort.as_str().to_string();
     assert_eq!(
         preview,
         format!("retry t1: a fresh session at rung 2 on codex {model} ({effort} effort)")

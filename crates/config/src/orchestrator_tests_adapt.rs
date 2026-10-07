@@ -17,7 +17,7 @@ fn adapt_defaults_when_absent() {
             mode: DeciderMode::Claude,
             timeout_secs: 90,
             strength: Strength::Fast,
-            effort: Effort::Low,
+            effort: Effort::LOW,
             slot_wait_secs: 30,
         }
     );
@@ -26,7 +26,7 @@ fn adapt_defaults_when_absent() {
         Scouts {
             runtime: None,
             strength: Strength::Fast,
-            effort: Effort::Low,
+            effort: Effort::LOW,
             timeout_secs: 900,
             max_tool_calls: 120,
         }
@@ -90,7 +90,7 @@ otlp_port = 4318
             mode: DeciderMode::Codex,
             timeout_secs: 120,
             strength: Strength::Standard,
-            effort: Effort::Medium,
+            effort: Effort::MEDIUM,
             slot_wait_secs: 0,
         }
     );
@@ -99,7 +99,7 @@ otlp_port = 4318
         Scouts {
             runtime: Some(Runtime::Codex),
             strength: Strength::Frontier,
-            effort: Effort::High,
+            effort: Effort::HIGH,
             timeout_secs: 60,
             max_tool_calls: 1000,
         }

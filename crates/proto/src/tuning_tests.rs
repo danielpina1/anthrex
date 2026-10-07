@@ -197,7 +197,7 @@ fn tuning_file_round_trips_and_rejects_unknown_keys() {
         file.routes["s"],
         ClassRoute {
             strength: Strength::Standard,
-            effort: Effort::Medium,
+            effort: Effort::MEDIUM,
         }
     );
     assert_eq!(file.dismissed["route-m"], "frontier/high");

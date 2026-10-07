@@ -33,7 +33,7 @@ fn route(runtime: Runtime, model: &str, strength: Strength) -> Route {
         runtime,
         model: model.to_string(),
         strength,
-        effort: Effort::High,
+        effort: Effort::HIGH,
     }
 }
 
@@ -220,7 +220,7 @@ fn a_ci_culprit_fix_task_refused_by_rule_9_falls_back_to_the_culprits_own_route(
         runtime: Some(culprit.runtime),
         model: Some(culprit.model.clone()),
         strength: Some(culprit.strength),
-        effort: Some(culprit.effort),
+        effort: Some(culprit.effort.clone()),
     };
     assert_eq!(
         fx.task(&fixes[0]).spec.route,

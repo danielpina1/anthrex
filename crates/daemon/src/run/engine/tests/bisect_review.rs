@@ -147,7 +147,7 @@ fn an_overlapping_open_task_keeps_the_fix_task_on_the_culprits_runtime() {
     ];
     let (mut fx, mut windows) = start_on(&profile(), &tasks);
     let mut route = fx.task("t2").route.clone();
-    route.effort = proto::Effort::High;
+    route.effort = proto::Effort::HIGH;
     fx.task_mut("t2").route = route.clone();
     let up = escalate(&fx.run().roster, &route);
     assert_ne!(

@@ -59,7 +59,7 @@ pub fn route() -> Route {
         runtime: Runtime::Codex,
         model: String::new(),
         strength: Strength::Standard,
-        effort: Effort::High,
+        effort: Effort::HIGH,
     }
 }
 
@@ -69,7 +69,7 @@ pub fn orchestrator() -> OrchestratorRecord {
             runtime: Runtime::Claude,
             model: "claude-opus-5".into(),
             strength: Strength::Frontier,
-            effort: Effort::High,
+            effort: Effort::HIGH,
         },
         window_id: Some(9),
         launch_op: Some(1),

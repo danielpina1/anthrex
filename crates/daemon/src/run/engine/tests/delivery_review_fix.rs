@@ -338,7 +338,7 @@ fn route_spec_of(route: &proto::Route) -> RouteSpec {
         runtime: Some(route.runtime),
         model: Some(route.model.clone()),
         strength: Some(route.strength),
-        effort: Some(route.effort),
+        effort: Some(route.effort.clone()),
     }
 }
 

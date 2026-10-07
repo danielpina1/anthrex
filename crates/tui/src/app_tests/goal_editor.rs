@@ -506,7 +506,8 @@ fn continue_sends_continue_from_and_no_orchestrator() {
         (
             Some(OrchestratorChoice {
                 runtime: Runtime::Claude,
-                model: None
+                model: None,
+                effort: None
             }),
             None
         )

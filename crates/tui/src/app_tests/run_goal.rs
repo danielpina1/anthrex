@@ -173,6 +173,7 @@ fn goal_form_sends_start_goal_and_opens_the_run() {
             orchestrator: Some(OrchestratorChoice {
                 runtime: proto::Runtime::Claude,
                 model: Some("claude-opus-5".into()),
+                effort: None,
             }),
             delivery: Some(proto::DeliveryMode::Pr),
             continue_from: None,

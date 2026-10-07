@@ -49,6 +49,7 @@ pub(super) fn doc(models: Vec<ModelEntry>) -> SettingsDoc {
             max_bounces: 2,
         },
         design_default: None,
+        roles: Default::default(),
     }
 }
 
@@ -403,6 +404,7 @@ fn the_model_picker_lists_the_runtimes_enabled_models_then_custom() {
             orchestrator: Some(OrchestratorChoice {
                 runtime: Runtime::Claude,
                 model: Some("claude-opus-5-5".into()),
+                effort: None,
             }),
             delivery: None,
             continue_from: None,
@@ -442,6 +444,7 @@ fn custom_reveals_the_text_line_and_its_text_is_the_model_sent() {
             orchestrator: Some(OrchestratorChoice {
                 runtime: Runtime::Claude,
                 model: Some("my model-2".into()),
+                effort: None,
             }),
             delivery: None,
             continue_from: None,
@@ -468,7 +471,8 @@ fn custom_with_no_text_is_the_default_model() {
         orchestrator,
         Some(OrchestratorChoice {
             runtime: Runtime::Codex,
-            model: None
+            model: None,
+            effort: None
         })
     );
 }
@@ -585,6 +589,7 @@ fn promote_picks_from_the_roster_cache() {
             orchestrator: Some(OrchestratorChoice {
                 runtime: Runtime::Claude,
                 model: Some("claude-opus-5-5".into()),
+                effort: None,
             }),
         }
     );

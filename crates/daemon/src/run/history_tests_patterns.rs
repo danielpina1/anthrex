@@ -20,7 +20,7 @@ fn pair(phase: PairPhase, writer_failures: u8) -> Pair {
             Runtime::Codex,
             "",
             proto::Strength::Standard,
-            proto::Effort::Medium,
+            proto::Effort::MEDIUM,
         ),
         test: Some("t_feat".into()),
         red: Some("a".repeat(40)),
@@ -124,7 +124,7 @@ fn a_crowned_race_records_the_tasks_route() {
         Runtime::Codex,
         "gpt-6.1-sol",
         proto::Strength::Frontier,
-        proto::Effort::High,
+        proto::Effort::HIGH,
     );
     let lane = raced.race.as_ref().unwrap().lanes[1].route.clone();
     assert_ne!(raced.route, lane, "the escalation moved the task's route");
@@ -204,7 +204,7 @@ fn refit_excludes_race_records_it_wrote() {
     assert_eq!(ids(threshold_samples(&lines, SizeClass::S, &t)), single);
     let at = proto::ClassRoute {
         strength: run.tasks[1].route.strength,
-        effort: run.tasks[1].route.effort,
+        effort: run.tasks[1].route.effort.clone(),
     };
     assert_eq!(ids(route_samples(&lines, SizeClass::S, &t, at)), single);
 }

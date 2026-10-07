@@ -115,9 +115,9 @@ fn class_routes_fill_the_policy() {
     let route = |strength, effort| ClassRoute { strength, effort };
     let mut file = TuningFile::default();
     file.routes
-        .insert("s".into(), route(Strength::Standard, Effort::Medium));
+        .insert("s".into(), route(Strength::Standard, Effort::MEDIUM));
     file.routes
-        .insert("m".into(), route(Strength::Frontier, Effort::Medium));
+        .insert("m".into(), route(Strength::Frontier, Effort::MEDIUM));
     let text = plan(&[
         task_toml("s1", "S", "[\"crates/a/src/x.rs\"]", ""),
         task_toml("m1", "M", "[\"crates/b/src/y.rs\"]", ""),
@@ -133,21 +133,21 @@ fn class_routes_fill_the_policy() {
     let run = built(&text, &config, tuned(&file, &config));
     let of = |id: &str| {
         let r = &task(&run, id).route;
-        (r.strength, r.effort)
+        (r.strength, r.effort.clone())
     };
-    assert_eq!(of("s1"), (Strength::Standard, Effort::Medium));
-    assert_eq!(of("m1"), (Strength::Frontier, Effort::Medium));
+    assert_eq!(of("s1"), (Strength::Standard, Effort::MEDIUM));
+    assert_eq!(of("m1"), (Strength::Frontier, Effort::MEDIUM));
     assert_eq!(
         of("h1"),
-        (Strength::Frontier, Effort::High),
+        (Strength::Frontier, Effort::HIGH),
         "hub is never tuned"
     );
-    assert_eq!(of("e1").1, Effort::High);
+    assert_eq!(of("e1").1, Effort::HIGH);
     assert_eq!(
         run.limits.class_routes,
         ClassRoutes {
-            s: route(Strength::Standard, Effort::Medium),
-            m: route(Strength::Frontier, Effort::Medium),
+            s: route(Strength::Standard, Effort::MEDIUM),
+            m: route(Strength::Frontier, Effort::MEDIUM),
             ..ClassRoutes::default()
         }
     );

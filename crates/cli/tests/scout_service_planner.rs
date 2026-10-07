@@ -41,12 +41,12 @@ fn planner_spec(repo: &std::path::Path) -> PlannerSpec {
         runtime: Runtime::Claude,
         model: "claude-opus-4-5".into(),
         strength: Strength::Frontier,
-        effort: Effort::High,
+        effort: Effort::HIGH,
     };
     let headless = HeadlessSpec {
         runtime: Runtime::Claude,
         model: route.model.clone(),
-        effort: route.effort,
+        effort: route.effort.clone(),
         cwd: repo.to_path_buf(),
         instructions: "You are a sub-planner.".into(),
         mcp: Some(McpTarget {

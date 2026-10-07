@@ -107,9 +107,9 @@ pub fn pick_reviewer(roster: &[ModelEntry], author: &Route, level: ReviewLevel) 
         ReviewLevel::Frontier => Strength::Frontier,
     };
     let effort = match level {
-        ReviewLevel::Small => Effort::Low,
-        ReviewLevel::Medium => Effort::Medium,
-        ReviewLevel::Frontier => Effort::High,
+        ReviewLevel::Small => Effort::LOW,
+        ReviewLevel::Medium => Effort::MEDIUM,
+        ReviewLevel::Frontier => Effort::HIGH,
     };
 
     let peer_runtime = peer(author.runtime);
@@ -143,12 +143,12 @@ pub fn escalate(roster: &[ModelEntry], route: &Route) -> Route {
     }
     let peer_runtime = peer(route.runtime);
     if let Some(entry) = first_at(roster, peer_runtime, route.strength) {
-        return route_from(entry, Effort::High);
+        return route_from(entry, Effort::HIGH);
     }
     if let Some(up) = strength_one_up(route.strength)
         && let Some(entry) = first_at(roster, route.runtime, up)
     {
-        return route_from(entry, Effort::High);
+        return route_from(entry, Effort::HIGH);
     }
     route.clone()
 }

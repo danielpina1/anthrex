@@ -23,7 +23,7 @@ fn spend(label: &str, role: AgentRole, (calls, tokens): (u32, u64)) -> AgentSpen
             runtime: Runtime::Codex,
             model: "m".into(),
             strength: Strength::Frontier,
-            effort: Effort::High,
+            effort: Effort::HIGH,
         },
         sessions: 1,
         calls,

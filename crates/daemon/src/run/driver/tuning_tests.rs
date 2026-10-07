@@ -134,7 +134,7 @@ async fn a_design_refit_at_a_start_keeps_its_lines_apart() {
             runtime: proto::Runtime::Codex,
             model: "gpt-6".into(),
             strength: proto::Strength::Frontier,
-            effort: proto::Effort::High,
+            effort: proto::Effort::HIGH,
         },
         calls: 30,
         tokens: 0,

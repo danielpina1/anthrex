@@ -94,7 +94,7 @@ pub fn peer_route(roster: &[ModelEntry], route: &Route, installed: &Installed) -
         runtime,
         model: entry.model.clone(),
         strength: entry.strength,
-        effort: route.effort,
+        effort: route.effort.clone(),
     })
 }
 

@@ -72,20 +72,14 @@ impl Old {
     fn choice(&self, fallback: Option<&Old>) -> RoleChoice {
         RoleChoice {
             model: self.model_ref(),
-            effort: Some(effort_name(self.effort)),
+            effort: Some(effort_name(&self.effort)),
             fallback: fallback.map(Old::model_ref),
         }
     }
 }
 
-/// M9.8.4 replaces the match with `e.as_str().to_string()`.
-fn effort_name(e: Effort) -> String {
-    match e {
-        Effort::Low => "low",
-        Effort::Medium => "medium",
-        Effort::High => "high",
-    }
-    .to_string()
+fn effort_name(e: &Effort) -> String {
+    e.as_str().to_string()
 }
 
 fn strength_name(s: Strength) -> &'static str {
@@ -172,34 +166,37 @@ fn route_within(
 /// or above the author's strength; else the same runtime's, another model preferred;
 /// else its strongest; else the author's route. At `medium`.
 fn pick_reviewer(roster: &[ModelEntry], author: &Old) -> Old {
-    let (required, effort) = (author.strength, Effort::Medium);
+    let (required, effort) = (author.strength, Effort::MEDIUM);
     lowest_at_or_above(roster, peer(author.runtime), required, None)
         .or_else(|| lowest_at_or_above(roster, author.runtime, required, Some(&author.model)))
         .or_else(|| strongest_of(roster, author.runtime))
         .map_or_else(
             || Old {
-                effort,
+                effort: effort.clone(),
                 ..author.clone()
             },
-            |e| Old::of(e, effort),
+            |e| Old::of(e, effort.clone()),
         )
 }
 
 /// A list's candidates that are in the roster, at their own effort or else `effort`.
-fn candidates(list: &RouteList, roster: &[ModelEntry], effort: Effort) -> Vec<Old> {
+fn candidates(list: &RouteList, roster: &[ModelEntry], effort: &Effort) -> Vec<Old> {
     (list.candidates.iter())
         .filter_map(|c| {
             let entry = roster
                 .iter()
                 .find(|e| e.runtime == c.runtime && e.model == c.model)?;
-            Some(Old::of(entry, c.effort.unwrap_or(effort)))
+            Some(Old::of(
+                entry,
+                c.effort.clone().unwrap_or_else(|| effort.clone()),
+            ))
         })
         .collect()
 }
 
 /// MR §6.2: a list's first candidate in the roster as the model, the next as the
 /// fallback. `None` with no usable candidate.
-fn listed(list: &RouteList, roster: &[ModelEntry], effort: Effort) -> Option<(Old, Option<Old>)> {
+fn listed(list: &RouteList, roster: &[ModelEntry], effort: &Effort) -> Option<(Old, Option<Old>)> {
     let mut found = candidates(list, roster, effort).into_iter();
     let first = found.next()?;
     Some((first, found.next()))
@@ -260,9 +257,12 @@ pub fn migrate(o: &Orchestrator, raw: Option<&toml::Table>) -> (ModelTable, Vec<
     );
 
     let p = &o.agent.planners;
-    let (planner, fallback) = listed(&lists.planner, roster, p.effort).unwrap_or_else(|| {
+    let (planner, fallback) = listed(&lists.planner, roster, &p.effort).unwrap_or_else(|| {
         let runtime = p.runtime.unwrap_or(orchestrator.0.runtime);
-        (route_within(roster, runtime, p.strength, p.effort), None)
+        (
+            route_within(roster, runtime, p.strength, p.effort.clone()),
+            None,
+        )
     });
     let fed = present.scalars("planners") || present.route("planner");
     put(
@@ -284,9 +284,12 @@ pub fn migrate(o: &Orchestrator, raw: Option<&toml::Table>) -> (ModelTable, Vec<
     }
 
     let s = &o.scouts;
-    let (research, fallback) = listed(&lists.scout, roster, s.effort).unwrap_or_else(|| {
+    let (research, fallback) = listed(&lists.scout, roster, &s.effort).unwrap_or_else(|| {
         let runtime = s.runtime.unwrap_or(o.default_runtime);
-        (route_within(roster, runtime, s.strength, s.effort), None)
+        (
+            route_within(roster, runtime, s.strength, s.effort.clone()),
+            None,
+        )
     });
     let fed = present.scalars("scouts") || present.route("scout");
     put(
@@ -324,7 +327,7 @@ fn orchestrator_row(
     roster: &[ModelEntry],
 ) -> (Old, Option<Old>) {
     let agent = &o.agent.agent;
-    if let Some(found) = listed(&lists.orchestrator, roster, agent.effort) {
+    if let Some(found) = listed(&lists.orchestrator, roster, &agent.effort) {
         return found;
     }
     let runtime = agent.runtime.unwrap_or(o.default_runtime);
@@ -335,14 +338,14 @@ fn orchestrator_row(
             .find(|e| e.runtime == runtime && e.model == model),
     };
     let route = match entry {
-        Some(entry) => Old::of(entry, agent.effort),
+        Some(entry) => Old::of(entry, agent.effort.clone()),
         // A named model outside the roster is refused at a start today; it is kept as
         // named, which `run start` then checks against the CLI.
         None => Old {
             runtime,
             model: agent.model.clone(),
             strength: Strength::Standard,
-            effort: agent.effort,
+            effort: agent.effort.clone(),
         },
     };
     (route, None)
@@ -364,29 +367,30 @@ fn implementer_rows(
             &lists.s,
             "s",
             Strength::Standard,
-            Effort::Low,
+            Effort::LOW,
         ),
         (
             Role::ImplementerMedium,
             &lists.m,
             "m",
             Strength::Standard,
-            Effort::Medium,
+            Effort::MEDIUM,
         ),
         (
             Role::ImplementerHub,
             &lists.hub,
             "hub",
             Strength::Frontier,
-            Effort::High,
+            Effort::HIGH,
         ),
     ];
     let mut medium = None;
     let mut unresolved = Vec::new();
     for (role, list, name, strength, effort) in classes {
         let runtime = o.default_runtime;
-        let found = listed(list, roster, effort)
-            .or_else(|| first_at(roster, runtime, strength).map(|e| (Old::of(e, effort), None)));
+        let found = listed(list, roster, &effort).or_else(|| {
+            first_at(roster, runtime, strength).map(|e| (Old::of(e, effort.clone()), None))
+        });
         let Some((route, fallback)) = found else {
             let (rt, s) = (runtime.label(), strength_name(strength));
             let keeps = builtin_choice(role).model.label();
@@ -418,10 +422,10 @@ fn derived_rows(
     table: &mut ModelTable,
 ) {
     let writer = first_at(roster, peer(medium.runtime), medium.strength)
-        .map_or_else(|| medium.clone(), |e| Old::of(e, medium.effort));
+        .map_or_else(|| medium.clone(), |e| Old::of(e, medium.effort.clone()));
     put(table, Role::TestWriter, writer.choice(None), false);
 
-    let listed = candidates(review, roster, Effort::Medium);
+    let listed = candidates(review, roster, &Effort::MEDIUM);
     let qualifies = |c: &Old| c.runtime != medium.runtime && c.strength >= medium.strength;
     let (reviewer, fallback) = match listed.iter().position(qualifies) {
         Some(k) => {
@@ -445,8 +449,8 @@ fn derived_rows(
 /// twice, none the orchestrator's twice. At the first's effort (the orchestrator's
 /// where a candidate names none).
 fn brainstorm_row(list: &RouteList, roster: &[ModelEntry], orchestrator: &Old) -> BrainstormChoice {
-    let effort = orchestrator.effort;
-    let listed = candidates(list, roster, effort);
+    let effort = orchestrator.effort.clone();
+    let listed = candidates(list, roster, &effort);
     let (first, second) = match listed.first() {
         Some(first) => {
             let other = listed.iter().skip(1).find(|r| r.runtime != first.runtime);
@@ -459,7 +463,7 @@ fn brainstorm_row(list: &RouteList, roster: &[ModelEntry], orchestrator: &Old) -
             let strongest: Vec<Old> = [Runtime::Claude, Runtime::Codex]
                 .into_iter()
                 .filter_map(|runtime| strongest_of(roster, runtime))
-                .map(|e| Old::of(e, effort))
+                .map(|e| Old::of(e, effort.clone()))
                 .collect();
             match &strongest[..] {
                 [a, b, ..] => (a.clone(), b.clone()),
@@ -471,7 +475,7 @@ fn brainstorm_row(list: &RouteList, roster: &[ModelEntry], orchestrator: &Old) -
     BrainstormChoice {
         first: first.model_ref(),
         second: second.model_ref(),
-        effort: Some(effort_name(first.effort)),
+        effort: Some(effort_name(&first.effort)),
     }
 }
 
@@ -480,7 +484,7 @@ fn brainstorm_row(list: &RouteList, roster: &[ModelEntry], orchestrator: &Old) -
 /// (`decider::call::ladder_route`).
 fn helpers_row(o: &Orchestrator, lists: &RouteLists, roster: &[ModelEntry]) -> (Old, Option<Old>) {
     let d = &o.deciders;
-    if let Some(found) = listed(&lists.decider, roster, d.effort) {
+    if let Some(found) = listed(&lists.decider, roster, &d.effort) {
         return found;
     }
     let runtime = match d.mode {
@@ -494,9 +498,9 @@ fn helpers_row(o: &Orchestrator, lists: &RouteLists, roster: &[ModelEntry]) -> (
             runtime,
             model: String::new(),
             strength: d.strength,
-            effort: d.effort,
+            effort: d.effort.clone(),
         },
-        |e| Old::of(e, d.effort),
+        |e| Old::of(e, d.effort.clone()),
     );
     (route, None)
 }

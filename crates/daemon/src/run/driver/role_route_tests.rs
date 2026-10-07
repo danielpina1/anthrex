@@ -164,7 +164,7 @@ fn route() -> proto::Route {
         runtime: proto::Runtime::Claude,
         model: String::new(),
         strength: proto::Strength::Fast,
-        effort: proto::Effort::Low,
+        effort: proto::Effort::LOW,
     }
 }
 

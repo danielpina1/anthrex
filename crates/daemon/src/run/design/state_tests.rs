@@ -176,7 +176,7 @@ fn a_live_agent_runs_in_its_window_in_its_role() {
             runtime: Runtime::Claude,
             model: "m".into(),
             strength: Strength::Frontier,
-            effort: Effort::High,
+            effort: Effort::HIGH,
         },
         session: 1,
         window_id: Some(window),

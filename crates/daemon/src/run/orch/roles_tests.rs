@@ -14,7 +14,7 @@ fn route(model: &str, strength: Strength) -> Route {
         runtime: Runtime::Claude,
         model: model.into(),
         strength,
-        effort: Effort::High,
+        effort: Effort::HIGH,
     }
 }
 
@@ -29,7 +29,7 @@ fn agent() -> config::AgentConfig {
     config::AgentConfig {
         runtime: None,
         model: String::new(),
-        effort: Effort::High,
+        effort: Effort::HIGH,
     }
 }
 
@@ -102,6 +102,7 @@ fn explicit_choice_is_identifiable_as_explicit() {
     let same = OrchestratorChoice {
         runtime: Runtime::Claude,
         model: Some(default.chosen.model.clone()),
+        effort: None,
     };
     let explicit = orchestrator_of(Some(&same));
     assert_eq!(explicit.chosen, default.chosen);
@@ -120,9 +121,10 @@ fn unchosen_candidates_have_no_failure_label() {
     let named = OrchestratorChoice {
         runtime: Runtime::Claude,
         model: Some("claude-sonnet-5".into()),
+        effort: None,
     };
     records.push(orchestrator_of(Some(&named)));
-    let ladder = ladder_candidates(&roster, Runtime::Claude, Strength::Fast, Effort::Low);
+    let ladder = ladder_candidates(&roster, Runtime::Claude, Strength::Fast, Effort::LOW);
     let chosen = ladder[1].route.clone();
     records.push(record(
         Some(&run),
@@ -228,7 +230,7 @@ fn decider_candidates_are_the_modes_runtime_ladder_only() {
             runtime,
             model: String::new(),
             strength: Strength::Standard,
-            effort: Effort::Low,
+            effort: Effort::LOW,
         };
         let got = decider_candidates(&roster, &chosen, Strength::Standard);
         let mut want: Vec<&proto::ModelEntry> = roster
@@ -243,7 +245,7 @@ fn decider_candidates_are_the_modes_runtime_ladder_only() {
         let want_models: Vec<(Runtime, &str)> =
             want.iter().map(|e| (e.runtime, e.model.as_str())).collect();
         assert_eq!(got_models, want_models);
-        assert!(got.iter().all(|c| c.route.effort == Effort::Low));
+        assert!(got.iter().all(|c| c.route.effort == Effort::LOW));
     }
 }
 
@@ -274,7 +276,7 @@ fn a_decider_record_names_its_task_only_when_it_has_one() {
 #[test]
 fn planner_and_scout_ladders_include_the_peer_runtime() {
     let roster = config::default_roster();
-    let got = ladder_candidates(&roster, Runtime::Codex, Strength::Standard, Effort::High);
+    let got = ladder_candidates(&roster, Runtime::Codex, Strength::Standard, Effort::HIGH);
     let rank = |rt: Runtime| {
         let mut e: Vec<&proto::ModelEntry> = roster
             .iter()

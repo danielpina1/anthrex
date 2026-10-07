@@ -65,6 +65,7 @@ pub(super) fn planned_on(yes: bool, choice: Option<Runtime>) -> Fixture {
     let choice = choice.map(|runtime| OrchestratorChoice {
         runtime,
         model: None,
+        effort: None,
     });
     let resolved = resolve_orchestrator(
         choice.as_ref(),
@@ -243,7 +244,7 @@ fn planned_run_starts_in_planning_and_creates_branch_then_orchestrator() {
         (None, 1)
     );
     assert_eq!(role.mcp.role, AgentRole::Orchestrator);
-    assert_eq!(role.effort, Effort::High);
+    assert_eq!(role.effort, Effort::HIGH);
     let o = run.orch.orchestrator.as_ref().unwrap();
     assert_eq!((o.launch_op, o.live, o.window_id), (Some(op), false, None));
     assert_eq!(o.first_prompt, first);
@@ -281,7 +282,7 @@ fn agent(runtime: Option<Runtime>, model: &str) -> config::AgentConfig {
     config::AgentConfig {
         runtime,
         model: model.into(),
-        effort: Effort::Medium,
+        effort: Effort::MEDIUM,
     }
 }
 
@@ -301,6 +302,7 @@ fn resolve_orchestrator_order() {
         Some(OrchestratorChoice {
             runtime: Runtime::Claude,
             model: Some(model.into()),
+            effort: None,
         })
     };
     // Default: the runtime's first frontier entry, at the agent's effort.
@@ -310,7 +312,7 @@ fn resolve_orchestrator_order() {
             Runtime::Claude,
             "claude-opus-5-5".into(),
             Strength::Frontier,
-            Effort::Medium
+            Effort::MEDIUM
         ))
     );
     // The agent's model, then the choice's, which wins.
@@ -326,6 +328,7 @@ fn resolve_orchestrator_order() {
     let codex = Some(OrchestratorChoice {
         runtime: Runtime::Codex,
         model: None,
+        effort: None,
     });
     assert_eq!(
         pick(codex, agent(Some(Runtime::Claude), "")),
@@ -333,7 +336,7 @@ fn resolve_orchestrator_order() {
             Runtime::Codex,
             String::new(),
             Strength::Standard,
-            Effort::Medium
+            Effort::MEDIUM
         )),
         "Codex has no frontier entry: its strongest, the default model at standard"
     );
@@ -345,6 +348,7 @@ fn resolve_orchestrator_order() {
     let codex_default = Some(OrchestratorChoice {
         runtime: Runtime::Codex,
         model: Some(String::new()),
+        effort: None,
     });
     assert_eq!(
         pick(codex_default, agent(None, "")).map(|r| r.0),
@@ -367,7 +371,7 @@ fn resolve_orchestrator_keeps_the_candidate_snapshot() {
         runtime: Runtime::Claude,
         model: model.into(),
         strength,
-        effort: Effort::Medium,
+        effort: Effort::MEDIUM,
     };
     let taken = |model: &str, strength, why: Option<&str>| RoutingCandidate {
         route: route(model, strength),
@@ -404,6 +408,7 @@ fn resolve_orchestrator_keeps_the_candidate_snapshot() {
     let choice = OrchestratorChoice {
         runtime: Runtime::Codex,
         model: None,
+        effort: None,
     };
     let chosen =
         resolve_orchestrator(Some(&choice), &agent(None, ""), Runtime::Claude, &roster()).unwrap();

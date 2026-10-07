@@ -257,6 +257,7 @@ mod tuning {
             choice: Some(proto::OrchestratorChoice {
                 runtime: proto::Runtime::Claude,
                 model: None,
+                effort: None,
             }),
             design: None,
         }))

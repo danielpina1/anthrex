@@ -88,18 +88,18 @@ const fn class_route(strength: Strength, effort: Effort) -> ClassRoute {
 
 /// Decision 9's ladder for S, bottom first; M8a's default is `standard/low`.
 pub const S_ROUTE_LADDER: [ClassRoute; 4] = [
-    class_route(Strength::Fast, Effort::Low),
-    class_route(Strength::Fast, Effort::Medium),
-    class_route(Strength::Standard, Effort::Low),
-    class_route(Strength::Standard, Effort::Medium),
+    class_route(Strength::Fast, Effort::LOW),
+    class_route(Strength::Fast, Effort::MEDIUM),
+    class_route(Strength::Standard, Effort::LOW),
+    class_route(Strength::Standard, Effort::MEDIUM),
 ];
 
 /// Decision 9's ladder for M, bottom first; M8a's default is `standard/medium`.
 pub const M_ROUTE_LADDER: [ClassRoute; 4] = [
-    class_route(Strength::Standard, Effort::Medium),
-    class_route(Strength::Standard, Effort::High),
-    class_route(Strength::Frontier, Effort::Medium),
-    class_route(Strength::Frontier, Effort::High),
+    class_route(Strength::Standard, Effort::MEDIUM),
+    class_route(Strength::Standard, Effort::HIGH),
+    class_route(Strength::Frontier, Effort::MEDIUM),
+    class_route(Strength::Frontier, Effort::HIGH),
 ];
 
 // ---- samples (decision 4) ----
@@ -229,7 +229,7 @@ pub fn route_samples<'a>(
     cur: ClassRoute,
 ) -> Vec<&'a TaskRecord> {
     let records = task_records(lines)
-        .filter(|r| plan_code(r, class) && r.sessions >= 1 && ran_on(r, cur))
+        .filter(|r| plan_code(r, class) && r.sessions >= 1 && ran_on(r, cur.clone()))
         .collect();
     cap_and_window(records, t)
 }

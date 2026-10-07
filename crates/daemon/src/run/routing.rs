@@ -118,7 +118,7 @@ pub fn worker_pool(roster: &[ModelEntry], chosen: &Route, explicit: bool) -> Vec
             } else {
                 None
             };
-            (route_of(entry, chosen.effort), reason)
+            (route_of(entry, chosen.effort.clone()), reason)
         })
         .collect()
 }
@@ -150,12 +150,12 @@ pub fn escalation_pool(roster: &[ModelEntry], from: &Route) -> Vec<Raw> {
         .iter()
         .filter(|e| e.runtime == from.runtime && Some(e.strength) == up);
     for entry in peers.chain(ups) {
-        raw.push((route_of(entry, Effort::High), None));
+        raw.push((route_of(entry, Effort::HIGH), None));
     }
     raw.push((from.clone(), None));
     let not_a_step = format!("not an escalation step from {}", from.model);
     for entry in roster {
-        let route = route_of(entry, Effort::High);
+        let route = route_of(entry, Effort::HIGH);
         if !raw.iter().any(|(r, _)| *r == route) {
             raw.push((route, Some(not_a_step.clone())));
         }
@@ -181,9 +181,9 @@ fn rank(mut entries: Vec<&ModelEntry>, strongest: bool) -> Vec<&ModelEntry> {
 /// roster has no entry on its runtime; then the peer runtime's weaker entries.
 pub fn reviewer_pool(roster: &[ModelEntry], author: &Route, level: ReviewLevel) -> Vec<Raw> {
     let (required, effort) = match level {
-        ReviewLevel::Small => (Strength::Fast, Effort::Low),
-        ReviewLevel::Medium => (author.strength, Effort::Medium),
-        ReviewLevel::Frontier => (Strength::Frontier, Effort::High),
+        ReviewLevel::Small => (Strength::Fast, Effort::LOW),
+        ReviewLevel::Medium => (author.strength, Effort::MEDIUM),
+        ReviewLevel::Frontier => (Strength::Frontier, Effort::HIGH),
     };
     let below = format!("below the required {} strength", strength_label(required));
     let peer_rt = peer(author.runtime);
@@ -207,13 +207,13 @@ pub fn reviewer_pool(roster: &[ModelEntry], author: &Route, level: ReviewLevel) 
     let mut raw: Vec<Raw> = tier1
         .into_iter()
         .chain(tier2)
-        .map(|e| (route_of(e, effort), None))
+        .map(|e| (route_of(e, effort.clone()), None))
         .collect();
     let rest = rank(
         roster
             .iter()
             .filter(|e| e.runtime == author.runtime)
-            .filter(|e| !raw.iter().any(|(r, _)| *r == route_of(e, effort)))
+            .filter(|e| !raw.iter().any(|(r, _)| *r == route_of(e, effort.clone())))
             .collect(),
         true,
     );
@@ -225,18 +225,18 @@ pub fn reviewer_pool(roster: &[ModelEntry], author: &Route, level: ReviewLevel) 
         } else {
             Some(below.clone())
         };
-        raw.push((route_of(entry, effort), reason));
+        raw.push((route_of(entry, effort.clone()), reason));
     }
     if !roster.iter().any(|e| e.runtime == author.runtime) {
         let fallback = Route {
-            effort,
+            effort: effort.clone(),
             ..author.clone()
         };
         let last = "the author's own route, used only when no roster entry fits";
         raw.push((fallback, (!open).then(|| last.to_string())));
     }
     for entry in roster.iter().filter(|e| e.runtime == peer_rt) {
-        let route = route_of(entry, effort);
+        let route = route_of(entry, effort.clone());
         if !raw.iter().any(|(r, _)| *r == route) {
             raw.push((route, Some(below.clone())));
         }

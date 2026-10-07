@@ -18,6 +18,7 @@ fn codex() -> Option<OrchestratorChoice> {
     Some(OrchestratorChoice {
         runtime: Runtime::Codex,
         model: None,
+        effort: None,
     })
 }
 

@@ -104,7 +104,7 @@ fn a_headless_spec_round_trips_through_json() {
     let spec = HeadlessSpec {
         runtime: Runtime::Claude,
         model: "claude-sonnet-5".into(),
-        effort: Effort::High,
+        effort: Effort::HIGH,
         cwd: "/tmp/p/wt/t1".into(),
         instructions: "contract".into(),
         mcp: Some(McpTarget {
@@ -223,7 +223,7 @@ fn only_a_claude_api_key_session_keeps_the_api_credentials() {
     let base = HeadlessSpec {
         runtime: Runtime::Claude,
         model: String::new(),
-        effort: Effort::Medium,
+        effort: Effort::MEDIUM,
         cwd: "/tmp/p/wt/t1".into(),
         instructions: String::new(),
         mcp: None,
@@ -302,7 +302,7 @@ fn only_a_design_agents_session_is_never_resumed() {
     let spec = |runtime, role| HeadlessSpec {
         runtime,
         model: "m".into(),
-        effort: Effort::High,
+        effort: Effort::HIGH,
         cwd: "/tmp/p/wt/t1".into(),
         instructions: "contract".into(),
         mcp: Some(McpTarget {

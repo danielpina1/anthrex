@@ -284,7 +284,7 @@ fn the_driver_fills_a_first_turn_with_the_stored_reports() {
             runtime: proto::Runtime::Claude,
             model: String::new(),
             strength: proto::Strength::Fast,
-            effort: proto::Effort::Low,
+            effort: proto::Effort::LOW,
         },
         window_id: None,
         started_at: 0,

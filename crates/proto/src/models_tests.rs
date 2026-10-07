@@ -1,11 +1,154 @@
-//! Milestone 9.8 (M9.8.2): the role table's types. The wire tests come in M9.8.4.
+//! Milestone 9.8 (M9.8.2, M9.8.4): the role table's types and the protocol-19 wire
+//! messages that carry catalogs, the table and the effort string.
 
 use std::collections::BTreeMap;
 
 use serde_json::json;
 
-use crate::models::{HelperKind, ModelRef, ModelTable, Role, RoleChoice};
-use crate::types::Runtime;
+use crate::delivery::tests::variant_names;
+use crate::models::Role;
+use crate::*;
+
+fn both<T: serde::Serialize + serde::de::DeserializeOwned + PartialEq + std::fmt::Debug>(v: &T) {
+    let back: T = serde_json::from_value(serde_json::to_value(v).unwrap()).unwrap();
+    assert_eq!(&back, v);
+    let back: T = rmp_serde::from_slice(&rmp_serde::to_vec_named(v).unwrap()).unwrap();
+    assert_eq!(&back, v);
+}
+
+fn catalog() -> ModelCatalog {
+    ModelCatalog {
+        runtime: Runtime::Codex,
+        cli_version: "0.160.1".into(),
+        fetched_at: 1_780_000_000,
+        source: CatalogSource::Live,
+        models: vec![CatalogModel {
+            id: "gpt-6-sol".into(),
+            label: "gpt-6 sol".into(),
+            description: "Balanced".into(),
+            efforts: vec!["low".into(), "medium".into(), "high".into(), "max".into()],
+            default_effort: Some("medium".into()),
+            is_default: true,
+        }],
+        problem: None,
+    }
+}
+
+#[test]
+fn effort_is_a_string_and_a_protocol_18_value_decodes() {
+    let old = json!({"runtime": "claude", "model": "claude-opus-5-5", "strength": "frontier", "effort": "high"});
+    let route: Route = serde_json::from_value(old.clone()).unwrap();
+    assert_eq!(route.effort, Effort::HIGH);
+    // MessagePack, as a protocol-18 peer wrote the enum: its variant name.
+    let back: Route = rmp_serde::from_slice(&rmp_serde::to_vec_named(&old).unwrap()).unwrap();
+    assert_eq!(back, route);
+    let xhigh: Effort = serde_json::from_value(json!("xhigh")).unwrap();
+    assert_eq!(xhigh.as_str(), "xhigh");
+    assert!(Effort::DEFAULT.is_default() && !Effort::LOW.is_default());
+    assert!(
+        Effort::DEFAULT < Effort::LOW
+            && Effort::LOW < Effort::MEDIUM
+            && Effort::MEDIUM < Effort::HIGH
+            && Effort::HIGH < xhigh
+    );
+    assert_eq!(Effort::new("low"), Effort::LOW);
+    assert_eq!(Effort::of(None), Effort::DEFAULT);
+    assert_eq!(Effort::of(Some("high")), Effort::HIGH);
+    assert_eq!(Effort::DEFAULT.to_string(), "default");
+    assert_eq!(Effort::HIGH.to_string(), "high");
+    assert_eq!(Effort::LOW.raised(), Some(Effort::MEDIUM));
+    assert_eq!(Effort::HIGH.raised(), None);
+}
+
+#[test]
+fn catalogs_round_trip_and_problem_is_left_out_while_none() {
+    both(&catalog());
+    assert!(
+        serde_json::to_value(catalog())
+            .unwrap()
+            .get("problem")
+            .is_none()
+    );
+    let mut missing = catalog();
+    missing.source = CatalogSource::Builtin;
+    missing.problem = Some("codex not found".into());
+    both(&missing);
+}
+
+#[test]
+fn list_models_and_models_round_trip() {
+    both(&ClientMsg::ListModels {
+        runtime: Some(Runtime::Claude),
+        refresh: true,
+    });
+    both(&ClientMsg::ListModels {
+        runtime: None,
+        refresh: false,
+    });
+    both(&DaemonMsg::Models {
+        catalogs: vec![catalog()],
+    });
+}
+
+#[test]
+fn the_new_variants_are_appended_last() {
+    assert_eq!(
+        variant_names::<ClientMsg>().last().map(String::as_str),
+        Some("ListModels")
+    );
+    assert_eq!(
+        variant_names::<DaemonMsg>().last().map(String::as_str),
+        Some("Models")
+    );
+    let requests = variant_names::<SettingsRequest>();
+    assert_eq!(
+        requests[requests.len() - 2..],
+        ["RepoModels", "PutRepoModels"]
+    );
+    let replies = variant_names::<SettingsReply>();
+    assert_eq!(replies[replies.len() - 2..], ["RepoModels", "RepoSaved"]);
+}
+
+#[test]
+fn orchestrator_choice_effort_defaults_to_none() {
+    let old: OrchestratorChoice =
+        serde_json::from_value(json!({"runtime": "codex", "model": "gpt-6-sol"})).unwrap();
+    assert_eq!(old.effort, None);
+    both(&OrchestratorChoice {
+        runtime: Runtime::Codex,
+        model: Some("gpt-6-sol".into()),
+        effort: Some("xhigh".into()),
+    });
+}
+
+#[test]
+fn repository_requests_round_trip() {
+    let mut table = ModelTable::default();
+    table.rows.insert(
+        Role::Reviewer,
+        RoleChoice {
+            model: ModelRef::parse("codex:gpt-6.1-sol").unwrap(),
+            effort: None,
+            fallback: None,
+        },
+    );
+    both(&SettingsRequest::RepoModels {
+        project: "/p".into(),
+    });
+    both(&SettingsRequest::PutRepoModels {
+        project: "/p".into(),
+        table: table.clone(),
+    });
+    both(&SettingsReply::RepoModels {
+        project: "/p".into(),
+        table: table.clone(),
+        path: "/d/repos/p-1234abcd/models.toml".into(),
+    });
+    both(&SettingsReply::RepoSaved {
+        project: "/p".into(),
+        table,
+    });
+}
 
 #[test]
 fn roles_print_and_parse_their_keys() {

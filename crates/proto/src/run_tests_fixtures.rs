@@ -44,7 +44,7 @@ pub(super) fn an_agent_round() -> AgentRoundInfo {
         route: a_route(
             Runtime::Claude,
             Strength::Standard,
-            Effort::High,
+            Effort::HIGH,
             "claude-sonnet-5",
         ),
         session_id: Some("claude-session-abc".into()),
@@ -71,7 +71,7 @@ pub(super) fn an_agent_round() -> AgentRoundInfo {
 pub(super) fn a_review() -> ReviewInfo {
     ReviewInfo {
         round: 1,
-        route: a_route(Runtime::Codex, Strength::Frontier, Effort::Medium, ""),
+        route: a_route(Runtime::Codex, Strength::Frontier, Effort::MEDIUM, ""),
         verdict: Some(Verdict::Changes),
         summary: "one blocking finding".into(),
         findings: vec![a_finding()],
@@ -99,13 +99,13 @@ pub(super) fn a_task_info() -> TaskInfo {
         route: a_route(
             Runtime::Claude,
             Strength::Standard,
-            Effort::High,
+            Effort::HIGH,
             "claude-sonnet-5",
         ),
         review_route: Some(a_route(
             Runtime::Codex,
             Strength::Frontier,
-            Effort::Medium,
+            Effort::MEDIUM,
             "",
         )),
         budget: Budget {

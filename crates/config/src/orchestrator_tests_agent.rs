@@ -23,12 +23,12 @@ fn defaults_when_absent() {
         agent: AgentConfig {
             runtime: None,
             model: String::new(),
-            effort: Effort::High,
+            effort: Effort::HIGH,
         },
         planners: PlannerConfig {
             runtime: None,
             strength: Strength::Frontier,
-            effort: Effort::High,
+            effort: Effort::HIGH,
             max_tool_calls: 200,
             timeout_secs: 2400,
             max_rejections: 5,
@@ -156,9 +156,9 @@ fn each_range_is_enforced_with_the_exact_message() {
 #[test]
 fn effort_and_strength_and_runtime_parse() {
     for (word, effort) in [
-        ("low", Effort::Low),
-        ("medium", Effort::Medium),
-        ("high", Effort::High),
+        ("low", Effort::LOW),
+        ("medium", Effort::MEDIUM),
+        ("high", Effort::HIGH),
     ] {
         let (config, problems) = parse(&format!(
             "[orchestrator.agent]\neffort = \"{word}\"\n[orchestrator.planners]\neffort = \"{word}\"\n"

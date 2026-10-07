@@ -73,7 +73,7 @@ fn every_section() -> TuningFile {
         "s".into(),
         ClassRoute {
             strength: Strength::Standard,
-            effort: Effort::Medium,
+            effort: Effort::MEDIUM,
         },
     );
     file.dismissed

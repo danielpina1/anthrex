@@ -14,7 +14,7 @@ fn route(runtime: Runtime) -> Route {
         runtime,
         model: String::new(),
         strength: Strength::Standard,
-        effort: Effort::Medium,
+        effort: Effort::MEDIUM,
     }
 }
 

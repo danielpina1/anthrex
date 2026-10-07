@@ -540,7 +540,7 @@ fn the_reviewer_prompt_never_names_the_author() {
             runtime: entry.runtime,
             model: entry.model.clone(),
             strength: entry.strength,
-            effort: proto::Effort::Medium,
+            effort: proto::Effort::MEDIUM,
         };
         let (op, _) = in_review(&mut fx, window);
         let (_, kind) = reviewer(&mut fx, op, "diff --git a/x b/x");

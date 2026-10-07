@@ -141,8 +141,8 @@ pub fn claude_decider_args(
     if !ctx.route.model.is_empty() {
         args.extend(["--model".into(), ctx.route.model.clone()]);
     }
-    if caps.claude_effort_flag {
-        args.extend(["--effort".into(), effort(ctx.route.effort).into()]);
+    if let (true, Some(e)) = (caps.claude_effort_flag, effort(&ctx.route.effort)) {
+        args.extend(["--effort".into(), e.into()]);
     }
     args
 }
@@ -176,12 +176,13 @@ pub fn codex_decider_args(
     args.extend([
         "-c".into(),
         format!("approval_policy={}", toml_string("never")),
-        "-c".into(),
-        format!(
-            "model_reasoning_effort={}",
-            toml_string(effort(ctx.route.effort))
-        ),
     ]);
+    if let Some(e) = effort(&ctx.route.effort) {
+        args.extend([
+            "-c".into(),
+            format!("model_reasoning_effort={}", toml_string(e)),
+        ]);
+    }
     if dcaps.codex_output_schema {
         args.extend(["--output-schema".into(), schema_file.display().to_string()]);
     }
@@ -204,10 +205,7 @@ pub fn schema_file_name(kind: DeciderKind, schema: &serde_json::Value) -> String
     format!("{}-{hash:016x}.json", kind.label())
 }
 
-fn effort(effort: Effort) -> &'static str {
-    match effort {
-        Effort::Low => "low",
-        Effort::Medium => "medium",
-        Effort::High => "high",
-    }
+/// The effort name a call passes, `None` for [`Effort::DEFAULT`] (M9.8 decision 6).
+fn effort(effort: &Effort) -> Option<&str> {
+    (!effort.is_default()).then(|| effort.as_str())
 }

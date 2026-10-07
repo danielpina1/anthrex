@@ -324,7 +324,7 @@ candidates = [
                 Candidate {
                     runtime: Runtime::Claude,
                     model: "claude-opus-5-5".to_string(),
-                    effort: Some(Effort::High),
+                    effort: Some(Effort::HIGH),
                 },
                 Candidate {
                     runtime: Runtime::Claude,

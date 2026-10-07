@@ -82,7 +82,7 @@ impl Default for AgentConfig {
         AgentConfig {
             runtime: None,
             model: String::new(),
-            effort: Effort::High,
+            effort: Effort::HIGH,
         }
     }
 }
@@ -92,7 +92,7 @@ impl Default for PlannerConfig {
         PlannerConfig {
             runtime: None,
             strength: Strength::Frontier,
-            effort: Effort::High,
+            effort: Effort::HIGH,
             max_tool_calls: 200,
             timeout_secs: 2400,
             max_rejections: 5,

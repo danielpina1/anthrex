@@ -185,7 +185,7 @@ fn roster_substitute(roster: &[ModelEntry], current: &Route, failed: &[Route]) -
         runtime: e.runtime,
         model: e.model.clone(),
         strength: e.strength,
-        effort: Effort::High,
+        effort: Effort::HIGH,
     };
     let left: Vec<&ModelEntry> = (roster.iter())
         .filter(|e| !failed_in(failed, &route(e)))

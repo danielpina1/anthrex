@@ -28,7 +28,7 @@ pub(super) fn report(id: &str, summary: &str) -> ScoutReport {
             runtime: proto::Runtime::Claude,
             model: String::new(),
             strength: proto::Strength::Fast,
-            effort: proto::Effort::Low,
+            effort: proto::Effort::LOW,
         },
         window_id: None,
         started_at: 0,

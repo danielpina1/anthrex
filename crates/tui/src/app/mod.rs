@@ -20,6 +20,9 @@ pub use toast::ToastLevel;
 
 pub const TOAST_TTL: Duration = Duration::from_secs(4);
 pub const RESIZE_DEBOUNCE: Duration = Duration::from_millis(30);
+// Protocol 19 grew `ClientMsg`/`RunRequest` (the role table, `OrchestratorChoice.effort`); these
+// values are built once per key press, so boxing would only add noise.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Effect {
     Send(ClientMsg),
@@ -183,6 +186,8 @@ pub struct App {
     pub replies: replies::PendingReplies, // Milestone 9.0.6 decision 16, by request id.
     /// Decision 24: the daemon's settings, fetched once per connection (`app/screens.rs`).
     pub settings_cache: Option<screens::SettingsCache>,
+    /// Milestone 9.8 decision 37: the discovered model catalogs (`DaemonMsg::Models`).
+    pub catalogs: model_picker::Catalogs,
     pub screen: Option<screens::Screen>, // Decision 33: the open full-body screen.
     /// Milestone 9.3 decision 8: each project's goal draft, and the goal request a
     /// closed dialog still waits on (its success clears that project's draft).
@@ -247,6 +252,7 @@ impl App {
             brief_expanded: None,
             replies: Default::default(),
             settings_cache: None,
+            catalogs: Default::default(),
             screen: None,
             goal_drafts: Default::default(),
             goal_sent: None,
@@ -561,6 +567,7 @@ mod iterate;
 mod lifecycle;
 mod link;
 mod modal_keys;
+pub(crate) mod model_picker;
 mod paste;
 pub(crate) mod plan_review;
 pub(crate) mod plan_summary;
