@@ -367,6 +367,46 @@ fn lanes_respect_runtime_caps() {
     assert!(t1.race_wait_since.is_none());
 }
 
+/// Milestone 9.8 decision 28: with no row fallback both racers run on the task's own
+/// runtime, so the race needs two slots under that runtime's cap; with one left it
+/// waits, then runs single.
+#[test]
+fn a_same_runtime_race_needs_two_slots_under_its_runtimes_cap() {
+    let tasks = [
+        task("tdep", "S", "d", ""),
+        task("t0", "M", "z", ""),
+        task("t1", "S", "a", "race = true\ndeps = [\"tdep\"]"),
+        task("t3", "S", "c", ""),
+        task("t4", "M", "e", "deps = [\"t1\"]"),
+    ];
+    let plan = plan_with(&profile_with("max_writers = 4"), &tasks);
+    let mut fx = Fixture::with_config(&plan, config::Orchestrator::default());
+    fx.ready(true);
+    fx.launch_all();
+    assert!(fx.run().limits.adaptive_concurrency);
+    let now = fx.now;
+    fx.run_mut().concurrency.insert(
+        "claude".into(),
+        RuntimeConcurrency {
+            cap: 3,
+            last_rate_limit_at: Some(now),
+            ..RuntimeConcurrency::new(4)
+        },
+    );
+    unblock(&mut fx);
+    assert_eq!(writers_busy(fx.run()), 2, "t0 and t3, both on Claude");
+    let since = fx
+        .task("t1")
+        .race_wait_since
+        .expect("it waits for a second Claude slot");
+    assert!(!started(&fx, "t1"));
+    fx.send(since + 120, EventKind::Tick);
+    let t1 = fx.task("t1");
+    assert!(t1.race.is_none());
+    let note = "race skipped: no second writer slot within 120 s";
+    assert!(t1.notes.iter().any(|n| n == note), "{:?}", t1.notes);
+}
+
 #[test]
 fn writers_busy_counts_live_lanes() {
     let (mut fx, _, _) = racing();

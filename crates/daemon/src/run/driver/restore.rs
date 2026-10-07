@@ -124,8 +124,9 @@ impl RunService {
             let Ok((reconciled, models)) = checked else {
                 // Ruling T22-minors, m7: said in the run's own log, and held.
                 tracing::error!(run = %run.id, "reconcile panicked; the run is held");
-                let table = crate::run::model_roles::RunModels::resolve(&global, None);
-                build_models::fill(&mut run, (table, Vec::new()), now);
+                let frozen =
+                    build_models::global_only(&global, &catalogs, build_models::READ_FAILED);
+                build_models::fill(&mut run, frozen, now);
                 hold_unreconciled(&mut run, now);
                 runs.push(run);
                 continue;

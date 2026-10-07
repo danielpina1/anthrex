@@ -26,7 +26,7 @@ const READ_SLOW: &str =
     "models: the repository's models.toml was not read within 5 s; using the global table";
 
 /// The run log's line for a start whose repository file read failed outright.
-const READ_FAILED: &str =
+pub const READ_FAILED: &str =
     "models: the repository's models.toml could not be read; using the global table";
 
 /// Decision 9: `global` overlaid by `project`'s repository file, every role resolved,
@@ -63,6 +63,20 @@ pub fn fill(run: &mut Run, frozen: (RunModels, Vec<String>), now: u64) {
     }
 }
 
+/// The global table alone, validated against `catalogs`, when the repository file could
+/// not be read: `line` first, then the validation's lines.
+pub fn global_only(
+    global: &ModelTable,
+    catalogs: &[ModelCatalog],
+    line: &str,
+) -> (RunModels, Vec<String>) {
+    let mut models = RunModels::resolve(global, None);
+    let lines = std::iter::once(line.to_string())
+        .chain(models.validate(catalogs))
+        .collect();
+    (models, lines)
+}
+
 impl RunService {
     /// Decision 9 for a start: [`freeze`] on `spawn_blocking`, bounded by
     /// [`MODELS_READ_BOUND`], over the catalogs in memory now; with none in memory, a
@@ -78,22 +92,16 @@ impl RunService {
             service.refresh_in_background();
         }
         let (table, project) = (global.clone(), project.to_path_buf());
-        let data_dir = self.ctx.data_dir.clone();
-        let read =
-            tokio::task::spawn_blocking(move || freeze(&table, &project, &data_dir, &catalogs));
-        match tokio::time::timeout(MODELS_READ_BOUND, read).await {
-            Ok(Ok(frozen)) => frozen,
+        let (data_dir, known) = (self.ctx.data_dir.clone(), catalogs.clone());
+        let read = tokio::task::spawn_blocking(move || freeze(&table, &project, &data_dir, &known));
+        let line = match tokio::time::timeout(MODELS_READ_BOUND, read).await {
+            Ok(Ok(frozen)) => return frozen,
             Ok(Err(error)) => {
                 tracing::warn!(%error, "freezing the role table panicked");
-                (
-                    RunModels::resolve(global, None),
-                    vec![READ_FAILED.to_string()],
-                )
+                READ_FAILED
             }
-            Err(_) => (
-                RunModels::resolve(global, None),
-                vec![READ_SLOW.to_string()],
-            ),
-        }
+            Err(_) => READ_SLOW,
+        };
+        global_only(global, &catalogs, line)
     }
 }

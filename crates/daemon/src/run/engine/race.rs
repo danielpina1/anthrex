@@ -64,8 +64,15 @@ pub(super) fn start(run: &mut Run, i: usize, now: u64) -> Start {
     let peer = crate::run::model_roles::racer_route(run, i);
     let free = usize::from(run.limits.max_writers).saturating_sub(schedule::writers_busy(run));
     let runtime = task.route.runtime;
-    if free >= 2 && concurrency::has_room(run, runtime) && concurrency::has_room(run, peer.runtime)
-    {
+    // Both lanes on one runtime (no row fallback) take two slots under its cap.
+    let room = match peer.runtime == runtime {
+        true => {
+            let busy = concurrency::writers_busy_on(run, runtime);
+            concurrency::cap(run, runtime).saturating_sub(busy) >= 2
+        }
+        false => concurrency::has_room(run, runtime) && concurrency::has_room(run, peer.runtime),
+    };
+    if free >= 2 && room {
         run.tasks[i].race_decision = Some(RaceDecision::Race);
         return Start::Race(peer);
     }

@@ -301,6 +301,10 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     // Decision 44: the runs of the last daemon are loaded, reconciled and restored
     // before the socket is bound, so the first client sees them.
     let runs = RunService::new(manager.clone(), run_context);
+    // Milestone 9.8 decision 20: the catalogs on disk, read on a blocking thread; no
+    // CLI is probed at start. Before the restore, so a run it fills with the role table
+    // (decision 9) is validated against them.
+    runs.models().load_disk().await;
     runs.restore().await;
     // M8b decisions 8, 11 and 12: the scout and profile services, handed to the engine
     // once; interrupted detections are failed and cleaned before the socket binds.
@@ -397,9 +401,6 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     // its role names this daemon's receiver (or none), not the last daemon's.
     let receiver = otlp.as_ref().map(|o| format!("http://{}", o.addr));
     runs.refresh_orchestrator_otlp(receiver.as_deref());
-    // Milestone 9.8 decision 20: the catalogs on disk, read on a blocking thread; no
-    // CLI is probed at start.
-    runs.models().load_disk().await;
     let served = server::serve(
         listener,
         manager.clone(),

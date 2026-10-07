@@ -6,6 +6,7 @@ use proto::{PlanEdit, PlanTask, Size};
 use super::{Batch, EditConsequence};
 use crate::run::contract::amend_message;
 use crate::run::edits_state::{has_live_worker, has_started, is_paused, not_started};
+use crate::run::orch::EditSource;
 use crate::run::plan::PlanError;
 use crate::run::route_pick::repicks;
 use crate::run::validate::resolve_task_lenient;
@@ -96,6 +97,23 @@ impl Batch {
             return;
         }
         if race_or_pair_refused {
+            return;
+        }
+        // Controller ruling (fix round 1 of M9.8.7a): a user's route that names a
+        // runtime or a strength but no model would be ignored (decision 10: the row
+        // fills it), so it is refused.
+        if let Some(r) = route.as_ref().filter(|r| r.model.is_none())
+            && matches!(self.source, EditSource::User)
+            && (r.runtime.is_some() || r.strength.is_some())
+        {
+            let what = if r.runtime.is_some() {
+                "runtime"
+            } else {
+                "strength"
+            };
+            let text = format!("choose a model; {what} alone no longer selects one");
+            self.errors
+                .push(PlanError::new(Some(task_id), "route.model", "route", text));
             return;
         }
         // Preflight ruling F24: a route's effort reaches `--effort` as given (decision 10

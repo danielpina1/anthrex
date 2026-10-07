@@ -532,3 +532,85 @@ fn a_users_route_with_a_bad_effort_is_refused() {
     .unwrap_or_else(|e| panic!("{}", show(&e)));
     assert_eq!(edited.tasks[0].route.effort.as_str(), "xhigh");
 }
+
+/// Controller ruling (M9.8.7a fix round 1): a user's route naming a runtime or a
+/// strength but no model is refused, since the row would silently replace it.
+#[test]
+fn a_users_route_without_a_model_is_refused() {
+    let run = build_with(
+        &plan_with(PROFILE, &[task_toml("m", "M", "[\"b/**\"]", CHECK)]),
+        &config::Orchestrator::default(),
+    )
+    .unwrap_or_else(|e| panic!("{}", show(&e)));
+    let amend = |route: RouteSpec| PlanEdit::AmendTask {
+        task_id: "m".into(),
+        brief: None,
+        acceptance: None,
+        route: Some(route),
+        test_mode: None,
+        test_mode_reason: None,
+        priority: None,
+        size: None,
+        deps: None,
+        stage: None,
+        race: None,
+        pair: None,
+    };
+    let refused = |route: RouteSpec| {
+        let errors = apply_edits(
+            &run,
+            &[amend(route)],
+            &EditScope::Run,
+            &EditSource::User,
+            5_000,
+        )
+        .expect_err("refused");
+        show(&errors)
+    };
+    let runtime = RouteSpec {
+        runtime: Some(Runtime::Codex),
+        ..RouteSpec::default()
+    };
+    assert_eq!(
+        refused(runtime),
+        "[route] task m: route.model: choose a model; runtime alone no longer selects one"
+    );
+    let strength = RouteSpec {
+        strength: Some(proto::Strength::Frontier),
+        ..RouteSpec::default()
+    };
+    assert_eq!(
+        refused(strength),
+        "[route] task m: route.model: choose a model; strength alone no longer selects one"
+    );
+}
+
+/// Fix round 1: the global table a start falls back to (the repository file unread)
+/// is validated against the catalogs too.
+#[test]
+fn the_global_fallback_is_validated() {
+    let global = ModelTable {
+        rows: [(
+            Role::ImplementerSmall,
+            row("codex:gpt-6-luna", Some("max"), None),
+        )]
+        .into(),
+        brainstorm: None,
+    };
+    let live = catalog(
+        &[("gpt-6-luna", &["low", "medium"], Some("medium"))],
+        CatalogSource::Live,
+    );
+    let (models, lines) = build_models::global_only(&global, &[live], "first");
+    assert_eq!(
+        lines,
+        [
+            "first",
+            "effort 'max' not offered by gpt-6-luna; using medium"
+        ]
+    );
+    assert_eq!(
+        models.choice(Role::ImplementerSmall).effort.as_deref(),
+        Some("medium")
+    );
+}
