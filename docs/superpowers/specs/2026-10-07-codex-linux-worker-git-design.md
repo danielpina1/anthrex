@@ -194,4 +194,20 @@ Deviations from the design above, recorded by the implementation.
 - `SandboxPlan::new` also drops a `write` entry equal to the working directory or to an earlier
   `write` entry: each profile path is a key of one inline TOML table, where a repeated key is
   invalid.
-- Manual acceptance: recorded by the controller (nexus1, macOS)
+- Manual acceptance, 2026-10-07, real Codex, isolated daemons (`/tmp/ax-*`):
+  - nexus1 (Ubuntu, bubblewrap, Codex 0.160.1, Profiles): run `add-hello-txt-d3ef` completed; the
+    Codex worker (`gpt-5.6-terra`) committed `hello.txt` itself (`51526b3`), it was reviewed and
+    merged. The persisted worker spec had `codex_grant_dialect = "Profiles"`, the task git dir
+    writable, and 11 read-only entries (the worktree `.git` plus the 10 git-denied entries). The
+    merge passed `pinned::check`, so the task `config` was byte-identical. Checks ran with
+    `--unconfined-checks` (this host cannot confine checks; the worker itself was sandboxed).
+  - nexus1, direct `codex exec` under the rendered profile: `index.lock` creation allowed; `config`
+    and `refs/` writes blocked; network blocked (unsandboxed control: HTTP 200). With
+    `-c sandbox_mode="danger-full-access" -c sandbox_workspace_write.network_access=true` passed
+    as well, the profile still won (same results). A second `-c permissions.anthrex.filesystem`
+    table naming an extra writable directory did not merge in (the directory stayed unwritable).
+    These used the `-c` layer as a stand-in for config-file values.
+  - macOS (Seatbelt, Codex 0.159.3, so Legacy): run `add-hello-txt-a9e4` completed; the Codex
+    worker committed `hello.txt` (`d891779`) under the legacy exact-file grant
+    (`codex_grant_dialect = "Legacy"`, no read-only entries). The Profiles path on macOS awaits a
+    Codex ≥ 0.160 on this Mac.
