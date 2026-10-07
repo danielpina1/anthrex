@@ -12,6 +12,8 @@
 pub mod argv;
 pub mod claude_stream;
 pub mod codex_guard;
+#[allow(dead_code)] // wired in by the next tasks
+pub mod codex_sandbox;
 pub mod codex_stream;
 pub mod conversation;
 pub mod failure;
