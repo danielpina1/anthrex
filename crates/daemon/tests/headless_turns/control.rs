@@ -286,3 +286,45 @@ async fn a_codex_send_waits_out_the_launch_jitter() {
     assert!(started.elapsed() >= JITTER, "{:?}", started.elapsed());
     next_signal(&mut feed, "the second exit", is_exit).await;
 }
+
+/// Final review I1 (ruling R6): a resume renders the Codex sandbox in the probed
+/// version's dialect, so it waits for the launch gate first. A window restored at daemon
+/// start can be resumed while the probe still runs.
+#[tokio::test]
+async fn a_resume_waits_for_the_launch_gate() {
+    let dir = tempfile::tempdir().unwrap();
+    let codex = codex_recorder(dir.path(), "");
+    let first = manager(&codex, &codex, |_| {});
+    let mut feed = first.signals();
+    let info = create(&first, "c", spec(Runtime::Codex, dir.path()), "first").await;
+    next_signal(&mut feed, "the first exit", is_exit).await;
+    let state = first.state_snapshot();
+    first.remove(info.id).unwrap();
+
+    let gate = daemon::launch::LaunchGate::closed();
+    let m = manager(&codex, &codex, |c| c.launch_gate = gate.clone());
+    let _cleanup = Cleanup(m.clone());
+    m.restore(state);
+    let resuming = {
+        let m = m.clone();
+        tokio::spawn(async move {
+            m.headless_resume(info.id, CODEX_THREAD, "carry on", Duration::ZERO)
+                .await
+        })
+    };
+    // An absence: nothing may spawn while the gate is closed. The positive half below
+    // proves the same resume does spawn once it opens.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(
+        argvs(dir.path()).len(),
+        1,
+        "resumed before the launch gate opened"
+    );
+    gate.open();
+    tokio::time::timeout(DEADLINE, resuming)
+        .await
+        .expect("the resume returns once the gate opens")
+        .unwrap()
+        .unwrap();
+    assert_eq!(argvs(dir.path()).len(), 2);
+}

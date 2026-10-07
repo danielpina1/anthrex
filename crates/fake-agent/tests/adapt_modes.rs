@@ -43,6 +43,7 @@ fn ctx(runtime: Runtime) -> DeciderContext {
         schema_dir: PathBuf::from("/tmp/unused"),
         caps: CLI_CAPS,
         routing: Default::default(),
+        launch_gate: daemon::launch::LaunchGate::open_already(),
     }
 }
 

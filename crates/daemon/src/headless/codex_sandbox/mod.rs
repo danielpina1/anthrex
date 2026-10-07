@@ -41,17 +41,22 @@ pub struct SandboxPlan {
 
 impl SandboxPlan {
     /// Drops a `write` entry equal to a `read_only` one: at equal specificity Codex lets
-    /// write win, and a protected path must never become writable.
+    /// write win, and a protected path must never become writable. Drops one equal to
+    /// `cwd` or to an earlier `write` entry too: a profile names each path once, as a
+    /// key of one inline table, where a repeated key is invalid TOML.
     pub fn new(
         mode: Mode,
         cwd: PathBuf,
         write: Vec<PathBuf>,
         read_only: Vec<PathBuf>,
     ) -> SandboxPlan {
-        let write = write
-            .into_iter()
-            .filter(|w| !read_only.contains(w))
-            .collect();
+        let mut kept: Vec<PathBuf> = Vec::new();
+        for w in write {
+            if w != cwd && !read_only.contains(&w) && !kept.contains(&w) {
+                kept.push(w);
+            }
+        }
+        let write = kept;
         SandboxPlan {
             mode,
             cwd,
@@ -67,7 +72,9 @@ pub enum CodexSandboxDialect {
     Profiles,
 }
 
-/// Ascending; the last row whose version is ≤ the CLI's wins.
+/// Ascending; the last row whose version is ≤ the CLI's wins. An unknown version is the
+/// first row's (`Legacy`): a profile on a Codex too old to read it would leave the
+/// user's own `sandbox_mode` in charge.
 pub const DIALECTS: &[((u64, u64, u64), CodexSandboxDialect)] = &[
     ((0, 0, 0), CodexSandboxDialect::Legacy),
     ((0, 160, 0), CodexSandboxDialect::Profiles),
@@ -77,10 +84,13 @@ pub const DIALECTS: &[((u64, u64, u64), CodexSandboxDialect)] = &[
 pub struct Unsupported(pub &'static str);
 
 impl CodexSandboxDialect {
-    /// `None` (the probe failed or has not answered) is the newest dialect.
+    /// `None` (the probe failed or timed out) is the oldest dialect, `Legacy`, which
+    /// every supported Codex honours (amended after the final review, ruling R6). Every
+    /// production caller waits for the launch gate first, so `None` never means "not
+    /// answered yet".
     pub fn for_version(version: Option<(u64, u64, u64)>) -> CodexSandboxDialect {
         let Some(version) = version else {
-            return DIALECTS[DIALECTS.len() - 1].1;
+            return DIALECTS[0].1;
         };
         DIALECTS
             .iter()

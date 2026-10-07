@@ -259,6 +259,9 @@ pub struct DeciderContext {
     pub caps: CliCaps,
     /// Milestone 9.5 (rulings RL-2, I6; decision 9a): what each call routes over.
     pub routing: call::Routing,
+    /// The manager's launch gate: a Codex call waits for it (the startup version probe)
+    /// before choosing its sandbox dialect (final review I1, ruling R6).
+    pub launch_gate: crate::launch::LaunchGate,
 }
 
 impl DeciderContext {
@@ -288,6 +291,7 @@ impl DeciderContext {
             schema_dir: root.join("schemas"),
             caps: manager.cli_caps,
             routing,
+            launch_gate: manager.launch_gate.clone(),
         }
     }
 }

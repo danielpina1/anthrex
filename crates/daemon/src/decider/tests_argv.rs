@@ -26,6 +26,7 @@ fn ctx(runtime: Runtime, model: &str, caps: CliCaps) -> DeciderContext {
         schema_dir: PathBuf::from("/data/deciders/schemas"),
         caps,
         routing: Default::default(),
+        launch_gate: crate::launch::LaunchGate::open_already(),
     }
 }
 
