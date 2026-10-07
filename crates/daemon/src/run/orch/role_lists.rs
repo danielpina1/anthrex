@@ -1,19 +1,14 @@
-//! Milestone 9.5 decision 9a for a run's roles (task M9.5.10b): the run scouts' and the
-//! sub-planners' picks from the run's frozen `scout` and `planner` lists, rotating per
-//! run in start order; the orchestrator's below an explicit choice (rulings RH-5,
-//! RL-3); and how a role record made over a list says so. Part of `roles.rs`. Pure.
+//! The design flow's agents' picks (milestone 9.6 decision 10) and the orchestrator
+//! record's sources. Milestone 9.8: the brainstormers are the run's `brainstorm` row and
+//! the document reviewer the `reviewer` row's pick against the orchestrator (decision
+//! 27); milestone 9.5's role lists no longer choose a route. Part of `roles.rs`. Pure.
 
-use proto::{Effort, OrchestratorChoice, RoleRoutingDecision, Route, RoutingCandidate, Runtime};
+use proto::models::ModelRef;
+use proto::{Route, Runtime};
 
 use crate::decider::DeciderCaps;
-use crate::run::model::{FrozenList, ListPolicy, Run};
-use crate::run::model_roles::Installed;
-use crate::run::orch::launch::{Resolved, scout_routing};
-use crate::run::roster::strongest_of;
-use crate::run::route_pick::{LIST_POLICY, RolePick, role};
-
-/// A role record's source when the role's list chose its route.
-pub const LIST_SOURCE: &str = "configured_list";
+use crate::run::model::Run;
+use crate::run::model_roles::RunModels;
 
 /// An orchestrator record's source when the user chose its route (`--orchestrator`).
 pub const EXPLICIT_SOURCE: &str = "explicit_choice";
@@ -31,100 +26,19 @@ pub const UNSAVED_BRAINSTORMER: &str =
 pub const UNSAVED_REVIEWER: &str =
     "design flow: no installed runtime can run a document reviewer without saving its session";
 
-/// Run scout `scout_id`'s pick from the run's `scout` list: its rotation is its place
-/// among the run's scouts (start order), at `[orchestrator.scouts] effort` where a
-/// candidate names none, over the run's installed runtimes. `None` with no list.
-pub fn scout_pick(run: &Run, scout_id: &str) -> Option<RolePick> {
-    let scouts = &run.orch.run_scouts;
-    let rotation = (scouts.iter().position(|s| s.id == scout_id)).unwrap_or(scouts.len());
-    let (list, effort) = (&run.limits.route_lists.scout, scout_routing(run).effort);
-    role(list, rotation as u32, effort, &run.orch.installed)
-}
-
-/// Epic `k`'s sub-planner pick from the run's `planner` list (rotation `k`), at
-/// `[orchestrator.planners] effort` where a candidate names none.
-pub fn planner_pick(run: &Run, k: usize) -> Option<RolePick> {
-    let (list, effort) = (
-        &run.limits.route_lists.planner,
-        run.limits.orch.planners.effort.clone(),
-    );
-    role(list, k as u32, effort, &run.orch.installed)
-}
-
-/// Rulings RH-5 and RL-3: the orchestrator's route, highest first: an explicit
-/// `choice` (the goal form, `run promote --orchestrator`, and a continued chain, whose
-/// route its continuation passes as the choice); the `orchestrator` list's first
-/// candidate `installed` (the window's map at a start) does not rule out; `today`
-/// (decision 6's resolution from `[orchestrator.agent]`). Skipped list candidates lead
-/// `today`'s snapshot.
-pub fn orchestrator(
-    choice: Option<&OrchestratorChoice>,
-    list: &FrozenList,
-    effort: proto::Effort,
-    installed: &Installed,
-    today: impl FnOnce() -> Result<Resolved, String>,
-) -> Result<Resolved, String> {
-    let pick = role(list, 0, effort, installed).filter(|_| choice.is_none());
-    match pick {
-        None => today(),
-        Some(RolePick {
-            route: Some(route),
-            candidates,
-            ..
-        }) => Ok(Resolved {
-            route,
-            source: LIST_SOURCE.to_string(),
-            candidates,
-        }),
-        Some(pick) => {
-            let mut resolved = today()?;
-            resolved.candidates = candidates(&pick, resolved.candidates);
-            Ok(resolved)
-        }
-    }
-}
-
-/// The candidates of a role record made over `pick`: the list's snapshot, followed by
-/// `today`'s when every candidate was skipped.
-pub fn candidates(pick: &RolePick, today: Vec<RoutingCandidate>) -> Vec<RoutingCandidate> {
-    let mut out = pick.candidates.clone();
-    if pick.route.is_none() {
-        out.extend(today);
-    }
-    out
-}
-
-/// Marks a role record made over a list: its `pick_policy`, a `spread` list's rotation
-/// and, when the list chose the record's route, source [`LIST_SOURCE`] and policy
-/// `m9.5-list-v1`.
-pub fn mark(decision: &mut RoleRoutingDecision, pick: (ListPolicy, u32), chosen: Option<&Route>) {
-    let (policy, rotation) = pick;
-    decision.pick_policy = Some(policy.label().to_string());
-    decision.rotation = (policy == ListPolicy::Spread).then_some(rotation);
-    if chosen == Some(&decision.chosen) {
-        decision.source = LIST_SOURCE.to_string();
-        decision.policy_version = LIST_POLICY.to_string();
-    }
-}
-
 /// Milestone 9.6 decision 10: one brainstormer's label and route.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BrainstormPick {
     /// `claude` or `codex` on two runtimes, the lens `A` or `B` on one.
     pub label: String,
     pub route: Route,
-    /// The run's `brainstorm` list chose the route.
+    /// The run's `brainstorm` list chose the route (milestone 9.5); never since
+    /// milestone 9.8, whose row chooses.
     pub listed: bool,
 }
 
-/// Decision 10: the two brainstormers' picks. With a `brainstorm` list: its first two
-/// entries on different runtimes, else its first two (one usable entry runs twice); a
-/// candidate on a runtime the run's start found missing is passed over, as every
-/// role's list does. Without one (or with none usable): the strongest model of each
-/// installed runtime (`roster::strongest_of`), Claude's first; with one runtime, its
-/// strongest twice. A candidate without an effort, and every default, takes the
-/// orchestrator's effort (no `[orchestrator.design]` key names one). Labels: the
-/// runtimes' names on two runtimes, the lenses `A` and `B` on one. Empty when no
+/// Decision 10, milestone 9.8 (MR §3.1): the two brainstormers' picks, the run's
+/// `brainstorm` row ([`brainstorm_picks_with`] by the decider's caps). Empty when no
 /// installed runtime can run a brainstormer unsaved (ruling WB-A-W2).
 pub fn brainstorm_picks(run: &Run) -> Vec<BrainstormPick> {
     brainstorm_picks_with(run, &crate::decider::caps()).unwrap_or_default()
@@ -140,118 +54,73 @@ pub fn runs_unsaved(runtime: Runtime, caps: &DeciderCaps) -> bool {
     }
 }
 
-/// Ruling T8-4: the installed runtimes that cannot brainstorm, their CLI unable to run
-/// without saving the session; their picks fall back as an uninstalled runtime's.
+/// Ruling T8-4: the installed runtimes of the `brainstorm` row that cannot brainstorm,
+/// their CLI unable to run without saving the session; their picks fall back to the
+/// row's other model ([`brainstorm_picks_with`]).
 pub fn unsaved_missing(run: &Run, caps: &DeciderCaps) -> Vec<Runtime> {
     let installed = |runtime: Runtime| run.orch.installed.get(runtime.label()) != Some(&false);
+    let row = &run.limits.models().brainstorm;
+    let in_row = |runtime: Runtime| row.first.runtime == runtime || row.second.runtime == runtime;
     [Runtime::Claude, Runtime::Codex]
         .into_iter()
-        .filter(|&runtime| installed(runtime) && !runs_unsaved(runtime, caps))
+        .filter(|&runtime| in_row(runtime) && installed(runtime) && !runs_unsaved(runtime, caps))
         .collect()
 }
 
-/// [`brainstorm_picks`] by `caps` (ruling T8-4). `None` when no installed runtime can
-/// run a brainstormer unsaved: there is no fallback to one that saves its session
-/// (ruling WB-A-W2).
+/// [`brainstorm_picks`] by `caps`: the `brainstorm` row's two models at its effort. A
+/// model whose runtime the start found missing, or whose CLI cannot run without saving
+/// the session (ruling T8-4), is replaced by the row's other model; `None` when neither
+/// can run (ruling WB-A-W2: there is no fallback to one that saves its session). Labels:
+/// the runtimes' names on two runtimes, the lenses `A` and `B` on one.
 pub fn brainstorm_picks_with(run: &Run, caps: &DeciderCaps) -> Option<Vec<BrainstormPick>> {
-    let effort = (run.orch.orchestrator.as_ref()).map_or(Effort::HIGH, |o| o.route.effort.clone());
     let usable = |runtime: Runtime| {
         run.orch.installed.get(runtime.label()) != Some(&false) && runs_unsaved(runtime, caps)
     };
-    let list = &run.limits.route_lists.brainstorm;
-    let listed: Vec<Route> = (list.candidates.iter())
-        .filter(|c| usable(c.runtime))
-        .map(|c| c.route(effort.clone()))
-        .collect();
-    let (routes, from_list) = match listed.first() {
-        Some(first) => {
-            let other = listed.iter().skip(1).find(|r| r.runtime != first.runtime);
-            let second = other.or(listed.get(1)).unwrap_or(first);
-            ((first.clone(), second.clone()), true)
-        }
-        None => (default_pair(run, effort, &usable)?, false),
+    let row = &run.limits.models().brainstorm;
+    let route = |m: &ModelRef| RunModels::route_of(m, row.effort.as_deref());
+    let (first, second) = (route(&row.first), route(&row.second));
+    let (a, b) = match (usable(first.runtime), usable(second.runtime)) {
+        (true, true) => (first, second),
+        (true, false) => (first.clone(), first),
+        (false, true) => (second.clone(), second),
+        (false, false) => return None,
     };
-    let (a, b) = routes;
     let labels = match a.runtime == b.runtime {
         true => ("A".to_string(), "B".to_string()),
         false => (a.runtime.label().to_string(), b.runtime.label().to_string()),
     };
-    Some(vec![
-        BrainstormPick {
-            label: labels.0,
-            route: a,
-            listed: from_list,
-        },
-        BrainstormPick {
-            label: labels.1,
-            route: b,
-            listed: from_list,
-        },
-    ])
+    let pick = |label, route| BrainstormPick {
+        label,
+        route,
+        listed: false,
+    };
+    Some(vec![pick(labels.0, a), pick(labels.1, b)])
 }
 
-/// Milestone 9.6 decision 10 (task M9.6.10, DF §4.2): the document reviewer's route
-/// and, when it is the orchestrator's own route, why (fix round 1, m1). Its peer
-/// (`validate_patterns::peer_route`: the other runtime's first roster entry at the
-/// orchestrator's strength, at its effort), unless that runtime is not installed, its
-/// CLI cannot run a session without saving it (ruling T8-4, as for a brainstormer), or
-/// the roster has no model of it at that strength. `None` when the orchestrator's own
-/// runtime cannot run one unsaved either: there is no fallback to a runtime that saves
-/// its session (ruling WB-A-W2, ruling WB-B m4).
+/// Milestone 9.6 decision 10 (task M9.6.10, DF §4.2), milestone 9.8 (decision 27): the
+/// document reviewer's route, the `reviewer` row's pick against the orchestrator's
+/// route (its author), and, when it is instead the orchestrator's own route, why (fix
+/// round 1, m1): the pick's runtime is not installed, or its CLI cannot run a session
+/// without saving it (ruling T8-4). `None` when the orchestrator's own runtime cannot
+/// run one unsaved either: there is no fallback to a runtime that saves its session
+/// (ruling WB-A-W2, ruling WB-B m4).
 pub fn review_pick(run: &Run, caps: &DeciderCaps) -> Option<(Route, Option<String>)> {
     let own = (run.orch.orchestrator.as_ref()).map_or_else(
-        || crate::run::orch::launch::frozen_scout_route(run),
+        || crate::run::orch::launch::scout_route(run),
         |o| o.route.clone(),
     );
-    let name = crate::run::roster::peer(own.runtime).label();
+    let (pick, _) = run.limits.models().reviewer_route(&own);
+    let name = pick.runtime.label();
     let installed = &run.orch.installed;
     let why = if installed.get(name) == Some(&false) {
         format!("the {name} runtime is not installed")
-    } else if !runs_unsaved(crate::run::roster::peer(own.runtime), caps) {
+    } else if !runs_unsaved(pick.runtime, caps) {
         format!("the {name} CLI cannot run a session without saving it")
-    } else if let Some(peer) =
-        crate::run::validate_patterns::peer_route(&run.roster, &own, installed)
-    {
-        return Some((peer, None));
     } else {
-        let strength = crate::run::validate::strength_label(own.strength);
-        format!("the roster has no {name} model at {strength} strength")
+        return Some((pick, None));
     };
     let own_installed = installed.get(own.runtime.label()) != Some(&false);
     (own_installed && runs_unsaved(own.runtime, caps)).then_some((own, Some(why)))
-}
-
-/// Decision 10's defaults: the strongest model of each usable runtime (installed, and
-/// able to run unsaved), else (no roster entry on any) the orchestrator's route twice
-/// when its runtime is usable; `None` otherwise (ruling WB-A-W2: no fallback to a
-/// runtime that saves its session).
-fn default_pair(
-    run: &Run,
-    effort: Effort,
-    usable: &dyn Fn(Runtime) -> bool,
-) -> Option<(Route, Route)> {
-    let strongest: Vec<Route> = [Runtime::Claude, Runtime::Codex]
-        .into_iter()
-        .filter(|&runtime| usable(runtime))
-        .filter_map(|runtime| strongest_of(&run.roster, runtime))
-        .map(|e| Route {
-            runtime: e.runtime,
-            model: e.model.clone(),
-            strength: e.strength,
-            effort: effort.clone(),
-        })
-        .collect();
-    match &strongest[..] {
-        [a, b, ..] => Some((a.clone(), b.clone())),
-        [a] => Some((a.clone(), a.clone())),
-        [] => {
-            let route = (run.orch.orchestrator.as_ref()).map_or_else(
-                || crate::run::orch::launch::frozen_scout_route(run),
-                |o| o.route.clone(),
-            );
-            usable(route.runtime).then(|| (route.clone(), route))
-        }
-    }
 }
 
 #[cfg(test)]

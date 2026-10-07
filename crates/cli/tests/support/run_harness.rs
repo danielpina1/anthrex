@@ -108,6 +108,19 @@ impl RunHarness {
         harness
     }
 
+    /// Milestone 9.8: [`Self::with_config`] with extra daemon environment `env` too (no
+    /// files; `ANTHREX_GIT=off`).
+    pub fn with_env_and_config(orchestrator: &str, env: &[(&str, &str)], extra_toml: &str) -> Self {
+        let harness = Self::unstarted(orchestrator, env, true, &[]);
+        let config = harness.dir.path().join("config.toml");
+        let text = std::fs::read_to_string(&config).unwrap();
+        std::fs::write(&config, format!("{text}\n{extra_toml}\n")).unwrap();
+        if let Err(error) = harness.start_daemon(DAEMON_START_WAIT) {
+            panic!("the daemon did not start: {error}\n{}", harness.log_tail());
+        }
+        harness
+    }
+
     /// A harness whose daemon start waited only `start_wait` (a slow start, simulated),
     /// and what that start came to. The harness owns the daemon either way.
     pub fn try_started(orchestrator: &str, start_wait: Duration) -> (Self, Result<(), String>) {

@@ -2,110 +2,47 @@
 //! fix round; the decision cited a "binary present" check the code did not have). Pure:
 //! the driver stats the binaries (`driver/build.rs::installed`) and passes what it found.
 
-use proto::{ModelEntry, OrchestratorChoice, Route, RoutingCandidate, Runtime};
+use proto::{OrchestratorChoice, Runtime};
 
-use super::launch::{Resolved, resolve_orchestrator};
-use super::roles::NOT_INSTALLED;
+use super::launch::{Resolved, orchestrator_route};
 use crate::run::model::Run;
-use crate::run::model_roles::Installed;
-use crate::run::roster::peer;
+use crate::run::model_roles::RunModels;
 
 /// A runtime's configured binary when that binary is not installed, `None` when it is.
 pub type Missing<'a> = &'a dyn Fn(Runtime) -> Option<String>;
 
-/// Decision 6's resolution over the installed runtimes only. The runtime decision 6
-/// picks is kept when it is installed. When it is not, and nothing pinned it (no
-/// `--orchestrator` choice, no `[orchestrator.agent]` runtime or model), the peer runtime
-/// is resolved instead, and the skipped runtime's roster entries lead the candidate
-/// snapshot, each `not installed` (decision 43: a factual reason, never a failure).
-/// Otherwise the start is refused, naming the runtime and its binary.
+/// The orchestrator's route ([`orchestrator_route`]) when its runtime is installed.
+/// Milestone 9.8 (D2, MR §7): no other model is ever taken in its place; a runtime that
+/// is not installed refuses the start, naming the runtime and its binary.
 pub fn resolve_installed(
     choice: Option<&OrchestratorChoice>,
-    agent: &config::AgentConfig,
-    default_runtime: Runtime,
-    roster: &[ModelEntry],
+    models: &RunModels,
     missing: Missing<'_>,
 ) -> Result<Resolved, String> {
-    let runtime = choice
-        .map(|c| c.runtime)
-        .or(agent.runtime)
-        .unwrap_or(default_runtime);
-    let refusal = || {
-        not_installed(
-            "the orchestrator's",
-            runtime,
-            missing,
-            "choose another runtime with --orchestrator",
-        )
-    };
-    let Some(refused) = refusal() else {
-        return resolve_orchestrator(choice, agent, default_runtime, roster);
-    };
-    let pinned = choice.is_some() || agent.runtime.is_some() || !agent.model.is_empty();
-    let peer = peer(runtime);
-    if pinned || missing(peer).is_some() {
-        return Err(refused);
+    let resolved = orchestrator_route(choice, models);
+    let hint = "choose another runtime with --orchestrator";
+    match not_installed("the orchestrator's", resolved.route.runtime, missing, hint) {
+        Some(refused) => Err(refused),
+        None => Ok(resolved),
     }
-    let mut resolved = resolve_orchestrator(None, agent, peer, roster)?;
-    let mut candidates: Vec<RoutingCandidate> = roster
-        .iter()
-        .filter(|e| e.runtime == runtime)
-        .map(|e| RoutingCandidate {
-            route: Route {
-                runtime: e.runtime,
-                model: e.model.clone(),
-                strength: e.strength,
-                effort: agent.effort.clone(),
-            },
-            skipped_reason: Some(NOT_INSTALLED.to_string()),
-        })
-        .collect();
-    if candidates.is_empty() {
-        // Item 6: a skipped runtime with no roster entry is still recorded, as the one
-        // candidate it would have had, the CLI's default model.
-        candidates.push(RoutingCandidate {
-            route: Route {
-                runtime,
-                model: String::new(),
-                strength: proto::Strength::Standard,
-                effort: agent.effort.clone(),
-            },
-            skipped_reason: Some(NOT_INSTALLED.to_string()),
-        });
-    }
-    candidates.append(&mut resolved.candidates);
-    resolved.candidates = candidates;
-    Ok(resolved)
 }
 
-/// Milestone 9.5 rulings RH-5 and RL-3: [`resolve_installed`] for planned `run` from its
-/// frozen `[orchestrator.agent]`, default runtime and roster, below an explicit
-/// `choice` and the run's `orchestrator` list over `window` (what the orchestrator's
-/// window finds installed).
+/// Milestone 9.5 rulings RH-5 and RL-3, milestone 9.8: [`resolve_installed`] for
+/// planned `run` from its frozen role table, below an explicit `choice`, over `missing`
+/// (what the orchestrator's window finds installed).
 pub fn resolve_planned(
     run: &Run,
     choice: Option<&OrchestratorChoice>,
-    window: &Installed,
     missing: Missing<'_>,
 ) -> Result<Resolved, String> {
-    let (agent, runtime) = (run.limits.orch.agent.config(), run.limits.default_runtime);
-    let today = || resolve_installed(choice, &agent, runtime, &run.roster, missing);
-    let list = &run.limits.route_lists.orchestrator;
-    super::roles::lists::orchestrator(choice, list, agent.effort.clone(), window, today)
+    resolve_installed(choice, run.limits.models(), missing)
 }
 
-/// Rulings RH-5 and RL-3: decision 29's route for `run`'s promotion
-/// ([`resolve_orchestrator`], no fallback), below an explicit `choice` and the run's
-/// `orchestrator` list over `installed`.
-pub fn resolve_promoted(
-    run: &Run,
-    choice: Option<&OrchestratorChoice>,
-    installed: &Installed,
-) -> Result<Resolved, String> {
-    let (agent, runtime) = (run.limits.orch.agent.config(), run.limits.default_runtime);
-    let today = || resolve_orchestrator(choice, &agent, runtime, &run.roster);
-    let list = &run.limits.route_lists.orchestrator;
-    super::roles::lists::orchestrator(choice, list, agent.effort.clone(), installed, today)
+/// Rulings RH-5 and RL-3, milestone 9.8: decision 29's route for `run`'s promotion
+/// ([`orchestrator_route`] on the run's frozen table, no fallback), below an explicit
+/// `choice`.
+pub fn resolve_promoted(run: &Run, choice: Option<&OrchestratorChoice>) -> Resolved {
+    orchestrator_route(choice, run.limits.models())
 }
 
 /// The start's refusal when `who`'s `runtime` is not installed; `hint` says what else

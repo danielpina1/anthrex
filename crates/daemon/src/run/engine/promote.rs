@@ -78,8 +78,8 @@ pub(super) fn on_resume(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     }
 }
 
-/// Decision 29: the route (decision 6, from the run's frozen `[orchestrator.agent]`
-/// and roster), the planned path, the orchestrator record with `plan_submitted` false,
+/// Decision 29: the route (milestone 9.8: the choice, else the run's `orchestrator`
+/// row), the planned path, the orchestrator record with `plan_submitted` false,
 /// and its `CreateOrchestrator`.
 fn perform(
     run: &mut Run,
@@ -87,11 +87,10 @@ fn perform(
     now: u64,
     fx: &mut Vec<Effect>,
 ) -> Result<(), String> {
-    // Milestone 9.5 rulings RH-5, RL-3: the choice, then the list, then decision 6; the
-    // list over the window's map when the check sent one (whole-branch review B, M8).
-    let window = run.orch.promote_window.take();
-    let over = window.as_ref().unwrap_or(&run.orch.installed);
-    let resolved = resolve_promoted(run, choice, over)?;
+    // Milestone 9.8: the choice, else the run's `orchestrator` row. The window's map
+    // the check sent served the old model lists only; it is spent here.
+    run.orch.promote_window = None;
+    let resolved = resolve_promoted(run, choice);
     run.path = Some(RunPath::Plan);
     run.promote_requested_at.get_or_insert(now);
     let mut record = OrchestratorRecord::new(resolved.route, now);

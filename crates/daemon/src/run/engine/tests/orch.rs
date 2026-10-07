@@ -7,15 +7,15 @@
 use std::collections::BTreeMap;
 
 use proto::{
-    AgentRole, DeciderSource, Effort, ModelEntry, OrchestratorChoice, RoutingCandidate, RunPath,
-    RunState, Runtime, Scale, Strength, TaskKind, ToolCall, TriageInfo,
+    AgentRole, DeciderSource, Effort, OrchestratorChoice, RunPath, RunState, Runtime, Scale,
+    TaskKind, ToolCall, TriageInfo,
 };
 use serde_json::{Value, json};
 
 use super::dispatch::replies;
 use super::fixture::*;
 use crate::run::engine::{Effect, EventKind, OpKind, OpResult, OrchEvent};
-use crate::run::orch::launch::resolve_orchestrator;
+use crate::run::orch::launch::orchestrator_route;
 use crate::run::orch::make_planned;
 
 /// The orchestrator's window in these tests.
@@ -63,19 +63,12 @@ pub(super) fn planned_on(yes: bool, choice: Option<Runtime>) -> Fixture {
         },
     )
     .unwrap_or_else(|e| panic!("an empty plan builds: {e:?}"));
-    let agent = config::AgentConfig::default();
     let choice = choice.map(|runtime| OrchestratorChoice {
         runtime,
         model: None,
         effort: None,
     });
-    let resolved = resolve_orchestrator(
-        choice.as_ref(),
-        &agent,
-        run.limits.default_runtime,
-        &run.roster,
-    )
-    .unwrap();
+    let resolved = orchestrator_route(choice.as_ref(), run.limits.models());
     make_planned(
         &mut run,
         Some(triage(RunPath::Plan)),
@@ -274,155 +267,6 @@ fn planned_run_starts_in_planning_and_creates_branch_then_orchestrator() {
     // A planning run never completes.
     fx.tick();
     assert_eq!(fx.run().state, RunState::Planning);
-}
-
-fn roster() -> Vec<ModelEntry> {
-    config::default_roster()
-}
-
-fn agent(runtime: Option<Runtime>, model: &str) -> config::AgentConfig {
-    config::AgentConfig {
-        runtime,
-        model: model.into(),
-        effort: Effort::MEDIUM,
-    }
-}
-
-#[test]
-fn resolve_orchestrator_order() {
-    let pick = |choice: Option<OrchestratorChoice>, agent: config::AgentConfig| {
-        resolve_orchestrator(choice.as_ref(), &agent, Runtime::Claude, &roster()).map(|r| {
-            (
-                r.route.runtime,
-                r.route.model,
-                r.route.strength,
-                r.route.effort,
-            )
-        })
-    };
-    let claude = |model: &str| {
-        Some(OrchestratorChoice {
-            runtime: Runtime::Claude,
-            model: Some(model.into()),
-            effort: None,
-        })
-    };
-    // Default: the runtime's first frontier entry, at the agent's effort.
-    assert_eq!(
-        pick(None, agent(None, "")),
-        Ok((
-            Runtime::Claude,
-            "claude-opus-5-5".into(),
-            Strength::Frontier,
-            Effort::MEDIUM
-        ))
-    );
-    // The agent's model, then the choice's, which wins.
-    assert_eq!(
-        pick(None, agent(None, "claude-sonnet-5")).map(|r| r.1),
-        Ok("claude-sonnet-5".to_string())
-    );
-    assert_eq!(
-        pick(claude("claude-haiku-4-5"), agent(None, "claude-sonnet-5")).map(|r| r.1),
-        Ok("claude-haiku-4-5".to_string())
-    );
-    // The agent's runtime, then the choice's.
-    let codex = Some(OrchestratorChoice {
-        runtime: Runtime::Codex,
-        model: None,
-        effort: None,
-    });
-    assert_eq!(
-        pick(codex, agent(Some(Runtime::Claude), "")),
-        Ok((
-            Runtime::Codex,
-            String::new(),
-            Strength::Standard,
-            Effort::MEDIUM
-        )),
-        "Codex has no frontier entry: its strongest, the default model at standard"
-    );
-    assert_eq!(
-        pick(None, agent(Some(Runtime::Codex), "")).map(|r| r.0),
-        Ok(Runtime::Codex)
-    );
-    // `codex:` names the default model, which the roster has.
-    let codex_default = Some(OrchestratorChoice {
-        runtime: Runtime::Codex,
-        model: Some(String::new()),
-        effort: None,
-    });
-    assert_eq!(
-        pick(codex_default, agent(None, "")).map(|r| r.0),
-        Ok(Runtime::Codex)
-    );
-    // A model the roster does not have is refused, the choice's or the agent's.
-    assert_eq!(
-        pick(claude("gpt-x"), agent(None, "")),
-        Err("claude:gpt-x is not in the roster".to_string())
-    );
-    assert_eq!(
-        pick(None, agent(Some(Runtime::Codex), "o9")),
-        Err("codex:o9 is not in the roster".to_string())
-    );
-}
-
-#[test]
-fn resolve_orchestrator_keeps_the_candidate_snapshot() {
-    let route = |model: &str, strength| proto::Route {
-        runtime: Runtime::Claude,
-        model: model.into(),
-        strength,
-        effort: Effort::MEDIUM,
-    };
-    let taken = |model: &str, strength, why: Option<&str>| RoutingCandidate {
-        route: route(model, strength),
-        skipped_reason: why.map(str::to_string),
-    };
-    let default = resolve_orchestrator(None, &agent(None, ""), Runtime::Claude, &roster()).unwrap();
-    assert_eq!(default.source, "roster_default");
-    let earlier = Some("an earlier candidate was taken");
-    assert_eq!(
-        default.candidates,
-        vec![
-            taken("claude-haiku-4-5", Strength::Fast, earlier),
-            taken("claude-sonnet-5", Strength::Standard, earlier),
-            taken("claude-opus-5-5", Strength::Frontier, None),
-        ]
-    );
-    let configured = resolve_orchestrator(
-        None,
-        &agent(None, "claude-sonnet-5"),
-        Runtime::Claude,
-        &roster(),
-    )
-    .unwrap();
-    assert_eq!(configured.source, "agent_config");
-    let listed = Some("not in the configured list");
-    assert_eq!(
-        configured.candidates,
-        vec![
-            taken("claude-haiku-4-5", Strength::Fast, listed),
-            taken("claude-sonnet-5", Strength::Standard, None),
-            taken("claude-opus-5-5", Strength::Frontier, listed),
-        ]
-    );
-    let choice = OrchestratorChoice {
-        runtime: Runtime::Codex,
-        model: None,
-        effort: None,
-    };
-    let chosen =
-        resolve_orchestrator(Some(&choice), &agent(None, ""), Runtime::Claude, &roster()).unwrap();
-    assert_eq!(chosen.source, "explicit_choice");
-    assert_eq!(chosen.candidates.len(), 1);
-    assert_eq!(chosen.candidates[0].route, chosen.route);
-    // A runtime with no roster entry: its default model, appended as the one candidate.
-    let bare =
-        resolve_orchestrator(None, &agent(None, ""), Runtime::Codex, &roster()[..3]).unwrap();
-    assert_eq!(bare.route.model, "");
-    assert_eq!(bare.candidates.len(), 1);
-    assert_eq!(bare.candidates[0].skipped_reason, None);
 }
 
 #[test]

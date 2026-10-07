@@ -255,6 +255,8 @@ fn only_task_edits_may_widen_the_reach() {
 /// every later batch's refusals keep covering them.
 #[test]
 fn reachable_runtimes_include_the_orchestrator_and_planners() {
+    use crate::run::test_support::set_row;
+    use proto::models::Role;
     let claude_only = vec![entry(Runtime::Claude, "claude-opus-5", Strength::Frontier)];
     let mut run = run_of(
         &config(claude_only.clone(), true),
@@ -280,31 +282,36 @@ fn reachable_runtimes_include_the_orchestrator_and_planners() {
             0,
         )
     };
+    // Milestone 9.8: the planners and scouts run on their rows (the built-ins on
+    // Claude), whatever the orchestrator's runtime.
     run.orch.orchestrator = Some(orchestrator(Runtime::Codex));
-    // The planners run on the orchestrator's runtime by default; the roster has no
-    // Codex entry, so their route falls back to Claude's.
     assert_eq!(
         reachable_runtimes(&run),
         vec![Runtime::Claude, Runtime::Codex]
     );
     run.orch.orchestrator = Some(orchestrator(Runtime::Claude));
     assert_eq!(reachable_runtimes(&run), vec![Runtime::Claude]);
-    // `[orchestrator.planners] runtime = "codex"` with a Codex entry.
-    run.roster
-        .push(entry(Runtime::Codex, "gpt-6", Strength::Frontier));
-    run.limits.orch.planners.runtime = Some(Runtime::Codex);
+    set_row(&mut run, Role::Planner, "codex:gpt-6", None, None);
+    assert_eq!(
+        reachable_runtimes(&run),
+        vec![Runtime::Claude, Runtime::Codex]
+    );
+    set_row(&mut run, Role::Planner, "claude:claude-opus-5", None, None);
+    set_row(&mut run, Role::Research, "codex:default", None, None);
     assert_eq!(
         reachable_runtimes(&run),
         vec![Runtime::Claude, Runtime::Codex]
     );
 }
 
-/// Milestone 9.6 task M9.6.8 (task 3's concern 3): a design run's brainstormers and
-/// document reviewer reach their runtimes, so the start's checks cover them: by default
-/// the strongest model of each installed runtime and the orchestrator's peer; and every
-/// candidate of a `brainstorm` list.
+/// Milestone 9.6 task M9.6.8 (task 3's concern 3), milestone 9.8: a design run's
+/// brainstormers and document reviewer reach their runtimes, so the start's checks
+/// cover them: the `brainstorm` row's two models and the `reviewer` row's pick against
+/// the orchestrator, each over what the start found installed.
 #[test]
 fn a_design_runs_brainstormers_and_reviewer_reach_their_runtimes() {
+    use crate::run::test_support::set_row;
+    use proto::models::Role;
     let both = vec![
         entry(Runtime::Claude, "claude-opus-5", Strength::Frontier),
         entry(Runtime::Codex, "gpt-6", Strength::Frontier),
@@ -336,25 +343,21 @@ fn a_design_runs_brainstormers_and_reviewer_reach_their_runtimes() {
     // Codex missing at the start: nothing of the flow reaches it.
     run.orch.installed = [("codex".to_string(), false)].into();
     assert_eq!(reachable_runtimes(&run), vec![Runtime::Claude]);
-    // A `brainstorm` list's every candidate can be taken.
+    // A brainstorm row and a reviewer row on Claude alone reach Claude alone; a
+    // reviewer row on Codex reaches Codex.
     run.orch.installed.clear();
-    run.roster.retain(|e| e.runtime == Runtime::Claude);
+    let mut models = run.limits.models().clone();
+    models.brainstorm.second = proto::models::ModelRef::parse("claude:claude-sonnet-5").unwrap();
+    run.limits.models = Some(models);
+    set_row(
+        &mut run,
+        Role::Reviewer,
+        "claude:claude-sonnet-5",
+        None,
+        None,
+    );
     assert_eq!(reachable_runtimes(&run), vec![Runtime::Claude]);
-    run.roster
-        .push(entry(Runtime::Codex, "gpt-6", Strength::Frontier));
-    let lists = config::RouteLists {
-        brainstorm: config::RouteList {
-            candidates: vec![config::Candidate {
-                runtime: Runtime::Codex,
-                model: "gpt-6".into(),
-                effort: None,
-            }],
-            pick: config::Pick::First,
-        },
-        ..Default::default()
-    };
-    run.limits.route_lists = crate::run::model::RouteListsFrozen::freeze(&lists, &run.roster);
-    run.roster.retain(|e| e.runtime == Runtime::Claude);
+    set_row(&mut run, Role::Reviewer, "codex:gpt-6", None, None);
     assert_eq!(
         reachable_runtimes(&run),
         vec![Runtime::Claude, Runtime::Codex]

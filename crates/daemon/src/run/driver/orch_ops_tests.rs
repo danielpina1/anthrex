@@ -222,15 +222,13 @@ fn a_restart_refreshes_the_otlp_variables() {
 /// keyed by the later run of the chain, whichever run id sorts last.
 #[test]
 fn a_shared_window_is_keyed_by_the_chains_later_run() {
-    use crate::run::orch::launch::resolve_orchestrator;
+    use crate::run::orch::launch::orchestrator_route;
     use crate::run::orch::make_planned;
     let with_orchestrator = |id: &str, created_at: u64, token: &str| {
         let mut run = crate::run::orch::test_support::run_of(1);
         run.id = id.into();
         run.created_at = created_at;
-        let agent = config::AgentConfig::default();
-        let resolved =
-            resolve_orchestrator(None, &agent, run.limits.default_runtime, &run.roster).unwrap();
+        let resolved = orchestrator_route(None, run.limits.models());
         make_planned(&mut run, None, resolved, false, Default::default());
         run.chain = Some("o-zz00".into());
         let o = run.orch.orchestrator.as_mut().unwrap();

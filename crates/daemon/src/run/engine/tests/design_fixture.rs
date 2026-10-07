@@ -15,7 +15,7 @@ use super::fixture::*;
 use super::orch::{ORCH, error, first_turn_woken, mcp_ready, orch_tool, triage};
 use crate::run::design::state::{DesignAgent, DesignAgentState, DesignState, NewDoc};
 use crate::run::engine::{Effect, EventKind, OpResult, design};
-use crate::run::orch::launch::resolve_orchestrator;
+use crate::run::orch::launch::orchestrator_route;
 use crate::run::orch::make_planned;
 
 pub(super) const REPORT: &str = "\
@@ -99,9 +99,7 @@ pub(super) fn design_planned(yes: bool) -> Fixture {
     .unwrap_or_else(|e| panic!("an empty plan builds: {e:?}"));
     // The driver froze the mode before (`driver/build.rs::make_planned`).
     run.design_mode = DesignMode::Full;
-    let agent = config::AgentConfig::default();
-    let default = run.limits.default_runtime;
-    let resolved = resolve_orchestrator(None, &agent, default, &run.roster).unwrap();
+    let resolved = orchestrator_route(None, run.limits.models());
     let triage = Some(triage(RunPath::Plan));
     make_planned(&mut run, triage, resolved, yes, BTreeMap::new());
     let reply = fx.reply();

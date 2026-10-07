@@ -290,6 +290,7 @@ pub(super) async fn run(
                 return failed(error);
             }
             let session = SessionArg::New { uuid: session_uuid };
+            let who = (spec.run_ref.clone(), spec.runtime);
             match service
                 .manager
                 .create_headless(name, *spec, session, first_turn, project, worktree)
@@ -299,7 +300,7 @@ pub(super) async fn run(
                     window_id: info.id,
                     pid: service.manager.headless_pid(info.id),
                 },
-                Err(error) => failed(error.to_string()),
+                Err(e) => failed(super::start_error::named(service, &who, &e)),
             }
         }
         OpKind::ResumeSession {

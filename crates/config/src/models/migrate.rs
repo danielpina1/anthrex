@@ -318,9 +318,9 @@ pub fn migrate(o: &Orchestrator, raw: Option<&toml::Table>) -> (ModelTable, Vec<
     (table, notes(raw, unresolved))
 }
 
-/// The orchestrator: its list, else `launch::resolve_orchestrator`'s rule
-/// (`agent.runtime`, else `default_runtime`; `agent.model` when set, else the
-/// runtime's strongest entry, a `frontier` one first; else the runtime's default).
+/// The orchestrator: its list, else the rule of `launch::resolve_orchestrator` (removed
+/// in M9.8.7b): `agent.runtime`, else `default_runtime`; `agent.model` when set, else
+/// the runtime's strongest entry, a `frontier` one first; else the runtime's default.
 fn orchestrator_row(
     o: &Orchestrator,
     lists: &RouteLists,
@@ -481,7 +481,7 @@ fn brainstorm_row(list: &RouteList, roster: &[ModelEntry], orchestrator: &Old) -
 
 /// The helpers: the `decider` list, else the mode's runtime's lowest entry at or above
 /// `deciders.strength`, else that runtime's first entry, else its default
-/// (`decider::call::ladder_route`).
+/// (`decider::call::ladder_route`, removed in M9.8.7b).
 fn helpers_row(o: &Orchestrator, lists: &RouteLists, roster: &[ModelEntry]) -> (Old, Option<Old>) {
     let d = &o.deciders;
     if let Some(found) = listed(&lists.decider, roster, &d.effort) {

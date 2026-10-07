@@ -206,10 +206,7 @@ fn planner_refusal(
             "the sub-planners' runtime {label} is found only through a `~` entry in PATH, which headless sessions (sub-planners and scouts) do not search; put {label}'s directory in PATH as an absolute path"
         ));
     }
-    let hint = match run.limits.orch.planners.runtime {
-        Some(_) => "change [orchestrator.planners] runtime",
-        None => "choose another runtime with --orchestrator",
-    };
+    let hint = "choose another model for the planner in C-b S";
     not_installed("the sub-planners'", route.runtime, missing, hint)
 }
 
@@ -268,7 +265,7 @@ impl RunService {
         })
         .await?;
         let window = missing_in(&found.window, &bins);
-        let resolved = resolve_planned(run, planned.choice.as_ref(), &found.window, &window)?;
+        let resolved = resolve_planned(run, planned.choice.as_ref(), &window)?;
         make_planned(
             run,
             planned.triage,
@@ -479,11 +476,8 @@ impl RunService {
         let bins = (config.claude_bin.clone(), config.codex_bin.clone());
         let (claude, codex) = bins.clone();
         let found = blocking(move || Ok(found(&claude, &codex))).await?;
-        // Milestone 9.5: over the map the engine resolves the promotion with, the
-        // window's (whole-branch review B, M8).
-        let Ok(resolved) = resolve_promoted(&run, choice, &found.window) else {
-            return Ok(None);
-        };
+        // Milestone 9.8: the choice, else the run's frozen `orchestrator` row.
+        let resolved = resolve_promoted(&run, choice);
         let window = missing_in(&found.window, &bins);
         let runtime = resolved.route.runtime;
         let hint = "choose another runtime with --orchestrator";

@@ -398,6 +398,7 @@ fn scouts_spread_over_their_list() {
 /// epic's planner takes its own pick), so its runtimes are reachable: the start's
 /// project-trust and API-key checks cover them.
 #[test]
+#[ignore = "M9.8.7b: the scouts, planners and brainstormers take their role-table rows, so no role list is reached; deleted with route_pick.rs in M9.8.13"]
 fn a_role_lists_runtimes_are_reachable() {
     let mut run = crate::run::orch::test_support::run_of(1);
     run.tasks.clear();

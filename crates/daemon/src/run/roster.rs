@@ -68,9 +68,7 @@ pub(crate) fn lowest_at_or_above<'a>(
 }
 
 /// The highest-strength roster entry on `runtime`, first in roster order among ties:
-/// `frontier` first, the rule `orch::launch::resolve_orchestrator` applies to an
-/// orchestrator with no model configured. Milestone 9.6 decision 10: a brainstormer's
-/// default route on each installed runtime.
+/// `frontier` first.
 pub fn strongest_of(roster: &[ModelEntry], runtime: Runtime) -> Option<&ModelEntry> {
     let mut best: Option<&ModelEntry> = None;
     for entry in roster {

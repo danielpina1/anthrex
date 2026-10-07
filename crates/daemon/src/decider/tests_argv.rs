@@ -25,7 +25,10 @@ fn ctx(runtime: Runtime, model: &str, caps: CliCaps) -> DeciderContext {
         cwd: PathBuf::from("/data/deciders/cwd"),
         schema_dir: PathBuf::from("/data/deciders/schemas"),
         caps,
-        routing: Default::default(),
+        live: crate::live_config::LiveSettings::defaults_of(config::Orchestrator::default()),
+        data_dir: PathBuf::from("/data"),
+        bins: ("claude".into(), "codex".into()),
+        decider_bin: None,
         launch_gate: crate::launch::LaunchGate::open_already(),
     }
 }

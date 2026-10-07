@@ -21,15 +21,17 @@
 //! **Skip reasons.** Only [`NOT_INSTALLED`], [`NOT_CONFIGURED`] and [`EARLIER_TAKEN`]:
 //! an unchosen candidate is never labelled a failure.
 
+use proto::models::{Role, RoleChoice};
 use proto::{
-    AgentRole, Effort, HISTORY_VERSION, ModelEntry, RoleOutcome, RoleRoutingDecision,
-    RoleRoutingInput, Route, RoutingCandidate, Runtime, Strength,
+    AgentRole, HISTORY_VERSION, RoleOutcome, RoleRoutingDecision, RoleRoutingInput, Route,
+    RoutingCandidate,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::run::design::state::DesignAgent;
 use crate::run::model::Run;
-use crate::run::roster::peer;
+use crate::run::model_roles::RunModels;
+use crate::run::routing::{ROLE_TABLE, ROLES_POLICY};
 
 pub const NOT_INSTALLED: &str = "not installed";
 pub const NOT_CONFIGURED: &str = "not in the configured list";
@@ -174,18 +176,17 @@ pub fn finish(decision: &mut RoleRoutingDecision, outcome: RoleOutcome, result: 
     }
 }
 
-/// M8b decision 12's strength ladder (`scout::spec::route`, and the deciders' route) as
-/// an ordered candidate list: `runtime`'s roster entries at or above `strength`, lowest
-/// strength first and roster order among ties, then its peer's the same way.
-pub fn ladder_candidates(
-    roster: &[ModelEntry],
-    runtime: Runtime,
-    strength: Strength,
-    effort: Effort,
-) -> Vec<RoutingCandidate> {
-    let mut out = runtime_ladder(roster, runtime, strength, effort.clone());
-    out.extend(runtime_ladder(roster, peer(runtime), strength, effort));
-    out
+/// Milestone 9.8 (ruling F16): a role record's candidates, `choice`'s model at its
+/// effort, then its fallback at its default effort.
+pub fn row_candidates(choice: &RoleChoice) -> Vec<RoutingCandidate> {
+    let own = RunModels::route_of(&choice.model, choice.effort.as_deref());
+    let fallback = (choice.fallback.as_ref()).map(|f| RunModels::route_of(f, None));
+    (std::iter::once(own).chain(fallback))
+        .map(|route| RoutingCandidate {
+            route,
+            skipped_reason: None,
+        })
+        .collect()
 }
 
 /// M9.17 fix round 3: each candidate on a runtime the run's start found not installed
@@ -200,33 +201,6 @@ pub fn mark_not_installed(
         }
     }
     candidates
-}
-
-/// `runtime`'s roster entries at or above `strength`, lowest strength first and roster
-/// order among ties, at `effort`.
-fn runtime_ladder(
-    roster: &[ModelEntry],
-    runtime: Runtime,
-    strength: Strength,
-    effort: Effort,
-) -> Vec<RoutingCandidate> {
-    let mut entries: Vec<&ModelEntry> = roster
-        .iter()
-        .filter(|e| e.runtime == runtime && e.strength >= strength)
-        .collect();
-    entries.sort_by_key(|e| e.strength);
-    entries
-        .into_iter()
-        .map(|e| RoutingCandidate {
-            route: Route {
-                runtime: e.runtime,
-                model: e.model.clone(),
-                strength: e.strength,
-                effort: effort.clone(),
-            },
-            skipped_reason: None,
-        })
-        .collect()
 }
 
 /// The run's next orchestrator session id: one more than its orchestrator records.
@@ -248,67 +222,50 @@ pub fn orchestrator_record(run: &Run, trigger: &str, now: u64) -> Option<RoleRou
         "" => "unrecorded",
         source => source,
     };
-    let mut decision = record(
+    Some(record(
         Some(run),
         AgentRole::Orchestrator,
         &session,
         trigger,
         source,
-        ORCHESTRATOR_POLICY,
+        ROLES_POLICY,
         input_of(run),
         o.routing.candidates.clone(),
         &o.route,
         now,
-    );
-    // Milestone 9.5 decision 9a: a route the `orchestrator` list chose.
-    if source == lists::LIST_SOURCE {
-        let pick = run.limits.route_lists.orchestrator.pick;
-        lists::mark(&mut decision, (pick, 0), Some(&o.route));
-    }
-    Some(decision)
+    ))
 }
 
-/// The record of session `session` of epic `k`'s sub-planner: `[orchestrator.planners]`
-/// as the run was frozen with it, on its runtime or else the orchestrator's.
+/// The record of session `session` of epic `k`'s sub-planner (milestone 9.8, ruling
+/// F16): the run's `planner` row, source `role_table`.
 pub fn planner_record(run: &Run, k: usize, session: u32, now: u64) -> RoleRoutingDecision {
     let epic = &run.orch.epics[k];
-    let p = &run.limits.orch.planners;
-    let orchestrator = run.orch.orchestrator.as_ref().map(|o| o.route.runtime);
-    let runtime = p.runtime.or(orchestrator).unwrap_or(epic.route.runtime);
-    let ladder = ladder_candidates(&run.roster, runtime, p.strength, p.effort.clone());
-    let mut candidates = mark_not_installed(ladder, &run.orch.installed);
-    let pick = lists::planner_pick(run, k);
-    if let Some(pick) = &pick {
-        candidates = lists::candidates(pick, candidates);
-    }
+    let row = row_candidates(run.limits.models().choice(Role::Planner));
+    let candidates = mark_not_installed(row, &run.orch.installed);
     let mut input = input_of(run);
     input.epic = Some(epic.epic.clone());
     input.area = epic.area.clone();
     let trigger = if session == 1 { "start" } else { "replan" };
-    let mut decision = record(
+    record(
         Some(run),
         AgentRole::Planner,
         &format!("{}/{session}", epic.epic),
         trigger,
-        "planner_config",
-        PLANNER_POLICY,
+        ROLE_TABLE,
+        ROLES_POLICY,
         input,
         candidates,
         &epic.route,
         now,
-    );
-    if let Some(p) = pick {
-        lists::mark(&mut decision, (p.pick, p.rotation), p.route.as_ref());
-    }
-    decision
+    )
 }
 
 /// Milestone 9.6 decision 10: the record of brainstormer `agent`'s current session,
-/// `<label>/<session>`: chosen from the run's `brainstorm` list when its pick was
-/// (`DesignAgent.listed`; every candidate in the snapshot, a missing runtime's marked
-/// so), else the strongest model of its runtime (`roster_default`). A document reviewer
-/// (task M9.6.10) is the orchestrator's peer (`peer_route`), else its own runtime
-/// (`same_runtime`, its review's record), with no list.
+/// `<label>/<session>`, over the run's `brainstorm` row (milestone 9.8, ruling F16:
+/// source `role_table`, its two models at its effort, a missing runtime's marked so). A
+/// document reviewer (task M9.6.10) is the `reviewer` row's pick against the
+/// orchestrator (decision 27), its row's model and fallback the candidates, else the
+/// orchestrator's own route (`same_runtime`, its review's record).
 ///
 /// Its trigger is `start` for a first session, `rethink` for the first session of a
 /// rethink's round (`rethink`, ruling T13-1), else `relaunch` (ruling T8-7's relaunch,
@@ -324,7 +281,8 @@ pub fn design_agent_record(
         (_, true) => "rethink",
         _ => "relaunch",
     };
-    if agent.role == AgentRole::DocReviewer {
+    let models = run.limits.models();
+    let (source, candidates) = if agent.role == AgentRole::DocReviewer {
         // WB-C M-2 (the final fix wave's FW-44): its pick's own reason, as its review
         // record (and the version it reviews) says it, never a route compared now.
         let design = run.orch.design.as_ref();
@@ -332,42 +290,24 @@ pub fn design_agent_record(
             (d.reviews.iter()).rfind(|r| format!("{}-r{}", r.doc.label(), r.n) == agent.label)
         });
         let same = review.is_some_and(|r| r.same_runtime);
-        let source = if same { "same_runtime" } else { "peer_route" };
-        let session = format!("{}/{}", agent.label, agent.session);
-        let (input, route) = (input_of(run), &agent.route);
-        return record(
-            Some(run),
-            agent.role,
-            &session,
-            trigger,
-            source,
-            DOC_REVIEWER_POLICY,
-            input,
-            Vec::new(),
-            route,
-            now,
-        );
-    }
-    let list = &run.limits.route_lists.brainstorm;
-    let listed = (list.candidates.iter())
-        .map(|c| RoutingCandidate {
-            route: c.route(agent.route.effort.clone()),
+        let source = if same { "same_runtime" } else { ROLE_TABLE };
+        (source, row_candidates(models.choice(Role::Reviewer)))
+    } else {
+        let b = &models.brainstorm;
+        let pair = [&b.first, &b.second].map(|m| RoutingCandidate {
+            route: RunModels::route_of(m, b.effort.as_deref()),
             skipped_reason: None,
-        })
-        .collect();
-    let candidates = mark_not_installed(listed, &run.orch.installed);
-    // Fix round 1 (m3): the pick's own source, carried on the agent.
-    let source = match agent.listed {
-        true => lists::LIST_SOURCE,
-        false => "roster_default",
+        });
+        (ROLE_TABLE, pair.to_vec())
     };
+    let candidates = mark_not_installed(candidates, &run.orch.installed);
     record(
         Some(run),
         agent.role,
         &format!("{}/{}", agent.label, agent.session),
         trigger,
         source,
-        BRAINSTORMER_POLICY,
+        ROLES_POLICY,
         input_of(run),
         candidates,
         &agent.route,
@@ -376,62 +316,35 @@ pub fn design_agent_record(
 }
 
 /// The record of run scout `scout_id`'s session, on the route the driver starts it on
-/// (`launch::scout_route_of`: `[orchestrator.scouts]` as the run froze it, over the
-/// run's installed runtimes).
+/// (`launch::scout_route`: the run's `research` row, milestone 9.8).
 pub fn scout_record(run: &Run, scout_id: &str, now: u64) -> RoleRoutingDecision {
-    let chosen = crate::run::orch::launch::scout_route_of(run, scout_id);
-    let routing = crate::run::orch::launch::scout_routing(run);
-    let runtime = routing.runtime.unwrap_or(routing.default_runtime);
-    let ladder = ladder_candidates(
-        &run.roster,
-        runtime,
-        routing.strength,
-        chosen.effort.clone(),
-    );
-    let mut candidates = mark_not_installed(ladder, &run.orch.installed);
-    let pick = lists::scout_pick(run, scout_id);
-    if let Some(pick) = &pick {
-        candidates = lists::candidates(pick, candidates);
-    }
+    let chosen = crate::run::orch::launch::scout_route(run);
+    let row = row_candidates(run.limits.models().choice(Role::Research));
+    let candidates = mark_not_installed(row, &run.orch.installed);
     let mut input = input_of(run);
     if let Some(scout) = run.orch.run_scouts.iter().find(|s| s.id == scout_id) {
         input.area = scout.area.clone();
     }
-    let mut decision = record(
+    record(
         Some(run),
         AgentRole::Scout,
         scout_id,
         "start",
-        "scout_config",
-        SCOUT_POLICY,
+        ROLE_TABLE,
+        ROLES_POLICY,
         input,
         candidates,
         &chosen,
         now,
-    );
-    if let Some(p) = pick {
-        lists::mark(&mut decision, (p.pick, p.rotation), p.route.as_ref());
-    }
-    decision
-}
-
-/// A decider's candidates (review I-2): `[orchestrator.deciders]`'s ladder on the
-/// mode's runtime only (the route's), its roster entries at or above `strength`, lowest
-/// first. `DeciderContext::new` takes the first of them, else the runtime's first entry,
-/// which [`record`] then appends.
-pub fn decider_candidates(
-    roster: &[ModelEntry],
-    route: &Route,
-    strength: Strength,
-) -> Vec<RoutingCandidate> {
-    runtime_ladder(roster, route.runtime, strength, route.effort.clone())
+    )
 }
 
 /// A decider's record (`run`: a run-bound decider; `None`: pre-run triage, whose
-/// `session_id` is `<request>/<n>`). Its trigger and question kind are the request's
-/// kind; `candidates` are [`decider_candidates`]. `task_id` is the task when the call
-/// is about exactly one; a call about several (a size check of a batch) is run-level
-/// and names none (review M-4).
+/// `session_id` is `<request>/<n>`), over its helper row (milestone 9.8, ruling F16:
+/// source `role_table`). Its trigger and question kind are the request's kind;
+/// `candidates` are the row's ([`crate::decider::call::Routed::candidates`]).
+/// `task_id` is the task when the call is about exactly one; a call about several (a
+/// size check of a batch) is run-level and names none (review M-4).
 pub fn decider_record(
     run: Option<&Run>,
     (session_id, kind): (&str, &str),
@@ -447,8 +360,8 @@ pub fn decider_record(
         AgentRole::Decider,
         session_id,
         kind,
-        "decider_config",
-        DECIDER_POLICY,
+        ROLE_TABLE,
+        ROLES_POLICY,
         input,
         candidates,
         route,
@@ -461,32 +374,17 @@ pub fn decider_record(
     decision
 }
 
-/// Milestone 9.5 decision 9a: [`decider_record`] for a call routed over the `decider`
-/// list's `pick` (`None`: no list): the list's snapshot first, and the list marked.
-/// `moved`: the mode's route the probe found not installed (ruling T10b-1), recorded
-/// skipped as [`NOT_INSTALLED`] ahead of the peer runtime's candidates.
-pub fn decider_listed(
+/// [`decider_record`] for a call [`crate::decider::call::routed`] routed: its route and
+/// its row's candidates.
+pub fn decider_routed(
     run: Option<&Run>,
     session: (&str, &str),
     task_ids: &[String],
-    (route, candidates): (&Route, Vec<RoutingCandidate>),
-    (pick, moved): (Option<&crate::run::route_pick::RolePick>, Option<&Route>),
+    routed: &crate::decider::call::Routed,
     (input, now): (RoleRoutingInput, u64),
 ) -> RoleRoutingDecision {
-    let skipped = moved.map(|m| RoutingCandidate {
-        route: m.clone(),
-        skipped_reason: Some(NOT_INSTALLED.to_string()),
-    });
-    let candidates: Vec<_> = skipped.into_iter().chain(candidates).collect();
-    let candidates = match pick {
-        Some(p) => lists::candidates(p, candidates),
-        None => candidates,
-    };
-    let mut decision = decider_record(run, session, task_ids, (route, candidates), input, now);
-    if let Some(p) = pick {
-        lists::mark(&mut decision, (p.pick, p.rotation), p.route.as_ref());
-    }
-    decision
+    let chosen = (&routed.ctx.route, routed.candidates());
+    decider_record(run, session, task_ids, chosen, input, now)
 }
 
 /// A decider call's outcome: `completed` with `answered`, or `fallback` with its

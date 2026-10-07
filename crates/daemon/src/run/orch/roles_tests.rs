@@ -6,7 +6,7 @@ use proto::{
 };
 
 use super::*;
-use crate::run::orch::launch::resolve_orchestrator;
+use crate::run::orch::launch::orchestrator_route;
 use crate::run::orch::test_support::run_of;
 
 fn route(model: &str, strength: Strength) -> Route {
@@ -25,20 +25,11 @@ fn candidate(model: &str, strength: Strength) -> RoutingCandidate {
     }
 }
 
-fn agent() -> config::AgentConfig {
-    config::AgentConfig {
-        runtime: None,
-        model: String::new(),
-        effort: Effort::HIGH,
-    }
-}
-
-/// The orchestrator's record from decision 6's resolution for `choice`.
+/// The orchestrator's record from its resolution for `choice` (milestone 9.8: the row).
 fn orchestrator_of(choice: Option<&OrchestratorChoice>) -> RoleRoutingDecision {
     let mut run = run_of(1);
     run.path = Some(RunPath::Plan);
-    let resolved =
-        resolve_orchestrator(choice, &agent(), Runtime::Claude, &config::default_roster()).unwrap();
+    let resolved = orchestrator_route(choice, run.limits.models());
     let mut o = crate::run::orch::OrchestratorRecord::new(resolved.route, 1_000);
     o.routing = RoleSnapshot {
         source: resolved.source,
@@ -96,7 +87,7 @@ fn record_appends_the_chosen_route_when_absent() {
 #[test]
 fn explicit_choice_is_identifiable_as_explicit() {
     let default = orchestrator_of(None);
-    assert_eq!(default.source, "roster_default");
+    assert_eq!(default.source, "role_table");
     // The user's choice names the same route the default would have taken; the record
     // still says it was the user's.
     let same = OrchestratorChoice {
@@ -107,7 +98,7 @@ fn explicit_choice_is_identifiable_as_explicit() {
     let explicit = orchestrator_of(Some(&same));
     assert_eq!(explicit.chosen, default.chosen);
     assert_eq!(explicit.source, "explicit_choice");
-    assert_eq!(explicit.policy_version, ORCHESTRATOR_POLICY);
+    assert_eq!(explicit.policy_version, crate::run::routing::ROLES_POLICY);
     assert_eq!(explicit.role, AgentRole::Orchestrator);
 }
 
@@ -116,7 +107,6 @@ fn unchosen_candidates_have_no_failure_label() {
     let allowed = [NOT_INSTALLED, NOT_CONFIGURED, EARLIER_TAKEN];
     let failure = ["fail", "error", "reject", "bad", "lost"];
     let run = run_of(1);
-    let roster = config::default_roster();
     let mut records = vec![orchestrator_of(None)];
     let named = OrchestratorChoice {
         runtime: Runtime::Claude,
@@ -124,7 +114,8 @@ fn unchosen_candidates_have_no_failure_label() {
         effort: None,
     };
     records.push(orchestrator_of(Some(&named)));
-    let ladder = ladder_candidates(&roster, Runtime::Claude, Strength::Fast, Effort::LOW);
+    let reviewer = run.limits.models().choice(proto::models::Role::Reviewer);
+    let ladder = row_candidates(reviewer);
     let chosen = ladder[1].route.clone();
     records.push(record(
         Some(&run),
@@ -154,8 +145,9 @@ fn unchosen_candidates_have_no_failure_label() {
         &route("b", Strength::Standard),
         2_000,
     ));
+    // Milestone 9.8: an orchestrator's snapshot is its chosen route alone.
     for d in &records {
-        assert!(d.candidates.len() > 1, "{d:#?}");
+        assert!(!d.candidates.is_empty(), "{d:#?}");
         for (i, c) in d.candidates.iter().enumerate() {
             if i == d.selected_index as usize {
                 assert_eq!(c.skipped_reason, None);
@@ -220,35 +212,6 @@ fn record_ids_are_stable() {
     assert_eq!(done.result.as_deref(), Some("timed out"));
 }
 
-/// Review I-2: a decider's snapshot is `[orchestrator.deciders]`'s ladder on the mode's
-/// runtime (the route's), at or above its strength, lowest first; never the peer's.
-#[test]
-fn decider_candidates_are_the_modes_runtime_ladder_only() {
-    let roster = config::default_roster();
-    for runtime in [Runtime::Claude, Runtime::Codex] {
-        let chosen = Route {
-            runtime,
-            model: String::new(),
-            strength: Strength::Standard,
-            effort: Effort::LOW,
-        };
-        let got = decider_candidates(&roster, &chosen, Strength::Standard);
-        let mut want: Vec<&proto::ModelEntry> = roster
-            .iter()
-            .filter(|e| e.runtime == runtime && e.strength >= Strength::Standard)
-            .collect();
-        want.sort_by_key(|e| e.strength);
-        let got_models: Vec<(Runtime, &str)> = got
-            .iter()
-            .map(|c| (c.route.runtime, c.route.model.as_str()))
-            .collect();
-        let want_models: Vec<(Runtime, &str)> =
-            want.iter().map(|e| (e.runtime, e.model.as_str())).collect();
-        assert_eq!(got_models, want_models);
-        assert!(got.iter().all(|c| c.route.effort == Effort::LOW));
-    }
-}
-
 /// Review M-4: a decider call about one task names it; a call about several (a batch
 /// size check) is run-level and names none rather than only the first.
 #[test]
@@ -269,32 +232,6 @@ fn a_decider_record_names_its_task_only_when_it_has_one() {
     assert_eq!(make(&["t0".into(), "t1".into()]).task_id, None);
     assert_eq!(make(&[]).task_id, None);
     assert_eq!(make(&["t0".into(), "t1".into()]).trigger, "size_check");
-}
-
-/// Review M-5 (a): a sub-planner's and a scout's ladder is its runtime's entries at or
-/// above the strength, lowest first, then the peer runtime's the same way.
-#[test]
-fn planner_and_scout_ladders_include_the_peer_runtime() {
-    let roster = config::default_roster();
-    let got = ladder_candidates(&roster, Runtime::Codex, Strength::Standard, Effort::HIGH);
-    let rank = |rt: Runtime| {
-        let mut e: Vec<&proto::ModelEntry> = roster
-            .iter()
-            .filter(|e| e.runtime == rt && e.strength >= Strength::Standard)
-            .collect();
-        e.sort_by_key(|e| e.strength);
-        e.into_iter().map(|e| (e.runtime, e.model.clone()))
-    };
-    let want: Vec<(Runtime, String)> = rank(Runtime::Codex).chain(rank(Runtime::Claude)).collect();
-    let got: Vec<(Runtime, String)> = got
-        .into_iter()
-        .map(|c| (c.route.runtime, c.route.model))
-        .collect();
-    assert_eq!(got, want);
-    assert!(
-        want.iter().any(|(r, _)| *r == Runtime::Claude),
-        "the peer is listed"
-    );
 }
 
 /// Review M-5 (b): which reason goes to which unchosen candidate. Before the chosen

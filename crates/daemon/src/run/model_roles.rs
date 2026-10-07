@@ -184,6 +184,24 @@ impl RunModels {
     }
 }
 
+/// Milestone 9.8 (D2, MR §7) for a role with no run (a decider, the onboarding scout):
+/// `choice`'s model at its effort, unless `installed` records its runtime missing and
+/// the row's fallback is on the other runtime, not missing: then the fallback at its
+/// default effort, and the row's route it moved from. Never a model the row does not
+/// name; `installed` empty counts everything installed.
+pub fn row_route_over(choice: &RoleChoice, installed: &Installed) -> (Route, Option<Route>) {
+    let own = RunModels::route_of(&choice.model, choice.effort.as_deref());
+    let fallback = (choice.fallback.as_ref()).filter(|f| {
+        missing(installed, own.runtime)
+            && f.runtime != own.runtime
+            && !missing(installed, f.runtime)
+    });
+    match fallback {
+        Some(f) => (RunModels::route_of(f, None), Some(own)),
+        None => (own, None),
+    }
+}
+
 /// A skip reason: the overlap rule holds the route off (decision 28; rulings FW-1, FW-5).
 pub const OVERLAPPING_OWNS: &str = "overlapping owns";
 pub const NOT_INSTALLED: &str = super::orch::roles::NOT_INSTALLED;

@@ -1,8 +1,9 @@
-//! M9.17 fix round 2: decision 26's start check at `build_plan`'s level. A user with
-//! only Codex installed starts a planned run (the sub-planners' frontier route stays on
-//! Codex instead of stepping to an uninstalled Claude model); a planner runtime that is
-//! genuinely missing is still refused before anything is written; a user with both
-//! runtimes is routed as before; and `run promote` makes the same check.
+//! M9.17 fix round 2: decision 26's start check at `build_plan`'s level. Milestone 9.8
+//! (D2, MR §7): every role takes its row, never a model the row does not name, so a
+//! user with only Codex installed starts a planned run once the orchestrator's,
+//! planner's and research rows name Codex models; a planner row on a runtime that is
+//! missing is refused before anything is written; a user with both runtimes is routed
+//! by the rows; and `run promote` makes the same check.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -81,11 +82,15 @@ fn planned(choice: Option<Runtime>) -> Shape {
     }))
 }
 
-fn planners_on(runtime: Runtime) -> config::Orchestrator {
-    let mut config = config::Orchestrator::default();
-    config.agent.planners.runtime = Some(runtime);
-    config
+/// `text` as a `config.toml`'s `[orchestrator]`, its old keys migrated into rows.
+fn parsed(text: &str) -> config::Orchestrator {
+    let (config, problems) = config::parse(text);
+    assert!(problems.is_empty(), "{problems:?}");
+    config.orchestrator
 }
+
+/// The planning rows on the Codex default: what a Codex-only user sets in `C-b S`.
+const CODEX_ROWS: &str = "[models.orchestrator]\nmodel = \"codex:default\"\n\n[models.planner]\nmodel = \"codex:default\"\n\n[models.research]\nmodel = \"codex:default\"\n";
 
 async fn build(service: &RunService, root: &Path, choice: Option<Runtime>) -> Result<Run, String> {
     service
@@ -124,67 +129,70 @@ fn assert_nothing_written(data: &Path, root: &Path) {
     assert!(refs.status.success() && refs.stdout.is_empty(), "{refs:?}");
 }
 
-/// The review's finding: every Codex-only start was refused, because the default
-/// frontier planner route stepped to Claude's frontier model.
+/// The review's finding (every Codex-only start was refused), under the role table: the
+/// built-in rows name Claude models, so a Codex-only user is refused naming the role's
+/// runtime and the way out; with the planning rows on Codex the start goes through.
 #[tokio::test]
-async fn a_codex_only_user_starts_planned_runs() {
+async fn a_codex_only_user_starts_planned_runs_on_codex_rows() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join("repo");
     plain_repo(&root);
     let data = tmp.path().join("data");
 
-    // `--orchestrator codex`, the default config.
+    // The built-in rows: the planner's Claude is not installed.
     let default = service(&data, config::Orchestrator::default(), NO_CLAUDE);
-    let run = build(&default, &root, Some(Runtime::Codex)).await.unwrap();
+    let refusal = build(&default, &root, Some(Runtime::Codex))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        refusal,
+        format!(
+            "the sub-planners' runtime claude is not installed ({NO_CLAUDE} is not an executable file); install it, or choose another model for the planner in C-b S"
+        )
+    );
+    assert_nothing_written(&data, &root);
+
+    // The planning rows on Codex: an unpinned goal starts, every role on Codex.
+    let codex = service(&data, parsed(CODEX_ROWS), NO_CLAUDE);
+    let run = build(&codex, &root, None).await.unwrap();
     let (orchestrator, planner) = routes(&run);
-    assert_eq!(orchestrator.runtime, Runtime::Codex);
+    assert_eq!(
+        (orchestrator.runtime, orchestrator.model.as_str()),
+        (Runtime::Codex, "")
+    );
     assert_eq!(
         (planner.runtime, planner.model.as_str()),
         (Runtime::Codex, "")
     );
     assert_eq!(run.orch.installed.get("claude"), Some(&false));
-
-    // `[orchestrator.planners] runtime = "codex"`.
-    let configured = service(&data, planners_on(Runtime::Codex), NO_CLAUDE);
-    let run = build(&configured, &root, Some(Runtime::Codex))
-        .await
-        .unwrap();
-    assert_eq!(routes(&run).1.runtime, Runtime::Codex);
-
-    // An unpinned goal: Claude, the default runtime, is skipped for Codex.
-    let run = build(&default, &root, None).await.unwrap();
-    let (orchestrator, planner) = routes(&run);
-    assert_eq!(orchestrator.runtime, Runtime::Codex);
-    assert_eq!(planner.runtime, Runtime::Codex);
     let o = run.orch.orchestrator.as_ref().unwrap();
-    let first = &o.routing.candidates[0];
-    assert_eq!(first.route.runtime, Runtime::Claude);
-    assert_eq!(first.skipped_reason.as_deref(), Some("not installed"));
+    assert_eq!(o.routing.source, "role_table");
 }
 
-/// A sub-planner runtime that is not installed is still refused, naming what to change,
-/// before the run is written.
+/// A sub-planner row on a runtime that is not installed is refused, naming what to
+/// change, before the run is written.
 #[tokio::test]
 async fn a_missing_planner_runtime_is_still_refused() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join("repo");
     plain_repo(&root);
     let data = tmp.path().join("data");
-    let service = service(&data, planners_on(Runtime::Claude), NO_CLAUDE);
+    let planner = "[models.planner]\nmodel = \"claude:claude-sonnet-5\"\n";
+    let service = service(&data, parsed(planner), NO_CLAUDE);
     let refusal = build(&service, &root, Some(Runtime::Codex))
         .await
         .unwrap_err();
     assert_eq!(
         refusal,
         format!(
-            "the sub-planners' runtime claude is not installed ({NO_CLAUDE} is not an executable file); install it, or change [orchestrator.planners] runtime"
+            "the sub-planners' runtime claude is not installed ({NO_CLAUDE} is not an executable file); install it, or choose another model for the planner in C-b S"
         )
     );
     assert_nothing_written(&data, &root);
 }
 
-/// With both runtimes installed nothing changes: a Codex orchestrator's frontier
-/// planner is Claude's frontier model, and an unpinned goal gets a Claude orchestrator.
+/// With both runtimes installed the rows route: a Codex orchestrator's planner is the
+/// planner row's Claude Opus, and an unpinned goal gets the Claude orchestrator row.
 #[tokio::test]
 async fn a_user_with_both_runtimes_is_routed_as_before() {
     let tmp = tempfile::tempdir().unwrap();
@@ -257,7 +265,14 @@ async fn promoting_to_a_missing_runtime_is_refused_without_side_effects() {
     );
     unchanged();
 
-    // Codex is installed, and its frontier sub-planners stay on it.
+    // Codex is installed, and the run's planner row is on it.
+    let planner = proto::models::Role::Planner;
+    let set_planner = |model: &str| {
+        let mut state = crate::lock(&service.state);
+        let run = state.runs.get_mut(&id).unwrap();
+        crate::run::test_support::set_row(run, planner, model, None, None);
+    };
+    set_planner("codex:default");
     assert!(
         service
             .promote_refusal(&id, Some(&choice(Runtime::Codex)))
@@ -265,15 +280,8 @@ async fn promoting_to_a_missing_runtime_is_refused_without_side_effects() {
             .is_ok()
     );
 
-    // Codex with its sub-planners configured on Claude.
-    crate::lock(&service.state)
-        .runs
-        .get_mut(&id)
-        .unwrap()
-        .limits
-        .orch
-        .planners
-        .runtime = Some(Runtime::Claude);
+    // Codex with its planner row on Claude.
+    set_planner("claude:claude-sonnet-5");
     let refusal = service
         .promote_refusal(&id, Some(&choice(Runtime::Codex)))
         .await
@@ -287,9 +295,9 @@ async fn promoting_to_a_missing_runtime_is_refused_without_side_effects() {
 }
 
 /// M9.17 fix round 3, item 2: `run promote` through the real engine loop records what
-/// its installed check found (`OrchEvent::Installed`, sent before `Promote`), so the
-/// promoted run's sub-planners stay on Codex. The launch gate stays closed: the
-/// promoted orchestrator's window is never started.
+/// its installed check found (`OrchEvent::Installed`, sent before `Promote`); the
+/// promoted run's sub-planners take its Codex planner row. The launch gate stays closed:
+/// the promoted orchestrator's window is never started.
 #[tokio::test(flavor = "multi_thread")]
 async fn run_promote_records_what_its_check_found() {
     let tmp = tempfile::tempdir().unwrap();
@@ -306,7 +314,7 @@ async fn run_promote_records_what_its_check_found() {
     let ctx = RunContext::new(
         data.clone(),
         manager.config(),
-        config::Orchestrator::default(),
+        parsed(CODEX_ROWS),
         Arc::new(NoRoots),
     );
     let service = RunService::new(manager, ctx);
@@ -359,12 +367,9 @@ async fn run_promote_records_what_its_check_found() {
 /// starts with it, the file trusted. With the default config (Claude scouts) it starts.
 #[tokio::test]
 async fn a_codex_run_scout_is_covered_by_the_project_settings_check() {
-    let codex_default = config::Orchestrator {
-        default_runtime: Runtime::Codex,
-        ..Default::default()
-    };
-    let mut codex_scouts = config::Orchestrator::default();
-    codex_scouts.scouts.runtime = Some(Runtime::Codex);
+    // Milestone 9.8: through the migration, as a real `config.toml` is read.
+    let codex_default = parsed("[orchestrator]\ndefault_runtime = \"codex\"\n");
+    let codex_scouts = parsed("[orchestrator.scouts]\nruntime = \"codex\"\n");
     for (name, config) in [("default_runtime", codex_default), ("scouts", codex_scouts)] {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("repo");

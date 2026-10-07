@@ -85,6 +85,9 @@ fn a_planner_runtime_found_only_through_a_tilde_entry_says_so() {
     o.route.runtime = Runtime::Codex;
     o.route.model = String::new();
     run.orch.orchestrator = Some(o);
+    // Milestone 9.8: the planner row on Codex.
+    let planner = proto::models::Role::Planner;
+    crate::run::test_support::set_row(&mut run, planner, "codex:default", None, None);
     let map = |claude: bool, codex: bool| -> std::collections::BTreeMap<String, bool> {
         [("claude".to_string(), claude), ("codex".to_string(), codex)].into()
     };

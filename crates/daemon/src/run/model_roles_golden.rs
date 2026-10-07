@@ -1,18 +1,17 @@
 //! Milestone 9.8 task 1 (MR §8): what each role resolves to with today's code, for a
 //! matrix of old configs, pinned in `model_roles_golden.json` before anything changes.
-//! Task M9.8.3 adds the comparison with `config::models::resolve`; task M9.8.13 deletes
-//! `today` with the code it calls, and the JSON stays the record.
+//! Task M9.8.3 adds the comparison with `config::models::resolve`; since task M9.8.7b
+//! every launcher `today` calls takes its row, so `today` is the launchers' own
+//! resolution; task M9.8.13 deletes it, and the JSON stays the record.
 
 use std::collections::BTreeMap;
 
-use proto::{DeciderMode, Route, Runtime, TuningFile};
+use proto::{Route, TuningFile};
 
-use crate::run::model::{FrozenList, Run};
-use crate::run::model_roles::Installed;
+use crate::run::model::Run;
 use crate::run::orch::test_support as orch_support;
 use crate::run::orch::{launch, roles};
 use crate::run::refit;
-use crate::run::route_pick;
 use crate::run::test_support::{build_tuned, plan_with, show, task_toml};
 
 /// A cell whose plan does not validate today (decision 16).
@@ -120,21 +119,14 @@ fn one_task(cfg: &config::Orchestrator, size: &str, owns: &str) -> Result<Run, S
     build_tuned(&plan, cfg, start).map_err(|e| show(&e))
 }
 
-/// Today's helpers route: `DeciderContext::new`'s route, then `route_over` with every
-/// runtime installed (its `decider` list's first, else the mode's route).
+/// The helpers route: since M9.8.7b the live table's helper row, as a decider call
+/// resolves it (`DeciderContext::route_for`, no repository file).
 fn helpers_today(cfg: &config::Orchestrator) -> Route {
-    let d = &cfg.deciders;
-    let runtime = if d.mode == DeciderMode::Codex {
-        Runtime::Codex
-    } else {
-        Runtime::Claude
-    };
-    let base =
-        crate::decider::call::ladder_route(&cfg.models, runtime, d.strength, d.effort.clone());
-    let list = FrozenList::freeze(&cfg.tuning.routes.decider, &cfg.models);
-    route_pick::role(&list, 0, base.effort.clone(), &Installed::new())
-        .and_then(|pick| pick.route)
-        .unwrap_or(base)
+    let live = crate::live_config::LiveSettings::defaults_of(cfg.clone());
+    let manager =
+        crate::manager::ManagerConfig::for_tests("/tmp/unused.sock".into(), "/bin/sh".into());
+    let ctx = crate::decider::DeciderContext::new(live, &manager, std::path::Path::new("/data"));
+    ctx.route_for(crate::decider::DeciderKind::Triage, None)
 }
 
 /// What each golden row resolves to with today's code.
@@ -151,21 +143,13 @@ pub(crate) fn today(cfg: &config::Orchestrator) -> BTreeMap<String, String> {
     }
     let mut run =
         one_task(cfg, "M", "[\"b/**\"]").expect("the medium plan builds in every matrix config");
-    let none = Installed::new();
-    let agent = &cfg.agent.agent;
-    let orchestrator = roles::lists::orchestrator(
-        None,
-        &run.limits.route_lists.orchestrator,
-        agent.effort.clone(),
-        &none,
-        || launch::resolve_orchestrator(None, agent, cfg.default_runtime, &run.roster),
-    )
-    .expect("the orchestrator resolves")
-    .route;
+    let orchestrator = launch::orchestrator_route(None, run.limits.models()).route;
     let mut record = orch_support::orchestrator();
     record.route = orchestrator.clone();
     run.orch.orchestrator = Some(record);
-    let picks = roles::lists::brainstorm_picks(&run);
+    let caps = crate::decider::DECIDER_CAPS;
+    let picks =
+        roles::lists::brainstorm_picks_with(&run, &caps).expect("both runtimes run unsaved");
     let rows = [
         ("orchestrator", orchestrator),
         (
@@ -183,7 +167,7 @@ pub(crate) fn today(cfg: &config::Orchestrator) -> BTreeMap<String, String> {
                 .clone()
                 .expect("an M task is reviewed"),
         ),
-        ("research", launch::scout_route_of(&run, "golden")),
+        ("research", launch::scout_route(&run)),
         ("brainstorm.first", picks[0].route.clone()),
         ("brainstorm.second", picks[1].route.clone()),
         ("helpers", helpers_today(cfg)),

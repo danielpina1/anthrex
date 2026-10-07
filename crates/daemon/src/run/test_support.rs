@@ -228,6 +228,27 @@ pub fn claude_rows(run: &mut Run) {
     run.limits.models = Some(models);
 }
 
+/// Milestone 9.8: one row of `run`'s frozen role table, set to `model` (`<runtime>:<id>`)
+/// at `effort` with `fallback`.
+pub fn set_row(
+    run: &mut Run,
+    role: proto::models::Role,
+    model: &str,
+    effort: Option<&str>,
+    fallback: Option<&str>,
+) {
+    use proto::models::{ModelRef, RoleChoice};
+    let parse = |m: &str| ModelRef::parse(m).expect("a model");
+    let mut models = run.limits.models().clone();
+    let row = RoleChoice {
+        model: parse(model),
+        effort: effort.map(str::to_string),
+        fallback: fallback.map(parse),
+    };
+    models.rows.insert(role, row);
+    run.limits.models = Some(models);
+}
+
 pub fn task<'a>(run: &'a Run, id: &str) -> &'a Task {
     run.task(id).unwrap_or_else(|| panic!("no task {id}"))
 }

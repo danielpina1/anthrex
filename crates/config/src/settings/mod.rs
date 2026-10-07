@@ -76,6 +76,8 @@ pub fn apply_owned(live: &mut Orchestrator, from: &Orchestrator) {
     live.max_writers = from.max_writers;
     live.max_readers = from.max_readers;
     live.max_bounces = from.max_bounces;
+    // Milestone 9.8 decision 42 (preflight ruling F14): helpers read the live table.
+    live.roles = from.roles.clone();
 }
 
 #[cfg(test)]

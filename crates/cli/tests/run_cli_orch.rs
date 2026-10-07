@@ -80,28 +80,15 @@ fn orchestrator_flag_parses_and_refuses_bad_values() {
         refused_with(&out, BAD_ORCHESTRATOR);
     }
     assert!(h.snapshot().runs.is_empty(), "a refused flag started a run");
-    // `claude:<model>` reaches the daemon: the planned run's orchestrator runs it (a
-    // roster model; the daemon refuses any other in its own words).
-    let out = run(
-        &h,
-        &[
-            "start",
-            "--goal",
-            "g",
-            "--orchestrator",
-            "claude:test-model",
-        ],
-    );
-    refused_with(&out, "claude:test-model is not in the roster");
+    // `claude:<model>` reaches the daemon and the planned run's orchestrator runs it:
+    // milestone 9.8 lets the user name any model (MR §5.2's `custom…`), so a model
+    // outside the catalog is the user's choice, not a refusal.
     h.decider("triage", 2, triage_plan());
-    let id = h.start_goal_id(
-        "rework storage",
-        &["--orchestrator", "claude:claude-sonnet-5"],
-    );
+    let id = h.start_goal_id("rework storage", &["--orchestrator", "claude:test-model"]);
     let route = h.run(&id).unwrap().orchestrator.unwrap().route;
     assert_eq!(
         (route.runtime, route.model.as_str()),
-        (Runtime::Claude, "claude-sonnet-5")
+        (Runtime::Claude, "test-model")
     );
 }
 

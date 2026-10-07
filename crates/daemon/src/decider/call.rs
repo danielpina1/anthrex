@@ -3,12 +3,15 @@
 //! the kind's deterministic fallback with one of decision 16's reasons, so a decider
 //! never blocks a run and a fallback is never an error.
 //!
-//! The only I/O in `decider/`. No lock is held anywhere in the call. The schema file
-//! write and the spawn (a `fork`/`exec` and thread starts) run on `spawn_blocking`; the
+//! The I/O in `decider/` (with the repository file `routed` reads through
+//! `DeciderContext::choice_for`). No lock is held anywhere in the call. The routing
+//! probe and that read, the schema file write and the spawn (a `fork`/`exec` and
+//! thread starts) run on `spawn_blocking`; the
 //! wait is an async receive on the session's event channel, bounded by the context's
 //! timeout. Every return after the spawn kills the process group of the exact child
 //! (`HeadlessHandle::kill`), which is a no-op once it has been reaped.
 
+use super::DeciderKind;
 use super::argv::{DECIDER_CAPS, claude_decider_args, codex_decider_args, schema_file_name};
 use super::fallback::{OFF_REASON, fallback_decision};
 use super::parse::{STRUCTURED_OUTPUT_TOOL, answer_from_events, json_from_text, parse_for};
@@ -16,19 +19,13 @@ use super::{DeciderAnswer, DeciderContext, DeciderRequest, Decision, prompt, sch
 use crate::headless::codex_sandbox::DialectChoice;
 use crate::headless::session::HeadlessHandle;
 use crate::headless::{SessionEvent, TurnOutcome, claude_stream, credential_scrub_for};
-use crate::manager::ManagerConfig;
-use crate::run::driver::build::installed::installed_now;
-use crate::run::model::FrozenList;
-use crate::run::model_roles::Installed;
-use crate::run::roster::{lowest_at_or_above, peer};
-use crate::run::route_pick::{RolePick, role};
+use crate::run::driver::build::installed::installed_with;
+use crate::run::model_roles::{Installed, NOT_INSTALLED, RunModels, row_route_over};
 use anyhow::Context;
-use proto::{DeciderMode, DeciderSource, Effort, ModelEntry, Route, Runtime, Strength, TokenUsage};
+use proto::models::RoleChoice;
+use proto::{DeciderMode, DeciderSource, Route, RoutingCandidate, Runtime, TokenUsage};
 use serde_json::Value;
-use std::ffi::OsString;
 use std::path::Path;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
@@ -42,79 +39,18 @@ pub const KILL_GRACE: Duration = Duration::from_secs(2);
 /// call's own deadline.
 pub const EXIT_WAIT: Duration = Duration::from_secs(2);
 
-/// Milestone 9.5 (rulings RL-2, I6; decision 9a): what a decider call routes over,
-/// fixed at daemon start: the `decider` list against the roster, the roster and
-/// `[orchestrator.deciders] strength` for a route on the other runtime, the two binaries
-/// the probe stats and each runtime's program, and the list's per-daemon rotation. The
-/// list and roster are fixed together, as the deciders' own route always was (review
-/// 10b, minor 6: never a live roster against a fixed list).
-#[derive(Debug, Clone, Default)]
-pub struct Routing {
-    pub list: FrozenList,
-    pub models: Vec<ModelEntry>,
-    pub strength: Option<Strength>,
-    pub bins: (String, String),
-    pub decider_bin: Option<String>,
-    pub rotation: Arc<AtomicU32>,
-}
-
-impl Routing {
-    pub fn new(cfg: &config::Orchestrator, manager: &ManagerConfig) -> Routing {
-        Routing {
-            list: FrozenList::freeze(&cfg.tuning.routes.decider, &cfg.models),
-            models: cfg.models.clone(),
-            strength: Some(cfg.deciders.strength),
-            bins: (manager.claude_bin.clone(), manager.codex_bin.clone()),
-            decider_bin: manager.decider_bin.clone(),
-            rotation: Arc::default(),
-        }
-    }
-
-    /// `ANTHREX_DECIDER_BIN`, else `runtime`'s command.
-    pub fn program(&self, runtime: Runtime) -> OsString {
-        let command = match runtime {
-            Runtime::Codex => &self.bins.1,
-            _ => &self.bins.0,
-        };
-        OsString::from(self.decider_bin.as_ref().unwrap_or(command))
-    }
-}
-
-/// Decision 16's route on `runtime`: the first roster entry at the lowest strength at or
-/// above `strength`, else the runtime's first entry, else no model (the CLI's default).
-pub fn ladder_route(
-    models: &[ModelEntry],
-    runtime: Runtime,
-    strength: Strength,
-    effort: Effort,
-) -> Route {
-    let entry = lowest_at_or_above(models, runtime, strength, None)
-        .or_else(|| models.iter().find(|e| e.runtime == runtime));
-    Route {
-        runtime,
-        model: entry.map(|e| e.model.clone()).unwrap_or_default(),
-        strength: entry.map_or(strength, |e| e.strength),
-        effort,
-    }
-}
-
-/// One call's context, routed; the `decider` list's pick it came from (`None`: no
-/// list, or the deciders are off); and, when the probe moved the call to the peer
-/// runtime, the mode's route it moved from (ruling T10b-1).
+/// One call's context, routed (its `route`, `program` and runtime set); the helper row
+/// it came from, whose model and fallback its record lists; and, when the probe found
+/// the row's runtime not installed and the call moved to the row's fallback on the other
+/// runtime, the row's route it moved from (ruling T10b-1, milestone 9.8 D2).
 #[derive(Debug, Clone)]
 pub struct Routed {
     pub ctx: DeciderContext,
-    pub pick: Option<RolePick>,
+    pub choice: RoleChoice,
     pub moved: Option<Route>,
 }
 
 impl Routed {
-    /// The strength the call's route was picked at (`Routing.strength`, frozen at
-    /// daemon start), which its record's ladder lists from (review 10b's carry).
-    pub fn strength(&self) -> proto::Strength {
-        (self.ctx.routing.strength).unwrap_or(self.ctx.route.strength)
-    }
-
     /// Ruling T10b-1: the run log's line for a call the probe moved to the peer
     /// runtime, `decider: <runtime> is not installed; using <peer>`.
     pub fn moved_line(&self) -> Option<String> {
@@ -125,57 +61,57 @@ impl Routed {
             to.label()
         ))
     }
+
+    /// Milestone 9.8 (ruling F16): the record's candidates: the row's model at its
+    /// effort, then its fallback at its default effort; the row's model `not installed`
+    /// when the call moved off it.
+    pub fn candidates(&self) -> Vec<RoutingCandidate> {
+        let own = RunModels::route_of(&self.choice.model, self.choice.effort.as_deref());
+        let fallback = (self.choice.fallback.as_ref()).map(|f| RunModels::route_of(f, None));
+        (std::iter::once(own).chain(fallback))
+            .map(|route| RoutingCandidate {
+                skipped_reason: (self.moved.as_ref() == Some(&route))
+                    .then(|| NOT_INSTALLED.to_string()),
+                route,
+            })
+            .collect()
+    }
 }
 
-/// Rulings RL-2 and I6: the context of one decider call, routed over what is installed
-/// now. The probe (`driver::build::installed`) runs at each call, on `spawn_blocking`
-/// and bounded, never under a lock; deciders that are off are left as they are.
-pub async fn routed(ctx: &DeciderContext) -> Routed {
+/// Rulings RL-2 and I6, milestone 9.8 (decision 42, ruling F25): the context of one
+/// `kind` call, routed over what is installed now on its helper row from the live table
+/// and, for a call about `project`, the repository's `models.toml`. The probe and the
+/// file read run together on one `spawn_blocking`, bounded as the probe is
+/// (`installed_with`), never under a lock; past the bound, the global row and
+/// everything counted installed. Deciders that are off are left as they are.
+pub async fn routed(ctx: &DeciderContext, kind: DeciderKind, project: Option<&Path>) -> Routed {
     if ctx.mode == DeciderMode::Off {
         return Routed {
             ctx: ctx.clone(),
-            pick: None,
+            choice: ctx.choice_for(kind, None),
             moved: None,
         };
     }
-    let (claude, codex) = ctx.routing.bins.clone();
-    route_over(ctx, &installed_now(claude, codex).await)
+    let (claude, codex) = ctx.bins.clone();
+    let (reader, project) = (ctx.clone(), project.map(Path::to_path_buf));
+    let read = move || reader.choice_for(kind, project.as_deref());
+    let (installed, choice) = installed_with(claude, codex, read).await;
+    let choice = choice.unwrap_or_else(|| ctx.choice_for(kind, None));
+    route_over(ctx, choice, &installed)
 }
 
-/// [`routed`]'s pure half. A `decider` list takes the place of the mode's runtime
-/// choice: its pick over `installed`, rotating per daemon. With no list, or every
-/// candidate skipped, the mode's route, on the other runtime when the probe found the
-/// mode's not installed and the other one installed, an explicit `mode` included
-/// (ruling T10b-1: a decider that cannot launch helps no one). `installed` empty: as
-/// before.
-pub fn route_over(ctx: &DeciderContext, installed: &Installed) -> Routed {
-    let r = &ctx.routing;
-    let rotation = match r.list.is_empty() {
-        true => 0,
-        false => r.rotation.fetch_add(1, Ordering::Relaxed),
-    };
-    let pick = role(&r.list, rotation, ctx.route.effort.clone(), installed);
-    let missing = |rt: Runtime| installed.get(rt.label()) == Some(&false);
-    let (runtime, other) = (ctx.route.runtime, peer(ctx.route.runtime));
-    let peer_route = (missing(runtime) && !missing(other)).then(|| {
-        let strength = r.strength.unwrap_or(ctx.route.strength);
-        ladder_route(&r.models, other, strength, ctx.route.effort.clone())
-    });
-    let listed = pick.as_ref().and_then(|p| p.route.clone());
-    let moved = (listed.is_none() && peer_route.is_some()).then(|| ctx.route.clone());
-    let route = (listed.or(peer_route)).unwrap_or_else(|| ctx.route.clone());
+/// [`routed`]'s pure half: the row's model at its effort, unless the probe found its
+/// runtime not installed and the row's fallback is on the other runtime, installed: then
+/// the fallback at its default effort (D2: never a model the user did not choose).
+/// `installed` empty: everything counts as installed.
+pub fn route_over(ctx: &DeciderContext, choice: RoleChoice, installed: &Installed) -> Routed {
+    let (route, moved) = row_route_over(&choice, installed);
     let mut routed = ctx.clone();
-    if route.runtime != ctx.route.runtime {
-        routed.mode = match route.runtime {
-            Runtime::Codex => DeciderMode::Codex,
-            _ => DeciderMode::Claude,
-        };
-        routed.program = r.program(route.runtime);
-    }
+    routed.program = ctx.program(route.runtime);
     routed.route = route;
     Routed {
         ctx: routed,
-        pick,
+        choice,
         moved,
     }
 }
@@ -185,11 +121,11 @@ pub fn route_over(ctx: &DeciderContext, installed: &Installed) -> Routed {
 /// turn ended, even when its answer was then refused. `secs` is the call's duration.
 pub async fn decide(ctx: &DeciderContext, request: &DeciderRequest) -> Decision {
     let started = Instant::now();
-    let runtime = match ctx.mode {
-        DeciderMode::Off => return fallback_decision(request, OFF_REASON.into()),
-        DeciderMode::Claude => Runtime::Claude,
-        DeciderMode::Codex => Runtime::Codex,
-    };
+    // Milestone 9.8 (ruling F25): the route's runtime; the mode only says off or on.
+    if ctx.mode == DeciderMode::Off {
+        return fallback_decision(request, OFF_REASON.into());
+    }
+    let runtime = ctx.route.runtime;
     let (outcome, usage) = call(ctx, runtime, request).await;
     let mut decision = match outcome {
         Ok(answer) => Decision {
@@ -215,7 +151,7 @@ pub async fn decide(ctx: &DeciderContext, request: &DeciderRequest) -> Decision 
 /// route to record.
 pub async fn decide_within(
     ctx: &DeciderContext,
-    request: &DeciderRequest,
+    (request, project): (&DeciderRequest, Option<&Path>),
     bound: Duration,
 ) -> (Option<Routed>, Decision) {
     if ctx.mode == DeciderMode::Off {
@@ -231,7 +167,8 @@ pub async fn decide_within(
         decision
     };
     let deadline = tokio::time::Instant::now() + bound;
-    let Ok(routed) = tokio::time::timeout_at(deadline, routed(ctx)).await else {
+    let routing = routed(ctx, request.kind(), project);
+    let Ok(routed) = tokio::time::timeout_at(deadline, routing).await else {
         return (None, timed_out());
     };
     let mut bounded = routed.ctx.clone();

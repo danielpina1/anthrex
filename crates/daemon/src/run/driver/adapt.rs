@@ -126,8 +126,14 @@ impl RunService {
         }
         let decision = match self.adaptation.get() {
             Some(adaptation) => {
-                // Milestone 9.5 rulings RL-2, I6: routed over what is installed now.
-                let routed = crate::decider::call::routed(&adaptation.deciders).await;
+                // Milestone 9.5 rulings RL-2, I6: routed over what is installed now;
+                // milestone 9.8: on the kind's helper row, the run's repository first.
+                let project =
+                    (crate::lock(&self.state).runs.get(&ctx.run_id)).map(|run| run.project.clone());
+                let kind = request.kind();
+                let routed =
+                    crate::decider::call::routed(&adaptation.deciders, kind, project.as_deref())
+                        .await;
                 let deciders = &routed.ctx;
                 let id = match record {
                     Some((op, tasks)) if deciders.mode != proto::DeciderMode::Off => {
@@ -178,17 +184,12 @@ impl RunService {
         routed: &crate::decider::call::Routed,
         request: &DeciderRequest,
     ) -> Option<(String, Result<(), String>)> {
-        let strength = routed.strength();
-        let (route, pick) = (&routed.ctx.route, routed.pick.as_ref());
         let decision = crate::lock(&self.state).runs.get(&ctx.run_id).map(|run| {
             let session = (op.to_string(), request.kind().label());
             let input = roles::input_of(run);
-            let candidates = roles::decider_candidates(&run.roster, route, strength);
             let at = super::unix_now();
-            let chosen = (route, candidates);
             let session = (session.0.as_str(), session.1);
-            let picked = (pick, routed.moved.as_ref());
-            roles::decider_listed(Some(run), session, tasks, chosen, picked, (input, at))
+            roles::decider_routed(Some(run), session, tasks, routed, (input, at))
         })?;
         let record_id = decision.record_id.clone();
         let kept = (self.keep_record(&ctx.run_id, decision, routed.moved_line())).await;

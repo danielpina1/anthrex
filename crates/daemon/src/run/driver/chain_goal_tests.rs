@@ -169,13 +169,7 @@ impl ChainRig {
         prev.data_dir = data.join("runs").join(PREV);
         prev.state = RunState::Accepted;
         prev.chain = Some(CHAIN.into());
-        let resolved = crate::run::orch::launch::resolve_orchestrator(
-            None,
-            &config::AgentConfig::default(),
-            prev.limits.default_runtime,
-            &prev.roster,
-        )
-        .unwrap();
+        let resolved = crate::run::orch::launch::orchestrator_route(None, prev.limits.models());
         let mut record = orchestrator();
         record.route = resolved.route;
         record.window_id = Some(window);

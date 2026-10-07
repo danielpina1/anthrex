@@ -95,6 +95,16 @@ impl Fixture {
             (key == "ANTHREX_DECIDER_BIN").then(|| program.clone())
         })
     }
+
+    /// [`Self::context`] over a config whose text adds `extra_toml` (a `[models]` row,
+    /// say), read as a `config.toml` is.
+    pub fn context_toml(&self, mode: DeciderMode, extra_toml: &str) -> DeciderContext {
+        let program = self.program().to_string_lossy().into_owned();
+        let var = move |key: &str| (key == "ANTHREX_DECIDER_BIN").then(|| program.clone());
+        let (config, problems) = config::parse(extra_toml);
+        assert!(problems.is_empty(), "{problems:?}");
+        context_over(self.root(), mode, config.orchestrator, var)
+    }
 }
 
 /// Where every test context's `claude` and `codex` commands point: a path that does not
@@ -106,9 +116,22 @@ pub const NO_CODEX_BIN: &str = "/nonexistent/anthrex-test/codex";
 /// A context from `var` (for `ANTHREX_DECIDER_BIN`), whatever it says about the runtime
 /// commands: `ANTHREX_CLAUDE_BIN` and `ANTHREX_CODEX_BIN` are always [`NO_CLAUDE_BIN`]
 /// and [`NO_CODEX_BIN`].
+///
+/// Milestone 9.8: the route is the `helpers` row (decision 17); a `Codex` mode puts that
+/// row on the Codex default, as migrating `mode = "codex"` does, so the mode still names
+/// the runtime a test asks for.
 pub fn context_with(
     root: &Path,
     mode: DeciderMode,
+    var: impl Fn(&str) -> Option<String>,
+) -> DeciderContext {
+    context_over(root, mode, config::Orchestrator::default(), var)
+}
+
+fn context_over(
+    root: &Path,
+    mode: DeciderMode,
+    mut cfg: config::Orchestrator,
     var: impl Fn(&str) -> Option<String>,
 ) -> DeciderContext {
     let var = move |key: &str| match key {
@@ -119,9 +142,16 @@ pub fn context_with(
         "ANTHREX_GH_BIN" => Some(daemon::manager::TEST_GH_BIN.to_string()),
         _ => var(key),
     };
-    let mut cfg = config::Orchestrator::default();
     cfg.deciders.mode = mode;
     cfg.deciders.timeout_secs = TIMEOUT_SECS;
+    if mode == DeciderMode::Codex {
+        let row = proto::models::RoleChoice {
+            model: proto::models::ModelRef::default_of(proto::Runtime::Codex),
+            effort: None,
+            fallback: None,
+        };
+        cfg.roles.rows.insert(proto::models::Role::Helpers, row);
+    }
     let manager = ManagerConfig::from_vars(
         root.join("unused.sock"),
         "/bin/sh".into(),
@@ -129,7 +159,8 @@ pub fn context_with(
         var,
         &config::Config::default().runtimes,
     );
-    DeciderContext::new(&cfg, &manager, &root.join("data"))
+    let live = daemon::live_config::LiveSettings::defaults_of(cfg);
+    DeciderContext::new(live, &manager, &root.join("data"))
 }
 
 /// Set only on [`write_executable`]'s warm-up run: the script exits before its own first

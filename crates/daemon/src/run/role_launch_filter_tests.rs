@@ -296,7 +296,13 @@ fn reviewers_and_scouts_never_get_it() {
             caps: CLI_CAPS,
             data_dir: PathBuf::from("/data"),
         };
-        let spec = crate::scout::spec::headless_spec(&scout, &ctx);
+        let route = proto::Route {
+            runtime,
+            model: String::new(),
+            strength: proto::Strength::Standard,
+            effort: proto::Effort::LOW,
+        };
+        let spec = crate::scout::spec::headless_spec_on(&scout, &ctx, &route);
         assert_eq!(spec.runtime, runtime);
         assert_eq!(spec.output_filter, None);
         if runtime == Runtime::Codex {

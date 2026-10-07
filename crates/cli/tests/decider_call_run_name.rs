@@ -30,8 +30,11 @@ fn a_scripted_answer_names_the_run() {
             fx.script("run_name", 2, json!({ "answer": answer }));
         }
         let goal = "in anthrex, at the bottom I want a short title";
-        let (routed, decision) =
-            runtime().block_on(decide_within(&fx.context(mode), &request(goal), BOUND));
+        let (routed, decision) = runtime().block_on(decide_within(
+            &fx.context(mode),
+            (&request(goal), None),
+            BOUND,
+        ));
         assert!(routed.is_some());
         assert_eq!(decision.source, DeciderSource::Decider, "{decision:?}");
         assert_eq!(
@@ -69,7 +72,7 @@ fn an_invalid_answer_or_a_failure_falls_back() {
     let ctx = fx.context(DeciderMode::Claude);
     let ask = || {
         runtime()
-            .block_on(decide_within(&ctx, &request("add login"), BOUND))
+            .block_on(decide_within(&ctx, (&request("add login"), None), BOUND))
             .1
     };
     let fallback = DeciderAnswer::RunName {
@@ -97,7 +100,7 @@ fn an_invalid_answer_or_a_failure_falls_back() {
     let calls = fx.calls().len();
     let (routed, decision) = runtime().block_on(decide_within(
         &fx.context(DeciderMode::Off),
-        &request("add login"),
+        (&request("add login"), None),
         BOUND,
     ));
     assert!(routed.is_none());
@@ -121,7 +124,7 @@ fn a_hanging_decider_is_cut_at_the_bound() {
     let started = Instant::now();
     let (routed, decision) = runtime().block_on(decide_within(
         &ctx,
-        &request(&format!("hang {marker}")),
+        (&request(&format!("hang {marker}")), None),
         BOUND,
     ));
     let elapsed = started.elapsed();
@@ -135,4 +138,25 @@ fn a_hanging_decider_is_cut_at_the_bound() {
     assert!(elapsed < BOUND + SPAWN_SLACK, "{elapsed:?}");
     // Only look: the test signals nothing.
     assert_gone(&marker);
+}
+
+/// Milestone 9.8 (MR §3.3): the `run_name` helper takes its own row, `[models.helpers.
+/// run_name]`, over `helpers`: the decider's argv names its model.
+#[test]
+fn the_run_name_helper_uses_its_row() {
+    let fx = Fixture::new();
+    let answer = json!({"title": "Short run titles", "slug": "short-run-titles"});
+    fx.script("run_name", 1, json!({ "answer": answer }));
+    let rows = "[models.helpers]\nmodel = \"claude:claude-haiku-4-5\"\n\n[models.helpers.run_name]\nmodel = \"claude:claude-sonnet-5\"\n";
+    let ctx = fx.context_toml(DeciderMode::Claude, rows);
+    let (routed, decision) =
+        runtime().block_on(decide_within(&ctx, (&request("add login"), None), BOUND));
+    assert_eq!(decision.source, DeciderSource::Decider, "{decision:?}");
+    assert_eq!(routed.expect("routed").ctx.route.model, "claude-sonnet-5");
+    let calls = fx.calls();
+    let argv: Vec<&str> = (calls[0]["argv"].as_array().unwrap().iter())
+        .map(|a| a.as_str().unwrap())
+        .collect();
+    let at = argv.iter().position(|a| *a == "--model").expect("--model");
+    assert_eq!(argv[at + 1], "claude-sonnet-5", "{argv:?}");
 }

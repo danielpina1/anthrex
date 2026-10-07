@@ -28,7 +28,6 @@ use super::model_roles::installed_roster;
 use super::roster::escalate;
 use super::route_pick::task_list;
 use super::validate::resolve_task_lenient;
-use super::validate_patterns::peer_route;
 use proto::models::Role;
 
 /// Whether `edits` can widen [`reachable_runtimes`] (T22-P2, F4): only a task added,
@@ -78,24 +77,19 @@ pub fn reachable_runtimes(run: &Run) -> Vec<Runtime> {
         }
     }
     // Milestone 9 decision 26: the orchestrator's runtime and its sub-planners'; and
-    // (whole-branch review, item 1) its run scouts', on the keys the run froze.
+    // (whole-branch review, item 1) its run scouts'. Milestone 9.8: their rows.
     if let Some(o) = &run.orch.orchestrator {
         found.push(o.route.runtime);
         found.extend(super::orch::launch::planner_route(run).map(|r| r.runtime));
-        found.push(super::orch::launch::frozen_scout_route(run).runtime);
-        // Milestone 9.5 decision 9a: a role list's every candidate can be taken.
-        let lists = &run.limits.route_lists;
-        found.extend((lists.scout.candidates.iter()).map(|c| c.runtime));
-        found.extend((lists.planner.candidates.iter()).map(|c| c.runtime));
-        // Milestone 9.6 decision 10: a design run's brainstormers (every `brainstorm`
-        // candidate, else the strongest of each installed runtime) and its document
-        // reviewer (the orchestrator's peer, else its own runtime).
+        found.push(super::orch::launch::scout_route(run).runtime);
+        // Milestone 9.6 decision 10: a design run's brainstormers and its document
+        // reviewer (milestone 9.8: the `brainstorm` row and the `reviewer` row's pick).
         if run.design_mode == proto::DesignMode::Full {
-            found.extend((lists.brainstorm.candidates.iter()).map(|c| c.runtime));
             let picks = super::orch::roles::lists::brainstorm_picks(run);
             found.extend(picks.iter().map(|p| p.route.runtime));
-            let peer = peer_route(&run.roster, &o.route, &run.orch.installed);
-            found.extend(peer.map(|r| r.runtime));
+            let caps = crate::decider::caps();
+            let doc = super::orch::roles::lists::review_pick(run, &caps);
+            found.extend(doc.map(|(r, _)| r.runtime));
         }
     }
     [Runtime::Claude, Runtime::Codex]

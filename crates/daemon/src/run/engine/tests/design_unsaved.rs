@@ -56,12 +56,15 @@ fn no_runtime_that_runs_unsaved_halts_the_brainstorm() {
     assert_eq!(fx.run().orch.design.as_ref().unwrap().answers, None);
 }
 
-/// The roster has no model of the one runtime that runs unsaved: the orchestrator's own
-/// route, whose runtime saves its sessions, is no fallback.
+/// Milestone 9.8: the brainstorm row names no model of the one runtime that runs
+/// unsaved: neither the orchestrator's own route, whose runtime saves its sessions, nor
+/// a model the row does not name (D2) is a fallback.
 #[test]
 fn the_orchestrators_saving_runtime_is_no_brainstorm_fallback() {
     let mut fx = design_launched(false);
-    fx.run_mut().roster.retain(|e| e.runtime != Runtime::Codex);
+    let mut models = fx.run().limits.models().clone();
+    models.brainstorm.second = proto::models::ModelRef::parse("claude:claude-sonnet-5").unwrap();
+    fx.run_mut().limits.models = Some(models);
     let args = json!({"answers": "skip"});
     let effects = with_caps(caps(false, true), || {
         orch_tool(&mut fx, ORCH, "start_brainstorm", args)

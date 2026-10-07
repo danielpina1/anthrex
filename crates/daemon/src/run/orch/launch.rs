@@ -2,10 +2,8 @@
 //! orchestrator's route (decision 6), its role and its window (decisions 5, 11), a
 //! sub-planner's route and session (decision 31), and a run scout's (decision 20). Pure.
 
-use proto::{
-    AgentRole, ModelEntry, OrchestratorChoice, Route, RoutingCandidate, RunRef, Runtime, Strength,
-    WindowSpec,
-};
+use proto::models::{ModelRef, Role};
+use proto::{AgentRole, OrchestratorChoice, Route, RoutingCandidate, RunRef, Runtime, WindowSpec};
 
 use std::path::Path;
 
@@ -20,18 +18,19 @@ use super::{EpicRecord, RunScout};
 use crate::headless::{ClaudeSandbox, HeadlessSpec, McpTarget};
 use crate::launch::role::{ORCHESTRATOR_ALLOWED_TOOLS, ORCHESTRATOR_DISALLOWED_TOOLS, RoleLaunch};
 use crate::run::model::{Run, Task};
+use crate::run::model_roles::RunModels;
 use crate::run::role_launch::{
     REVIEWER_CODEX_SANDBOX, REVIEWER_DISALLOWED_TOOLS, REVIEWER_PERMISSION_MODE,
     codex_config_guard, protected_write_denials,
 };
+use crate::run::routing::ROLE_TABLE;
 use crate::scout::contract::SCOUT_CONTRACT;
 use crate::scout::planner::PlannerSpec;
 use crate::scout::spec::ScoutSpec;
 
-/// Decision 6's resolution, and decision 43's candidate snapshot: `source` is
-/// `explicit_choice`, `agent_config` or `roster_default`; `candidates` lists the
-/// runtime's roster entries in roster order (the chosen route appended when it is not
-/// one of them), every one but the chosen with its skip reason.
+/// The orchestrator's route and decision 43's candidate snapshot: `source` is
+/// `explicit_choice` (the goal form, `run promote --orchestrator`, a continued chain) or
+/// `role_table` (milestone 9.8); `candidates` is the chosen route alone.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Resolved {
     pub route: Route,
@@ -39,84 +38,35 @@ pub struct Resolved {
     pub candidates: Vec<RoutingCandidate>,
 }
 
-/// Decision 6: the runtime is the choice's, else `[orchestrator.agent] runtime`, else
-/// `default_runtime`; the model is the choice's, else the agent's when non-empty (either
-/// must be in the roster), else the runtime's first `frontier` entry, else its
-/// strongest; the effort is the agent's.
-pub fn resolve_orchestrator(
-    choice: Option<&OrchestratorChoice>,
-    agent: &config::AgentConfig,
-    default_runtime: Runtime,
-    roster: &[ModelEntry],
-) -> Result<Resolved, String> {
-    let runtime = choice
-        .map(|c| c.runtime)
-        .or(agent.runtime)
-        .unwrap_or(default_runtime);
-    let named = choice
-        .and_then(|c| c.model.clone())
-        .or_else(|| (!agent.model.is_empty()).then(|| agent.model.clone()));
-    let source = if choice.is_some() {
-        super::roles::lists::EXPLICIT_SOURCE
-    } else if agent.runtime.is_some() || !agent.model.is_empty() {
-        "agent_config"
-    } else {
-        "roster_default"
+/// Milestone 9.8 (MR §3.1): the `orchestrator` row of the run's table, unless `choice`
+/// (the goal form's) names the model: its runtime and model (`None`: the CLI's
+/// default), at its effort, else at the row's when it is the row's own model, else at
+/// the model's default.
+pub fn orchestrator_route(choice: Option<&OrchestratorChoice>, models: &RunModels) -> Resolved {
+    let row = models.choice(Role::Orchestrator);
+    let (route, source) = match choice {
+        None => (models.route(Role::Orchestrator), ROLE_TABLE),
+        Some(c) => {
+            let model = ModelRef {
+                runtime: c.runtime,
+                id: c.model.clone().filter(|m| !m.is_empty()),
+            };
+            let effort = (c.effort.as_deref()).or((model == row.model)
+                .then_some(row.effort.as_deref())
+                .flatten());
+            let route = RunModels::route_of(&model, effort);
+            (route, super::roles::lists::EXPLICIT_SOURCE)
+        }
     };
-    let entries: Vec<&ModelEntry> = roster.iter().filter(|e| e.runtime == runtime).collect();
-    let chosen = match &named {
-        Some(model) => *entries
-            .iter()
-            .find(|e| &e.model == model)
-            .ok_or_else(|| format!("{}:{model} is not in the roster", runtime.label()))?,
-        None => match entries
-            .iter()
-            .find(|e| e.strength == Strength::Frontier)
-            .or_else(|| entries.iter().rev().max_by_key(|e| e.strength))
-        {
-            Some(entry) => *entry,
-            None => {
-                let route = Route {
-                    runtime,
-                    model: String::new(),
-                    strength: Strength::Standard,
-                    effort: agent.effort.clone(),
-                };
-                let candidates = vec![RoutingCandidate {
-                    route: route.clone(),
-                    skipped_reason: None,
-                }];
-                return Ok(Resolved {
-                    route,
-                    source: source.into(),
-                    candidates,
-                });
-            }
-        },
-    };
-    let route_of = |e: &ModelEntry| Route {
-        runtime: e.runtime,
-        model: e.model.clone(),
-        strength: e.strength,
-        effort: agent.effort.clone(),
-    };
-    let skipped = if named.is_some() {
-        "not in the configured list"
-    } else {
-        "an earlier candidate was taken"
-    };
-    let candidates = entries
-        .iter()
-        .map(|e| RoutingCandidate {
-            route: route_of(e),
-            skipped_reason: (!std::ptr::eq(*e, chosen)).then(|| skipped.to_string()),
-        })
-        .collect();
-    Ok(Resolved {
-        route: route_of(chosen),
-        source: source.into(),
+    let candidates = vec![RoutingCandidate {
+        route: route.clone(),
+        skipped_reason: None,
+    }];
+    Resolved {
+        route,
+        source: source.to_string(),
         candidates,
-    })
+    }
 }
 
 /// The orchestrator's role (decisions 7–11): session `run.orch.orchestrator`'s, its
@@ -173,62 +123,16 @@ pub fn first_turn_pasted(route: &Route) -> bool {
     route.runtime == Runtime::Claude
 }
 
-/// The run scouts' route keys: the ones the run froze at its start (whole-branch
-/// review, item 1), else, for a run recorded on this branch before they were frozen,
-/// the default scout keys on the run's own frozen `default_runtime` (fix round 2, item
-/// 4). Never the daemon's live config: what the start checked is what launches.
-pub fn scout_routing(run: &Run) -> crate::scout::spec::ScoutRouting {
-    run.limits.orch.scouts.clone().unwrap_or_else(|| {
-        let defaults = config::Scouts::default();
-        crate::scout::spec::ScoutRouting {
-            runtime: None,
-            default_runtime: run.limits.default_runtime,
-            strength: defaults.strength,
-            effort: defaults.effort,
-        }
-    })
+/// Milestone 9.8 (MR §3.1): the run scouts' route, the run's `research` row.
+pub fn scout_route(run: &Run) -> Route {
+    run.limits.models().route(Role::Research)
 }
 
-/// Run scout `scout_id`'s route: the run's `scout` list's pick (milestone 9.5 decision
-/// 9a), else [`frozen_scout_route`].
-pub fn scout_route_of(run: &Run, scout_id: &str) -> Route {
-    let pick = super::roles::lists::scout_pick(run, scout_id).and_then(|p| p.route);
-    pick.unwrap_or_else(|| frozen_scout_route(run))
-}
-
-/// The run scouts' route with no `scout` list, as `reach::reachable_runtimes` counts it.
-pub fn frozen_scout_route(run: &Run) -> Route {
-    crate::scout::spec::run_scout_route(&run.roster, &scout_routing(run), &run.orch.installed)
-}
-
-/// Decision 31: a sub-planner's route, `[orchestrator.planners]` as the run was built
-/// with it, on its runtime or else the orchestrator's (M8b's `scout::spec::route`). The
-/// route steps to the peer runtime only when the run's start check did not find the peer
-/// missing (`run.orch.installed`; M9.17 fix round 2), so a Codex-only user's frontier
-/// planner stays on Codex instead of naming an uninstalled Claude model.
+/// Decision 31, milestone 9.8 (MR §3.1): a sub-planner's route, the run's `planner`
+/// row, once the run has an orchestrator.
 pub fn planner_route(run: &Run) -> Option<Route> {
-    let orchestrator = run.orch.orchestrator.as_ref()?;
-    // Milestone 9.5 decision 9a: the next epic's pick from the run's `planner` list.
-    let k = run.orch.epics.len();
-    if let Some(route) = super::roles::lists::planner_pick(run, k).and_then(|p| p.route) {
-        return Some(route);
-    }
-    let p = &run.limits.orch.planners;
-    let runtime = p.runtime.unwrap_or(orchestrator.route.runtime);
-    let peer = crate::run::roster::peer(runtime);
-    let peer_allowed = run
-        .orch
-        .installed
-        .get(peer.label())
-        .copied()
-        .unwrap_or(true);
-    Some(crate::scout::spec::route_within(
-        &run.roster,
-        runtime,
-        p.strength,
-        p.effort.clone(),
-        peer_allowed,
-    ))
+    run.orch.orchestrator.as_ref()?;
+    Some(run.limits.models().route(Role::Planner))
 }
 
 /// The Claude tools a sub-planner may use (decision 31): its two anthrex tools and the

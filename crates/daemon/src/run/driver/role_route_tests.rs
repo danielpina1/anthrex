@@ -199,7 +199,7 @@ async fn a_scout_record_is_saved_before_its_session_starts() {
         (records[0].record_id.as_str(), records[0].outcome),
         (id.as_str(), None)
     );
-    assert_eq!(records[0].source, "scout_config");
+    assert_eq!(records[0].source, "role_table");
 }
 
 /// A scout spec whose id (`Bad`) the scout service refuses before any await.
@@ -334,30 +334,34 @@ async fn a_decider_record_is_saved_before_its_call() {
     assert_eq!(records.len(), 1, "{records:#?}");
     assert_eq!(records[0].outcome, Some(RoleOutcome::Fallback));
     assert_eq!(records[0].task_id.as_deref(), Some("t0"));
-    assert!(
-        records[0].candidates.len() > 1,
-        "{:#?}",
-        records[0].candidates
-    );
+    // Milestone 9.8: the `check_summary` row (the built-in `helpers`, no fallback).
+    let models: Vec<&str> = (records[0].candidates.iter())
+        .map(|c| c.route.model.as_str())
+        .collect();
+    assert_eq!(models, ["claude-haiku-4-5"], "{:#?}", records[0].candidates);
 }
 
-/// Milestone 9.0.6 decision 29: a run-bound decider's candidates come from the roster
-/// its run froze, not from the live settings a save swapped since.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_decider_record_lists_the_runs_frozen_roster() {
-    let rig = Rig::new(DeciderMode::Claude, None);
-    let swapped = config::Orchestrator {
-        models: vec![proto::ModelEntry {
-            runtime: proto::Runtime::Codex,
-            model: "gpt-6-sol".into(),
-            strength: proto::Strength::Fast,
-            note: String::new(),
-        }],
-        ..config::Orchestrator::default()
+/// The live settings of `rig` with `helpers` = `model` falling back to `fallback`.
+fn helpers_row(rig: &Rig, model: &str, fallback: Option<&str>) {
+    use proto::models::{ModelRef, Role, RoleChoice};
+    let mut config = config::Orchestrator::default();
+    let row = RoleChoice {
+        model: ModelRef::parse(model).unwrap(),
+        effort: None,
+        fallback: fallback.map(|f| ModelRef::parse(f).unwrap()),
     };
-    rig.runs
-        .live_settings()
-        .swap_owned(&swapped, Default::default());
+    config.roles.rows.insert(Role::Helpers, row);
+    let live = rig.runs.live_settings();
+    live.swap_owned(&config, Default::default());
+}
+
+/// Milestone 9.8 decision 42: a run-bound decider reads the live table at each call
+/// (decision 9 freezes only runs), so a save made since the run started is the one its
+/// record lists.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_decider_record_lists_the_live_table() {
+    let rig = Rig::new(DeciderMode::Claude, None);
+    helpers_row(&rig, "codex:gpt-6-sol", None);
     let result = rig
         .runs
         .decide_as(&rig.ctx(), Some((5, vec!["t0".into()])), summary_request())
@@ -366,15 +370,8 @@ async fn a_decider_record_lists_the_runs_frozen_roster() {
     rig.settled().await;
     let records = rig.records(AgentRole::Decider);
     assert_eq!(records.len(), 1, "{records:#?}");
-    let models: Vec<&str> = records[0]
-        .candidates
-        .iter()
-        .map(|c| c.route.model.as_str())
-        .collect();
-    assert!(
-        models.len() > 1 && !models.contains(&"gpt-6-sol"),
-        "{models:?}"
-    );
+    assert_eq!(records[0].chosen.model, "gpt-6-sol");
+    assert_eq!(records[0].source, "role_table");
 }
 
 /// Review M-3: with the daemon's deciders off no decider session starts, so no record
@@ -391,56 +388,20 @@ async fn no_decider_record_when_the_deciders_are_off() {
     assert!(rig.records(AgentRole::Decider).is_empty());
 }
 
-/// M9.17 fix round 3: a run scout of a run whose start found Claude not installed is
-/// started on Codex (the scouts' default runtime is Claude), and its record says so.
-/// Neither binary exists here, so the launch fails naming the one it tried.
+/// Whole-branch fix round 2, item 1, milestone 9.8: the scout the driver starts runs on
+/// the `research` row its run froze, not on the live table the scout service reads.
+/// Here the run's row is the Codex default while the live one is Claude's; the launch
+/// fails naming the role and the runtime it tried (MR §7).
 #[tokio::test(flavor = "multi_thread")]
-async fn a_codex_only_run_scout_is_started_on_codex() {
+async fn a_run_scout_is_started_on_its_runs_research_row() {
     let rig = Rig::new(DeciderMode::Off, None);
     std::fs::create_dir_all(rig.dir.path().join("repo")).unwrap();
     rig.scout_in("s1", RunScoutState::Running);
     {
         let mut engine = crate::lock(&rig.runs.state);
         let run = engine.runs.get_mut(&rig.run_id).unwrap();
-        run.orch.installed = [("claude".to_string(), false), ("codex".to_string(), true)].into();
-    }
-    let spec = crate::scout::spec::ScoutSpec {
-        id: "s1".into(),
-        ..bad_scout(&rig)
-    };
-    let result = rig.runs.start_scout(&rig.ctx(), spec).await;
-    let OpResult::Failed { message } = &result else {
-        panic!("{result:?}");
-    };
-    assert_eq!(message, "could not start /nonexistent/anthrex-test/codex");
-    rig.settled().await;
-    let records = rig.records(AgentRole::Scout);
-    assert_eq!(
-        records[0].chosen.runtime,
-        proto::Runtime::Codex,
-        "{records:#?}"
-    );
-}
-
-/// Whole-branch fix round 2, item 1: the scout the driver starts runs on the route keys
-/// the run froze at its start, not on the scout service's live ones. Here the run froze
-/// `[orchestrator.scouts] runtime = "codex"` while the daemon's config (the service's
-/// context) says Claude; the launch fails naming the binary it tried.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_run_scout_is_started_on_the_keys_its_run_froze() {
-    let rig = Rig::new(DeciderMode::Off, None);
-    std::fs::create_dir_all(rig.dir.path().join("repo")).unwrap();
-    rig.scout_in("s1", RunScoutState::Running);
-    {
-        let mut engine = crate::lock(&rig.runs.state);
-        let run = engine.runs.get_mut(&rig.run_id).unwrap();
-        let frozen = run
-            .limits
-            .orch
-            .scouts
-            .as_mut()
-            .expect("frozen at the start");
-        frozen.runtime = Some(proto::Runtime::Codex);
+        let research = proto::models::Role::Research;
+        crate::run::test_support::set_row(run, research, "codex:default", None, None);
     }
     let live = rig.runs.adaptation.get().unwrap().scouts.context().clone();
     assert_eq!(
@@ -455,7 +416,9 @@ async fn a_run_scout_is_started_on_the_keys_its_run_froze() {
     let OpResult::Failed { message } = &result else {
         panic!("{result:?}");
     };
-    assert_eq!(message, "could not start /nonexistent/anthrex-test/codex");
+    // MR §7: the missing program names the role and the way out.
+    let want = "research: codex not found; choose another model in C-b S";
+    assert_eq!(message, want);
     rig.settled().await;
     let records = rig.records(AgentRole::Scout);
     assert_eq!(
@@ -489,12 +452,13 @@ fn exits(dir: &Path, _run_id: &str) -> PathBuf {
     testexec::write_executable(dir.join("exits.sh"), "#!/bin/sh\nexit 0\n")
 }
 
-/// Ruling T10b-1: deciders whose `mode` names Claude, with only Codex installed, are
-/// moved to Codex; the record skips Claude's route as `not installed`, and the run log
-/// says so.
+/// Ruling T10b-1, milestone 9.8 (D2): a decider whose row names Claude, with only Codex
+/// installed, is moved to the row's Codex fallback; the record skips Claude's route as
+/// `not installed`, and the run log says so.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_decider_whose_runtime_is_not_installed_moves_and_says_so() {
     let rig = Rig::with(DeciderMode::Claude, Some(exits), Some(exits));
+    helpers_row(&rig, "claude:claude-haiku-4-5", Some("codex:gpt-6-luna"));
     let result = rig
         .runs
         .decide_as(&rig.ctx(), Some((5, vec!["t0".into()])), summary_request())

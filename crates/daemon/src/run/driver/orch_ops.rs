@@ -363,14 +363,13 @@ impl RunService {
             return failed("the scout service is not running");
         };
         let scout_id = spec.id.clone();
-        // M9.17 fix round 3: the route over the run's installed runtimes, the one its
-        // record names.
+        // Milestone 9.8: the run's `research` row, the route its record names.
         let (record, route) = {
             let state = crate::lock(&self.state);
             let run = state.runs.get(&ctx.run_id);
             let record =
                 run.map(|run| crate::run::orch::roles::scout_record(run, &scout_id, unix_now()));
-            let route = run.map(|run| crate::run::orch::launch::scout_route_of(run, &scout_id));
+            let route = run.map(crate::run::orch::launch::scout_route);
             (record, route)
         };
         // Fix round 3, item 2: a run scout is routed from its run alone; with the run
@@ -385,6 +384,7 @@ impl RunService {
         {
             return failed(format!("the scout was not started: {why}"));
         }
+        let runtime = route.runtime;
         match scouts.start_on(spec, route).await {
             Ok(handle) => {
                 let window_id = handle.window_id;
@@ -407,7 +407,8 @@ impl RunService {
                 });
                 OpResult::ScoutStarted { window_id }
             }
-            Err(error) => failed(error.to_string()),
+            // Milestone 9.8 (MR §7): a missing program names the role.
+            Err(e) => failed(super::start_error::named_as("research", runtime, &e)),
         }
     }
 
@@ -421,7 +422,7 @@ impl RunService {
         let slot = spec.extract.take();
         let turn = std::mem::take(&mut spec.first_turn);
         spec.first_turn = self.fill_extract(ctx, slot, turn).await;
-        let (epic, session) = (spec.epic.clone(), spec.session);
+        let (epic, session, runtime) = (spec.epic.clone(), spec.session, spec.route.runtime);
         match scouts.start_planner(spec).await {
             Ok(handle) => {
                 let window_id = handle.window_id;
@@ -445,7 +446,7 @@ impl RunService {
                 });
                 OpResult::PlannerStarted { window_id }
             }
-            Err(error) => failed(error.to_string()),
+            Err(e) => failed(super::start_error::named_as("planner", runtime, &e)),
         }
     }
 

@@ -42,7 +42,10 @@ fn ctx(runtime: Runtime) -> DeciderContext {
         cwd: PathBuf::from("/tmp/unused"),
         schema_dir: PathBuf::from("/tmp/unused"),
         caps: CLI_CAPS,
-        routing: Default::default(),
+        live: daemon::live_config::LiveSettings::defaults_of(config::Orchestrator::default()),
+        data_dir: PathBuf::from("/tmp/unused"),
+        bins: ("fake-agent".into(), "fake-agent".into()),
+        decider_bin: None,
         launch_gate: daemon::launch::LaunchGate::open_already(),
     }
 }

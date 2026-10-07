@@ -99,13 +99,23 @@ impl Rig {
         });
         let runs = RunService::for_manager(&manager, data.clone(), git.registry.clone());
         runs.spawn(shutdown.clone());
-        let orchestrator = config::Orchestrator::default();
+        let mut orchestrator = config::Orchestrator::default();
+        // Milestone 9.8: a scout's route is the `research` row; on Codex, its default.
+        if runtime == Runtime::Codex {
+            let row = proto::models::RoleChoice {
+                model: proto::models::ModelRef::default_of(Runtime::Codex),
+                effort: Some("low".into()),
+                fallback: None,
+            };
+            (orchestrator.roles.rows).insert(proto::models::Role::Research, row);
+        }
         let mut limits = orchestrator.scouts.clone();
         limits.max_tool_calls = max_tool_calls.unwrap_or(limits.max_tool_calls);
+        let live = daemon::live_config::LiveSettings::defaults_of(orchestrator.clone());
         let scouts = ScoutService::new(
             manager.clone(),
             ScoutContext {
-                roster: orchestrator.models.clone().into(),
+                roster: daemon::scout::spec::Roster::Live(live),
                 default_runtime: runtime,
                 scouts: limits,
                 claude: orchestrator.claude.clone(),
@@ -129,8 +139,8 @@ impl Rig {
             },
         );
         // No run here asks a decider; mode off keeps any call from spawning one.
-        let mut deciders =
-            DeciderContext::new(&orchestrator, manager.config(), &dir.path().join("data"));
+        let live = runs.live_settings().clone();
+        let mut deciders = DeciderContext::new(live, manager.config(), &dir.path().join("data"));
         deciders.mode = proto::DeciderMode::Off;
         runs.set_adaptation(Adaptation {
             profiles,
