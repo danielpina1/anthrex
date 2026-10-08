@@ -327,7 +327,8 @@ fn check_budget(id: &str, b: &Budget, errors: &mut Vec<PlanError>) {
 /// model (until M9.8.9 clears plan routes; a user's amend keeps its route): then that
 /// model on the route's runtime (the row's when it names none), checked against the
 /// roster as before. Either way at the route's effort when it names one (the task edit
-/// form's effort over the row's model), else the row's.
+/// form's effort over the row's model), else the row's for the row's own model, and the
+/// named model's default for another (M9.8.11 fix round 1).
 fn resolve_route(
     spec: &PlanTask,
     roster: &[ModelEntry],
@@ -340,13 +341,22 @@ fn resolve_route(
     if given.runtime == Some(Runtime::Shell) {
         errors.push(e("route.runtime", "must be claude or codex".to_string()));
     }
-    let effort = given.effort.clone().unwrap_or(row.effort.clone());
     let Some(model) = &given.model else {
+        let effort = given.effort.clone().unwrap_or(row.effort.clone());
         return Route { effort, ..row };
     };
     let runtime = (given.runtime)
         .filter(|r| *r != Runtime::Shell)
         .unwrap_or(row.runtime);
+    // M9.8.11 fix round 1 (controller ruling): another model than the row's, with no
+    // effort, runs at its own default, never at the row's (it may not offer it); the
+    // row's own model keeps the row's, as the goal form's choice does.
+    let own = runtime == row.runtime && *model == row.model;
+    let effort = given.effort.clone().unwrap_or(if own {
+        row.effort.clone()
+    } else {
+        proto::Effort::DEFAULT
+    });
     let strength = match roster::find(roster, runtime, model) {
         Some(entry) => {
             if let Some(s) = given.strength

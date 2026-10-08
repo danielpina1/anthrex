@@ -378,3 +378,7 @@ mod tests;
 #[cfg(test)]
 #[path = "model_roles_tests_efforts.rs"]
 mod tests_efforts;
+
+#[cfg(test)]
+#[path = "model_roles_tests_user.rs"]
+mod tests_user;

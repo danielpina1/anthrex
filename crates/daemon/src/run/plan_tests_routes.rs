@@ -108,13 +108,15 @@ fn a_given_model_fixes_the_strength() {
     )])
     .unwrap_or_else(|e| panic!("{}", show(&e)));
     // S policy would give standard; the model is fast in the roster, so fast it is.
+    // M9.8.11 fix round 1 (changed expectation): no effort given on another model than
+    // the row's runs at that model's default, not the row's `low`.
     assert_eq!(
         task(&run, "s").route,
         route(
             Runtime::Claude,
             "claude-haiku-4-5",
             Strength::Fast,
-            Effort::LOW
+            Effort::DEFAULT
         )
     );
 }

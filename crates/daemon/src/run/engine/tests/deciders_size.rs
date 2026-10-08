@@ -229,7 +229,13 @@ fn a_raise_to_m_takes_the_medium_row_unless_the_route_names_a_model() {
         (t2.size, t2.route.model.as_str()),
         (Size::M, "claude-opus-5-5")
     );
-    assert_eq!(t2.route.effort, medium.effort, "the user set no effort");
+    // M9.8.11 fix round 1 (controller ruling, changed expectation): the user set no
+    // effort on another model than the row's, so that model's default, not the row's.
+    assert_eq!(
+        t2.route.effort,
+        proto::Effort::DEFAULT,
+        "the user set no effort"
+    );
     let models = fx.run().limits.models();
     assert_eq!(t1.review_route, Some(models.reviewer_route(&t1.route).0));
 }
