@@ -327,6 +327,13 @@ fn resolve_route(spec: &PlanTask, row: Route, errors: &mut Vec<PlanError>) -> Ro
         let effort = given.effort.clone().unwrap_or(row.effort.clone());
         return Route { effort, ..row };
     };
+    // M9.8.13 fix round 1 (I1): with no roster to check it, the name rule alone keeps a
+    // bad model off `-m`/`--model`; `""` is the runtime's default model.
+    if let Err(problem) = proto::models::model_id_problem(model)
+        && !model.is_empty()
+    {
+        errors.push(e("route.model", problem));
+    }
     let runtime = (given.runtime)
         .filter(|r| *r != Runtime::Shell)
         .unwrap_or(row.runtime);

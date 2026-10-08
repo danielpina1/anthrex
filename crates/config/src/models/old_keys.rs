@@ -112,6 +112,9 @@ pub fn old_keys(raw: &toml::Table) -> Vec<OldKey> {
 pub struct Kept {
     pub unmigrated: Vec<OldKey>,
     pub with: Vec<OldKey>,
+    /// The medium route's runtime when the `review` list is kept although its models
+    /// are known: none of them can review that runtime's work (M9.8.13 fix round 1, M4).
+    pub review_unfit: Option<proto::Runtime>,
 }
 
 impl Kept {
@@ -164,7 +167,12 @@ pub fn kept(
     let with = (rest.into_iter())
         .filter(|k| k.feeds == Feeds::Roster || k.path == "orchestrator.default_runtime")
         .collect();
-    Kept { unmigrated, with }
+    let review_unfit = super::migrate::review_unfit(o, raw);
+    Kept {
+        unmigrated,
+        with,
+        review_unfit,
+    }
 }
 
 /// Decision 18's notes with each kept key's note saying why it stays (Task 3's review).
@@ -190,8 +198,14 @@ pub fn kept_notes(notes: &mut Vec<String>, kept: &Kept, wanted: &ModelTable) {
             ),
             Feeds::Rows(r) => {
                 let uses = r.first().map(|r| resolve(*r, None, wanted).model.label());
+                let reason = match kept.review_unfit {
+                    Some(runtime) if k.path == "orchestrator.routes.review" => {
+                        format!("none of its models can review {}'s work", runtime.label())
+                    }
+                    _ => "none of its models are known".to_string(),
+                };
                 format!(
-                    "config: {}: none of its models are known; {} uses {} until you choose one in C-b S",
+                    "config: {}: {reason}; {} uses {} until you choose one in C-b S",
                     k.named,
                     rows(r),
                     uses.unwrap_or_default()

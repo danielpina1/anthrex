@@ -651,7 +651,9 @@ fn an_emptied_old_table_takes_its_comments() {
 
 /// Fix round 2 (N1): a `review` list counts as migrated only when the reviewer came
 /// from it. Here its one model, in the roster, is on the medium route's own runtime,
-/// so the reviewer is the old reviewer pick's `codex:default`: the list is kept and noted.
+/// so the reviewer is the old reviewer pick's `codex:default`: the list is kept, and its
+/// note says why (M9.8.13 fix round 1, M4): its model is known, but cannot review
+/// Claude's work.
 #[test]
 fn a_review_list_the_reviewer_did_not_come_from_is_kept() {
     let text = "[orchestrator.routes.review]\ncandidates = [{ runtime = \"claude\", model = \"claude-sonnet-5\" }]\n";
@@ -660,7 +662,7 @@ fn a_review_list_the_reviewer_did_not_come_from_is_kept() {
         before.roles.rows[&Role::Reviewer].model,
         model("codex:default")
     );
-    let note = "config: [orchestrator.routes.review]: none of its models are known; [models.reviewer] uses codex:default until you choose one in C-b S";
+    let note = "config: [orchestrator.routes.review]: none of its models can review claude's work; [models.reviewer] uses codex:default until you choose one in C-b S";
     assert!(
         before.roles_notes.iter().any(|n| n == note),
         "{:?}",

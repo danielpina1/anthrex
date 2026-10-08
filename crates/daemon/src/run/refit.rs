@@ -1,9 +1,9 @@
 //! Milestone 9.5 decisions 4–9 and 11 (rulings RH-1 to RH-5, RH-7): what a repository's
 //! history teaches. Budgets and critical-path weights are refitted into `tuning.toml`
-//! automatically; line thresholds are only proposed, applied by
-//! `anthrex run stats --apply <id>` and silenced by `--dismiss <id>` (milestone 9.8
-//! decision 30: the class routes are no longer refitted). [`tuned`] is what a
-//! run freezes at start (decision 12).
+//! automatically; line thresholds are only proposed, applied by `anthrex run stats
+//! --apply <id>` and silenced by `--dismiss <id>` (milestone 9.8 decision 30: the
+//! class routes are no longer refitted). [`tuned`] is what a run freezes at start
+//! (decision 12).
 //!
 //! Pure (decision 1): no I/O, no clock (`now` is passed in), and integers only
 //! (decision 5). `driver/tuning.rs` reads and writes the file.

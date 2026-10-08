@@ -12,6 +12,7 @@ use crate::run::model::{DoneClaim, Run};
 /// `t1` in the merge queue with a worker and a reviewer round, a check, a proof and a
 /// review; `t2` working; a `MergeCandidate` and a `VerifyDone` pending.
 const M93_RUN: &str = include_str!("../../tests/fixtures/run/m93-run.json");
+const M95_RUN: &str = include_str!("../../tests/fixtures/run/m95-run.json");
 
 /// Every key milestone 9.5 adds to the persisted run. `lane` is also an older key, a
 /// routing decision's (milestone 9), so it is counted rather than looked for. Milestone
@@ -292,7 +293,7 @@ fn limits_written_with_budget_configured_still_load() {
 /// Milestone 9.8 task M9.8.13 (decision 30, preflight ruling F15): the model lists, the
 /// class routes, the roster, the scouts' routing and the list picks are gone from the
 /// run's schema. The 9.3 run (which already carries `roster` and `limits.orch.scouts`),
-/// with 9.5's `class_routes`, `route_lists` and a task's `list_pick` and
+/// with 9.5's `class_routes`, `route_lists` (from the 9.5 run) and a task's `list_pick` and
 /// `list_escalation` added as JSON, still loads through the daemon's own load, its
 /// tasks' routes unchanged, and is written back without any of them.
 #[test]
@@ -309,12 +310,11 @@ fn a_run_json_with_lists_and_class_routes_still_loads() {
         "m": {"strength": "standard", "effort": "medium"},
         "hub": {"strength": "frontier", "effort": "high"},
     });
-    json["limits"]["route_lists"] = serde_json::json!({
-        "m": {"candidates": [{"runtime": "codex", "model": "gpt-6-sol", "strength": "standard"}],
-              "pick": "spread"},
-        "scout": {"candidates": [{"runtime": "claude", "model": "claude-haiku-5", "strength": "fast",
-                                  "effort": "low"}], "pick": "first"},
-    });
+    // Fix round 1 (review M3): the lists as 9.5's own code wrote them, not by hand.
+    let m95: serde_json::Value = serde_json::from_str(M95_RUN).expect("m95 fixture");
+    let lists = m95["limits"]["route_lists"].clone();
+    assert!(lists.is_object(), "the 9.5 run froze its lists");
+    json["limits"]["route_lists"] = lists;
     let pick = serde_json::json!({
         "candidates": [{"route": route.clone(), "skipped_reason": null}],
         "chosen": 0, "pick": "spread", "slot": 0,

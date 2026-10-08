@@ -15,7 +15,14 @@ const NOTE: &str = "config: [orchestrator.routes.review] is replaced by [models.
 fn daemon_start_logs_each_migrated_key() {
     let h = RunHarness::with_config(
         "",
-        "[orchestrator.routes.review]\ncandidates = [{ runtime = \"claude\", model = \"claude-opus-5-5\" }]\n",
+        // A known Codex model, so the review list's reviewer comes from it (M9.8.12 N1:
+        // the medium route is Claude's, and a reviewer is on the other runtime).
+        concat!(
+            "[[orchestrator.models]]\n",
+            "runtime = \"codex\"\nmodel = \"gpt-6-sol\"\nstrength = \"standard\"\n",
+            "[orchestrator.routes.review]\n",
+            "candidates = [{ runtime = \"codex\", model = \"gpt-6-sol\" }]\n",
+        ),
         &[],
     );
     let deadline = Instant::now() + DAEMON_START_WAIT;

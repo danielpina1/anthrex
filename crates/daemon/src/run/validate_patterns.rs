@@ -1,7 +1,8 @@
 //! Milestone 9.5 decisions 17 and 24: the plan rules of `race` and `pair` (rulings
-//! RR-5 to RR-8, review ruling I9), and the refusal of an amend of either on a task that has started. Called from
-//! `validate_graph::validate_tasks_with`, after each task's own resolution, so a task's
-//! test mode is the resolved one (rule 8.3 applied). Pure (design decision 1).
+//! RR-5 to RR-8, review ruling I9), and the refusal of an amend of either on a task
+//! that has started. Called from `validate_graph::validate_tasks_with`, after each
+//! task's own resolution, so a task's test mode is the resolved one (rule 8.3
+//! applied). Pure (design decision 1).
 
 use std::collections::BTreeSet;
 

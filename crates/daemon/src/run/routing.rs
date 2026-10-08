@@ -182,8 +182,7 @@ fn decision(
 /// already counted): its first session records `initial`, and a session after rung 2
 /// or `run retry` records `escalation` from the route it escalated from. Any other
 /// fresh session (a lost resume, say) keeps the route already recorded. A run without
-/// history (one from milestone 8a) records nothing (whole-branch review m2). Milestone
-/// 9.5 decision 9a: a model list's choice records the list's snapshot.
+/// history (one from milestone 8a) records nothing (whole-branch review m2).
 pub fn record_worker(run: &mut Run, i: usize, now: u64) {
     let from = run.tasks[i].escalated_from.take();
     if !run.history {
@@ -247,8 +246,9 @@ pub fn record_worker(run: &mut Run, i: usize, now: u64) {
 
 /// Milestone 9.5 decision 9a: a paired task's test writer session is being launched on
 /// `chosen`. Its first session records trigger `test_writer`, source `role_table` (the
-/// `test_writer` row, milestone 9.8); a session after rung 2 or `run retry` records `escalation` from the route it stepped
-/// from; any other fresh session (a lost resume, say) records nothing, as a worker's.
+/// `test_writer` row, milestone 9.8); a session after rung 2 or `run retry` records
+/// `escalation` from the route it stepped from; any other fresh session (a lost
+/// resume, say) records nothing, as a worker's.
 /// Nothing for a run without history.
 pub fn record_test_writer(run: &mut Run, i: usize, chosen: &Route, now: u64) {
     let from = (run.tasks[i].pair.as_mut()).and_then(|p| p.escalated_from.take());

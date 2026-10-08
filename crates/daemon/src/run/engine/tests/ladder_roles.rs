@@ -3,11 +3,13 @@
 //! (`role_step::escalate`), and records the step from the role table (ruling F16).
 
 use proto::models::{ModelRef, ModelTable, Role, RoleChoice};
-use proto::{AgentRole, Route};
+use proto::{AgentRole, Effort, Route, Runtime, Strength, TaskState};
 
+use super::control::retry;
 use super::fixture::*;
-use super::gates::only_op;
-use crate::run::engine::{Effect, EventKind, OpResult};
+use super::gates::{CHECK_MODE, only_op, working_with};
+use crate::headless::FailureKind;
+use crate::run::engine::{Effect, EventKind, OpResult, TurnOutcome};
 use crate::run::model_roles::{ModelEfforts, RunModels};
 use crate::run::routing::ROLES_POLICY;
 
@@ -121,4 +123,132 @@ fn a_default_table_with_no_catalog_climbs_effort() {
     assert_eq!(fx.task("t1").rounds[0].route, at(sonnet, "medium"));
     stall(&mut fx, window);
     assert_eq!(fx.task("t1").rounds[1].route, at(sonnet, "high"));
+}
+
+// M9.8.13 fix round 1 (review I2): restored from `route_lists_substitute.rs` and
+// `route_lists_failed.rs`, deleted with them; they drive `run retry` and rung 2 over a
+// route that failed in the task, and the "every route … failed" log line.
+
+/// The default config, its `implementer.small` row (Sonnet at `low`) falling back to
+/// Codex's default.
+fn small_falls_back_to_codex() -> config::Orchestrator {
+    let mut config = config::Orchestrator::default();
+    let row = RoleChoice {
+        model: m("claude:claude-sonnet-5"),
+        effort: Some("low".into()),
+        fallback: Some(m("codex:default")),
+    };
+    (config.roles.rows).insert(Role::ImplementerSmall, row);
+    config
+}
+
+/// A working S task `t1` started on Opus, its row ([`small_falls_back_to_codex`])
+/// falling back to Codex's default; its window.
+fn working_on_opus() -> (Fixture, u32) {
+    let plan = plan_with(PROFILE, &[task("t1", "S", "a", CHECK_MODE)]);
+    let mut fx = Fixture::with_config(&plan, small_falls_back_to_codex());
+    fx.start_with(true, |run| run.tasks[0].route = opus());
+    let (op, _) = fx.op("CreateRunBranch");
+    fx.done(op, OpResult::Worktree { head: BASE.into() });
+    let window = fx.launch_all()[0].1;
+    assert_eq!(fx.task("t1").route, opus());
+    (fx, window)
+}
+
+fn opus() -> Route {
+    Route {
+        runtime: Runtime::Claude,
+        model: "claude-opus-5-5".into(),
+        strength: Strength::Frontier,
+        effort: Effort::MEDIUM,
+    }
+}
+
+/// Decision 29: the row's fallback, Codex's default, at its default effort.
+fn codex_default() -> Route {
+    Route {
+        runtime: Runtime::Codex,
+        model: String::new(),
+        strength: Strength::Standard,
+        effort: Effort::DEFAULT,
+    }
+}
+
+fn client_error(fx: &mut Fixture, window: u32, error: &str) {
+    let failed = TurnOutcome::Failed {
+        error: error.into(),
+        kind: FailureKind::ClientError,
+    };
+    fx.turn_ended(window, failed);
+    assert_eq!(fx.task("t1").state, TaskState::Blocked);
+    assert!(fx.task("t1").rounds[0].environment_failed);
+}
+
+#[test]
+fn run_retry_substitutes_a_failed_route_with_the_rows_fallback() {
+    let (mut fx, window) = working_on_opus();
+    client_error(&mut fx, window, "credit balance is too low");
+    retry(&mut fx, "t1");
+    assert_eq!(fx.task("t1").route, codex_default());
+    let logged = fx
+        .run()
+        .log
+        .iter()
+        .any(|e| e.text.starts_with("every route"));
+    assert!(!logged, "{:#?}", fx.run().log);
+}
+
+#[test]
+fn rung_2_substitutes_a_failed_route_with_the_rows_fallback() {
+    let (mut fx, _) = working_on_opus();
+    let t1 = fx.task_mut("t1");
+    let k = t1.rounds.len() - 1;
+    t1.rounds[k].environment_failed = true;
+    let mut effects = Vec::new();
+    let now = fx.now;
+    super::super::ladder::rung2(fx.run_mut(), 0, "a test".into(), now, &mut effects);
+    assert_eq!(fx.task("t1").route, codex_default());
+}
+
+/// Every route the role table reaches from Opus (the row's own model and its fallback)
+/// failed in this task too, in earlier sessions: a retry takes the original and the run
+/// log says so.
+#[test]
+fn with_every_route_failed_a_retry_takes_the_original_and_logs_it() {
+    let (mut fx, window) = working_on_opus();
+    client_error(&mut fx, window, "credit balance is too low");
+    let k = fx.task("t1").rounds.len() - 1;
+    let sonnet = at("claude:claude-sonnet-5", "low");
+    for route in [sonnet, codex_default()] {
+        let mut earlier = fx.task("t1").rounds[k].clone();
+        earlier.route = route;
+        fx.task_mut("t1").rounds.push(earlier);
+    }
+    retry(&mut fx, "t1");
+    assert_eq!(fx.task("t1").route, opus());
+    let line = "every route for task t1 failed in this task; retrying claude/claude-opus-5-5";
+    let logged = fx.run().log.iter().any(|e| e.text == line);
+    assert!(logged, "{:#?}", fx.run().log);
+}
+
+/// The action menu's retry preview names the route a retry takes: here a worker whose
+/// own route failed with a client error, so no higher effort on that model, but its
+/// row's fallback, Codex's default, at its default effort (decision 29).
+#[test]
+fn the_retry_preview_names_the_route_a_retry_takes() {
+    use crate::run::engine::actions::{self, ActionNode};
+    let (mut fx, window) = working_with(PROFILE, CHECK_MODE, small_falls_back_to_codex());
+    client_error(&mut fx, window, "model not found");
+    let preview = actions::available(fx.run(), &ActionNode::Task("t1"))
+        .into_iter()
+        .find(|a| a.kind == proto::ActionKind::Retry)
+        .expect("retry is listed")
+        .effect;
+    assert_eq!(
+        preview,
+        "retry t1: a fresh session at rung 2 on codex default (default effort)"
+    );
+    retry(&mut fx, "t1");
+    let route = &fx.task("t1").route;
+    assert_eq!((route.runtime, route.model.as_str()), (Runtime::Codex, ""));
 }

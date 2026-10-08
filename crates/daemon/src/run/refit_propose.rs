@@ -1,6 +1,7 @@
 //! Milestone 9.5 decisions 8 and 11: line-threshold proposals, `--apply` and
-//! `--dismiss` (milestone 9.8 decision 30: the class-route proposals are gone). Part of `run::refit` (split for the 600-line rule), which
-//! re-exports its public items. Pure.
+//! `--dismiss` (milestone 9.8 decision 30: the class-route proposals are gone). Part
+//! of `run::refit` (split for the 600-line rule), which re-exports its public items.
+//! Pure.
 
 use proto::{HistoryLine, SizeThresholds, TuningChange, TuningFile, TuningProposal};
 
@@ -84,7 +85,8 @@ fn named<'a>(
         .collect()
 }
 
-/// `--apply`: each named current proposal's change, written into `[thresholds]`. An unknown id refuses the whole request.
+/// `--apply`: each named current proposal's change, written into `[thresholds]`. An
+/// unknown id refuses the whole request.
 pub fn apply(
     file: &TuningFile,
     current: &[TuningProposal],

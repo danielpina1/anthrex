@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use serde_json::json;
 
 use crate::delivery::tests::variant_names;
-use crate::models::Role;
+use crate::models::{Role, valid_model_id};
 use crate::*;
 
 fn both<T: serde::Serialize + serde::de::DeserializeOwned + PartialEq + std::fmt::Debug>(v: &T) {
@@ -204,4 +204,23 @@ fn a_model_table_is_a_json_map_keyed_by_role() {
     );
     let back: ModelTable = serde_json::from_value(value).unwrap();
     assert_eq!(back, table);
+}
+
+/// M9.8.13 fix round 1 (I1): the model-name rule, shared by `ModelRef::parse` and a
+/// user's route: 1 to 100 visible characters, no whitespace, control or hidden-format
+/// character, and no leading `-` (a CLI would read it as an option).
+#[test]
+fn a_model_name_never_starts_with_a_dash() {
+    for bad in ["", "a b", "a\n", "a\u{200b}", "-m", "--model"] {
+        assert!(!valid_model_id(bad), "{bad:?}");
+    }
+    assert!(!valid_model_id(&"g".repeat(101)));
+    for good in ["gpt-6-sol", "claude-opus-5-5", "a-", &"g".repeat(100)] {
+        assert!(valid_model_id(good), "{good:?}");
+    }
+    let refused = ModelRef::parse("codex:-m").unwrap_err();
+    assert_eq!(
+        refused,
+        "\"-m\" is not a model name (it may not start with -)"
+    );
 }

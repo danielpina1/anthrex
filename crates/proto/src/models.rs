@@ -50,13 +50,7 @@ impl ModelRef {
         if id == "default" {
             return Ok(ModelRef { runtime, id: None });
         }
-        let bad =
-            |c: char| c.is_whitespace() || c.is_control() || crate::safe_text::is_hidden_format(c);
-        if id.is_empty() || id.chars().count() > MODEL_ID_MAX_CHARS || id.chars().any(bad) {
-            return Err(format!(
-                "{id:?} is not a model name (1 to {MODEL_ID_MAX_CHARS} visible characters, no spaces)"
-            ));
-        }
+        model_id_problem(id)?;
         Ok(ModelRef {
             runtime,
             id: Some(id.to_string()),
@@ -81,6 +75,31 @@ impl<'de> Deserialize<'de> for ModelRef {
         let text = String::deserialize(deserializer)?;
         ModelRef::parse(&text).map_err(serde::de::Error::custom)
     }
+}
+
+/// Whether `id` is a model name: 1 to [`MODEL_ID_MAX_CHARS`] visible characters, no
+/// whitespace, control or hidden-format character, and (M9.8.13 fix round 1) no leading
+/// `-`, which a CLI's `-m`/`--model` would read as an option.
+pub fn valid_model_id(id: &str) -> bool {
+    model_id_problem(id).is_ok()
+}
+
+/// Why `id` is not a model name ([`valid_model_id`]), as `ModelRef::parse` and a user's
+/// route refuse it.
+pub fn model_id_problem(id: &str) -> Result<(), String> {
+    let bad =
+        |c: char| c.is_whitespace() || c.is_control() || crate::safe_text::is_hidden_format(c);
+    if id.is_empty() || id.chars().count() > MODEL_ID_MAX_CHARS || id.chars().any(bad) {
+        return Err(format!(
+            "{id:?} is not a model name (1 to {MODEL_ID_MAX_CHARS} visible characters, no spaces)"
+        ));
+    }
+    if id.starts_with('-') {
+        return Err(format!(
+            "{id:?} is not a model name (it may not start with -)"
+        ));
+    }
+    Ok(())
 }
 
 /// Whether `name` is an effort name (decision 5).

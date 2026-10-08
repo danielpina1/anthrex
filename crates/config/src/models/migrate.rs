@@ -239,6 +239,19 @@ pub fn unknown_lists(o: &Orchestrator, raw: &toml::Table) -> Vec<&'static str> {
         .collect()
 }
 
+/// M9.8.13 fix round 1 (M4): the medium route's runtime when the `review` list names
+/// known models yet none of them can review that route's work (another runtime, at
+/// least its strength: `review_pick`), so it is kept although its models are known.
+pub fn review_unfit(o: &Orchestrator, raw: &toml::Table) -> Option<Runtime> {
+    let roster = &o.models[..];
+    let lists = crate::orchestrator::read_routes(raw, roster, &mut Vec::new());
+    let listed = candidates(&lists.review, roster, &Effort::MEDIUM);
+    let (m, standard, medium) = (&lists.m, Strength::Standard, &Effort::MEDIUM);
+    let (medium_route, _) = class_route(m, roster, o.default_runtime, standard, medium)?;
+    let unfit = !listed.is_empty() && review_pick(&listed, &medium_route).is_none();
+    unfit.then_some(medium_route.runtime)
+}
+
 /// A class's route: its list, else `runtime`'s first entry at `strength`, at `effort`.
 fn class_route(
     list: &RouteList,

@@ -99,10 +99,11 @@ fn a_users_model_without_effort_does_not_take_the_rows_effort() {
 }
 
 /// Milestone 9.8 task M9.8.13 (the follow-up from M9.8.8): with `Run.roster` gone, a
-/// user's route naming any catalog model is accepted as given, whatever an old roster
-/// listed: no roster membership, and no roster strength checked against it.
+/// user's route naming a model no roster lists is accepted as given: no roster
+/// membership, and no roster strength checked against it. No catalog is consulted
+/// either; the only check is the name rule (fix round 1, I1).
 #[test]
-fn a_users_route_to_any_catalog_model_is_accepted() {
+fn a_users_route_to_a_model_no_roster_lists_is_accepted() {
     let cfg = config::Orchestrator::default();
     assert!(!cfg.models.iter().any(|m| m.model == "gpt-9-new"));
     let run = build_with(
@@ -121,4 +122,68 @@ fn a_users_route_to_any_catalog_model_is_accepted() {
         (route.runtime, route.model.as_str(), route.effort.as_str()),
         (Runtime::Codex, "gpt-9-new", "high")
     );
+}
+
+/// The user's amend of task `m` to Codex model `model`, from the built-in table's run:
+/// the run's refusal, or the route it took.
+fn amended_to(model: &str) -> Result<proto::Route, String> {
+    let run = build_with(
+        &plan_with(PROFILE, &[task_toml("m", "M", "[\"b/**\"]", CHECK)]),
+        &config::Orchestrator::default(),
+    )
+    .unwrap_or_else(|e| panic!("{}", show(&e)));
+    apply_edits(
+        &run,
+        &[amend(Runtime::Codex, model)],
+        &EditScope::Run,
+        &EditSource::User,
+        5_000,
+    )
+    .map(|(edited, _)| edited.tasks[0].route.clone())
+    .map_err(|e| show(&e))
+}
+
+/// M9.8.13 fix round 1 (I1): a user's model must be a model name (`ModelRef`'s rule:
+/// 1 to 100 visible characters, no whitespace, control or hidden-format character, no
+/// leading `-`), refused with `route.model` named, so it never reaches `-m`/`--model`.
+fn refused(model: &str) {
+    let error = amended_to(model).expect_err(model);
+    assert!(error.contains("route.model"), "{model:?}: {error}");
+    assert!(error.contains("is not a model name"), "{model:?}: {error}");
+}
+
+#[test]
+fn a_users_model_with_whitespace_is_refused() {
+    refused("gpt 6");
+    refused("   ");
+}
+
+#[test]
+fn a_users_model_with_a_control_character_is_refused() {
+    refused("gpt-6\n--x");
+    refused("gpt\u{7}6");
+}
+
+#[test]
+fn a_users_model_with_a_hidden_format_character_is_refused() {
+    refused("gpt\u{200b}6");
+}
+
+#[test]
+fn a_users_model_over_100_characters_is_refused() {
+    refused(&"g".repeat(101));
+    assert!(amended_to(&"g".repeat(100)).is_ok(), "100 is allowed");
+}
+
+#[test]
+fn a_users_model_with_a_leading_dash_is_refused() {
+    refused("-gpt-6");
+    refused("--model");
+}
+
+/// `""` is the runtime's default model, as a route spells it.
+#[test]
+fn a_users_empty_model_is_the_runtimes_default() {
+    let route = amended_to("").expect("the default model");
+    assert_eq!((route.runtime, route.model.as_str()), (Runtime::Codex, ""));
 }
