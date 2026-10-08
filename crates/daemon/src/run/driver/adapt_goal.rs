@@ -175,6 +175,11 @@ impl RunService {
             Option<DesignMode>,
         ),
     ) -> RunReply {
+        // M9.8.13 fix round 1: a bad model name (the CLI's flag or the TUI's goal form)
+        // never reaches the orchestrator's `--model`.
+        if let Some(problem) = orchestrator.as_ref().and_then(|c| c.model_problem().err()) {
+            return refused(format!("orchestrator.model: {problem}"));
+        }
         let flags = (trust_project, unconfined_checks);
         let ready = match self.goal_ready(&goal, &dir, flags, delivery).await {
             Ok(ready) => ready,

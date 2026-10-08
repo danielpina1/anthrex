@@ -102,6 +102,38 @@ fn orchestrator_flag_parses_and_refuses_bad_values() {
     );
 }
 
+/// M9.8.13 fix round 1: a model that fails the model-name rule is refused by the flag,
+/// so it never reaches the orchestrator's `--model`.
+#[test]
+fn orchestrator_flag_refuses_a_bad_model_name() {
+    let h = RunHarness::orch("", &[]);
+    let long = format!("claude:{}", "g".repeat(101));
+    let cases = [
+        (
+            "claude:-x",
+            "\"-x\" is not a model name (it may not start with -)",
+        ),
+        (
+            "codex:a b",
+            "\"a b\" is not a model name (1 to 100 visible characters, no spaces)",
+        ),
+        (long.as_str(), "(1 to 100 visible characters, no spaces)"),
+    ];
+    for (spec, why) in cases {
+        for args in [
+            &["start", "--goal", "g", "--orchestrator", spec][..],
+            &["promote", "zzzz", "--orchestrator", spec][..],
+        ] {
+            let out = run(&h, args);
+            assert_eq!(out.code, 1, "{spec}: {}", out.stderr);
+            let last = out.stderr.lines().last().unwrap_or_default();
+            assert!(last.starts_with("--orchestrator: "), "{spec}: {last}");
+            assert!(last.ends_with(why), "{spec}: {last}");
+        }
+    }
+    assert!(h.snapshot().runs.is_empty(), "a refused flag started a run");
+}
+
 #[test]
 fn orchestrator_flag_is_refused_with_plan() {
     let h = RunHarness::new("");

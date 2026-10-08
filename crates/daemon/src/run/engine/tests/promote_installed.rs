@@ -130,3 +130,29 @@ fn a_runtime_only_promotion_takes_the_row_or_the_built_in() {
         (Runtime::Claude, "claude-opus-5-5")
     );
 }
+
+/// M9.8.13 fix round 1: a promotion whose orchestrator model fails the model-name rule
+/// is refused with the field named, and nothing launches on it.
+#[test]
+fn a_promotion_with_a_bad_orchestrator_model_is_refused() {
+    for bad in ["-x", "a b", "gpt\n--x"] {
+        let mut fx = fast();
+        let choice = OrchestratorChoice {
+            runtime: Runtime::Claude,
+            model: Some(bad.into()),
+            effort: None,
+        };
+        let effects = promote(&mut fx, Some(choice));
+        let reply = effects.iter().find_map(|e| match e {
+            crate::run::engine::Effect::Reply { result, .. } => Some(result.clone()),
+            _ => None,
+        });
+        let err = reply.expect("a reply").expect_err(bad);
+        assert!(
+            err.starts_with("orchestrator.model: ") && err.contains("is not a model name"),
+            "{bad:?}: {err}"
+        );
+        assert!(fx.run().orch.orchestrator.is_none(), "{bad:?}");
+        assert_eq!(fx.run().path, Some(proto::RunPath::Fast), "{bad:?}");
+    }
+}

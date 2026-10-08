@@ -435,3 +435,29 @@ async fn deliver_and_watch_are_routed_to_the_engine() {
     s.stop().await;
     handle.abort();
 }
+
+/// M9.8.13 fix round 1: a goal whose orchestrator model fails the model-name rule (the
+/// CLI's flag and the TUI's goal form both send it) is refused with the field named,
+/// before preflight or triage.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_goal_with_a_bad_orchestrator_model_is_refused() {
+    let rig = Rig::new(true);
+    rig.ctl.create_repo("fake", "app", &rig.bare, "main");
+    rig.ctl.log_in("github.com");
+    let (s, handle, marker) = goal_service(&rig);
+    let mut goal = pr_goal(&rig, None);
+    if let RunRequest::StartGoal { orchestrator, .. } = &mut goal {
+        *orchestrator = Some(proto::OrchestratorChoice {
+            runtime: proto::Runtime::Claude,
+            model: Some("-x".into()),
+            effort: None,
+        });
+    }
+    let reply = ask(&s, goal).await;
+    let message = "orchestrator.model: \"-x\" is not a model name (it may not start with -)";
+    assert_eq!(reply, RunReply::refused(request::START_GOAL, message));
+    assert!(!marker.exists(), "triage ran on a bad orchestrator model");
+    assert!(s.current().runs.is_empty());
+    handle.abort();
+    let _ = handle.await;
+}

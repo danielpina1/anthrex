@@ -32,11 +32,16 @@ pub(super) fn parse_orchestrator(spec: &str) -> anyhow::Result<OrchestratorChoic
         "codex" => Runtime::Codex,
         _ => anyhow::bail!(BAD_ORCHESTRATOR),
     };
-    Ok(OrchestratorChoice {
+    let choice = OrchestratorChoice {
         runtime,
         model: model.filter(|m| !m.is_empty()).map(str::to_string),
         effort: None,
-    })
+    };
+    // M9.8.13 fix round 1: a bad model name never reaches the orchestrator's `--model`.
+    if let Err(problem) = choice.model_problem() {
+        anyhow::bail!("--orchestrator: {problem}");
+    }
+    Ok(choice)
 }
 
 /// `--orchestrator`, when given.

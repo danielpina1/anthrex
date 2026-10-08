@@ -38,6 +38,10 @@ fn promote(
     let Some(run) = state.runs.get_mut(run_id) else {
         return Err(format!("unknown run {run_id}"));
     };
+    // M9.8.13 fix round 1: a bad model name never reaches the orchestrator's `--model`.
+    if let Some(problem) = choice.and_then(|c| c.model_problem().err()) {
+        return Err(format!("orchestrator.model: {problem}"));
+    }
     // M8c.1 review: the repeat reply carries no time (the user reads times locally).
     if run.promote_requested_at.is_some() && run.orch.orchestrator.is_some() {
         return Ok(format!("run {run_id} was already marked for promotion"));

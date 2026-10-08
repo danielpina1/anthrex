@@ -26,6 +26,18 @@ pub struct OrchestratorChoice {
     pub effort: Option<String>,
 }
 
+impl OrchestratorChoice {
+    /// M9.8.13 fix round 1: the chosen model's problem under the model-name rule
+    /// ([`crate::models::model_id_problem`]); no model, or `""`, is the runtime's
+    /// default.
+    pub fn model_problem(&self) -> Result<(), String> {
+        match self.model.as_deref() {
+            Some(model) if !model.is_empty() => crate::models::model_id_problem(model),
+            _ => Ok(()),
+        }
+    }
+}
+
 /// Decision 28: what an approval hold waits on.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
