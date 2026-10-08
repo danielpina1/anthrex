@@ -203,8 +203,9 @@ fn listed(list: &RouteList, roster: &[ModelEntry], effort: &Effort) -> Option<(O
 }
 
 /// Fix round 1, I1 (controller ruling): the `[orchestrator.routes.<name>]` lists in
-/// `raw` none of whose candidates is in the roster. Such a list migrated nothing (its
-/// row, if any, came from the fallback), so a save keeps it (`old_keys::kept`).
+/// `raw` the row's model did not come from: none of the candidates is in the roster,
+/// or, for `review` (fix round 2, N1), none is the reviewer `derived_rows` picks. Such
+/// a list migrated nothing, so a save keeps it (`old_keys::kept`).
 pub fn unknown_lists(o: &Orchestrator, raw: &toml::Table) -> Vec<&'static str> {
     let roster = &o.models[..];
     let lists = crate::orchestrator::read_routes(raw, roster, &mut Vec::new());
@@ -219,10 +220,41 @@ pub fn unknown_lists(o: &Orchestrator, raw: &toml::Table) -> Vec<&'static str> {
         "orchestrator" => &lists.orchestrator,
         _ => &lists.brainstorm,
     };
+    // Fix round 2 (N1): the reviewer comes from the `review` list only through
+    // `review_pick` against the medium route, as `derived_rows` takes it.
+    let (m, standard, medium) = (&lists.m, Strength::Standard, &Effort::MEDIUM);
+    let medium_route = class_route(m, roster, o.default_runtime, standard, medium);
+    let migrated = |name: &str| {
+        let listed = candidates(of(name), roster, &Effort::MEDIUM);
+        match name {
+            "review" => {
+                (medium_route.as_ref()).is_some_and(|(m, _)| review_pick(&listed, m).is_some())
+            }
+            _ => !listed.is_empty(),
+        }
+    };
     (ROUTES.iter().map(|(name, _)| *name))
         .filter(|name| Present(raw).route(name))
-        .filter(|name| candidates(of(name), roster, &Effort::MEDIUM).is_empty())
+        .filter(|name| !migrated(name))
         .collect()
+}
+
+/// A class's route: its list, else `runtime`'s first entry at `strength`, at `effort`.
+fn class_route(
+    list: &RouteList,
+    roster: &[ModelEntry],
+    runtime: Runtime,
+    strength: Strength,
+    effort: &Effort,
+) -> Option<(Old, Option<Old>)> {
+    listed(list, roster, effort)
+        .or_else(|| first_at(roster, runtime, strength).map(|e| (Old::of(e, effort.clone()), None)))
+}
+
+/// Decision 15: the `review` list's first candidate on the other runtime than the
+/// medium route's, at or above its strength.
+fn review_pick(listed: &[Old], medium: &Old) -> Option<usize> {
+    (listed.iter()).position(|c| c.runtime != medium.runtime && c.strength >= medium.strength)
 }
 
 /// Which old keys are present in the raw `[orchestrator]` table.
@@ -411,9 +443,7 @@ fn implementer_rows(
     let mut unresolved = Vec::new();
     for (role, list, name, strength, effort) in classes {
         let runtime = o.default_runtime;
-        let found = listed(list, roster, &effort).or_else(|| {
-            first_at(roster, runtime, strength).map(|e| (Old::of(e, effort.clone()), None))
-        });
+        let found = class_route(list, roster, runtime, strength, &effort);
         let Some((route, fallback)) = found else {
             let (rt, s) = (runtime.label(), strength_name(strength));
             let keeps = builtin_choice(role).model.label();
@@ -449,8 +479,7 @@ fn derived_rows(
     put(table, Role::TestWriter, writer.choice(None), false);
 
     let listed = candidates(review, roster, &Effort::MEDIUM);
-    let qualifies = |c: &Old| c.runtime != medium.runtime && c.strength >= medium.strength;
-    let (reviewer, fallback) = match listed.iter().position(qualifies) {
+    let (reviewer, fallback) = match review_pick(&listed, medium) {
         Some(k) => {
             let next = (listed.iter().enumerate())
                 .find(|(j, _)| *j != k)

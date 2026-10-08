@@ -4,6 +4,11 @@
 use crate::models::{HelperKind, ModelRef, Role, RoleChoice};
 use crate::settings::{doc_of, save};
 
+/// The brief's fixture, but for the `review` candidate: fix round 2 (N1) keeps a list
+/// the reviewer did not come from, and the brief's `codex` / `gpt-6-sol` is on the
+/// medium route's own runtime (`default_runtime = "codex"`), so it never was the
+/// reviewer. Claude Sonnet is, as `pick_reviewer` chose before; the test's point (every
+/// old key goes) holds.
 const OLD: &str = r#"# my settings
 prefix = "a"
 
@@ -31,7 +36,7 @@ model = "gpt-6-sol"
 strength = "standard"
 
 [orchestrator.routes.review]
-candidates = [{ runtime = "codex", model = "gpt-6-sol" }]
+candidates = [{ runtime = "claude", model = "claude-sonnet-5" }]
 
 [testing]
 "#;
@@ -487,11 +492,19 @@ fn a_list_whose_models_are_all_unknown_is_kept_and_noted() {
 #[test]
 fn a_list_with_one_known_model_is_migrated_and_removed() {
     for (name, _) in LISTS {
-        let text = format!(
-            "[orchestrator.routes.{name}]\ncandidates = [{{ runtime = \"codex\", model = \"gpt-9-unknown\" }}, {{ runtime = \"claude\", model = \"claude-opus-5-5\" }}]\n"
+        // The reviewer must be on the medium route's other runtime (N1).
+        let known = match name {
+            "review" => "{ runtime = \"codex\", model = \"gpt-6-sol\" }",
+            _ => "{ runtime = \"claude\", model = \"claude-opus-5-5\" }",
+        };
+        let mut text = format!(
+            "[orchestrator.routes.{name}]\ncandidates = [{{ runtime = \"codex\", model = \"gpt-9-unknown\" }}, {known}]\n"
         );
+        if name == "review" {
+            text.push_str("\n[[orchestrator.models]]\nruntime = \"codex\"\nmodel = \"gpt-6-sol\"\nstrength = \"standard\"\n");
+        }
         let (_, out, after) = saved(&text);
-        assert!(!out.contains("[orchestrator.routes"), "{name}:\n{out}");
+        assert!(!out.contains("[orchestrator."), "{name}:\n{out}");
         assert!(
             after.roles_notes.is_empty(),
             "{name}: {:?}",
@@ -633,5 +646,54 @@ fn an_emptied_old_table_takes_its_comments() {
     assert!(
         out.starts_with("[orchestrator]\nmax_writers = 2\n\n[testing]\n"),
         "{out}"
+    );
+}
+
+/// Fix round 2 (N1): a `review` list counts as migrated only when the reviewer came
+/// from it. Here its one model, in the roster, is on the medium route's own runtime,
+/// so the reviewer is `pick_reviewer`'s `codex:default`: the list is kept and noted.
+#[test]
+fn a_review_list_the_reviewer_did_not_come_from_is_kept() {
+    let text = "[orchestrator.routes.review]\ncandidates = [{ runtime = \"claude\", model = \"claude-sonnet-5\" }]\n";
+    let (before, out, after) = saved(text);
+    assert_eq!(
+        before.roles.rows[&Role::Reviewer].model,
+        model("codex:default")
+    );
+    let note = "config: [orchestrator.routes.review]: none of its models are known; [models.reviewer] uses codex:default until you choose one in C-b S";
+    assert!(
+        before.roles_notes.iter().any(|n| n == note),
+        "{:?}",
+        before.roles_notes
+    );
+    assert!(out.contains(text), "the list went:\n{out}");
+    assert!(
+        after.roles_notes.iter().any(|n| n == note),
+        "{:?}",
+        after.roles_notes
+    );
+}
+
+/// Fix round 2: an inline list naming no known model is kept as written.
+#[test]
+fn an_inline_unknown_hub_list_is_kept() {
+    let text = "[orchestrator]\nmax_writers = 2\n\n[orchestrator.routes]\nhub = { candidates = [{ runtime = \"codex\", model = \"gpt-9-unknown\" }] }\n";
+    let (before, out, after) = saved(text);
+    assert!(
+        out.contains(
+            "hub = { candidates = [{ runtime = \"codex\", model = \"gpt-9-unknown\" }] }\n"
+        ),
+        "{out}"
+    );
+    let note = "config: [orchestrator.routes.hub]: none of its models are known; [models.implementer.hub] uses claude:claude-opus-5-5 until you choose one in C-b S";
+    assert!(
+        before.roles_notes.iter().any(|n| n == note),
+        "{:?}",
+        before.roles_notes
+    );
+    assert!(
+        after.roles_notes.iter().any(|n| n == note),
+        "{:?}",
+        after.roles_notes
     );
 }
