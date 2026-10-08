@@ -114,8 +114,25 @@ impl RunHarness {
         env: &[(&str, &str)],
         files: &[(&str, &str)],
     ) -> Self {
+        Self::adapt_with_config(mode, orchestrator, env, files, "")
+    }
+
+    /// Milestone 9.8: [`Self::adapt`] with `extra_toml` (a `[models]` table, say)
+    /// written after the harness's own tables.
+    pub fn adapt_with_config(
+        mode: &str,
+        orchestrator: &str,
+        env: &[(&str, &str)],
+        files: &[(&str, &str)],
+        extra_toml: &str,
+    ) -> Self {
         let lines = format!("{}{orchestrator}", decider_lines(mode));
         let mut harness = Self::unstarted(&lines, env, true, files);
+        if !extra_toml.is_empty() {
+            let config = harness.dir.path().join("config.toml");
+            let text = std::fs::read_to_string(&config).unwrap();
+            std::fs::write(&config, format!("{text}\n{extra_toml}\n")).unwrap();
+        }
         let deciders = harness.decider_dir();
         std::fs::create_dir_all(&deciders).unwrap();
         harness.env.extend(with_deciders(mode, &deciders).1);

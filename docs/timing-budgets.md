@@ -625,6 +625,20 @@ Model discovery (`crates/daemon/src/models/`). Every probe's deadline is one run
 | `two_concurrent_lists_probe_once`: both runtimes' probes have started | `daemon/src/models/tests_service.rs` | 10 s, a deadline loop every 5 ms | In-process: two `tokio::spawn`ed tasks reach `spawn_blocking` on an idle pool. A hang guard. | **Recorded.** |
 | `list_models` (`MODELS_WAIT`) | `cli/tests/support/models.rs`, used by `models_discovery.rs` | `DISCOVERY_TIMEOUT` + 10 s (20 s), derived from `daemon::models::DISCOVERY_TIMEOUT` | One `ListModels`: each runtime's refresh is one `spawn_blocking` closure bounded by `DISCOVERY_TIMEOUT` (version, then cache or probe, `EXIT_GRACE` inside), the two at once; the test's three calls are sequential, so no call waits behind another's gate. The 10 s covers the connection and the blocking pool's queue on a loaded machine (the pool is otherwise idle in this test's daemon). | **Recorded.** |
 
+### Recorded, from M9.8.5, M9.8.7a and M9.8.15 (checked 2026-10-08)
+
+M9.8.15 checked the M9.8.6 rows above against the code (`DISCOVERY_TIMEOUT` 10 s,
+`REAP_RESERVE` 100 ms, `EXIT_GRACE` 500 ms, `WALL_CLOCK_SLACK` 2 s, `MODELS_WAIT` 20 s,
+the 10 s / 5 ms loop of `two_concurrent_lists_probe_once`): unchanged. The rest of the
+milestone's bounds:
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| `fake-agent`'s discovery replies (`DEADLINE`) | `crates/fake-agent/tests/discovery.rs` | 5 s per line (`recv_timeout`) | One `fake-agent` spawn answering from its fixtures at once, plus macOS's first exec of a fresh build ("Measured primitive costs"). A hang guard. | **Recorded.** |
+| `hang_answers_nothing_until_killed`: no reply | the same | 500 ms with nothing read | A negative check: the `hang` mode never writes, so no bound can be too short for it to pass; a longer window would only slow the test. | **Recorded.** |
+| The start's repository `models.toml` read (`MODELS_READ_BOUND`) | `crates/daemon/src/run/driver/build_models.rs` (production) | 5 s, then the global table and a log line | One small file read on `spawn_blocking`. No test waits on the bound. | **Recorded.** No test bound. |
+| `run_e2e_model_roles.rs` | `crates/cli/tests/` | the harness's `RUN_WAIT` and `ORCH_WAIT` (and `RUN_WAIT * 3` for the run with a sub-planner, a race, a pair and a research task, as `run_e2e_large`'s epic runs) | The harness's own rows above. Measured: the three tests together 15 to 16 s. | **Recorded.** |
+
 ### Fixed, from M9.5.8's flake fix (ruling F-1, 2026-10-03)
 
 | Test | File | Bound | Derivation | Status |

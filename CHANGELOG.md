@@ -7,6 +7,42 @@ release is a pre-release and any release may change behaviour or the protocol.
 
 ## [Unreleased]
 
+The protocol version is now 19: a client needs a daemon of the same release. Stop the
+old daemon (`anthrex daemon stop`) after upgrading.
+
+### Added
+
+- **Model roles.** Every model anthrex launches comes from one table, `[models]`: a row
+  per role (orchestrator, planner, the three implementer sizes, test writer, reviewer,
+  research, the helpers, the brainstormers), each a model, an optional effort and an
+  optional "if it struggles" fallback. `codex:default` runs Codex's own configured
+  model. A repository can override rows in its own `models.toml`. Settings (`C-b S`)
+  shows the table and picks models from the list the installed `claude` and `codex`
+  report. Older configs keep choosing the same models: their keys are read as rows and
+  removed only when you save, which keeps the previous file as `config.toml.bak`. See
+  the README's "Models".
+
+### Changed
+
+- **The orchestrator no longer routes tasks.** It gives each task a size, and the size
+  picks the row. A route from the orchestrator, a sub-planner or a plan file is ignored,
+  and the run log says `route model ignored: models come from the role table`.
+- **A route naming only a runtime no longer selects a model.** `anthrex run edit` refuses
+  one (`choose a model; runtime alone no longer selects one`).
+- **Escalation raises effort first.** A task that struggles runs again at its model's
+  next higher effort, then on its row's fallback, then stays; it no longer moves to a
+  stronger model or the other runtime on its own. A race's second racer runs the row's
+  fallback, or the same model when there is none.
+- **A missing orchestrator CLI refuses the start** instead of switching to the other
+  runtime: `install it, or choose another model for the orchestrator in C-b S, or another
+  runtime with --orchestrator`. Any other role whose CLI is missing fails naming the role
+  (`reviewer: codex not found; choose another model in C-b S`).
+- **Model names are checked.** A model you name (a task's route, `--orchestrator`) must
+  be 1 to 100 visible characters with no spaces and no leading `-`.
+- **Research scouts run the `research` row** (built-in: Claude Haiku at low effort).
+  `[orchestrator.tuning] escalate_above_percent` and a `tuning.toml`'s `[routes]` are no
+  longer used, and `anthrex run stats` proposes no model routes.
+
 ### Fixed
 
 - **Codex workers can commit on Linux.** Every Codex session is now sandboxed through

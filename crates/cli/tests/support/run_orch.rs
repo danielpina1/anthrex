@@ -29,9 +29,20 @@ impl RunHarness {
     /// `orchestrator` lines, the stored profile and `files` over its base files, and a
     /// triage that answers `plan` first.
     pub fn orch(orchestrator: &str, files: &[(&str, &str)]) -> RunHarness {
+        RunHarness::orch_with_config(orchestrator, files, "")
+    }
+
+    /// Milestone 9.8: [`Self::orch`] with `extra_toml` (a `[models]` table, say) written
+    /// after the harness's own tables.
+    pub fn orch_with_config(
+        orchestrator: &str,
+        files: &[(&str, &str)],
+        extra_toml: &str,
+    ) -> RunHarness {
         let mut all: Vec<(&str, &str)> = ADAPT_FILES.to_vec();
         all.extend_from_slice(files);
-        let h = RunHarness::adapt("claude", &format!("{ORCH_LINES}{orchestrator}"), &[], &all);
+        let lines = format!("{ORCH_LINES}{orchestrator}");
+        let h = RunHarness::adapt_with_config("claude", &lines, &[], &all, extra_toml);
         h.stored_profile(STORED_PROFILE);
         h.decider("triage", 1, triage_plan());
         h

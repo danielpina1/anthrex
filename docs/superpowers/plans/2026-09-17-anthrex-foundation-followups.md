@@ -2013,3 +2013,17 @@ A Claude worker on Ubuntu 26.04 could not commit (reported with Claude Code 2.1.
 ## From M9.8.13 (2026-10-08, the roster pickers, the model lists and the route refit removed), for later
 
 - **Done (M9.8.13 fix round 1): `cli/tests/models_migration.rs::daemon_start_logs_each_migrated_key` fails since M9.8.12's fix round 2 (N1).** Fixed: the fixture lists codex `gpt-6-sol` with its roster entry; the kept review list's note now says `none of its models can review <runtime>'s work` (review M4). Its fixture's `[orchestrator.routes.review]` names only `claude-opus-5-5`, on the default medium route's own runtime, so the reviewer never came from it: the list is kept and the daemon logs `config: [orchestrator.routes.review]: none of its models are known; [models.reviewer] uses codex:default until you choose one in C-b S` instead of the `… is replaced by [models.reviewer] …` note the test waits for (61 s timeout). `config/src/models/` is unchanged by M9.8.13; the test was not in M9.8.12's verification list. Fix: name a Codex roster model in the fixture's list (as `write_models_tests::a_list_with_one_known_model_is_migrated_and_removed` does), or expect the kept-list note.
+
+## From M9.8 (collected at M9.8.15, 2026-10-08), for later
+
+The gaps tasks M9.8.6 to M9.8.14 left on purpose, each detailed under its task in `docs/milestones/M9.8-model-roles.md`'s Implementation notes.
+
+- **The manual check is outstanding** (the brief's "Manual check"): one real discovery per CLI on macOS and nexus1, with the raw replies compared to `crates/fake-agent/fixtures/`. Any difference becomes a fixture-and-parser follow-up.
+- **`reach` counts the reviewer row's runtime unconditionally** (M9.8.7a): a Claude-only user on the built-in `codex:default` reviewer has Codex in reach. Fix direction: count it only when a task is reviewed by it.
+- **The once-per-run same-model reviewer line** dedups by scanning a trimmed `run.log`, so it can repeat once trimmed away (M9.8.7a). Fix direction: a flag in `run.json`.
+- **`build_models::fill` rewrites a finished run's `run.json` once at restore** (M9.8.7a).
+- **Rule 9's refusal text can say "size research"** for a research task's row (M9.8.7a).
+- **The orchestrator's PTY window does not name its role on a missing CLI** (M9.8.7b, M2): its spawn goes through `portable_pty`, whose missing-program error is not an `io::Error`. The start's runtime check refuses first, so this needs a CLI removed between the check and the spawn.
+- **Discovery snapshots** (M9.8.6 fix round 1): `CliProbes.claude_auth` is read at daemon start, and a Codex upgraded while the daemon runs is served the old version's cache until `r` or a restart. Check for leftover descendants of a probed CLI during the manual check.
+- **The goal form's `role table (…)` names the global orchestrator row**, not a repository override (M9.8.11 minor 6): the TUI holds no project table outside the open Settings screen. The task edit form's picker title stays `this task` (minor 7).
+- **Files over 600 lines**: `config/src/settings/write_models_tests.rs` (701), `daemon/src/run/model_roles_tests.rs` (624), `config/src/models/migrate.rs` (612), `tui/src/app_tests/goal_editor.rs` (602); `tui/src/app/mod.rs` is at 598, so the next `App` field needs a split first (M9.8.11 minor 10).
