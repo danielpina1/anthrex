@@ -90,8 +90,11 @@ pub struct GoalForm {
     pub role_table: String,
     /// The chosen model's catalog efforts, refreshed by the app before each key.
     pub efforts: Vec<String>,
-    /// `None`: the model's default.
+    /// `None`: the model's default, or for the row's own model the row's effort.
     pub effort: Option<String>,
+    /// The orchestrator row's model and effort, set by the app (fix round 1: a pick of
+    /// the row's model with no effort runs the row's effort, and the form says so).
+    pub row: Option<(ModelRef, Option<String>)>,
     /// The model picker, while it is open over the form.
     pub picker: Option<ModelPicker>,
     /// Milestone 9.2 ruling R-13: `None` is the repo profile's `[delivery] mode`
@@ -173,6 +176,7 @@ impl GoalForm {
             role_table: ROLE_TABLE.to_string(),
             efforts: Vec::new(),
             effort: None,
+            row: None,
             picker: None,
             delivery: None,
             design: None,
@@ -200,6 +204,22 @@ impl GoalForm {
         }
         self.idle = idle;
         self.busy = busy;
+    }
+
+    /// The effort row's text: the chosen effort; with none, `<row effort> (role table)`
+    /// for the row's own model (what the daemon runs), else `default`; `role table`
+    /// with no model chosen.
+    pub fn effort_text(&self) -> String {
+        match (&self.model, &self.effort) {
+            (None, _) => ROLE_TABLE.to_string(),
+            (Some(_), Some(effort)) => effort.clone(),
+            (Some(m), None) => match &self.row {
+                Some((row, effort)) if row == m => {
+                    format!("{} ({ROLE_TABLE})", effort.as_deref().unwrap_or("default"))
+                }
+                _ => "default".to_string(),
+            },
+        }
     }
 
     /// The idle orchestrator this goal continues, while continue is chosen.

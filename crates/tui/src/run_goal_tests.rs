@@ -342,3 +342,42 @@ fn re_picking_keeps_the_effort_and_a_models_reply_refreshes_the_picker() {
     assert_eq!(open_form(&app).model, Some(luna));
     assert_eq!(open_form(&app).effort.as_deref(), Some("low"), "kept");
 }
+
+/// Fix round 1 (controller ruling): the form shows exactly what runs. Picking the
+/// orchestrator row's own model with no effort runs the row's effort, drawn
+/// `<effort> (role table)`; another model runs its default, drawn `default`.
+#[test]
+fn the_effort_row_shows_the_rows_effort_for_the_rows_model() {
+    let mut app = goal_app();
+    let _ = app.set_terminal_size(120, 40);
+    let pick = |app: &mut crate::app::App, label: &str| {
+        app.on_key(key(KeyCode::Enter));
+        // The picker opens on the current model: from the top.
+        for _ in 0..12 {
+            app.on_key(key(KeyCode::Char('k')));
+        }
+        for _ in 0..12 {
+            let picker = open_form(app).picker.as_ref().unwrap();
+            if matches!(&picker.entries[picker.selected],
+                crate::app::model_picker::PickerEntry::Model { label: l, .. } if l == label)
+            {
+                break;
+            }
+            app.on_key(key(KeyCode::Char('j')));
+        }
+        app.on_key(key(KeyCode::Enter));
+    };
+    let rows = |app: &crate::app::App| {
+        crate::ui::audit::rows(&crate::ui::audit::draw(app, 120, 40)).join("\n")
+    };
+    app.on_key(key(KeyCode::Tab));
+    pick(&mut app, "Opus 5.5");
+    let shown = rows(&app);
+    assert!(
+        shown.contains("  effort            ‹ high (role table) ›"),
+        "{shown}"
+    );
+    pick(&mut app, "Haiku 4.5");
+    let shown = rows(&app);
+    assert!(shown.contains("  effort            ‹ default ›"), "{shown}");
+}

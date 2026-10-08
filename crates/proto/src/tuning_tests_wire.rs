@@ -474,3 +474,21 @@ fn a_check_and_a_proof_carry_their_lane() {
     let back: crate::ProofInfo = rmp_serde::from_slice(&p15_bytes(&json)).unwrap();
     assert_eq!(back, none);
 }
+
+/// Milestone 9.8 (M9.8.11 fix round 1): `TaskInfo.row` round-trips, and a task info
+/// without it (as sent before the field) decodes with none.
+#[test]
+fn a_task_infos_row_round_trips() {
+    let mut task = a_task_info();
+    task.row = Some(a_route(
+        Runtime::Claude,
+        Strength::Frontier,
+        Effort::new("max"),
+        "claude-opus-5-5",
+    ));
+    both_ways(&task);
+    let mut json = serde_json::to_value(&task).unwrap();
+    json.as_object_mut().unwrap().remove("row");
+    let back: TaskInfo = serde_json::from_value(json).unwrap();
+    assert_eq!(back.row, None);
+}

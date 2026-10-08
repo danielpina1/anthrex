@@ -77,6 +77,8 @@ pub struct TaskEditForm {
     pub model_label: Option<String>,
     /// The route model's catalog efforts, refreshed by the app before each key.
     pub efforts: Vec<String>,
+    /// `TaskInfo.row`: the task's role table row, as the run resolves it (fix round 1).
+    pub row: Option<Route>,
     /// The table's model as the catalogs label it (`Claude · Sonnet 5`), set by the app;
     /// `None` reads the resolved id.
     pub role_label: Option<String>,
@@ -196,6 +198,7 @@ impl TaskEditForm {
             model_label: None,
             efforts: Vec::new(),
             role_label: None,
+            row: task.row.clone(),
             picker: None,
             size: task.size,
             test_mode: task.test_mode,
@@ -303,6 +306,9 @@ impl TaskEditForm {
     /// The model the table runs the task on, while the task's resolution is the
     /// table's: the route the form opened with named no model (review I3).
     pub fn table_model(&self) -> Option<ModelRef> {
+        if let Some(row) = &self.row {
+            return route_model(Some(row.runtime), Some(&row.model));
+        }
         let resolved = &self.resolved;
         let runtime = self.route.runtime.unwrap_or(resolved.runtime);
         (self.original.route_spec.model.is_none() && runtime == resolved.runtime)
@@ -320,11 +326,30 @@ impl TaskEditForm {
             let id = model.id.as_deref().map_or_else(|| "default".into(), clean);
             format!("{} · {id}", runtime_name(model.runtime))
         });
+        if let Some(row) = &self.row {
+            let effort = Some(row.effort.as_str()).filter(|e| !e.is_empty());
+            let effort = clean(effort.unwrap_or("default"));
+            return format!("{ROLE_TABLE} ({label} · {effort})");
+        }
         let effort = &self.resolved.effort;
         match &self.original.route_spec.effort {
             None if effort.is_default() => format!("{ROLE_TABLE} ({label} · default)"),
             None => format!("{ROLE_TABLE} ({label} · {})", clean(effort.as_str())),
             Some(_) => format!("{ROLE_TABLE} ({label})"),
+        }
+    }
+
+    /// A named model's blank effort: the row's (`<effort> (role table)`) for the row's
+    /// own model, which the daemon runs at the row's effort, else `default`.
+    fn picked_default(&self) -> String {
+        match &self.row {
+            Some(row)
+                if self.current_model() == route_model(Some(row.runtime), Some(&row.model)) =>
+            {
+                let effort = Some(row.effort.as_str()).filter(|e| !e.is_empty());
+                format!("{} ({ROLE_TABLE})", clean(effort.unwrap_or("default")))
+            }
+            _ => "default".to_string(),
         }
     }
 
@@ -550,7 +575,7 @@ impl TaskEditForm {
                 (Some(effort), _) => (choice(&effort_word(effort.clone())), None),
                 // Fix round 1 (controller ruling I2): a named model with no effort runs
                 // at its default.
-                (None, Some(_)) => (choice("default"), None),
+                (None, Some(_)) => (choice(&self.picked_default()), None),
                 (None, None) => (
                     choice(ROLE_TABLE),
                     muted(effort_word(resolved.effort.clone())),

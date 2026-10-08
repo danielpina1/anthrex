@@ -299,3 +299,39 @@ fn a_models_reply_refreshes_the_edit_forms_open_picker() {
         })]
     );
 }
+
+/// Fix round 1 (controller ruling): picking the task's row model with no effort runs
+/// the row's effort, drawn `<effort> (role table)`; another model reads `default`.
+#[test]
+fn the_effort_row_shows_the_rows_effort_for_the_rows_model() {
+    let mut task = edit_fixture_task();
+    task.row = Some(proto::Route {
+        runtime: Runtime::Claude,
+        model: "claude-opus-5-5".into(),
+        strength: proto::Strength::Frontier,
+        effort: Effort::new("max"),
+    });
+    let mut app = edit_app();
+    app.modal = Some(Modal::EditTask(Box::new(TaskEditForm::new(RUN_ID, &task))));
+    let pick = |app: &mut App, label: &str| {
+        app.on_key(key(KeyCode::Enter));
+        // The picker opens on the current model: from the top.
+        for _ in 0..12 {
+            app.on_key(key(KeyCode::Char('k')));
+        }
+        for _ in 0..12 {
+            let picker = form(app).picker.as_ref().unwrap();
+            if matches!(&picker.entries[picker.selected],
+                PickerEntry::Model { label: l, .. } if l == label)
+            {
+                break;
+            }
+            app.on_key(key(KeyCode::Char('j')));
+        }
+        app.on_key(key(KeyCode::Enter));
+    };
+    pick(&mut app, "Opus 5.5");
+    assert_eq!(effort_shown(&app), "‹ max (role table) ›");
+    pick(&mut app, "Haiku 4.5");
+    assert_eq!(effort_shown(&app), "‹ default ›");
+}

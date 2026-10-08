@@ -60,6 +60,13 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
             info.actions = available(run, &ActionNode::Task(t.id()));
             // Milestone 9.2 decision 41: a review fix's text names its threads' authors.
             info.fixes = t.fixes.as_ref().map(|f| super::engine::fix_text(run, f));
+            // Milestone 9.8 (M9.8.11 fix round 1): the task's row, which the task edit
+            // form shows for a pick of the row's own model; sent with the plan text,
+            // while the form can open (the gate), as `route_spec` is.
+            if text {
+                let role = super::model_roles::RunModels::task_role(t);
+                info.row = run.limits.models.as_ref().map(|m| m.route(role));
+            }
             info
         })
         .collect();
@@ -446,6 +453,7 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64, plan_text: b
         } else {
             Default::default()
         },
+        row: None,
         hold: t.orch.gate_hold.clone(),
         review_target: None,
         research_bytes: None,

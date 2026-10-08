@@ -111,6 +111,7 @@ fn task(
         brief: String::new(),
         acceptance: vec![],
         route_spec: Default::default(),
+        row: None,
         hold: None,
         review_target: None,
         research_bytes: None,

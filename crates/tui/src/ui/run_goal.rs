@@ -11,7 +11,7 @@
 //! has the editor's keys, so Enter there is a newline (task 9b fix round 1).
 
 use crate::app::model_picker::runtime_name;
-use crate::run_goal::{GoalField, GoalForm, OrchestratorRow, ROLE_TABLE, field_label};
+use crate::run_goal::{GoalField, GoalForm, OrchestratorRow, field_label};
 use crate::safe_text::one_line;
 use crate::theme::{Glyph, Palette, Role, dot_sep, ellipsis, glyph, role};
 use crate::ui::goal_editor;
@@ -198,12 +198,8 @@ pub(crate) fn option_lines(form: &GoalForm, width: u16, p: Palette) -> Vec<Line<
         };
         let model = crate::theme::fold(model, p.ascii);
         body.push(choice_line(form, GoalField::Model, &model, value_w, p));
-        let effort = match (&form.model, &form.effort) {
-            (None, _) => ROLE_TABLE,
-            (Some(_), None) => "default",
-            (Some(_), Some(effort)) => effort.as_str(),
-        };
-        body.push(choice_line(form, GoalField::Effort, effort, value_w, p));
+        let effort = form.effort_text();
+        body.push(choice_line(form, GoalField::Effort, &effort, value_w, p));
     }
     // Decision 33: the chain id and the run's short id are drawn sanitised.
     body.push(match form.orchestrator_row() {

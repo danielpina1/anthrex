@@ -84,4 +84,16 @@ fn a_users_model_without_effort_does_not_take_the_rows_effort() {
         "max",
         "the row's own model keeps its effort"
     );
+
+    // At the gate the snapshot names the task's row, so the task edit form can say
+    // which effort a pick of the row's model runs at.
+    assert_eq!(run.state, proto::RunState::AwaitingApproval);
+    let mut state = crate::run::engine::EngineState::default();
+    state.runs.insert(run.id.clone(), run.clone());
+    let info = &crate::run::snapshot::snapshot(&state, 0).runs[0].tasks[0];
+    let row = info.row.as_ref().expect("the task's row");
+    assert_eq!(
+        (row.runtime, row.model.as_str(), row.effort.as_str()),
+        (Runtime::Claude, "claude-opus-5-5", "max")
+    );
 }

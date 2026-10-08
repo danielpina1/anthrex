@@ -103,6 +103,8 @@ impl App {
             form.design_default = cache.doc.design_default;
         }
         form.role_table = self.goal_role_table();
+        let row = self.goal_row();
+        form.row = Some((row.model, row.effort));
         if let Some(draft) = draft {
             form.goal = TextArea::editor(&draft);
         }
@@ -114,9 +116,7 @@ impl App {
     /// orchestrator row's model>)`, from the settings' global table (or the built-in)
     /// and the catalogs' labels.
     pub(super) fn goal_role_table(&self) -> String {
-        let global = (self.settings_cache.as_ref()).map(|c| c.doc.roles.clone());
-        let global = global.unwrap_or_default();
-        let row = config::models::resolve(proto::models::Role::Orchestrator, None, &global);
+        let row = self.goal_row();
         format!(
             "{} ({})",
             crate::run_goal::ROLE_TABLE,
@@ -124,13 +124,22 @@ impl App {
         )
     }
 
+    /// The orchestrator's row in the settings' global table, else the built-in.
+    fn goal_row(&self) -> proto::models::RoleChoice {
+        let global = (self.settings_cache.as_ref()).map(|c| c.doc.roles.clone());
+        let global = global.unwrap_or_default();
+        config::models::resolve(proto::models::Role::Orchestrator, None, &global)
+    }
+
     /// The open goal form's role table entry and its model's efforts, from the
     /// settings and the catalogs as they are now.
     pub(super) fn refresh_goal_models(&mut self) {
         let role_table = self.goal_role_table();
+        let row = self.goal_row();
         let catalogs = &self.catalogs;
         if let Some(Modal::StartGoal(form)) = &mut self.modal {
             form.role_table = role_table;
+            form.row = Some((row.model, row.effort));
             form.efforts = (form.model.as_ref()).map_or_else(Vec::new, |m| catalogs.efforts(m));
         }
     }

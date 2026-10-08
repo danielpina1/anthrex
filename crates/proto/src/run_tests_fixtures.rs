@@ -175,6 +175,7 @@ pub(super) fn a_task_info() -> TaskInfo {
         brief: String::new(),
         acceptance: Vec::new(),
         route_spec: RouteSpec::default(),
+        row: None,
         hold: None,
         review_target: None,
         research_bytes: None,
