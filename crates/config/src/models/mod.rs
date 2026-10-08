@@ -2,14 +2,17 @@
 //! an effort and an "if it struggles" fallback. The types live in `proto::models` (the
 //! settings document carries them); this module adds the built-in rows, the resolution
 //! order (repository file, then the global table, then the built-in), reading and
-//! rendering a `[models]` table (`parse.rs`), the repository file (`repo.rs`, the
-//! only file here with I/O) and the migration of the old model keys (`migrate.rs`).
+//! rendering a `[models]` table (`parse.rs`), the repository file (`repo.rs`, the only
+//! file here with I/O), the migration of the old model keys (`migrate.rs`) and which of
+//! them a save removes or keeps (`old_keys.rs`).
 
 mod migrate;
+mod old_keys;
 mod parse;
 mod repo;
 
 pub use migrate::migrate;
+pub use old_keys::{Feeds, Kept, OldKey, is_route_name, kept, kept_notes, old_keys};
 pub(crate) use parse::read_table;
 pub use parse::{parse_text, render};
 pub use proto::models::{

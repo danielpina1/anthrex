@@ -6,10 +6,10 @@ use serde::de::DeserializeOwned;
 
 use crate::run_wire::request;
 use crate::settings::{
-    BudgetLimit, OrchestratorDefault, Origin, SETTINGS_KEYS, SettingsDoc, SettingsLimits,
-    SettingsReply, SettingsRequest, key,
+    BudgetLimit, Origin, SETTINGS_KEYS, SettingsDoc, SettingsLimits, SettingsReply,
+    SettingsRequest, key,
 };
-use crate::{DaemonMsg, ModelEntry, RunReply, RunRequest, Runtime, Strength};
+use crate::{DaemonMsg, RunReply, RunRequest};
 
 /// Ruling F2: `rmp_serde` directly (`encode` prepends a length), plus JSON.
 fn both_ways<T: Serialize + DeserializeOwned + PartialEq + std::fmt::Debug>(value: &T) {
@@ -21,24 +21,6 @@ fn both_ways<T: Serialize + DeserializeOwned + PartialEq + std::fmt::Debug>(valu
 
 fn a_doc() -> SettingsDoc {
     SettingsDoc {
-        models: vec![
-            ModelEntry {
-                runtime: Runtime::Claude,
-                model: "claude-sonnet-5".into(),
-                strength: Strength::Standard,
-                note: "daily driver".into(),
-            },
-            ModelEntry {
-                runtime: Runtime::Codex,
-                model: String::new(),
-                strength: Strength::Fast,
-                note: String::new(),
-            },
-        ],
-        orchestrator: OrchestratorDefault {
-            runtime: Some(Runtime::Claude),
-            model: "claude-sonnet-5".into(),
-        },
         limits: SettingsLimits {
             budget_s: BudgetLimit {
                 tool_calls: 40,
@@ -58,8 +40,28 @@ fn a_doc() -> SettingsDoc {
             max_bounces: 2,
         },
         design_default: None,
-        roles: Default::default(),
+        roles: a_table(),
     }
+}
+
+/// Milestone 9.8: the doc carries the role table, a row and the brainstorm pair.
+fn a_table() -> crate::models::ModelTable {
+    use crate::models::{BrainstormChoice, ModelRef, Role, RoleChoice};
+    let mut table = crate::models::ModelTable::default();
+    table.rows.insert(
+        Role::ImplementerSmall,
+        RoleChoice {
+            model: ModelRef::parse("claude:claude-opus-5-5").unwrap(),
+            effort: Some("high".into()),
+            fallback: Some(ModelRef::parse("codex:default").unwrap()),
+        },
+    );
+    table.brainstorm = Some(BrainstormChoice {
+        first: ModelRef::parse("claude:claude-opus-5-5").unwrap(),
+        second: ModelRef::parse("codex:gpt-6-sol").unwrap(),
+        effort: None,
+    });
+    table
 }
 
 fn an_origin() -> BTreeMap<String, Origin> {
@@ -178,15 +180,21 @@ fn settings_variants_are_appended_last() {
 }
 
 #[test]
-fn settings_keys_are_thirteen_and_distinct() {
-    assert_eq!(SETTINGS_KEYS.len(), 13);
+fn settings_keys_are_eleven_and_distinct() {
+    assert_eq!(SETTINGS_KEYS.len(), 11);
     let mut sorted = SETTINGS_KEYS.to_vec();
     sorted.sort_unstable();
     sorted.dedup();
-    assert_eq!(sorted.len(), 13);
-    assert_eq!(SETTINGS_KEYS[0], key::MODELS);
-    assert_eq!(SETTINGS_KEYS[12], key::MAX_BOUNCES);
-    assert!(SETTINGS_KEYS.iter().all(|k| k.starts_with("orchestrator.")));
+    assert_eq!(sorted.len(), 11);
+    // Milestone 9.8 (M9.8.12): the role table replaced the roster and the agent keys.
+    assert_eq!(SETTINGS_KEYS[0], key::ROLES);
+    assert_eq!(key::ROLES, "models");
+    assert_eq!(SETTINGS_KEYS[10], key::MAX_BOUNCES);
+    assert!(
+        SETTINGS_KEYS[1..]
+            .iter()
+            .all(|k| k.starts_with("orchestrator."))
+    );
 }
 
 #[test]

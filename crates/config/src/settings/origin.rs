@@ -1,6 +1,7 @@
 //! Decision 26: where each settings value came from. A key is `File` when the parsed
-//! table holds it; `orchestrator.models` is `File` when the file sets `builtin_models`
-//! or has any `[[orchestrator.models]]`. Everything else is `Default`.
+//! table holds it; `models` (milestone 9.8, M9.8.12) is `File` when the file has a
+//! `[models]` table or any old model key it replaced (decision 18). Everything else is
+//! `Default`.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -10,14 +11,16 @@ use proto::settings::{SETTINGS_KEYS, key};
 
 use crate::{Config, Problem};
 
-/// The origin of each of the thirteen `SETTINGS_KEYS` in `table`.
+/// The origin of each of the eleven `SETTINGS_KEYS` in `table`.
 pub fn origin_of(table: &toml::Table) -> BTreeMap<String, Origin> {
     let has = |path: &str| lookup(table, path).is_some();
     SETTINGS_KEYS
         .iter()
         .map(|k| {
-            let set = if *k == key::MODELS {
-                has("orchestrator.builtin_models") || has(key::MODELS)
+            let set = if *k == key::ROLES {
+                let old = (table.get("orchestrator").and_then(|v| v.as_table()))
+                    .is_some_and(|raw| !crate::models::old_keys(raw).is_empty());
+                has(key::ROLES) || old
             } else {
                 has(k)
             };

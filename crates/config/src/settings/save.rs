@@ -20,14 +20,16 @@ pub struct Saved {
     pub origin: BTreeMap<String, Origin>,
 }
 
-/// Blocking: [`super::cleaned`], [`super::validate`], read, [`super::edit_text`], temporary file, fsync,
-/// `cancel` check, rename, fsync the directory. The check swaps `cancel` to `true`, so
-/// exactly one of this save and a caller that swaps it later reads `false`. A missing
-/// file (and its directory) is created. On any refusal the file is untouched and no
-/// temporary file is left.
+/// Blocking: [`super::cleaned`], [`super::validate`], read, [`super::edit_text`] (the
+/// limits), `write_models::edit` (the role table and the old keys, M9.8.12), the read
+/// back, temporary files, fsync, `cancel` check, rename, fsync the directory. The check
+/// swaps `cancel` to `true`, so exactly one of this save and a caller that swaps it
+/// later reads `false`. A missing file (and its directory) is created. When the edit
+/// removed an old model key, the file as it was is kept as `config.toml.bak` (decision
+/// 40), renamed into place just before the file is. On any refusal the file is
+/// untouched and no temporary file is left.
 pub fn save(path: &Path, doc: &SettingsDoc, cancel: &AtomicBool) -> Result<Saved, Vec<String>> {
-    // M9.2.6 fix round 2: what is written, validated and read back is the cleaned doc
-    // (no hidden format character), so a stored `⚠️` never blocks a save.
+    // M9.2.6 fix round 2: what is written, validated and read back is the cleaned doc.
     let doc = &super::cleaned(doc);
     let problems = super::validate(doc);
     if !problems.is_empty() {
@@ -41,7 +43,9 @@ pub fn save(path: &Path, doc: &SettingsDoc, cancel: &AtomicBool) -> Result<Saved
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => (String::new(), None),
         Err(e) => return Err(vec![format!("could not read {}: {e}", path.display())]),
     };
-    let out = super::edit_text(&text, doc)?;
+    let limits = super::edit_text(&text, doc)?;
+    let edited = super::write_models::write(&text, &limits, &doc.roles)?;
+    let out = edited.text;
     let dir = match path.parent() {
         Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
         _ => PathBuf::from("."),
@@ -49,17 +53,32 @@ pub fn save(path: &Path, doc: &SettingsDoc, cancel: &AtomicBool) -> Result<Saved
     std::fs::create_dir_all(&dir)
         .map_err(|e| vec![format!("could not create {}: {e}", dir.display())])?;
     let temp = temp_path(&dir, path);
-    let written = write_temp(&temp, &out, mode).and_then(|()| {
-        // The claim (task 9): setting the flag here tells a caller that times out and
-        // swaps it afterwards that the rename was already under way.
-        if cancel.swap(true, Ordering::SeqCst) {
-            return Err("the save was cancelled; nothing changed".to_string());
-        }
-        std::fs::rename(&temp, path)
-            .map_err(|e| format!("could not replace {}: {e}", path.display()))
-    });
+    let bak = edited
+        .removed
+        .then(|| (temp_path(&dir, &bak_path(path)), bak_path(path)));
+    let written = write_temp(&temp, &out, mode)
+        .and_then(|()| match &bak {
+            Some((bak_temp, _)) => write_temp(bak_temp, &text, mode),
+            None => Ok(()),
+        })
+        .and_then(|()| {
+            // The claim (task 9): setting the flag here tells a caller that times out
+            // and swaps it afterwards that the rename was already under way.
+            if cancel.swap(true, Ordering::SeqCst) {
+                return Err("the save was cancelled; nothing changed".to_string());
+            }
+            if let Some((bak_temp, bak)) = &bak {
+                std::fs::rename(bak_temp, bak)
+                    .map_err(|e| format!("could not write {}: {e}", bak.display()))?;
+            }
+            std::fs::rename(&temp, path)
+                .map_err(|e| format!("could not replace {}: {e}", path.display()))
+        });
     if let Err(problem) = written {
         let _ = std::fs::remove_file(&temp);
+        if let Some((bak_temp, _)) = &bak {
+            let _ = std::fs::remove_file(bak_temp);
+        }
         return Err(vec![problem]);
     }
     // The rename is durable once the directory entry is; a failure here does not undo it.
@@ -71,6 +90,15 @@ pub fn save(path: &Path, doc: &SettingsDoc, cancel: &AtomicBool) -> Result<Saved
         orchestrator: crate::parse(&out).0.orchestrator,
         origin: origin_of(&table),
     })
+}
+
+/// Decision 40: `config.toml.bak` beside `config.toml`.
+pub(crate) fn bak_path(path: &Path) -> PathBuf {
+    let mut name = path
+        .file_name()
+        .map_or_else(|| "config.toml".into(), |n| n.to_os_string());
+    name.push(".bak");
+    path.with_file_name(name)
 }
 
 /// `<dir>/.<name>.anthrex-<pid>-<nanos>.tmp`, beside the original so the rename stays on
@@ -124,9 +152,8 @@ fn file_mode(_: &Path) -> Option<u32> {
     None
 }
 
-/// Decision 28 step 3's guard: `out` must parse, every owned key must read back as
-/// `doc`, and every other key must read back as `before` has it (the design default
-/// among them: the screen does not own it).
+/// Decision 28 step 3's guard for the limits writer: `out` must parse, every limit must
+/// read back as `doc` has it, and every other key as `before` has it.
 pub(super) fn read_back(
     before: &toml::Table,
     out: &str,
@@ -135,42 +162,27 @@ pub(super) fn read_back(
     let after: toml::Table = out
         .parse()
         .map_err(|e| vec![format!("the edited config.toml would not parse: {e}")])?;
-    // Ruling T18-7: `design_default` is reported by the daemon and read-only on the
-    // settings screen, so a client's stale or absent copy is never compared.
-    let owned = |d: &SettingsDoc| SettingsDoc {
-        design_default: None,
-        ..d.clone()
-    };
     let read = super::doc_of(&crate::parse(out).0.orchestrator);
-    if owned(&read) != owned(doc) {
+    if read.limits != doc.limits {
         return Err(vec![format!(
             "config.toml would not read back as saved ({}); nothing changed",
             differing(&read, doc).join(", ")
         )]);
     }
-    if unowned(before.clone()) != unowned(after) {
-        return Err(vec![
-            "the edit would change keys the settings screen does not own; nothing changed"
-                .to_string(),
-        ]);
+    if unowned(before.clone(), false) != unowned(after, false) {
+        return Err(vec![UNOWNED_CHANGED.to_string()]);
     }
     Ok(())
 }
 
-/// The keys of `SETTINGS_KEYS` on which `a` and `b` differ.
+pub(super) const UNOWNED_CHANGED: &str =
+    "the edit would change keys the settings screen does not own; nothing changed";
+
+/// The keys of `SETTINGS_KEYS` on which `a` and `b`'s limits differ.
 fn differing(a: &SettingsDoc, b: &SettingsDoc) -> Vec<&'static str> {
     use proto::settings::key;
     let (x, y) = (&a.limits, &b.limits);
     [
-        (key::MODELS, a.models != b.models),
-        (
-            key::AGENT_RUNTIME,
-            a.orchestrator.runtime != b.orchestrator.runtime,
-        ),
-        (
-            key::AGENT_MODEL,
-            a.orchestrator.model != b.orchestrator.model,
-        ),
         (
             key::BUDGET_S_CALLS,
             x.budget_s.tool_calls != y.budget_s.tool_calls,
@@ -208,24 +220,28 @@ fn differing(a: &SettingsDoc, b: &SettingsDoc) -> Vec<&'static str> {
     .collect()
 }
 
-/// `table` without the owned keys, and without an owned table left empty by their removal.
-fn unowned(mut table: toml::Table) -> toml::Table {
+/// `table` without the limits, and with `models` also without `[models]` and every old
+/// model key (decision 18), each table left empty by the removal pruned.
+pub(super) fn unowned(mut table: toml::Table, models: bool) -> toml::Table {
+    if models {
+        table.remove("models");
+        let old = (table.get("orchestrator").and_then(|v| v.as_table()))
+            .map(crate::models::old_keys)
+            .unwrap_or_default();
+        for k in old {
+            remove_path(&mut table, &k.path);
+        }
+    }
     let Some(o) = table.get_mut("orchestrator").and_then(|v| v.as_table_mut()) else {
         return table;
     };
     for k in [
-        "builtin_models",
         "max_writers",
         "max_readers",
         "max_bounces",
         "stall_after_secs",
-        "models",
     ] {
         o.remove(k);
-    }
-    if let Some(agent) = o.get_mut("agent").and_then(|v| v.as_table_mut()) {
-        agent.remove("runtime");
-        agent.remove("model");
     }
     if let Some(budget) = o.get_mut("budget").and_then(|v| v.as_table_mut()) {
         for r in ["s", "m", "l"] {
@@ -237,10 +253,28 @@ fn unowned(mut table: toml::Table) -> toml::Table {
         }
     }
     prune(o, "budget");
-    prune(o, "agent");
+    for t in ["agent", "planners", "scouts", "deciders", "routes"] {
+        prune(o, t);
+    }
     prune(&mut table, "orchestrator");
     debug_assert!(lookup(&table, "orchestrator.max_writers").is_none());
     table
+}
+
+/// Removes the value at a dotted path of plain segments.
+fn remove_path(table: &mut toml::Table, path: &str) {
+    let mut segments: Vec<&str> = path.split('.').collect();
+    let Some(last) = segments.pop() else {
+        return;
+    };
+    let mut at = table;
+    for s in segments {
+        match at.get_mut(s).and_then(|v| v.as_table_mut()) {
+            Some(t) => at = t,
+            None => return,
+        }
+    }
+    at.remove(last);
 }
 
 fn prune(table: &mut toml::Table, key: &str) {

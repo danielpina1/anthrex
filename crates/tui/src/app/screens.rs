@@ -3,15 +3,13 @@
 //! keeps them.
 //! One tagged `Settings(Get)` leaves with every new connection; its `Current` reply and
 //! every `Saved` become `App.settings_cache`, which the goal form's role table entry
-//! (milestone 9.8), the Promote form and (tasks 13-15) the screens read. None of them
+//! (milestone 9.8) and (tasks 13-15) the screens read. None of them
 //! sends a request of its own to read it. Pure: every request leaves as an `Effect`.
 
 use super::replies::PendingWhat;
 use super::runs::first_line_and_more;
 use super::{App, Effect, Modal, ToastLevel};
-use proto::{
-    ModelEntry, Origin, RunReply, RunRequest, Runtime, SettingsDoc, SettingsReply, SettingsRequest,
-};
+use proto::{Origin, RunReply, RunRequest, SettingsDoc, SettingsReply, SettingsRequest};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Instant;
@@ -90,28 +88,6 @@ pub struct SettingsCache {
     pub path: PathBuf,
     /// The request id of the reply that set this cache; an older reply never replaces it.
     pub id: u64,
-}
-
-impl SettingsCache {
-    /// The enabled roster, in order.
-    pub fn models(&self) -> &[ModelEntry] {
-        &self.doc.models
-    }
-
-    /// The names of `runtime`'s enabled models, in roster order. An entry with an empty
-    /// model is the runtime's own default and is not a name.
-    pub fn models_of(&self, runtime: Runtime) -> Vec<String> {
-        models_of(self.models(), runtime)
-    }
-}
-
-/// [`SettingsCache::models_of`] over any roster.
-pub fn models_of(models: &[ModelEntry], runtime: Runtime) -> Vec<String> {
-    models
-        .iter()
-        .filter(|m| m.runtime == runtime && !m.model.is_empty())
-        .map(|m| m.model.clone())
-        .collect()
 }
 
 impl App {

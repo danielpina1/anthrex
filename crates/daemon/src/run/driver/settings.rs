@@ -1,5 +1,6 @@
 //! Milestone 9.0.6 decisions 25, 28, 29 and 37: `RunRequest::Settings` and the runs a
-//! profile edit waits for.
+//! profile edit waits for; milestone 9.8 decision 36: the repository's role table
+//! (`RepoModels`, `PutRepoModels`), read and written on blocking threads.
 //!
 //! `Get` answers from memory (the live settings, decision 29); no file is read. `Put`
 //! validates, takes `settings_write` (never the manager or engine lock), runs the
@@ -14,10 +15,11 @@
 //! the background holding `settings_write`, and a save that does land is swapped in then,
 //! so the live settings never disagree with the file.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use proto::models::ModelTable;
 use proto::{RunReply, RunState, SettingsDoc, SettingsReply, SettingsRequest};
 
 use super::RunService;
@@ -28,6 +30,17 @@ pub const WRITE_TIMEOUT_TEXT: &str = "config.toml was not written within 5 s; no
 
 /// A save that had begun renaming when the timeout fired (Task 9 notes).
 pub const WRITE_UNKNOWN_TEXT: &str = "config.toml was still being written after 5 s; if the write completes, new runs use the new settings";
+
+/// Decision 36: a repository table not written within the timeout. Its outcome is not
+/// known: the write goes on in the background (an atomic rename, so the file is either
+/// the old table or the new one).
+pub const REPO_WRITE_TIMEOUT_TEXT: &str =
+    "the repository's models.toml was not written within 5 s; it may still be written";
+
+/// `<repo_dir>/models.toml` (MR §3.3).
+fn repo_file(data_dir: &Path, project: &Path) -> PathBuf {
+    crate::profile::repo_dir(data_dir, project).join(config::models::REPO_FILE)
+}
 
 fn reply(reply: SettingsReply) -> RunReply {
     RunReply::Settings {
@@ -53,10 +66,68 @@ impl RunService {
                 })
             }
             SettingsRequest::Put { settings } => self.put_settings(settings).await,
-            // M9.8.12 serves these; until then every request still gets an answer.
-            SettingsRequest::RepoModels { .. } | SettingsRequest::PutRepoModels { .. } => {
-                refused(vec!["repository models are not available yet".into()])
+            SettingsRequest::RepoModels { project } => self.repo_models(project).await,
+            SettingsRequest::PutRepoModels { project, table } => {
+                self.put_repo_models(project, table).await
             }
+        }
+    }
+
+    /// Milestone 9.8 decision 36: `<repo_dir>/models.toml` as a table, read on a blocking
+    /// thread within `SettingsIo.timeout`. A missing file is the empty table; an
+    /// unreadable or broken one refuses with its problems (the screen must not edit over
+    /// a file it could not read).
+    async fn repo_models(&self, project: PathBuf) -> RunReply {
+        let path = repo_file(&self.ctx.data_dir, &project);
+        let file = path.clone();
+        let read = tokio::task::spawn_blocking(move || config::models::load_repo(&file));
+        match tokio::time::timeout(self.ctx.settings_io.timeout, read).await {
+            Ok(Ok((table, problems))) if problems.is_empty() || table.is_some() => {
+                reply(SettingsReply::RepoModels {
+                    project,
+                    table: table.unwrap_or_default(),
+                    path,
+                })
+            }
+            Ok(Ok((_, problems))) => refused(problems),
+            Ok(Err(error)) => refused(vec![format!("the read did not finish: {error}")]),
+            Err(_) => refused(vec![format!(
+                "{} was not read within {} s",
+                path.display(),
+                self.ctx.settings_io.timeout.as_secs()
+            )]),
+        }
+    }
+
+    /// Decision 36: `table` written to the repository's `models.toml` (an empty table
+    /// removes it), validated first, on a blocking thread within `SettingsIo.timeout`
+    /// and under `settings_write`, so it never races a `Put`. Runs read the file when
+    /// they start, so nothing live changes.
+    async fn put_repo_models(&self, project: PathBuf, table: ModelTable) -> RunReply {
+        let problems = config::settings::validate(&SettingsDoc {
+            roles: table.clone(),
+            ..config::settings::doc_of(&config::Orchestrator::default())
+        });
+        if !problems.is_empty() {
+            return refused(problems);
+        }
+        let timeout = self.ctx.settings_io.timeout;
+        let write = self.settings_write.clone().lock_owned();
+        let Ok(guard) = tokio::time::timeout(timeout, write).await else {
+            return refused(vec![REPO_WRITE_TIMEOUT_TEXT.into()]);
+        };
+        let path = repo_file(&self.ctx.data_dir, &project);
+        let wanted = table.clone();
+        let task = tokio::task::spawn_blocking(move || {
+            let saved = config::models::save_repo(&path, &wanted);
+            drop(guard);
+            saved
+        });
+        match tokio::time::timeout(timeout, task).await {
+            Ok(Ok(Ok(()))) => reply(SettingsReply::RepoSaved { project, table }),
+            Ok(Ok(Err(problem))) => refused(vec![problem]),
+            Ok(Err(error)) => refused(vec![format!("the save did not finish: {error}")]),
+            Err(_) => refused(vec![REPO_WRITE_TIMEOUT_TEXT.into()]),
         }
     }
 

@@ -36,8 +36,8 @@ pub use design::{DesignBudget, DesignConfig};
 
 use budget::read_budgets;
 use profile::{read_profile, report_unknown_profile};
+pub use roster::default_roster;
 use roster::read_models;
-pub use roster::{MODEL_NOTE_MAX, default_roster};
 mod unknown;
 pub(crate) use unknown::report_unknown;
 

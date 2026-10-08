@@ -3,16 +3,16 @@
 //! cache yet). Its sections are `models` (milestone 9.8 decision 35: the role table,
 //! `models_table.rs`, and its picker, `model_picker.rs`) and `limits`. Every rule is the
 //! daemon's own:
-//! `config::settings::validate` and `warnings` decide what blocks `w` and what only
-//! warns; this file never re-implements a range. `w` sends one tagged `Settings(Put)`
+//! `config::settings::validate` decides what blocks `w`; this file never re-implements a
+//! range. `w` sends one tagged `Settings(Put)`
 //! (`App::settings_put`); its reply comes back by `request_id` through
 //! `app/screens.rs::route_settings_reply`. Keys are `settings_keys.rs`; drawing is
 //! `ui/settings.rs`. Pure: every request leaves as an `Effect`.
 
 use super::models_table::ModelsTable;
-use config::settings::{validate, warnings};
+use config::settings::validate;
 use proto::settings::key;
-use proto::{BudgetLimit, OrchestratorDefault, Origin, SettingsDoc, SettingsLimits, TuningReport};
+use proto::{BudgetLimit, Origin, SettingsDoc, SettingsLimits, TuningReport};
 use std::collections::BTreeMap;
 
 /// Interfaces "Exact user-visible text": a `Saved` reply.
@@ -182,11 +182,6 @@ impl SettingsScreen {
             minutes: 0,
         };
         let empty = SettingsDoc {
-            models: vec![],
-            orchestrator: OrchestratorDefault {
-                runtime: None,
-                model: String::new(),
-            },
             limits: SettingsLimits {
                 budget_s: NONE,
                 budget_m: NONE,
@@ -250,9 +245,9 @@ impl SettingsScreen {
         self.limits.len().saturating_sub(1)
     }
 
-    /// The document the screen holds, valid or not. Preflight F18: until M9.8.12 the
-    /// roster and the orchestrator default go back as they were read, so a save in
-    /// between cannot wipe them; the role table is the `everywhere` scope's.
+    /// The document the screen holds, valid or not: the limits, and the role table of
+    /// the `everywhere` scope (M9.8.12: the roster and the orchestrator default left the
+    /// document).
     pub fn built(&self) -> SettingsDoc {
         let mut limits = self.base.limits.clone();
         for f in &self.limits {
@@ -260,8 +255,6 @@ impl SettingsScreen {
             set_limit(&mut limits, f.key, f.text.parse().unwrap_or(0));
         }
         SettingsDoc {
-            models: self.base.models.clone(),
-            orchestrator: self.base.orchestrator.clone(),
             limits,
             // Ruling T18-2: read-only here; the screen carries what the daemon said.
             design_default: self.base.design_default,
@@ -287,15 +280,6 @@ impl SettingsScreen {
     /// What blocks `w` now.
     pub fn problems(&self) -> Vec<String> {
         self.doc().err().unwrap_or_default()
-    }
-
-    /// What only warns (`config::settings::warnings`).
-    pub fn warnings(&self) -> Vec<String> {
-        if self.loaded {
-            warnings(&self.built())
-        } else {
-            vec![]
-        }
     }
 
     /// Whether the global document differs from the one the screen opened on: what

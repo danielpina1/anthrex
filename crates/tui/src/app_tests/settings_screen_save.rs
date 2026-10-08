@@ -363,40 +363,27 @@ fn an_unsent_put_says_so_on_the_screen() {
     assert_eq!(app.toast_text(), Some("daemon is not responding"));
 }
 
-/// The sample with hidden format characters a save drops (milestone 9.2's M9.2.6 fix
-/// round 2): `⚠️`'s variation selector in `claude-x`'s note and a soft hyphen in the
-/// orchestrator default's model.
-fn with_hidden() -> SettingsDoc {
-    let mut doc = sample();
-    doc.models[1].note = "\u{26A0}\u{FE0F} careful".into();
-    doc.models[1].model = "claude-\u{AD}x".into();
-    doc.orchestrator.runtime = Some(Runtime::Claude);
-    doc.orchestrator.model = "claude-\u{AD}x".into();
-    doc
-}
-
-/// Ruling (M9.2.15, carried): the Settings screen adopts the `Saved` reply's doc, which
-/// the daemon cleaned (`config::settings::cleaned`), so what the screen holds is what
-/// was stored (`⚠` without its selector) and an unchanged screen is not dirty; edits
-/// made while the save was in flight are kept on top of it.
+/// Ruling (M9.2.15, carried): the Settings screen adopts the `Saved` reply's doc, as the
+/// daemon stored it (`config::settings::cleaned`; since M9.8.12 the doc holds no text a
+/// save cleans), so an unchanged screen is not dirty; edits made while the save was in
+/// flight are kept on top of it.
 #[test]
 fn the_saved_doc_is_adopted_as_the_daemon_cleaned_it() {
     let stored = |sent: &SettingsDoc| config::settings::cleaned(sent);
     // Nothing edited since the send.
-    let mut app = cached(with_hidden(), origin(&[]));
+    let mut app = cached(sample(), origin(&[]));
     open(&mut app);
     set_limit(&mut app, key::MAX_READERS, "4");
     let (id, sent) = puts(&w(&mut app))[0].clone();
-    assert_ne!(stored(&sent), sent, "the save cleans something");
     let saved = SettingsReply::Saved {
         doc: stored(&sent),
         origin: origin(&[]),
     };
     app.on_daemon(reply(saved, id));
-    assert_eq!(screen(&app).built().models[1].note, "\u{26A0} careful");
+    assert_eq!(screen(&app).built(), stored(&sent));
     assert!(!screen(&app).dirty());
     // An edit made while saving: kept, and the rest is the stored doc.
-    let mut app = cached(with_hidden(), origin(&[]));
+    let mut app = cached(sample(), origin(&[]));
     open(&mut app);
     set_limit(&mut app, key::MAX_READERS, "4");
     let (id, sent) = puts(&w(&mut app))[0].clone();
@@ -412,8 +399,6 @@ fn the_saved_doc_is_adopted_as_the_daemon_cleaned_it() {
     assert_ne!(want.limits.max_writers, 5);
     want.limits.max_writers = 5;
     assert_eq!(s.built(), want, "only the in-flight edit differs");
-    assert_eq!(s.built().models[1].model, "claude-x");
-    assert_eq!(s.built().orchestrator.model, "claude-x");
     assert_eq!(s.outcome, Some(SaveOutcome::Saved));
 }
 
@@ -421,7 +406,7 @@ fn the_saved_doc_is_adopted_as_the_daemon_cleaned_it() {
 /// doc, and the screen still knows it as its own and takes it (fix round 1, ruling 2).
 #[test]
 fn a_landed_save_is_known_by_its_cleaned_doc() {
-    let mut app = cached(with_hidden(), origin(&[]));
+    let mut app = cached(sample(), origin(&[]));
     open(&mut app);
     set_limit(&mut app, key::MAX_READERS, "4");
     let (_, sent) = puts(&w(&mut app))[0].clone();

@@ -230,8 +230,7 @@ pub use run_info::{
 pub use run_wire::{ProfileReply, ProfileRequest, RunReply, RunRequest, ToolCall};
 pub use scout::{ScoutFile, ScoutInfo, ScoutKind, ScoutReport, ScoutState};
 pub use settings::{
-    BudgetLimit, OrchestratorDefault, Origin, SETTINGS_KEYS, SettingsDoc, SettingsLimits,
-    SettingsReply, SettingsRequest,
+    BudgetLimit, Origin, SETTINGS_KEYS, SettingsDoc, SettingsLimits, SettingsReply, SettingsRequest,
 };
 pub use task_detail::{ACTIVITY_MAX, SummarySource, TaskDetailInfo, WORKER_SUMMARY_MAX};
 pub use tiers::{FullInfo, FullState, SignalInfo, StageInfo, TaskOrigin, TierInfo};

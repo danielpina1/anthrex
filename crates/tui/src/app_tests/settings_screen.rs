@@ -211,18 +211,16 @@ fn c_b_s_opens_from_the_cache() {
     assert!(settings_sent(&open(&mut app)).is_empty());
 }
 
+/// M9.8.12 (carried from Task 11's review): the roster's strength warnings left with
+/// the roster; a limits edit saves with nothing but the limits and the table.
 #[test]
-fn a_strength_on_one_runtime_warns_but_saves() {
+fn no_strength_warning_and_a_limit_saves() {
     let mut app = opened();
-    let warnings = screen(&app).warnings();
-    assert_eq!(
-        warnings,
-        vec![
-            "no codex model is fast: the cross-runtime reviewer cannot be chosen for fast tasks",
-            "no claude model is standard: the cross-runtime reviewer cannot be chosen for standard tasks",
-            "no codex model is frontier: the cross-runtime reviewer cannot be chosen for frontier tasks",
-        ]
-    );
+    for section in [SettingsSection::Models, SettingsSection::Limits] {
+        to_section(&mut app, section);
+        let text = crate::ui::settings::tests::screen_text(&app, 120, 40);
+        assert!(!text.contains("cross-runtime reviewer"), "{text}");
+    }
     assert!(screen(&app).problems().is_empty());
     set_limit(&mut app, key::MAX_READERS, "4");
     let sent = puts(&w(&mut app));
@@ -297,7 +295,7 @@ fn budgets_show_their_hard_stop() {
 
 #[test]
 fn defaults_are_marked() {
-    let defaults = [key::MODELS, key::AGENT_MODEL, key::MAX_BOUNCES];
+    let defaults = [key::ROLES, key::MAX_BOUNCES];
     let mut app = cached(sample(), origin(&defaults));
     open(&mut app);
     let s = screen(&app);

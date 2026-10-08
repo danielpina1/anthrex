@@ -20,7 +20,7 @@ use crate::{Orchestrator, RouteList, RouteLists};
 const CLIS: &str = "the models your CLIs report (C-b S)";
 
 /// Each sub-table's keys that fed a row, and the row.
-const SCALARS: &[(&str, &[&str], &str)] = &[
+pub(super) const SCALARS: &[(&str, &[&str], &str)] = &[
     ("agent", &["runtime", "model", "effort"], "orchestrator"),
     ("planners", &["runtime", "strength", "effort"], "planner"),
     ("scouts", &["runtime", "strength", "effort"], "research"),
@@ -29,7 +29,7 @@ const SCALARS: &[(&str, &[&str], &str)] = &[
 ];
 
 /// Each `[orchestrator.routes.<name>]` table and the row it is replaced by.
-const ROUTES: &[(&str, &str)] = &[
+pub(super) const ROUTES: &[(&str, &str)] = &[
     ("s", "implementer.small"),
     ("m", "implementer.medium"),
     ("hub", "implementer.hub"),

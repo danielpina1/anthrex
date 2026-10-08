@@ -550,7 +550,7 @@ fn w_saves_the_scope() {
         [(_, SettingsRequest::Put { settings })] => {
             assert!(!settings.roles.rows.contains_key(&Role::Research));
             assert_eq!(settings.roles.rows.len(), spec_roles().rows.len() - 1);
-            assert_eq!(settings.models, crate::ui::settings::tests::sample().models);
+            assert_eq!(settings.limits, crate::ui::settings::tests::sample().limits);
         }
         other => panic!("{other:?}"),
     }

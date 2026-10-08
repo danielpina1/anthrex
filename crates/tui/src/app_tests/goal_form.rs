@@ -12,9 +12,10 @@ use crate::app::actions::forms::ActionForm;
 use crate::app::replies::PendingWhat;
 use crate::run_goal::{GoalField, GoalForm};
 use crate::tree::NodeKey;
+use proto::models::{HelperKind, ModelRef, ModelTable, Role, RoleChoice};
 use proto::{
-    ActionKind, BudgetLimit, ModelEntry, OrchestratorChoice, OrchestratorDefault, Origin, RunReply,
-    RunRequest, SettingsDoc, SettingsLimits, SettingsReply, SettingsRequest, Strength,
+    ActionKind, BudgetLimit, ModelEntry, OrchestratorChoice, Origin, RunReply, RunRequest,
+    SettingsDoc, SettingsLimits, SettingsReply, SettingsRequest, Strength,
 };
 use std::collections::BTreeMap;
 use std::time::Instant;
@@ -28,17 +29,34 @@ pub(super) fn entry(runtime: Runtime, model: &str) -> ModelEntry {
     }
 }
 
+/// M9.8.12: the roster left the settings document. A fixture's entries become helper
+/// kind rows (one per kind, in order), which tell documents apart without changing
+/// what the orchestrator row or the goal form's `role table` entry reads.
+pub(super) fn table(models: Vec<ModelEntry>) -> ModelTable {
+    let mut out = ModelTable::default();
+    for (m, kind) in models.into_iter().zip(HelperKind::ALL) {
+        let id = if m.model.is_empty() {
+            "default"
+        } else {
+            &m.model
+        };
+        let model = ModelRef::parse(&format!("{}:{id}", m.runtime.label())).unwrap();
+        let row = RoleChoice {
+            model,
+            effort: None,
+            fallback: None,
+        };
+        out.rows.insert(Role::Helper(kind), row);
+    }
+    out
+}
+
 pub(super) fn doc(models: Vec<ModelEntry>) -> SettingsDoc {
     let budget = BudgetLimit {
         tool_calls: 10,
         minutes: 5,
     };
     SettingsDoc {
-        models,
-        orchestrator: OrchestratorDefault {
-            runtime: None,
-            model: String::new(),
-        },
         limits: SettingsLimits {
             budget_s: budget,
             budget_m: budget,
@@ -49,7 +67,7 @@ pub(super) fn doc(models: Vec<ModelEntry>) -> SettingsDoc {
             max_bounces: 2,
         },
         design_default: None,
-        roles: Default::default(),
+        roles: table(models),
     }
 }
 
@@ -72,7 +90,7 @@ pub(super) fn reply(reply: SettingsReply, id: u64) -> DaemonMsg {
 fn current(models: Vec<ModelEntry>) -> SettingsReply {
     SettingsReply::Current {
         doc: doc(models),
-        origin: BTreeMap::from([("orchestrator.models".to_string(), Origin::File)]),
+        origin: BTreeMap::from([("models".to_string(), Origin::File)]),
         path: "/cfg/config.toml".into(),
     }
 }
@@ -80,7 +98,7 @@ fn current(models: Vec<ModelEntry>) -> SettingsReply {
 fn saved(models: Vec<ModelEntry>) -> SettingsReply {
     SettingsReply::Saved {
         doc: doc(models),
-        origin: BTreeMap::from([("orchestrator.models".to_string(), Origin::File)]),
+        origin: BTreeMap::from([("models".to_string(), Origin::File)]),
     }
 }
 
@@ -170,12 +188,15 @@ fn a_new_connection_fetches_the_settings_once() {
     // The `Current` reply to the fetch fills the cache.
     assert!(app.on_daemon(reply(current(roster()), ids[0])).is_empty());
     let cache = app.settings_cache.as_ref().expect("cache");
-    assert_eq!(cache.doc.models, roster());
+    assert_eq!(cache.doc.roles, table(roster()));
     assert_eq!(cache.path, std::path::PathBuf::from("/cfg/config.toml"));
-    assert_eq!(cache.origin["orchestrator.models"], Origin::File);
+    assert_eq!(cache.origin["models"], Origin::File);
     // The entry is spent: a repeat of the same id changes nothing.
     app.on_daemon(reply(current(vec![]), ids[0]));
-    assert_eq!(app.settings_cache.as_ref().unwrap().doc.models, roster());
+    assert_eq!(
+        app.settings_cache.as_ref().unwrap().doc.roles,
+        table(roster())
+    );
 
     // Every new connection: exactly one more, under a new id.
     assert!(app.on_link_lost("x").is_empty());
@@ -211,7 +232,7 @@ fn a_saved_reply_replaces_the_cache_and_keeps_its_path() {
     ));
     assert!(effects.is_empty(), "{effects:?}");
     let cache = app.settings_cache.as_ref().unwrap();
-    assert_eq!(cache.doc.models.len(), 1);
+    assert_eq!(cache.doc.roles.rows.len(), 1);
     assert_eq!(cache.path, std::path::PathBuf::from("/cfg/config.toml"));
 }
 
@@ -232,11 +253,14 @@ fn a_put_that_was_not_saved_asks_for_the_settings_again() {
     assert_eq!(gets(&effects).len(), 1, "{effects:?}");
     assert_eq!(app.toast_level(), Some(ToastLevel::Error));
     assert!(app.toast_text().unwrap().contains("still being written"));
-    assert_eq!(app.settings_cache.as_ref().unwrap().doc.models, roster());
+    assert_eq!(
+        app.settings_cache.as_ref().unwrap().doc.roles,
+        table(roster())
+    );
     // The new Get's `Current` brings the file's truth in.
     let id = gets(&effects)[0];
     app.on_daemon(reply(current(vec![entry(Runtime::Codex, "gpt-6-sol")]), id));
-    assert_eq!(app.settings_cache.as_ref().unwrap().doc.models.len(), 1);
+    assert_eq!(app.settings_cache.as_ref().unwrap().doc.roles.rows.len(), 1);
 
     // A refused `Get` does not loop: it toasts and sends nothing.
     let id = gets(&[app.settings_fetch()])[0];
@@ -255,9 +279,15 @@ fn an_older_reply_never_replaces_a_newer_cache() {
     let (put, _) = tagged(&[app.settings_put(doc(vec![]))]);
     let one = vec![entry(Runtime::Claude, "claude-opus-5-5")];
     app.on_daemon(reply(saved(one.clone()), put));
-    assert_eq!(app.settings_cache.as_ref().unwrap().doc.models, one);
+    assert_eq!(
+        app.settings_cache.as_ref().unwrap().doc.roles,
+        table(one.clone())
+    );
     assert!(app.on_daemon(reply(current(roster()), older)).is_empty());
-    assert_eq!(app.settings_cache.as_ref().unwrap().doc.models, one);
+    assert_eq!(
+        app.settings_cache.as_ref().unwrap().doc.roles,
+        table(one.clone())
+    );
     assert!(
         !app.replies.contains(older),
         "the stale reply was still spent"
@@ -444,7 +474,8 @@ fn custom_in_the_picker_names_any_model() {
 }
 
 #[test]
-fn promote_picks_from_the_roster_cache() {
+fn promote_picks_from_the_catalogs() {
+    // M9.8.12: the roster left the settings; the picker offers what the CLIs report.
     let (mut snap, windows) = running_snapshot();
     snap.runs[0]
         .actions
@@ -452,6 +483,7 @@ fn promote_picks_from_the_roster_cache() {
     let mut app = app_with_runs(windows, snap);
     let id = gets(&[app.settings_fetch()])[0];
     app.on_daemon(reply(current(roster()), id));
+    app.catalogs = crate::app::model_picker::tests::fixture_catalogs();
     app.open_actions(
         (crate::tree::run_fixtures::RUN_ID.into(), ActionTarget::Run),
         Some(ActionKind::Promote),
@@ -472,9 +504,11 @@ fn promote_picks_from_the_roster_cache() {
         [
             "configured",
             "cl claude-haiku-4-5",
-            "cx gpt-6-sol",
+            "cl claude-sonnet-5",
             "cl claude-opus-5-5",
-            "cx default"
+            "cx gpt-6-luna",
+            "cx gpt-6-sol",
+            "cx gpt-6.1-sol"
         ]
     );
     // Picking the third entry sends its runtime and model.

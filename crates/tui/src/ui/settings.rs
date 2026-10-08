@@ -233,20 +233,14 @@ fn marked(g: Glyph, text: &str, width: usize, r: Role, p: Palette) -> Vec<Line<'
         .collect()
 }
 
-/// What blocks `w` and what only warns.
+/// What blocks `w`.
 fn notes(s: &SettingsScreen, width: u16, p: Palette) -> Vec<Line<'static>> {
     let w = usize::from(width).max(1);
     let mut out = Vec::new();
     for problem in s.problems() {
         out.extend(marked(Glyph::Failed, &problem, w, Role::Failed, p));
     }
-    // Fix round 1 (review minor 5): the roster's strength warnings (F18) say nothing
-    // of the models table; they stay on `limits` until M9.8.12 removes the roster.
-    if s.section != SettingsSection::Models {
-        for warning in s.warnings() {
-            out.extend(marked(Glyph::Warning, &warning, w, Role::Attention, p));
-        }
-    }
+    // M9.8.12: the roster's strength warnings went with the roster.
     out
 }
 

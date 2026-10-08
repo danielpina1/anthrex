@@ -222,8 +222,14 @@ pub fn parse(text: &str) -> (Config, Vec<Problem>) {
         .map(|v| models::read_table(v, &mut problems))
         .unwrap_or_default();
     let raw = table.get("orchestrator").and_then(|v| v.as_table());
-    let (migrated, notes) = models::migrate(&config.orchestrator, raw);
+    let (migrated, mut notes) = models::migrate(&config.orchestrator, raw);
     config.orchestrator.roles = migrated.overlaid(&explicit);
+    // M9.8.12 (Task 3's review): a key that migrated to no row is kept by a save; its
+    // note says so.
+    if let Some(raw) = raw {
+        let kept = models::kept(raw, &migrated, &config.orchestrator.roles);
+        models::kept_notes(&mut notes, &kept);
+    }
     config.orchestrator.roles_notes = notes;
     read_testing(&table, &mut config, &mut problems);
     read_delivery(&table, &mut config, &mut problems);

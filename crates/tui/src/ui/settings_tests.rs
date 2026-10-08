@@ -7,23 +7,11 @@ use crate::settings::UiSettings;
 use crate::theme::{Role, role};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use proto::settings::key;
-use proto::{
-    BudgetLimit, DaemonMsg, ModelEntry, OrchestratorDefault, Origin, RunReply, Runtime,
-    SettingsDoc, SettingsLimits, SettingsReply, Strength,
-};
+use proto::{BudgetLimit, DaemonMsg, Origin, RunReply, SettingsDoc, SettingsLimits, SettingsReply};
 use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
 use std::collections::BTreeMap;
 
 const SIZES: [(u16, u16); 2] = [(80, 24), (120, 40)];
-
-fn model(runtime: Runtime, name: &str, strength: Strength) -> ModelEntry {
-    ModelEntry {
-        runtime,
-        model: name.into(),
-        strength,
-        note: String::new(),
-    }
-}
 
 pub(crate) fn sample() -> SettingsDoc {
     let budget = |tool_calls, minutes| BudgetLimit {
@@ -31,15 +19,6 @@ pub(crate) fn sample() -> SettingsDoc {
         minutes,
     };
     SettingsDoc {
-        models: vec![
-            model(Runtime::Claude, "claude-opus-5-5", Strength::Frontier),
-            model(Runtime::Claude, "claude-x", Strength::Fast),
-            model(Runtime::Codex, "", Strength::Standard),
-        ],
-        orchestrator: OrchestratorDefault {
-            runtime: Some(Runtime::Claude),
-            model: "claude-opus-5-5".into(),
-        },
         limits: SettingsLimits {
             budget_s: budget(40, 15),
             budget_m: budget(80, 30),
@@ -54,9 +33,9 @@ pub(crate) fn sample() -> SettingsDoc {
     }
 }
 
-/// `orchestrator.models`, the orchestrator's model and `max_bounces` from the defaults.
+/// `models` and `max_bounces` from the defaults.
 fn origin() -> BTreeMap<String, Origin> {
-    let defaults = [key::MODELS, key::AGENT_MODEL, key::MAX_BOUNCES];
+    let defaults = [key::ROLES, key::MAX_BOUNCES];
     proto::SETTINGS_KEYS
         .iter()
         .map(|k| {
@@ -149,31 +128,9 @@ fn tail(app: &App, w: u16, h: u16, n: usize) -> Vec<String> {
     all[all.len() - n..].to_vec()
 }
 
-const WARN_80: [&str; 6] = [
-    "⚠ no codex model is fast: the cross-runtime reviewer cannot be chosen for fast",
-    "  tasks",
-    "⚠ no claude model is standard: the cross-runtime reviewer cannot be chosen for",
-    "  standard tasks",
-    "⚠ no codex model is frontier: the cross-runtime reviewer cannot be chosen for",
-    "  frontier tasks",
-];
-const WARN_120: [&str; 3] = [
-    "⚠ no codex model is fast: the cross-runtime reviewer cannot be chosen for fast tasks",
-    "⚠ no claude model is standard: the cross-runtime reviewer cannot be chosen for standard tasks",
-    "⚠ no codex model is frontier: the cross-runtime reviewer cannot be chosen for frontier tasks",
-];
-
-fn warnings_at(app: &App, w: u16, h: u16) {
-    if w == 80 {
-        assert_eq!(tail(app, w, h, 6), WARN_80, "{w}x{h}");
-    } else {
-        assert_eq!(tail(app, w, h, 3), WARN_120, "{w}x{h}");
-    }
-}
-
 /// Milestone 9.8: the screen opens on `models`, drawn whole as the spec's table
-/// (`ui/models_table_tests.rs` checks its rows); the roster's warnings stay on
-/// `limits`, and the status bar keeps the section's hints.
+/// (`ui/models_table_tests.rs` checks its rows), and the status bar keeps the
+/// section's hints.
 #[test]
 fn models_section_renders_at_80x24_and_120x40() {
     let mut app = opened(false, sample());
@@ -194,8 +151,7 @@ fn models_section_renders_at_80x24_and_120x40() {
             all[3].starts_with("▸orchestrator          Claude · Opus 5.5       high     —"),
             "{w}x{h}: {all:?}"
         );
-        // Fix round 1 (review minor 5): the roster's strength warnings (F18) are not
-        // the models table's; only what blocks `w` shows here.
+        // Only what blocks `w` shows here (M9.8.12 removed the roster's warnings).
         assert!(
             all[13..all.len() - 1].iter().all(|r| r.is_empty()),
             "{w}x{h}: {all:?}"
@@ -234,7 +190,11 @@ fn limits_section_renders_at_80x24_and_120x40() {
             ],
             "{w}x{h}"
         );
-        warnings_at(&app, w, h);
+        // M9.8.12: the roster's strength warnings went with the roster.
+        assert!(
+            !screen_text(&app, w, h).contains("cross-runtime reviewer"),
+            "{w}x{h}"
+        );
     }
     // Out of range: the value in `Failed`, config's own message above the hints.
     let at = screen_mut(&mut app)
@@ -277,7 +237,6 @@ fn ascii_mode_draws_only_ascii() {
         ">orchestrator          Claude - Opus 5.5       high     -",
         " implementer - small   Claude - Sonnet 5       low      -",
         " helpers >             Claude - Haiku 4.5      -        -",
-        "! no codex model is fast",
         " enter choose model   e effort",
         "enter choose model",
     ] {
@@ -354,20 +313,29 @@ fn the_pages_render_as_kit_dialogs() {
 #[test]
 fn problems_warnings_and_outcomes_render() {
     let mut app = opened(false, sample());
-    // Milestone 9.8 (preflight F18): the roster is the daemon's as read; a doc with
-    // none is refused by the daemon's own rules.
-    let none = SettingsDoc {
-        models: vec![],
-        ..sample()
-    };
-    screen_mut(&mut app).load(&none, &origin());
+    // Milestone 9.8 (M9.8.12): a row the daemon's own rules refuse blocks `w`, and the
+    // roster's strength warnings are gone from every section with the roster.
+    let mut bad = sample();
+    bad.roles.rows.insert(
+        proto::models::Role::Planner,
+        proto::models::RoleChoice {
+            model: proto::models::ModelRef::parse("codex:default").unwrap(),
+            effort: Some("Not An Effort".into()),
+            fallback: None,
+        },
+    );
+    screen_mut(&mut app).load(&bad, &origin());
     let text = screen_text(&app, 80, 24);
-    assert!(text.contains("✗ enable at least one model"), "{text}");
-    // The orchestrator's model went with them: the daemon's rule says so too.
     assert!(
-        text.contains("✗ orchestrator.agent.model: claude-opus-5-5 is not an enabled claude"),
+        text.contains("✗ models.planner.effort: \"Not An Effort\" is not an effort name"),
         "{text}"
     );
+    for s in SettingsSection::ALL {
+        section(&mut app, s);
+        let text = screen_text(&app, 120, 40);
+        assert!(!text.contains("cross-runtime reviewer"), "{s:?}\n{text}");
+    }
+    section(&mut app, SettingsSection::Models);
     let s = screen_mut(&mut app);
     s.load(&sample(), &origin());
     s.outcome = Some(SaveOutcome::Refused(vec!["one".into(), "two".into()]));
@@ -484,12 +452,7 @@ fn no_panic_at_tiny_sizes() {
 #[test]
 fn settings_screen_text_is_sanitised() {
     let hostile = crate::safe_text::tests::hostile_text();
-    let mut doc = sample();
-    doc.models.push(ModelEntry {
-        note: hostile.clone(),
-        ..model(Runtime::Claude, &hostile, Strength::Fast)
-    });
-    doc.orchestrator.model = hostile.clone();
+    let doc = sample();
     let mut app = opened(false, doc);
     // Milestone 9.8: a catalog's label, description and efforts, in the table and the
     // picker.

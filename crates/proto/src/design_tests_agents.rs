@@ -5,7 +5,7 @@
 //! and a run without the flow writes what it wrote before.
 
 use super::*;
-use crate::settings::{BudgetLimit, OrchestratorDefault, SettingsDoc, SettingsLimits};
+use crate::settings::{BudgetLimit, SettingsDoc, SettingsLimits};
 
 fn agent(role: AgentRole, label: &str, state: DesignAgentStatus) -> DesignAgentInfo {
     DesignAgentInfo {
@@ -76,11 +76,6 @@ fn a_settings_doc() -> SettingsDoc {
         minutes: 5,
     };
     SettingsDoc {
-        models: Vec::new(),
-        orchestrator: OrchestratorDefault {
-            runtime: None,
-            model: String::new(),
-        },
         limits: SettingsLimits {
             budget_s: budget,
             budget_m: budget,
