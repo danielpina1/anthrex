@@ -54,8 +54,15 @@ impl App {
         if let Some(modal) = &mut self.modal {
             match modal {
                 Modal::NewAgent(form) => form.on_paste(&text),
-                Modal::EditTask(form) => form.on_paste(&text),
-                Modal::StartGoal(form) => form.on_paste_in(&text, goal_view),
+                // Milestone 9.8: an open picker takes it (its custom name) or drops it.
+                Modal::EditTask(form) => match &mut form.picker {
+                    Some(picker) => picker.on_paste(&text),
+                    None => form.on_paste(&text),
+                },
+                Modal::StartGoal(form) => match &mut form.picker {
+                    Some(picker) => picker.on_paste(&text),
+                    None => form.on_paste_in(&text, goal_view),
+                },
                 Modal::Action(flow) => {
                     if let super::actions::ActionStep::Form(form) = &mut flow.step {
                         form.on_paste(&text);

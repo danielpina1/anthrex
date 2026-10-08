@@ -64,7 +64,7 @@ pub enum Modal {
     /// Milestone 8c decision 33: the plan gate's task edit form (`crate::run_edit`).
     EditTask(Box<crate::run_edit::TaskEditForm>),
     /// Milestone 9 decision 44: the goal form (`crate::run_goal`).
-    StartGoal(crate::run_goal::GoalForm),
+    StartGoal(Box<crate::run_goal::GoalForm>),
     Action(Box<actions::ActionFlow>), // Milestone 9.0.6 decision 12: the action menu.
     Iterate(crate::run_iterate::IterateForm), // Milestone 9.3 decision 32 (`app/iterate.rs`).
     IdleMenu(idle_menu::IdleMenu),    // Milestone 9.3 decision 32: the idle orchestrator's menu.
@@ -564,6 +564,7 @@ mod daemon;
 pub(crate) mod doc_gate;
 mod doc_gate_note;
 mod doc_gate_replies;
+pub(crate) mod form_picker;
 mod goal;
 pub(crate) mod headless;
 pub(crate) mod help;

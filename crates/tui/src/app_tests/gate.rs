@@ -8,8 +8,7 @@ use crate::run_edit::{EditField, TaskEditForm};
 use crate::tree::NodeKey;
 use crate::tree::run_fixtures::{RUN_ID, gate_fixture, snapshot, task};
 use proto::{
-    Effort, PlanEdit, RouteSpec, RunPath, RunReply, RunRequest, RunState, Size, Strength,
-    TaskState, TestMode,
+    Effort, PlanEdit, RouteSpec, RunPath, RunReply, RunRequest, RunState, Size, TaskState, TestMode,
 };
 
 use super::runs::{app_with_runs, deliver, open_run_view};
@@ -326,14 +325,16 @@ fn e_or_d_on_the_root_toasts() {
 #[test]
 fn the_edit_form_sends_only_what_changed() {
     let mut app = gate();
+    // Milestone 9.8 decision 39 (changed expectation): the effort cycles the catalog's
+    // efforts of the model the task resolves to (`claude-sonnet-5`).
+    app.catalogs = crate::app::model_picker::tests::fixture_catalogs();
     open_form(&mut app, "t1");
     assert_eq!(
-        form(&app).value_parts(EditField::Strength),
-        ("‹ policy ›".into(), Some("standard".into()))
-    );
-    assert_eq!(
         form(&app).value_parts(EditField::Model),
-        ("policy".into(), Some("claude-sonnet-5".into()))
+        (
+            "‹ Claude · role table ›".into(),
+            Some("claude-sonnet-5".into())
+        )
     );
     focus(&mut app, EditField::Effort);
     tap(&mut app, KeyCode::Right);
@@ -362,58 +363,23 @@ fn the_edit_form_sends_only_what_changed() {
 }
 
 #[test]
-fn changing_the_runtime_clears_the_model() {
-    let (mut snap, windows) = gate_fixture();
-    let mut t1 = edit_fixture_task();
-    t1.route_spec = RouteSpec {
-        runtime: Some(Runtime::Claude),
-        model: Some("claude-sonnet-5".into()),
-        strength: Some(Strength::Standard),
-        effort: None,
-    };
-    snap.runs[0].tasks[0] = t1;
-    let mut app = app_with_runs(windows, snap);
-    open_run_view(&mut app, RUN_ID);
-    open_form(&mut app, "t1");
-    assert_eq!(form(&app).model.text(), "claude-sonnet-5");
-    tap(&mut app, KeyCode::Right);
-    assert_eq!(form(&app).runtime, Some(Runtime::Codex));
-    assert_eq!(form(&app).model.text(), "");
-    assert_eq!(
-        tap(&mut app, KeyCode::Enter),
-        form_edit(vec![amend(
-            Some(RouteSpec {
-                runtime: Some(Runtime::Codex),
-                model: None,
-                strength: Some(Strength::Standard),
-                effort: None,
-            }),
-            None
-        )])
-    );
-}
-
-#[test]
-fn policy_is_a_choice() {
+fn the_role_table_is_a_choice() {
+    // Milestone 9.8 decision 39 (was `policy_is_a_choice`): the picker's `role table`
+    // clears the plan's route, every field the table's.
     let mut app = gate();
     open_form(&mut app, "t1");
-    tap(&mut app, KeyCode::Left);
-    assert_eq!(form(&app).runtime, None);
+    tap(&mut app, KeyCode::Enter);
+    assert!(form(&app).picker.is_some());
+    tap(&mut app, KeyCode::Enter);
+    assert!(form(&app).picker.is_none());
     assert_eq!(
-        form(&app).value_parts(EditField::Runtime),
-        ("‹ policy ›".into(), Some("claude".into()))
+        form(&app).value_parts(EditField::Model),
+        ("‹ role table ›".into(), None)
     );
+    focus(&mut app, EditField::Size);
     assert_eq!(
         tap(&mut app, KeyCode::Enter),
-        form_edit(vec![amend(
-            Some(RouteSpec {
-                runtime: None,
-                model: None,
-                strength: None,
-                effort: Some(Effort::MEDIUM),
-            }),
-            None
-        )])
+        form_edit(vec![amend(Some(RouteSpec::default()), None)])
     );
 }
 

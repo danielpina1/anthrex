@@ -3,6 +3,8 @@
 //! Moved out of `app/runs.rs` (`AGENTS.md` hard rule 8) before milestone 9 adds holds
 //! (`app/run_holds.rs`), which `a` and `x` try first.
 
+use super::form_picker::{self, FormPick};
+use super::model_picker::PickerFor;
 use super::{App, Effect, Modal, PendingAction};
 use crate::run_edit::{EditOutcome, TaskEditForm};
 use crate::tree::NodeKey;
@@ -119,11 +121,38 @@ impl App {
         // The brief's text area as the form draws it over the whole terminal, so Up
         // and Down move a drawn row (decision 35).
         let brief_width = crate::ui::run_edit::brief_width(self.body_area.width);
+        let catalogs = &self.catalogs;
         let Some(Modal::EditTask(form)) = &mut self.modal else {
             return vec![];
         };
+        // Milestone 9.8 decision 39: the route model's efforts, as the catalogs say now.
+        form.efforts = (form.effort_model()).map_or_else(Vec::new, |m| catalogs.efforts(&m));
+        if let Some(picker) = &mut form.picker {
+            match form_picker::on_key(picker, key) {
+                FormPick::Stay => {}
+                FormPick::Close => form.picker = None,
+                FormPick::Refresh => return vec![form_picker::refresh()],
+                FormPick::Chose(model) => {
+                    let label =
+                        (model.as_ref()).map_or_else(String::new, |m| catalogs.label(m, false));
+                    form.picker = None;
+                    form.choose(model, label);
+                }
+            }
+            return vec![];
+        }
         match form.on_key_in(key, brief_width) {
             EditOutcome::Stay => vec![],
+            EditOutcome::Pick => {
+                let current = form.current_model();
+                form.picker = Some(form_picker::open(
+                    PickerFor::TaskEdit,
+                    catalogs,
+                    current.as_ref(),
+                    crate::run_edit::ROLE_TABLE.to_string(),
+                ));
+                vec![]
+            }
             EditOutcome::Cancel => {
                 self.modal = None;
                 vec![]

@@ -1,40 +1,8 @@
 //! The task edit form's choices: each field's next value forward or back (milestone 8c
-//! decision 33).
+//! decision 33). Milestone 9.8: the route's runtime, strength and effort cycles went;
+//! the model is the picker's and the effort cycles the catalog's (`app/form_picker.rs`).
 
-use proto::{Effort, Runtime, Size, Strength, TestMode};
-
-pub(super) fn next_runtime(value: Option<Runtime>, forward: bool) -> Option<Runtime> {
-    let order = [None, Some(Runtime::Claude), Some(Runtime::Codex)];
-    step(&order, value, forward)
-}
-
-pub(super) fn next_strength(value: Option<Strength>, forward: bool) -> Option<Strength> {
-    let order = [
-        None,
-        Some(Strength::Fast),
-        Some(Strength::Standard),
-        Some(Strength::Frontier),
-    ];
-    step(&order, value, forward)
-}
-
-pub(super) fn next_effort(value: Option<Effort>, forward: bool) -> Option<Effort> {
-    let order = [
-        None,
-        Some(Effort::LOW),
-        Some(Effort::MEDIUM),
-        Some(Effort::HIGH),
-    ];
-    // `Effort` is not `Copy` (a string since 9.8): step by position, then clone.
-    let at = order.iter().position(|v| *v == value);
-    let len = order.len();
-    let next = match at {
-        Some(at) if forward => (at + 1) % len,
-        Some(at) => (at + len - 1) % len,
-        None => 0,
-    };
-    order[next].clone()
-}
+use proto::{Size, TestMode};
 
 pub(super) fn next_test_mode(value: TestMode, forward: bool) -> TestMode {
     step(

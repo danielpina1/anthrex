@@ -2,9 +2,9 @@
 //! its keys and its tick; and decision 24: the settings the daemon owns, as the client
 //! keeps them.
 //! One tagged `Settings(Get)` leaves with every new connection; its `Current` reply and
-//! every `Saved` become `App.settings_cache`, which the goal form's model picker, the
-//! Promote form and (tasks 13-15) the screens read. None of them sends a request of its
-//! own to read it. Pure: every request leaves as an `Effect`.
+//! every `Saved` become `App.settings_cache`, which the goal form's role table entry
+//! (milestone 9.8), the Promote form and (tasks 13-15) the screens read. None of them
+//! sends a request of its own to read it. Pure: every request leaves as an `Effect`.
 
 use super::replies::PendingWhat;
 use super::runs::first_line_and_more;
@@ -212,13 +212,14 @@ impl App {
         Some(effects)
     }
 
-    /// Replaces the cache and tells the open goal form its roster changed.
+    /// Replaces the cache and tells the open goal form (its design default, its role
+    /// table entry).
     fn set_cache(&mut self, cache: SettingsCache) {
         if let Some(Modal::StartGoal(form)) = &mut self.modal {
-            form.set_roster(cache.doc.models.clone());
             form.design_default = cache.doc.design_default;
         }
         self.settings_cache = Some(cache);
+        self.refresh_goal_models();
         self.sync_settings_screen();
     }
 }

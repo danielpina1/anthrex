@@ -1,7 +1,8 @@
 //! Milestone 9 decision 44 and (9.0.6) decision 39: the goal form `C-b g` opens, pure
 //! (`AGENTS.md` hard rule 5). It holds a goal (a text area; `Ctrl-J` inserts a newline),
-//! an optional orchestrator runtime, a model picked from that runtime's enabled models
-//! (or typed after `custom…`), and three toggles that start off: `trust`,
+//! the orchestrator's model chosen from the CLIs' models in the model picker (milestone
+//! 9.8 decision 39; `role table` is the orchestrator row's) and its effort, and three
+//! toggles that start off: `trust`,
 //! `approve at once` and `unconfined checks`, for one project the caller chose. It
 //! builds M8b's `RunRequest::StartGoal` exactly as `anthrex run start --goal` sends it:
 //! with the toggles off the plan gate stays on and checks stay confined. Opening,
@@ -13,13 +14,13 @@
 //! from an option row, Esc on a text asks before discarding it, and the orchestrator
 //! row continues the project's idle orchestrator (`continue_from`) or starts a new one.
 
-use crate::app::screens::models_of;
-use crate::dialog::{TextInput, apply_text_key};
-use crate::run_edit::TEXT_MAX_CHARS;
+use crate::app::form_picker::cycle_effort;
+use crate::app::model_picker::ModelPicker;
 use crate::text_area::EditorKey;
 use crate::text_area::TextArea;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use proto::{DeliveryMode, IdleOrchestrator, ModelEntry, OrchestratorChoice, RunRequest, Runtime};
+use proto::models::ModelRef;
+use proto::{DeliveryMode, IdleOrchestrator, OrchestratorChoice, RunRequest};
 use std::path::PathBuf;
 
 /// The toast `C-b g` shows when no project is selected, no window is focused and the
@@ -44,8 +45,10 @@ pub struct EditorView {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GoalField {
     Goal,
-    Runtime,
+    /// Milestone 9.8 decision 39: `⏎` opens the model picker.
     Model,
+    /// The chosen model's catalog efforts, then its default.
+    Effort,
     /// Milestone 9.3 decision 25: continue the project's idle orchestrator, or a new one.
     Orchestrator,
     /// Milestone 9.2 ruling R-13: `run start --goal --delivery`.
@@ -59,8 +62,8 @@ pub enum GoalField {
 
 const FIELDS: [GoalField; 9] = [
     GoalField::Goal,
-    GoalField::Runtime,
     GoalField::Model,
+    GoalField::Effort,
     GoalField::Orchestrator,
     GoalField::Delivery,
     GoalField::Design,
@@ -69,15 +72,8 @@ const FIELDS: [GoalField; 9] = [
     GoalField::UnconfinedChecks,
 ];
 
-/// The model choice (decision 39): the runtime's own default, one of the roster's
-/// enabled models of the chosen runtime (an index into [`GoalForm::models`]), or text.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum GoalModel {
-    Default,
-    Pick(usize),
-    /// Selects [`GoalForm::custom`], whose text survives a move of the picker.
-    Custom,
-}
+/// What the model row reads before a choice, until the app names the row.
+pub const ROLE_TABLE: &str = "role table";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GoalForm {
@@ -85,9 +81,19 @@ pub struct GoalForm {
     pub project: PathBuf,
     /// Newlines are typed with `Ctrl-J` and sent as they are.
     pub goal: TextArea,
-    /// `None` is the configured orchestrator (`[orchestrator.agent]`, then the default).
-    pub runtime: Option<Runtime>,
-    pub model: GoalModel,
+    /// Milestone 9.8 decision 39: the orchestrator's model; `None` is the role table's
+    /// orchestrator row (no choice sent).
+    pub model: Option<ModelRef>,
+    /// The chosen model as the picker labels it (`Codex · gpt-6.1 sol`).
+    pub model_label: String,
+    /// `role table (<the orchestrator row's model>)`, set by the app.
+    pub role_table: String,
+    /// The chosen model's catalog efforts, refreshed by the app before each key.
+    pub efforts: Vec<String>,
+    /// `None`: the model's default.
+    pub effort: Option<String>,
+    /// The model picker, while it is open over the form.
+    pub picker: Option<ModelPicker>,
     /// Milestone 9.2 ruling R-13: `None` is the repo profile's `[delivery] mode`
     /// (`configured`), else `local` or `pr` for this run (`RunRequest::StartGoal.delivery`).
     pub delivery: Option<DeliveryMode>,
@@ -95,13 +101,8 @@ pub struct GoalForm {
     /// `[orchestrator.design].default`), else `full` or `off` (`StartGoal.design`).
     pub design: Option<proto::DesignMode>,
     /// Ruling T18-2: the settings' `[orchestrator.design].default` as of the last
-    /// `set_roster`, which `configured` names; `None` while no cache has arrived.
+    /// settings cache, which `configured` names; `None` while no cache has arrived.
     pub design_default: Option<proto::DesignMode>,
-    /// The text typed after `custom…`; kept while the picker moves away and back.
-    pub custom: TextInput,
-    /// The settings cache's roster as of the last `set_roster` (decision 24); empty
-    /// while no cache has arrived.
-    pub roster: Vec<ModelEntry>,
     pub trust_project: bool,
     /// `approve at once`: the plan gate is skipped.
     pub yes: bool,
@@ -132,6 +133,8 @@ pub enum GoalOutcome {
     /// The confirm page's `y`: the dialog closes and the draft goes.
     Discard,
     Submit(RunRequest),
+    /// `⏎` on the model row: the app opens the picker.
+    Pick,
 }
 
 /// What the orchestrator row shows: a choice, or the active chain's muted line.
@@ -144,8 +147,8 @@ pub enum OrchestratorRow {
 pub fn field_label(field: GoalField) -> &'static str {
     match field {
         GoalField::Goal => "goal",
-        GoalField::Runtime => "runtime",
         GoalField::Model => "model",
+        GoalField::Effort => "effort",
         GoalField::Orchestrator => "orchestrator",
         GoalField::Delivery => "delivery",
         GoalField::Design => "design",
@@ -158,20 +161,22 @@ pub fn field_label(field: GoalField) -> &'static str {
 #[path = "run_goal_helpers.rs"]
 mod helpers;
 pub(crate) use helpers::cycle;
-use helpers::{clean_line, insert_bounded, is_ctrl, next_delivery, next_design, next_runtime};
+use helpers::{is_ctrl, next_delivery, next_design};
 
 impl GoalForm {
     pub fn new(project: PathBuf) -> Self {
         Self {
             project,
             goal: TextArea::editor(""),
-            runtime: None,
-            model: GoalModel::Default,
+            model: None,
+            model_label: String::new(),
+            role_table: ROLE_TABLE.to_string(),
+            efforts: Vec::new(),
+            effort: None,
+            picker: None,
             delivery: None,
             design: None,
             design_default: None,
-            custom: TextInput::default(),
-            roster: Vec::new(),
             trust_project: false,
             yes: false,
             unconfined_checks: false,
@@ -195,12 +200,6 @@ impl GoalForm {
         }
         self.idle = idle;
         self.busy = busy;
-    }
-
-    /// Whether the custom model's text row is drawn: `custom…` chosen, and the model not
-    /// held by a continued chain.
-    pub fn custom_shown(&self) -> bool {
-        self.model == GoalModel::Custom && self.continues().is_none()
     }
 
     /// The idle orchestrator this goal continues, while continue is chosen.
@@ -228,49 +227,13 @@ impl GoalForm {
         }
     }
 
-    /// The enabled models of the chosen runtime, in roster order; none with runtime
-    /// `configured`, which only offers `default`.
-    pub fn models(&self) -> Vec<String> {
-        self.runtime
-            .map(|runtime| models_of(&self.roster, runtime))
-            .unwrap_or_default()
-    }
-
-    /// The picker's entries, as drawn: `default`, the models, then `custom…` (only with a
-    /// runtime chosen).
-    pub fn model_options(&self) -> Vec<String> {
-        let models = self.models();
-        let mut options = vec!["default".to_string()];
-        if self.runtime.is_some() {
-            options.extend(models);
-            options.push("custom…".to_string());
-        }
-        options
-    }
-
-    /// The picker's current position in [`GoalForm::model_options`].
-    pub fn model_at(&self) -> usize {
-        match &self.model {
-            GoalModel::Default => 0,
-            GoalModel::Pick(i) => 1 + i,
-            GoalModel::Custom => 1 + self.models().len(),
-        }
-    }
-
-    /// A new roster (the settings cache changed while the form is open): a picked model
-    /// stays picked by name, or falls back to `default` when it left the roster.
-    pub fn set_roster(&mut self, roster: Vec<ModelEntry>) {
-        let picked = match &self.model {
-            GoalModel::Pick(i) => self.models().get(*i).cloned(),
-            _ => None,
-        };
-        self.roster = roster;
-        if let Some(name) = picked {
-            self.model = match self.models().iter().position(|m| *m == name) {
-                Some(i) => GoalModel::Pick(i),
-                None => GoalModel::Default,
-            };
-        }
+    /// Decision 39: the picker chose `model` (`None`: the role table), labelled
+    /// `label`; its effort starts at the model's default.
+    pub fn choose(&mut self, model: Option<ModelRef>, label: String) {
+        self.model = model;
+        self.model_label = label;
+        self.effort = None;
+        self.efforts.clear();
     }
 
     fn move_focus(&mut self, delta: isize) {
@@ -330,6 +293,9 @@ impl GoalForm {
         match key.code {
             KeyCode::Tab | KeyCode::Down => self.move_focus(1),
             KeyCode::BackTab | KeyCode::Up => self.move_focus(-1),
+            KeyCode::Enter if self.focus == GoalField::Model && self.continues().is_none() => {
+                return GoalOutcome::Pick;
+            }
             KeyCode::Enter => return self.submit(),
             _ => self.on_field_key(key),
         }
@@ -345,18 +311,21 @@ impl GoalForm {
         match self.focus {
             // The text's keys are `on_key_in`'s; continuing, the chain's runtime and
             // model hold (decision 25).
-            GoalField::Goal => {}
-            GoalField::Runtime | GoalField::Model if locked => {}
+            GoalField::Goal | GoalField::Model => {}
+            GoalField::Effort if locked || self.model.is_none() => {}
             GoalField::Orchestrator if toggle && self.idle.is_some() => {
                 self.continuing = !self.continuing;
             }
             GoalField::Orchestrator => {}
-            GoalField::Runtime => match key.code {
-                KeyCode::Right | KeyCode::Char(' ') => self.cycle_runtime(true),
-                KeyCode::Left => self.cycle_runtime(false),
+            GoalField::Effort => match key.code {
+                KeyCode::Right | KeyCode::Char(' ') => {
+                    self.effort = cycle_effort(&self.efforts, self.effort.as_deref(), true);
+                }
+                KeyCode::Left => {
+                    self.effort = cycle_effort(&self.efforts, self.effort.as_deref(), false);
+                }
                 _ => {}
             },
-            GoalField::Model => self.on_model_key(key),
             GoalField::Delivery => match key.code {
                 KeyCode::Right | KeyCode::Char(' ') => {
                     self.delivery = next_delivery(self.delivery, true)
@@ -378,66 +347,20 @@ impl GoalForm {
         }
     }
 
-    fn cycle_runtime(&mut self, forward: bool) {
-        self.runtime = next_runtime(self.runtime, forward);
-        // A model names one runtime's model.
-        self.model = GoalModel::Default;
-        self.custom = TextInput::default();
-    }
-
-    /// `←`/`→` always move the picker; `Space` does too, except while `custom…` is
-    /// chosen, where it and every other character edit the text.
-    fn on_model_key(&mut self, key: KeyEvent) {
-        match (&self.model, key.code) {
-            (_, KeyCode::Right) => self.cycle_model(true),
-            (_, KeyCode::Left) => self.cycle_model(false),
-            (GoalModel::Custom, _) => {
-                let input = &mut self.custom;
-                let full = input.text().chars().count() >= TEXT_MAX_CHARS;
-                let typing = matches!(key.code, KeyCode::Char(_))
-                    && !key.modifiers.contains(KeyModifiers::CONTROL);
-                if !(full && typing) {
-                    apply_text_key(input, key);
-                }
-            }
-            (_, KeyCode::Char(' ')) => self.cycle_model(true),
-            _ => {}
-        }
-    }
-
-    fn cycle_model(&mut self, forward: bool) {
-        let len = self.model_options().len();
-        let at = self.model_at();
-        let to = if forward {
-            (at + 1) % len
-        } else {
-            (at + len - 1) % len
-        };
-        self.model = match to {
-            0 => GoalModel::Default,
-            n if n == len - 1 => GoalModel::Custom,
-            n => GoalModel::Pick(n - 1),
-        };
-    }
-
     /// [`GoalForm::on_paste_in`] with the goal unwrapped.
     pub fn on_paste(&mut self, text: &str) {
         self.on_paste_in(text, EditorView::default());
     }
 
-    /// A bracketed paste into the goal (the editor's, decision 5) or the custom model:
-    /// control characters go; the field stays bounded; the goal keeps its line breaks.
-    /// The goal is drawn as `view` says (the editor's viewport follows it).
+    /// A bracketed paste into the goal (the editor's, decision 5): it keeps its line
+    /// breaks; the goal is drawn as `view` says (the editor's viewport follows it). The
+    /// picker's custom name takes a paste while it is open (`app/paste.rs`).
     pub fn on_paste_in(&mut self, text: &str, view: EditorView) {
         if self.submitting || self.discarding {
             return;
         }
-        match (self.focus, &self.model) {
-            (GoalField::Goal, _) => self.goal.on_editor_paste(text, view.width, view.rows),
-            (GoalField::Model, GoalModel::Custom) if self.custom_shown() => {
-                insert_bounded(&mut self.custom, &clean_line(text));
-            }
-            _ => {}
+        if self.focus == GoalField::Goal {
+            self.goal.on_editor_paste(text, view.width, view.rows);
         }
     }
 
@@ -456,20 +379,9 @@ impl GoalForm {
         }
     }
 
-    /// The model the request names: none for `default` (or an empty custom text).
-    pub fn chosen_model(&self) -> Option<String> {
-        match &self.model {
-            GoalModel::Default => None,
-            GoalModel::Pick(i) => self.models().get(*i).cloned(),
-            GoalModel::Custom => {
-                let text = self.custom.text().trim();
-                (!text.is_empty()).then(|| text.to_string())
-            }
-        }
-    }
-
     /// Decision 44's request: what `anthrex run start --goal` sends, with the
-    /// orchestrator choice when a runtime is chosen, and decision 39's toggles; while
+    /// orchestrator choice when a model is chosen (milestone 9.8 decision 39: its
+    /// runtime, its id, its effort), and decision 39's toggles; while
     /// continuing (decision 25), `continue_from` the chain's last run and no
     /// orchestrator choice, as `run start --goal … --continue` sends it.
     pub fn request(&self) -> Result<RunRequest, (GoalField, &'static str)> {
@@ -478,13 +390,12 @@ impl GoalForm {
             return Err((GoalField::Goal, EMPTY_GOAL));
         }
         let continue_from = self.continues().map(|idle| idle.after_run.clone());
-        let orchestrator = self
-            .runtime
+        let orchestrator = (self.model.as_ref())
             .filter(|_| continue_from.is_none())
-            .map(|runtime| OrchestratorChoice {
-                runtime,
-                model: self.chosen_model(),
-                effort: None,
+            .map(|m| OrchestratorChoice {
+                runtime: m.runtime,
+                model: m.id.clone(),
+                effort: self.effort.clone(),
             });
         Ok(RunRequest::StartGoal {
             goal: goal.trim().to_string(),

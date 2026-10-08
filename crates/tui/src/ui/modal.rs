@@ -150,6 +150,19 @@ fn render_confirm(
     );
 }
 
+/// Milestone 9.8 decision 39: a form's model picker, over the form.
+fn form_picker(
+    frame: &mut Frame,
+    app: &App,
+    picker: Option<&crate::app::model_picker::ModelPicker>,
+    area: Rect,
+) {
+    if let Some(picker) = picker {
+        let age = app.catalogs.updated_age(app.ticked_at);
+        crate::ui::model_picker::render(frame, picker, age, area, app.palette());
+    }
+}
+
 pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     let Some(modal) = &app.modal else {
         return;
@@ -161,8 +174,14 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         Modal::ForceRemove { name, message, .. } => {
             dialog::render_force_remove(frame, name, message, area, p);
         }
-        Modal::EditTask(form) => crate::ui::run_edit::render(frame, form, area, p),
-        Modal::StartGoal(form) => crate::ui::run_goal::render(frame, form, area, p),
+        Modal::EditTask(form) => {
+            crate::ui::run_edit::render(frame, form, area, p);
+            form_picker(frame, app, form.picker.as_ref(), area);
+        }
+        Modal::StartGoal(form) => {
+            crate::ui::run_goal::render(frame, form, area, p);
+            form_picker(frame, app, form.picker.as_ref(), area);
+        }
         Modal::Iterate(form) => crate::ui::run_iterate::render(frame, form, area, p),
         Modal::IdleMenu(menu) => crate::ui::idle_menu::render(frame, menu, area, p),
         Modal::Confirm { message, action } => render_confirm(frame, message, action, area, p),

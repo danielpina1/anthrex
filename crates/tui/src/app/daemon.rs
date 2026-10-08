@@ -17,6 +17,16 @@ impl App {
                 {
                     picker.refresh(&self.catalogs);
                 }
+                // Milestone 9.8 decision 39: the forms' pickers follow too.
+                let picker = match &mut self.modal {
+                    Some(Modal::StartGoal(form)) => form.picker.as_mut(),
+                    Some(Modal::EditTask(form)) => form.picker.as_mut(),
+                    _ => None,
+                };
+                if let Some(picker) = picker {
+                    picker.refresh(&self.catalogs);
+                }
+                self.refresh_goal_models();
                 vec![]
             }
             DaemonMsg::Welcome { windows, .. } | DaemonMsg::WindowsChanged { windows } => {

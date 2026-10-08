@@ -10,7 +10,7 @@ use crate::app::Modal;
 use crate::app::actions::ActionStep;
 use crate::app::actions::forms::ActionForm;
 use crate::app::replies::PendingWhat;
-use crate::run_goal::{GoalField, GoalForm, GoalModel};
+use crate::run_goal::{GoalField, GoalForm};
 use crate::tree::NodeKey;
 use proto::{
     ActionKind, BudgetLimit, ModelEntry, OrchestratorChoice, OrchestratorDefault, Origin, RunReply,
@@ -365,105 +365,71 @@ fn the_toggles_reach_the_request() {
     );
 }
 
-/// The picker's drawn entries and the one chosen.
-fn picker(app: &App) -> (Vec<String>, String) {
-    let f = form(app);
-    let options = f.model_options();
-    let at = options[f.model_at()].clone();
-    (options, at)
+/// Milestone 9.8 decision 39 (replacing 9.0.6's roster picker tests,
+/// `the_model_picker_lists_the_runtimes_enabled_models_then_custom`,
+/// `custom_reveals_the_text_line_…`, `custom_with_no_text_is_the_default_model`,
+/// `with_runtime_configured_the_model_is_default_only`,
+/// `without_a_cache_the_picker_offers_default_and_custom` and
+/// `a_cache_that_arrives_while_the_form_is_open_fills_the_picker`): the picker's first
+/// entry names the role table's orchestrator row, and follows a cache that arrives
+/// while the form is open.
+#[test]
+fn the_role_table_entry_names_the_orchestrator_row_and_follows_the_cache() {
+    let mut app = app();
+    let id = gets(&[app.settings_fetch()])[0];
+    open_form(&mut app);
+    // No catalog yet: the row's model by its id.
+    assert_eq!(
+        form(&app).role_table,
+        "role table (Claude · claude-opus-5-5)"
+    );
+    let mut roles = proto::models::ModelTable::default();
+    roles.rows.insert(
+        proto::models::Role::Orchestrator,
+        proto::models::RoleChoice {
+            model: proto::models::ModelRef::parse("codex:gpt-6-sol").unwrap(),
+            effort: None,
+            fallback: None,
+        },
+    );
+    let mut with_roles = doc(roster());
+    with_roles.roles = roles;
+    app.on_daemon(reply(
+        SettingsReply::Current {
+            doc: with_roles,
+            origin: BTreeMap::new(),
+            path: "/cfg/config.toml".into(),
+        },
+        id,
+    ));
+    assert_eq!(form(&app).role_table, "role table (Codex · gpt-6-sol)");
+    focus(&mut app, GoalField::Model);
+    tap(&mut app, KeyCode::Enter);
+    let picker = form(&app).picker.as_ref().expect("the picker");
+    assert_eq!(
+        picker.entries[0],
+        crate::app::model_picker::PickerEntry::RoleTable("role table (Codex · gpt-6-sol)".into())
+    );
 }
 
+/// `custom…` in the goal form's picker: the runtime, then any name `ModelRef` accepts;
+/// a paste reaches the name.
 #[test]
-fn the_model_picker_lists_the_runtimes_enabled_models_then_custom() {
-    let mut app = app_with_cache(roster());
+fn custom_in_the_picker_names_any_model() {
+    let mut app = app();
     open_form(&mut app);
-    focus(&mut app, GoalField::Runtime);
-    tap(&mut app, KeyCode::Right);
-    assert_eq!(form(&app).runtime, Some(Runtime::Claude));
     focus(&mut app, GoalField::Model);
-    // Claude's models in roster order, the empty-model entry of Codex never.
-    let (options, at) = picker(&app);
-    assert_eq!(
-        options,
-        ["default", "claude-haiku-4-5", "claude-opus-5-5", "custom…"]
-    );
-    assert_eq!(at, "default");
-
+    tap(&mut app, KeyCode::Enter);
+    // No catalogs: the role table, two headers, then `custom…`.
+    tap(&mut app, KeyCode::Char('j'));
+    tap(&mut app, KeyCode::Enter);
     tap(&mut app, KeyCode::Right);
-    assert_eq!(form(&app).model, GoalModel::Pick(0));
-    tap(&mut app, KeyCode::Char(' '));
-    assert_eq!(form(&app).model, GoalModel::Pick(1));
-    assert_eq!(
-        request(&mut app, "add a"),
-        RunRequest::StartGoal {
-            goal: "add a".into(),
-            dir: "/p/a".into(),
-            yes: false,
-            trust_project: false,
-            unconfined_checks: false,
-            orchestrator: Some(OrchestratorChoice {
-                runtime: Runtime::Claude,
-                model: Some("claude-opus-5-5".into()),
-                effort: None,
-            }),
-            delivery: None,
-            continue_from: None,
-            design: None,
-        }
-    );
-}
-
-#[test]
-fn custom_reveals_the_text_line_and_its_text_is_the_model_sent() {
-    let mut app = app_with_cache(roster());
-    open_form(&mut app);
-    focus(&mut app, GoalField::Runtime);
-    tap(&mut app, KeyCode::Char(' '));
-    focus(&mut app, GoalField::Model);
-    // `custom…` is last: one step back from `default` wraps to it.
-    tap(&mut app, KeyCode::Left);
-    assert!(matches!(form(&app).model, GoalModel::Custom));
-    // Space and every character are text now; the arrows still move the picker.
-    typed(&mut app, "my model");
+    tap(&mut app, KeyCode::Enter);
+    typed(&mut app, "my-model");
     app.on_paste("-2\n".into());
-    assert_eq!(form(&app).custom.text(), "my model-2");
-    // The picker moving away and back keeps what was typed.
-    tap(&mut app, KeyCode::Left);
-    assert_eq!(form(&app).model, GoalModel::Pick(1));
-    tap(&mut app, KeyCode::Right);
-    assert_eq!(form(&app).model, GoalModel::Custom);
-    assert_eq!(form(&app).custom.text(), "my model-2");
-    assert_eq!(
-        request(&mut app, "add a"),
-        RunRequest::StartGoal {
-            goal: "add a".into(),
-            dir: "/p/a".into(),
-            yes: false,
-            trust_project: false,
-            unconfined_checks: false,
-            orchestrator: Some(OrchestratorChoice {
-                runtime: Runtime::Claude,
-                model: Some("my model-2".into()),
-                effort: None,
-            }),
-            delivery: None,
-            continue_from: None,
-            design: None,
-        }
-    );
-}
-
-#[test]
-fn custom_with_no_text_is_the_default_model() {
-    let mut app = app_with_cache(roster());
-    open_form(&mut app);
-    focus(&mut app, GoalField::Runtime);
-    tap(&mut app, KeyCode::Right);
-    tap(&mut app, KeyCode::Right); // codex
-    focus(&mut app, GoalField::Model);
-    assert_eq!(picker(&app).0, ["default", "gpt-6-sol", "custom…"]);
-    tap(&mut app, KeyCode::Left);
-    assert!(matches!(form(&app).model, GoalModel::Custom));
+    tap(&mut app, KeyCode::Enter);
+    assert!(form(&app).picker.is_none());
+    assert_eq!(form(&app).model_label, "Codex · my-model-2");
     let RunRequest::StartGoal { orchestrator, .. } = request(&mut app, "add a") else {
         panic!()
     };
@@ -471,75 +437,10 @@ fn custom_with_no_text_is_the_default_model() {
         orchestrator,
         Some(OrchestratorChoice {
             runtime: Runtime::Codex,
-            model: None,
+            model: Some("my-model-2".into()),
             effort: None
         })
     );
-}
-
-#[test]
-fn with_runtime_configured_the_model_is_default_only() {
-    let mut app = app_with_cache(roster());
-    open_form(&mut app);
-    assert_eq!(form(&app).runtime, None);
-    focus(&mut app, GoalField::Model);
-    assert_eq!(picker(&app).0, ["default"]);
-    // Nothing to step to: the arrows and Space leave it on default.
-    for code in [KeyCode::Right, KeyCode::Left, KeyCode::Char(' ')] {
-        tap(&mut app, code);
-        assert_eq!(form(&app).model, GoalModel::Default);
-    }
-    // Choosing a runtime resets the model, which named another runtime's.
-    focus(&mut app, GoalField::Runtime);
-    tap(&mut app, KeyCode::Right);
-    focus(&mut app, GoalField::Model);
-    tap(&mut app, KeyCode::Right);
-    assert_eq!(form(&app).model, GoalModel::Pick(0));
-    focus(&mut app, GoalField::Runtime);
-    tap(&mut app, KeyCode::Right);
-    assert_eq!(form(&app).model, GoalModel::Default);
-}
-
-#[test]
-fn without_a_cache_the_picker_offers_default_and_custom() {
-    let mut app = app();
-    assert_eq!(app.settings_cache, None);
-    open_form(&mut app);
-    focus(&mut app, GoalField::Runtime);
-    tap(&mut app, KeyCode::Right);
-    focus(&mut app, GoalField::Model);
-    assert_eq!(picker(&app).0, ["default", "custom…"]);
-}
-
-#[test]
-fn a_cache_that_arrives_while_the_form_is_open_fills_the_picker() {
-    let mut app = app();
-    let id = gets(&[app.settings_fetch()])[0];
-    open_form(&mut app);
-    focus(&mut app, GoalField::Runtime);
-    tap(&mut app, KeyCode::Right);
-    focus(&mut app, GoalField::Model);
-    assert_eq!(picker(&app).0.len(), 2);
-    app.on_daemon(reply(current(roster()), id));
-    assert_eq!(picker(&app).0.len(), 4);
-    tap(&mut app, KeyCode::Right);
-    tap(&mut app, KeyCode::Right);
-    assert_eq!(form(&app).model, GoalModel::Pick(1));
-
-    // A save that drops the picked model leaves the choice on default; one that keeps
-    // it picked, keeps it by name.
-    let (id, _) = tagged(&[app.settings_put(doc(vec![]))]);
-    app.on_daemon(reply(
-        saved(vec![
-            entry(Runtime::Claude, "claude-opus-5-5"),
-            entry(Runtime::Claude, "claude-haiku-4-5"),
-        ]),
-        id,
-    ));
-    assert_eq!(form(&app).model, GoalModel::Pick(0));
-    let (id, _) = tagged(&[app.settings_put(doc(vec![]))]);
-    app.on_daemon(reply(saved(vec![]), id));
-    assert_eq!(form(&app).model, GoalModel::Default);
 }
 
 #[test]

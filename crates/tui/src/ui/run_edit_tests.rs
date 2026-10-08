@@ -66,9 +66,7 @@ fn the_form_renders_its_fields() {
     assert_eq!(
         rows,
         vec![
-            "▌ runtime    ‹ claude ›",
-            "  model      policy  claude-sonnet-5",
-            "  strength   ‹ policy ›  standard",
+            "▌ model      ‹ Claude · role table ›  claude-sonnet-5",
             "  effort     ‹ medium ›",
             "  size       ‹ M ›",
             "  test mode  ‹ tdd ›",
@@ -79,7 +77,7 @@ fn the_form_renders_its_fields() {
             "",
             "",
             "",
-            "⏎ save · tab next · ←/→ change · ^J newline · esc cancel",
+            "⏎ choose model · tab next · ←/→ change · esc cancel",
         ]
     );
     // The kit's 64 columns, centred.
@@ -87,10 +85,8 @@ fn the_form_renders_its_fields() {
     assert_eq!(top_line.trim().chars().count(), 64);
     // The resolved values are muted; the chosen ones are not.
     let muted = theme::role(theme::Role::Muted, theme::Palette::PLAIN).fg;
-    let (x, y) = position(&buffer, "standard");
-    assert_eq!(buffer[(x, y)].fg, muted.expect("muted has a colour"));
     let (x, y) = position(&buffer, "claude-sonnet-5");
-    assert_eq!(buffer[(x, y)].fg, muted.unwrap());
+    assert_eq!(buffer[(x, y)].fg, muted.expect("muted has a colour"));
     let (x, y) = position(&buffer, "‹ medium ›");
     assert_ne!(buffer[(x + 2, y)].fg, muted.unwrap());
 }
@@ -102,17 +98,17 @@ fn the_reason_row_and_an_error_row_appear() {
     form.focus = EditField::Reason;
     form.error = Some("task t1: size: one (+2 more)".into());
     let (_, rows) = rows(&draw(&form, 80, 24));
-    assert_eq!(rows[5], "  test mode  ‹ check ›");
-    assert_eq!(rows[6], "▌ reason");
-    assert_eq!(rows[7], "  brief      Line one");
-    assert_eq!(rows[8], "             Line two");
-    assert_eq!(rows[13], "task t1: size: one (+2 more)");
-    assert_eq!(rows[14], "");
+    assert_eq!(rows[3], "  test mode  ‹ check ›");
+    assert_eq!(rows[4], "▌ reason");
+    assert_eq!(rows[5], "  brief      Line one");
+    assert_eq!(rows[6], "             Line two");
+    assert_eq!(rows[11], "task t1: size: one (+2 more)");
+    assert_eq!(rows[12], "");
     assert_eq!(
-        rows[15],
+        rows[13],
         "⏎ save · tab next · ←/→ change · ^J newline · esc cancel"
     );
-    assert_eq!(rows.len(), 16);
+    assert_eq!(rows.len(), 14);
 }
 
 #[test]
@@ -120,7 +116,7 @@ fn a_long_error_is_cut_to_the_box() {
     let mut form = edit_fixture_form();
     form.error = Some(format!("{}…", "x".repeat(300)));
     let (_, rows) = rows(&draw(&form, 80, 24));
-    let error = &rows[12];
+    let error = &rows[10];
     assert_eq!(error.chars().count(), 60);
     assert!(error.ends_with('…'));
 }
@@ -146,9 +142,11 @@ fn the_cursor_sits_in_the_focused_text_field() {
             .contains(ratatui::style::Modifier::REVERSED),
         "after the last character"
     );
-    // A one-line field keeps the hardware cursor.
-    form.focus = EditField::Model;
-    form.model = crate::dialog::TextInput::new("gpt");
+    // A one-line field keeps the hardware cursor (the reason, since milestone 9.8's
+    // model is the picker's).
+    form.test_mode = TestMode::Check;
+    form.focus = EditField::Reason;
+    form.reason = crate::dialog::TextInput::new("gpt");
     let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
     terminal
         .draw(|frame| render(frame, &form, frame.area(), theme::Palette::PLAIN))
@@ -178,7 +176,7 @@ fn no_panic_at_degenerate_sizes() {
 fn hostile_fields_are_drawn_sanitised() {
     use crate::safe_text::tests::{first_hostile, hostile_text};
     let mut t = crate::run_edit::tests::edit_fixture_task();
-    // The model's cursor is at its end, so the field shows its tail.
+    // Milestone 9.8: the model is drawn as a choice, its label cut to the box.
     t.route_spec.model = Some(format!("{}x\u{200D}y\u{202E}z", hostile_text()));
     t.test_mode = TestMode::Check;
     t.test_mode_reason = Some("r\u{200D}e\u{202E}n".into());
@@ -187,11 +185,11 @@ fn hostile_fields_are_drawn_sanitised() {
     let (_, rows) = rows(&draw(&form, 120, 40));
     assert_eq!(first_hostile(&rows.join(" ")), None, "{rows:#?}");
     assert!(
-        rows[1].starts_with("  model      ") && rows[1].ends_with(" ab xyz"),
+        rows[0].starts_with("▌ model      ‹ Claude · a") && rows[0].ends_with('…'),
         "{rows:#?}"
     );
-    assert_eq!(rows[6], "  reason     ren");
-    assert_eq!(rows[7], "  brief      brf");
+    assert_eq!(rows[4], "  reason     ren");
+    assert_eq!(rows[5], "  brief      brf");
 }
 
 /// Fix round 1 (m3): on a short terminal the hints (with `esc`) and the error stay,
@@ -217,9 +215,10 @@ fn a_short_terminal_keeps_the_hints_and_the_focused_field() {
         form.visible_fields().contains(&EditField::Stage),
         "all eight rows"
     );
-    // The model's hardware cursor follows the scroll.
-    form.focus = EditField::Model;
-    form.model = crate::dialog::TextInput::new("gpt");
+    // The reason's hardware cursor follows the scroll.
+    form.test_mode = TestMode::Check;
+    form.focus = EditField::Reason;
+    form.reason = crate::dialog::TextInput::new("gpt");
     let mut terminal = Terminal::new(TestBackend::new(80, 12)).unwrap();
     terminal
         .draw(|frame| render(frame, &form, frame.area(), theme::Palette::PLAIN))
@@ -234,8 +233,9 @@ fn a_short_terminal_keeps_the_hints_and_the_focused_field() {
 #[test]
 fn the_cursor_column_skips_hidden_characters() {
     let mut form = edit_fixture_form();
-    form.focus = EditField::Model;
-    form.model = crate::dialog::TextInput::new("x\u{200D}y\u{202E}z");
+    form.test_mode = TestMode::Check;
+    form.focus = EditField::Reason;
+    form.reason = crate::dialog::TextInput::new("x\u{200D}y\u{202E}z");
     let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
     terminal
         .draw(|frame| render(frame, &form, frame.area(), theme::Palette::PLAIN))

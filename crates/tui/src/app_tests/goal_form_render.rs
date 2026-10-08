@@ -3,7 +3,7 @@
 //! dialog is the large editor, so the compact drawing's tests run at 59×24.
 
 use super::actions::tap;
-use super::goal_form::{app, app_with_cache, focus, form, open_form, roster, typed};
+use super::goal_form::{app, app_with_cache, focus, form, open_form, roster};
 use super::*;
 use crate::run_goal::{GoalField, GoalForm};
 
@@ -64,7 +64,13 @@ fn goal_form_renders_at_80x24_and_120x40() {
         assert_eq!(rows[1], pad("what should the run achieve?"));
         assert!(rows[2..=text].iter().all(|r| *r == pad("")), "{w}x{h}");
         assert_eq!(rows[text + 1], pad(""));
-        assert_eq!(rows[text + 2], pad("  runtime           < configured >"));
+        // Milestone 9.8 decision 39 (changed expectation): `model` (the role table's row,
+        // by its id with no catalog) and `effort` in place of `runtime` and `model`.
+        assert_eq!(
+            rows[text + 2],
+            pad("  model             < role table (Claude - claude-opus-5-5) >")
+        );
+        assert_eq!(rows[text + 3], pad("  effort            < role table >"));
         assert_eq!(rows[text + 4], pad("  orchestrator      < new >"));
         assert_eq!(rows[text + 6], pad("  design            < configured >"));
         assert_eq!(rows[text + 9], pad("  unconfined checks < off >"));
@@ -95,8 +101,8 @@ fn goal_form_renders_compact_at_59x24() {
             "",
             "",
             "",
-            "   runtime           < configured >",
-            "   model             < default >",
+            "   model             < role table (Claude -... >",
+            "   effort            < role table >",
             "   orchestrator      < new >",
             "   delivery          < configured >",
             "   design            < configured >",
@@ -114,22 +120,54 @@ fn goal_form_renders_compact_at_59x24() {
 }
 
 #[test]
-fn the_unicode_form_draws_its_choices_and_custom_row() {
+fn the_unicode_form_draws_its_choices() {
+    // Milestone 9.8 decision 39 (was `…_and_custom_row`): the model row is the picker's
+    // choice; the custom model is typed in the picker, so no text row.
     let mut app = app_with_cache(roster());
+    app.catalogs = crate::app::model_picker::tests::fixture_catalogs();
     app.set_terminal_size(120, 40);
     open_form(&mut app);
-    focus(&mut app, GoalField::Runtime);
-    tap(&mut app, KeyCode::Right);
-    focus(&mut app, GoalField::Model);
-    tap(&mut app, KeyCode::Left);
-    typed(&mut app, "x1");
     let rows = crate::ui::audit::rows(&crate::ui::audit::draw(&app, 120, 40)).join("\n");
-    assert!(rows.contains("‹ claude ›"), "{rows}");
-    assert!(rows.contains("‹ custom… ›"), "{rows}");
-    assert!(rows.contains("x1"), "{rows}");
+    assert!(
+        rows.contains("  model             ‹ role table (Claude · Opus 5.5) ›"),
+        "{rows}"
+    );
+    assert!(
+        rows.contains("  effort            ‹ role table ›"),
+        "{rows}"
+    );
+    focus(&mut app, GoalField::Model);
+    tap(&mut app, KeyCode::Enter);
+    let rows = crate::ui::audit::rows(&crate::ui::audit::draw(&app, 120, 40)).join("\n");
+    assert!(
+        rows.contains("┌ choose model · the goal's orchestrator ─"),
+        "{rows}"
+    );
+    assert!(
+        rows.contains("▸ ● role table (Claude · Opus 5.5)"),
+        "{rows}"
+    );
+    for _ in 0..3 {
+        tap(&mut app, KeyCode::Char('j'));
+    }
+    tap(&mut app, KeyCode::Enter);
+    focus(&mut app, GoalField::Effort);
+    tap(&mut app, KeyCode::Char(' '));
+    let rows = crate::ui::audit::rows(&crate::ui::audit::draw(&app, 120, 40)).join("\n");
+    assert!(
+        rows.contains("  model             ‹ Claude · Opus 5.5 ›"),
+        "{rows}"
+    );
+    assert!(rows.contains("▌ effort            ‹ low ›"), "{rows}");
     // Milestone 9.3 (changed expectation): the large editor's footer.
     assert!(
         rows.contains("^S start  Tab options  ^K cut  ^U paste  Esc cancel"),
+        "{rows}"
+    );
+    focus(&mut app, GoalField::Model);
+    let rows = crate::ui::audit::rows(&crate::ui::audit::draw(&app, 120, 40)).join("\n");
+    assert!(
+        rows.contains("^S start  ⏎ choose model  Tab next  Esc cancel"),
         "{rows}"
     );
 }
@@ -191,7 +229,7 @@ fn the_goal_label_sits_on_the_first_text_row_and_the_cursor_only_when_focused() 
     };
     assert!(reversed(true));
     assert!(!reversed(false));
-    focus(&mut app, GoalField::Runtime);
+    focus(&mut app, GoalField::Model);
     // Not focused: the goal's rows carry no reversed cell on screen.
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(59, 24)).unwrap();
     terminal

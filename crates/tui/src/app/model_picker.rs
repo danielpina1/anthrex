@@ -179,7 +179,6 @@ fn efforts_text(efforts: &[String]) -> String {
 
 /// What the picker chooses for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(not(test), allow(dead_code))] // `Goal` and `TaskEdit`: the forms, M9.8.11.
 pub enum PickerFor {
     Row(Role),
     Fallback(Role),
@@ -189,7 +188,6 @@ pub enum PickerFor {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(not(test), allow(dead_code))] // `RoleTable`: the forms, M9.8.11.
 pub enum PickerEntry {
     /// `CLAUDE  (claude 2.1.290)`, `(cached)`, `(built-in list)`, or `codex not found`.
     Header {
@@ -212,7 +210,6 @@ pub enum PickerEntry {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(not(test), allow(dead_code))] // `RoleTable`: the forms, M9.8.11.
 pub enum Picked {
     Model(ModelRef),
     NoFallback,

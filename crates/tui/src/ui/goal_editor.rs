@@ -32,6 +32,13 @@ pub const FOOTER: [(&str, &str); 5] = [
     ("^U", "paste"),
     ("Esc", "cancel"),
 ];
+/// Milestone 9.8 decision 39: the footer on the model row, where `⏎` opens the picker.
+pub const MODEL_FOOTER: [(&str, &str); 4] = [
+    ("^S", "start"),
+    ("⏎", "choose model"),
+    ("Tab", "next"),
+    ("Esc", "cancel"),
+];
 /// The rows decision 7 keeps beside the text and the options: the blank row above the
 /// options, the position row and the footer.
 const FIXED_ROWS: u16 = 3;
@@ -55,10 +62,10 @@ pub fn dialog_rect(area: Rect) -> Rect {
 }
 
 /// The rows under the text that are not the fixed three: the eight options (milestone
-/// 9.6 adds `design`), the custom model's text row while it shows, and the error row
-/// while one is set.
+/// 9.6 adds `design`; milestone 9.8 `model` and `effort` in place of `runtime`, `model`
+/// and the custom model's text row) and the error row while one is set.
 fn option_rows(form: &GoalForm) -> u16 {
-    8 + u16::from(form.custom_shown()) + u16::from(form.error.is_some())
+    8 + u16::from(form.error.is_some())
 }
 
 /// The goal's text area in a terminal `cols`×`rows`, as the dialog draws it: in the
@@ -87,6 +94,10 @@ pub fn text_view(form: &GoalForm, cols: u16, rows: u16) -> EditorView {
 /// The footer for `width` columns: `entries` as `key word`, two spaces apart, the key
 /// in the accent and the word muted, dropping entries from the right until it fits.
 pub fn footer(entries: &[(&str, &str)], width: u16, p: Palette) -> Line<'static> {
+    // `⏎` has an ASCII twin, `enter` (`theme::fold`).
+    let entries: Vec<(String, &str)> = (entries.iter())
+        .map(|(k, w)| (crate::theme::fold(k, p.ascii), *w))
+        .collect();
     let mut kept = entries.len();
     let total = |n: usize| -> usize {
         let words: usize = entries[..n]
@@ -103,7 +114,7 @@ pub fn footer(entries: &[(&str, &str)], width: u16, p: Palette) -> Line<'static>
         if i > 0 {
             spans.push(Span::raw("  "));
         }
-        spans.push(Span::styled(key.to_string(), role(Role::Accent, p)));
+        spans.push(Span::styled(key.clone(), role(Role::Accent, p)));
         spans.push(Span::raw(" "));
         spans.push(Span::styled(word.to_string(), role(Role::Muted, p)));
     }
@@ -142,7 +153,12 @@ pub fn body(form: &GoalForm, view: EditorView, height: u16, p: Palette) -> Vec<L
         if lines.len() + 2 <= usize::from(height) {
             lines.push(kit::editor_position(&form.goal, view.width, p));
         }
-        lines.push(footer(&FOOTER, view.width, p));
+        let keys: &[(&str, &str)] = if form.focus == crate::run_goal::GoalField::Model {
+            &MODEL_FOOTER
+        } else {
+            &FOOTER
+        };
+        lines.push(footer(keys, view.width, p));
     }
     lines
 }

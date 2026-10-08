@@ -14,10 +14,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 fn is_text(field: EditField) -> bool {
-    matches!(
-        field,
-        EditField::Model | EditField::Reason | EditField::Brief
-    )
+    matches!(field, EditField::Reason | EditField::Brief)
 }
 
 /// `marker label` for `field`: the focused field's label is accented and bold and led
@@ -70,7 +67,6 @@ pub(super) fn field_line(
     let mut spans = label(form, field, p);
     let (value, resolved) = form.value_parts_in(field, p);
     let input = match field {
-        EditField::Model => Some(&form.model),
         EditField::Reason => Some(&form.reason),
         _ => None,
     };
