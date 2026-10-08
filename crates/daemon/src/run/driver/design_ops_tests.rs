@@ -5,7 +5,7 @@
 
 use proto::{
     DocAuthor, DocKind, Effort, Route, RunState, Runtime, ScoutFile, ScoutKind, ScoutReport,
-    Strength, TokenUsage,
+    TokenUsage,
 };
 
 use super::read_rig::Rig;
@@ -36,7 +36,6 @@ fn report(id: &str) -> ScoutReport {
         route: Route {
             runtime: Runtime::Codex,
             model: String::new(),
-            strength: Strength::Standard,
             effort: Effort::MEDIUM,
         },
         window_id: None,
@@ -303,7 +302,6 @@ fn a_claude_brainstormer_is_denied_the_codex_sessions() {
         route: Route {
             runtime,
             model: String::new(),
-            strength: Strength::Frontier,
             effort: Effort::HIGH,
         },
         session: 1,

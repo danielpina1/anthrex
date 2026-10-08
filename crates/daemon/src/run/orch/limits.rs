@@ -2,7 +2,7 @@
 //! `[orchestrator]` keys a run is frozen with, moved out of `orch/mod.rs` (milestone
 //! 9.3, task 3) and re-exported there. Pure.
 
-use proto::{Budget, Effort, Runtime, Strength};
+use proto::{Budget, Effort, Runtime};
 use serde::{Deserialize, Serialize};
 
 /// `[orchestrator]`'s milestone 9 keys, as the run was built with them. Absent from a
@@ -93,7 +93,6 @@ impl AgentLimits {
 #[serde(default)]
 pub struct PlannerLimits {
     pub runtime: Option<Runtime>,
-    pub strength: Strength,
     pub effort: Effort,
     pub max_tool_calls: u32,
     pub timeout_secs: u64,
@@ -114,7 +113,6 @@ impl OrchLimits {
             note_max_per_task: a.note_max_per_task,
             planners: PlannerLimits {
                 runtime: p.runtime,
-                strength: p.strength,
                 effort: p.effort.clone(),
                 max_tool_calls: p.max_tool_calls,
                 timeout_secs: p.timeout_secs,

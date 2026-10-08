@@ -4,7 +4,7 @@
 //! M9.5.16, `pair.rs`).
 
 use proto::models::{ModelRef, Role, RoleChoice};
-use proto::{AgentRole, ModelEntry, PlanEdit, Runtime, Strength};
+use proto::{AgentRole, PlanEdit, Runtime};
 use serde_json::json;
 
 use super::dispatch::replies;
@@ -63,25 +63,11 @@ fn an_orchestrators_race_goes_through_a_gate_hold() {
     assert_eq!(fx.task("t5").orch.gate_hold, None);
 }
 
-fn entry(runtime: Runtime, model: &str, strength: Strength) -> ModelEntry {
-    ModelEntry {
-        runtime,
-        model: model.to_string(),
-        strength,
-        note: String::new(),
-    }
-}
-
 /// RR-6: a racing task that would reach a runtime the driver found a decision-53
 /// refusal for is refused with that text, as any widening edit is.
 #[test]
 fn a_racing_task_that_widens_the_reach_is_refused_by_the_trust_check() {
     let config = config::Orchestrator {
-        models: vec![
-            entry(Runtime::Claude, "claude-sonnet-5", Strength::Standard),
-            entry(Runtime::Claude, "claude-opus-5", Strength::Frontier),
-            entry(Runtime::Codex, "gpt-5-codex", Strength::Standard),
-        ],
         review_small: false,
         // Milestone 9.8: a Claude reviewer row, and the small row's racer on Codex.
         roles: proto::models::ModelTable {

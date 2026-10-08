@@ -2,7 +2,7 @@
 //! with history, the same gate as its records, so a run restored from milestone 8a
 //! gains no `initial` decision for a session it launched before the upgrade.
 
-use proto::{Effort, Runtime, Strength};
+use proto::{Effort, Runtime};
 
 use super::fixtures::*;
 use crate::run::model::ReviewLevel;
@@ -11,12 +11,7 @@ use crate::run::test_support::{escalated, with_efforts};
 
 #[test]
 fn a_run_without_history_records_no_routing_decisions() {
-    let sonnet = route(
-        Runtime::Claude,
-        "claude-sonnet-5",
-        Strength::Standard,
-        Effort::MEDIUM,
-    );
+    let sonnet = route(Runtime::Claude, "claude-sonnet-5", Effort::MEDIUM);
     for history in [false, true] {
         let mut run = run_of(&["t1"]);
         run.history = history;

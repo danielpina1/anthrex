@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use proto::{
     AgentRole, DiffStats, Effort, GateCounts, GateTally, HISTORY_VERSION, HistoryLine, PhaseSecs,
     Route, RoutingCandidate, RoutingDecision, RoutingInput, RunPath, Runtime, SeverityTally, Size,
-    Strength, TaskKind, TaskOrigin, TaskOutcome, TaskRecord, TestMode, TokenUsage,
+    TaskKind, TaskOrigin, TaskOutcome, TaskRecord, TestMode, TokenUsage,
 };
 
 /// `refit_budget`'s `now`, and the CLI block's (review ruling I5): 2026-09-27 09:06:40
@@ -28,7 +28,6 @@ pub(crate) fn record(
     let route = Route {
         runtime: Runtime::Claude,
         model: "claude-sonnet-5".into(),
-        strength: Strength::Standard,
         effort: Effort::LOW,
     };
     TaskRecord {

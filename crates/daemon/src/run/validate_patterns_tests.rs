@@ -21,15 +21,6 @@ fn shown(errors: &[PlanError]) -> Vec<String> {
     errors.iter().map(ToString::to_string).collect()
 }
 
-fn claude_only() -> config::Orchestrator {
-    config::Orchestrator {
-        models: (config::default_roster().into_iter())
-            .filter(|m| m.runtime == Runtime::Claude)
-            .collect(),
-        ..config::Orchestrator::default()
-    }
-}
-
 fn amend(task_id: &str, field: &str, on: bool) -> PlanEdit {
     serde_json::from_value(json!({"op": "amend_task", "task_id": task_id, field: on})).unwrap()
 }
@@ -69,7 +60,8 @@ fn flat() -> Run {
 
 /// Milestone 9.8 (task M9.8.13): a race needs a code task, never a peer model: its
 /// second racer is the row's fallback, else the task's own route (decision 28), so a
-/// Claude-only roster or a Codex the start found missing no longer refuses it.
+/// Claude-only roster (gone with strength, task M9.8.14) or a Codex the start found
+/// missing no longer refuses it.
 #[test]
 fn race_needs_code_and_no_peer() {
     // A docs task.
@@ -84,7 +76,8 @@ fn race_needs_code_and_no_peer() {
         ["task t1: race: only code tasks can race (rule 4.1.race)"]
     );
     let text = plan_with(PROFILE, &[code("t1", "race = true")]);
-    let built = build_with(&text, &claude_only()).unwrap_or_else(|e| panic!("{}", show(&e)));
+    let built = build_with(&text, &config::Orchestrator::default())
+        .unwrap_or_else(|e| panic!("{}", show(&e)));
     assert!(built.task("t1").unwrap().spec.race);
     let mut moved = flat();
     moved.orch.installed = [("claude".to_string(), true), ("codex".to_string(), false)].into();
@@ -277,7 +270,6 @@ fn a_started_racing_task_on_a_moved_route_still_takes_a_brief() {
     t1.route = proto::Route {
         runtime: Runtime::Claude,
         model: "claude-opus-5-5".into(),
-        strength: proto::Strength::Frontier,
         effort: proto::Effort::HIGH,
     };
     t1.hub = true;

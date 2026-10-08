@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 
 use super::*;
+use crate::orchestrator::LegacyModel;
+use crate::orchestrator::LegacyStrength;
 use crate::{Problem, parse};
 
 fn keys(problems: &[Problem]) -> HashSet<String> {
@@ -72,14 +74,14 @@ fn defaults_when_absent() {
     assert_eq!(o.models.len(), 4);
     assert_eq!(o.models[0].runtime, proto::Runtime::Claude);
     assert_eq!(o.models[0].model, "claude-haiku-4-5");
-    assert_eq!(o.models[0].strength, proto::Strength::Fast);
+    assert_eq!(o.models[0].strength, LegacyStrength::Fast);
     assert_eq!(o.models[1].model, "claude-sonnet-5");
-    assert_eq!(o.models[1].strength, proto::Strength::Standard);
+    assert_eq!(o.models[1].strength, LegacyStrength::Standard);
     assert_eq!(o.models[2].model, "claude-opus-5-5");
-    assert_eq!(o.models[2].strength, proto::Strength::Frontier);
+    assert_eq!(o.models[2].strength, LegacyStrength::Frontier);
     assert_eq!(o.models[3].runtime, proto::Runtime::Codex);
     assert_eq!(o.models[3].model, "");
-    assert_eq!(o.models[3].strength, proto::Strength::Standard);
+    assert_eq!(o.models[3].strength, LegacyStrength::Standard);
     assert_eq!(o.profile, proto::ProfileSpec::default());
 }
 
@@ -192,11 +194,10 @@ FOO = "bar"
     assert!(!o.builtin_models);
     assert_eq!(
         o.models,
-        vec![proto::ModelEntry {
+        vec![LegacyModel {
             runtime: proto::Runtime::Codex,
             model: "my-model".to_string(),
-            strength: proto::Strength::Frontier,
-            note: "custom".to_string(),
+            strength: LegacyStrength::Frontier,
         }]
     );
     assert_eq!(o.profile.modules, Some(vec!["a".to_string()]));

@@ -2,25 +2,24 @@
 
 use proto::{
     AgentRole, Effort, OrchestratorChoice, RoleOutcome, RoleRoutingInput, Route, RoutingCandidate,
-    RunPath, Runtime, Strength,
+    RunPath, Runtime,
 };
 
 use super::*;
 use crate::run::orch::launch::orchestrator_route;
 use crate::run::orch::test_support::run_of;
 
-fn route(model: &str, strength: Strength) -> Route {
+fn route(model: &str) -> Route {
     Route {
         runtime: Runtime::Claude,
         model: model.into(),
-        strength,
         effort: Effort::HIGH,
     }
 }
 
-fn candidate(model: &str, strength: Strength) -> RoutingCandidate {
+fn candidate(model: &str) -> RoutingCandidate {
     RoutingCandidate {
-        route: route(model, strength),
+        route: route(model),
         skipped_reason: None,
     }
 }
@@ -42,11 +41,8 @@ fn orchestrator_of(choice: Option<&OrchestratorChoice>) -> RoleRoutingDecision {
 #[test]
 fn record_appends_the_chosen_route_when_absent() {
     let run = run_of(1);
-    let listed = vec![
-        candidate("claude-haiku-4-5", Strength::Fast),
-        candidate("claude-sonnet-5", Strength::Standard),
-    ];
-    let chosen = route("claude-opus-5", Strength::Frontier);
+    let listed = vec![candidate("claude-haiku-4-5"), candidate("claude-sonnet-5")];
+    let chosen = route("claude-opus-5");
     let d = record(
         Some(&run),
         AgentRole::Planner,
@@ -138,11 +134,8 @@ fn unchosen_candidates_have_no_failure_label() {
         "planner_config",
         PLANNER_POLICY,
         input_of(&run),
-        vec![
-            candidate("a", Strength::Fast),
-            candidate("b", Strength::Standard),
-        ],
-        &route("b", Strength::Standard),
+        vec![candidate("a"), candidate("b")],
+        &route("b"),
         2_000,
     ));
     // Milestone 9.8: an orchestrator's snapshot is its chosen route alone.
@@ -176,7 +169,7 @@ fn record_ids_are_stable() {
             PLANNER_POLICY,
             input_of(&run),
             Vec::new(),
-            &route("m", Strength::Standard),
+            &route("m"),
             2_000,
         )
     };
@@ -195,7 +188,7 @@ fn record_ids_are_stable() {
         None,
         ("17/3", "triage"),
         &[],
-        (&route("m", Strength::Fast), Vec::new()),
+        (&route("m"), Vec::new()),
         RoleRoutingInput::default(),
         2_000,
     );
@@ -218,7 +211,7 @@ fn record_ids_are_stable() {
 fn a_decider_record_names_its_task_only_when_it_has_one() {
     let run = run_of(2);
     let make = |tasks: &[String]| {
-        let chosen = (&route("m", Strength::Fast), Vec::new());
+        let chosen = (&route("m"), Vec::new());
         decider_record(
             Some(&run),
             ("9", "size_check"),
@@ -241,10 +234,10 @@ fn a_decider_record_names_its_task_only_when_it_has_one() {
 fn each_unchosen_candidate_gets_the_reason_for_its_place() {
     let run = run_of(1);
     let mut listed = vec![
-        candidate("a", Strength::Fast),
-        candidate("b", Strength::Standard),
-        candidate("c", Strength::Frontier),
-        candidate("d", Strength::Frontier),
+        candidate("a"),
+        candidate("b"),
+        candidate("c"),
+        candidate("d"),
     ];
     listed[3].skipped_reason = Some(NOT_INSTALLED.into());
     let reasons = |chosen: &Route| {
@@ -267,12 +260,12 @@ fn each_unchosen_candidate_gets_the_reason_for_its_place() {
     };
     let s = |r: &str| Some(r.to_string());
     assert_eq!(
-        reasons(&route("b", Strength::Standard)),
+        reasons(&route("b")),
         vec![s(NOT_CONFIGURED), None, s(EARLIER_TAKEN), s(NOT_INSTALLED)]
     );
     // A chosen route absent from the list is appended; every listed one came first.
     assert_eq!(
-        reasons(&route("z", Strength::Frontier)),
+        reasons(&route("z")),
         vec![
             s(NOT_CONFIGURED),
             s(NOT_CONFIGURED),

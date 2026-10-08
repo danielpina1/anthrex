@@ -388,7 +388,7 @@ fn task_panel_renders_at_120x40() {
             "deps      after t0 ✓, t6 ✓ · unblocks t3, t7 · on critical path",
             "budget    ███████░░░ 104/150 tool calls · 38/60 min · 410k tokens",
             "tries     review 1/2 bounces · check 0/2 · escalation step 1",
-            "route     codex · standard · high effort → reviewer claude · frontier",
+            "route     codex · high → reviewer claude · claude-opus-5 · high",
             "history   12:31 review r1 changes · 12:20 check passed · 12:02 started",
             "cx default · M · tdd",
         ]

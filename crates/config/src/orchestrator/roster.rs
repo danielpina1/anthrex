@@ -2,8 +2,11 @@
 //! `orchestrator.rs` to keep that file under the 600-line rule and because the roster
 //! is a responsibility of its own: the built-in list, in order, and the
 //! replace-in-place-or-append merge a `[[orchestrator.models]]` entry does against it.
+//! Milestone 9.8 (task M9.8.14): read only for migration (`models::migrate`,
+//! `models::old_keys`); strength is gone everywhere else, so the roster's types are
+//! this crate's own.
 
-use proto::{ModelEntry, Runtime, Strength};
+use proto::Runtime;
 
 use super::Orchestrator;
 use crate::Problem;
@@ -12,35 +15,68 @@ use crate::Problem;
 /// annotation shown beside a roster entry, not a place for prose.
 pub const MODEL_NOTE_MAX: usize = 80;
 
+/// How capable an old roster entry, planner, scout or decider was told to be. Read only
+/// by the migration of the old keys. Ordered, as the old rules compared it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub(crate) enum LegacyStrength {
+    Fast,
+    Standard,
+    Frontier,
+}
+
+impl LegacyStrength {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            LegacyStrength::Fast => "fast",
+            LegacyStrength::Standard => "standard",
+            LegacyStrength::Frontier => "frontier",
+        }
+    }
+
+    pub(crate) fn parse(text: &str) -> Option<LegacyStrength> {
+        match text {
+            "fast" => Some(LegacyStrength::Fast),
+            "standard" => Some(LegacyStrength::Standard),
+            "frontier" => Some(LegacyStrength::Frontier),
+            _ => None,
+        }
+    }
+}
+
+/// One `[[orchestrator.models]]` entry (or a built-in one), as migration reads it. Its
+/// fields are this crate's: nothing outside it chooses a model from the roster.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LegacyModel {
+    pub(crate) runtime: Runtime,
+    pub(crate) model: String,
+    pub(crate) strength: LegacyStrength,
+}
+
 /// The built-in roster, decision 23's exact order: `claude`/`claude-haiku-4-5`/`fast`,
 /// `claude`/`claude-sonnet-5`/`standard`, `claude`/`claude-opus-5-5`/`frontier`,
 /// `codex`/`""`/`standard`. An empty Codex model means "use Codex's configured
 /// default"; that is the only runtime an empty model is valid for.
-pub fn default_roster() -> Vec<ModelEntry> {
+pub(crate) fn default_roster() -> Vec<LegacyModel> {
     vec![
-        ModelEntry {
+        LegacyModel {
             runtime: Runtime::Claude,
             model: "claude-haiku-4-5".to_string(),
-            strength: Strength::Fast,
-            note: String::new(),
+            strength: LegacyStrength::Fast,
         },
-        ModelEntry {
+        LegacyModel {
             runtime: Runtime::Claude,
             model: "claude-sonnet-5".to_string(),
-            strength: Strength::Standard,
-            note: String::new(),
+            strength: LegacyStrength::Standard,
         },
-        ModelEntry {
+        LegacyModel {
             runtime: Runtime::Claude,
             model: "claude-opus-5-5".to_string(),
-            strength: Strength::Frontier,
-            note: String::new(),
+            strength: LegacyStrength::Frontier,
         },
-        ModelEntry {
+        LegacyModel {
             runtime: Runtime::Codex,
             model: String::new(),
-            strength: Strength::Standard,
-            note: String::new(),
+            strength: LegacyStrength::Standard,
         },
     ]
 }
@@ -52,7 +88,7 @@ pub fn default_roster() -> Vec<ModelEntry> {
 /// index as a [`Problem`]; an empty result falls back to the built-in roster, also
 /// with a `Problem`.
 pub(super) fn read_models(table: &toml::Table, o: &mut Orchestrator, problems: &mut Vec<Problem>) {
-    let mut roster: Vec<ModelEntry> = if o.builtin_models {
+    let mut roster: Vec<LegacyModel> = if o.builtin_models {
         default_roster()
     } else {
         Vec::new()
@@ -99,7 +135,7 @@ pub(super) fn read_models(table: &toml::Table, o: &mut Orchestrator, problems: &
     o.models = roster;
 }
 
-fn parse_model_entry(value: &toml::Value) -> Result<ModelEntry, String> {
+fn parse_model_entry(value: &toml::Value) -> Result<LegacyModel, String> {
     let Some(table) = value.as_table() else {
         return Err("expected a table".to_string());
     };
@@ -118,10 +154,10 @@ fn parse_model_entry(value: &toml::Value) -> Result<ModelEntry, String> {
         return Err("empty model is only allowed for codex".to_string());
     }
     let strength = match table.get("strength").and_then(|v| v.as_str()) {
-        Some("fast") => Strength::Fast,
-        Some("standard") => Strength::Standard,
-        Some("frontier") => Strength::Frontier,
-        Some(other) => return Err(format!("invalid strength {other:?}")),
+        Some(text) => match LegacyStrength::parse(text) {
+            Some(strength) => strength,
+            None => return Err(format!("invalid strength {text:?}")),
+        },
         None => return Err("strength is required".to_string()),
     };
     let note = match table.get("note").and_then(|v| v.as_str()) {
@@ -132,10 +168,9 @@ fn parse_model_entry(value: &toml::Value) -> Result<ModelEntry, String> {
         return Err(format!("note must be at most {MODEL_NOTE_MAX} characters"));
     }
 
-    Ok(ModelEntry {
+    Ok(LegacyModel {
         runtime,
         model,
         strength,
-        note,
     })
 }

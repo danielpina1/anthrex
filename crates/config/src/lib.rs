@@ -32,7 +32,7 @@ use git::{KNOWN_GIT_KEYS, read_git};
 pub use models::{ModelRef, ModelTable, Role, RoleChoice};
 pub use orchestrator::{
     AgentConfig, ClaudeAuth, ClaudeHeadless, ConfiguredBudgets, Deciders, DesignBudget,
-    DesignConfig, Metering, Onboarding, Orchestrator, Scouts, Tuning, TuningConfig, default_roster,
+    DesignConfig, Metering, Onboarding, Orchestrator, Scouts, Tuning, TuningConfig,
 };
 // Milestone 9.8 (task M9.8.13): the model lists are read for the migration only.
 pub(crate) use orchestrator::{RouteList, RouteLists};

@@ -386,6 +386,17 @@ fn plan_task_addresses_defaults_empty() {
     );
 }
 
+fn drop_strength(v: &mut serde_json::Value) {
+    match v {
+        serde_json::Value::Object(map) => {
+            map.remove("strength");
+            map.values_mut().for_each(drop_strength);
+        }
+        serde_json::Value::Array(items) => items.iter_mut().for_each(drop_strength),
+        _ => {}
+    }
+}
+
 /// `m9_1_run_info.json` is milestone 9.1's `RunInfo` (two stages, a bisect fix task),
 /// serialized by 9.1's own types before milestone 9.2 changed them; `m9_1_profile.toml`
 /// is a 9.1 `profile.toml`.
@@ -409,6 +420,9 @@ fn old_snapshot_and_profile_still_decode() {
             node["round"] = 1.into();
         }
     }
+    // Milestone 9.8 (task M9.8.14): a route's `strength` is read and ignored, never
+    // written.
+    drop_strength(&mut stored);
     assert_eq!(serde_json::to_value(&run).unwrap(), stored);
 
     let mut run = run;

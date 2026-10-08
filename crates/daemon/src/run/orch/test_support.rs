@@ -3,7 +3,7 @@
 
 use proto::{
     AgentRole, BlockInfo, BlockReason, Effort, Finding, HoldKind, HoldState, MessageKind, Route,
-    Runtime, Severity, Strength, TaskNoteKind, TaskState, TokenUsage, Verdict,
+    Runtime, Severity, TaskNoteKind, TaskState, TokenUsage, Verdict,
 };
 
 use super::{
@@ -58,7 +58,6 @@ pub fn route() -> Route {
     Route {
         runtime: Runtime::Codex,
         model: String::new(),
-        strength: Strength::Standard,
         effort: Effort::HIGH,
     }
 }
@@ -68,7 +67,6 @@ pub fn orchestrator() -> OrchestratorRecord {
         route: Route {
             runtime: Runtime::Claude,
             model: "claude-opus-5".into(),
-            strength: Strength::Frontier,
             effort: Effort::HIGH,
         },
         window_id: Some(9),

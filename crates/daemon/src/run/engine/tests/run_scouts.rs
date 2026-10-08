@@ -27,7 +27,6 @@ pub(super) fn report(id: &str, summary: &str) -> ScoutReport {
         route: Route {
             runtime: proto::Runtime::Claude,
             model: String::new(),
-            strength: proto::Strength::Fast,
             effort: proto::Effort::LOW,
         },
         window_id: None,

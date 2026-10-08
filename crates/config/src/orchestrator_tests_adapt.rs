@@ -3,7 +3,8 @@
 //! tables (M8b decision 3, Interfaces "`config`").
 
 use super::*;
-use proto::{DeciderMode, Effort, Runtime, Strength};
+use crate::orchestrator::LegacyStrength;
+use proto::{DeciderMode, Effort, Runtime};
 
 #[test]
 fn adapt_defaults_when_absent() {
@@ -16,7 +17,7 @@ fn adapt_defaults_when_absent() {
         Deciders {
             mode: DeciderMode::Claude,
             timeout_secs: 90,
-            strength: Strength::Fast,
+            strength: LegacyStrength::Fast,
             effort: Effort::LOW,
             slot_wait_secs: 30,
         }
@@ -25,7 +26,7 @@ fn adapt_defaults_when_absent() {
         o.scouts,
         Scouts {
             runtime: None,
-            strength: Strength::Fast,
+            strength: LegacyStrength::Fast,
             effort: Effort::LOW,
             timeout_secs: 900,
             max_tool_calls: 120,
@@ -89,7 +90,7 @@ otlp_port = 4318
         Deciders {
             mode: DeciderMode::Codex,
             timeout_secs: 120,
-            strength: Strength::Standard,
+            strength: LegacyStrength::Standard,
             effort: Effort::MEDIUM,
             slot_wait_secs: 0,
         }
@@ -98,7 +99,7 @@ otlp_port = 4318
         o.scouts,
         Scouts {
             runtime: Some(Runtime::Codex),
-            strength: Strength::Frontier,
+            strength: LegacyStrength::Frontier,
             effort: Effort::HIGH,
             timeout_secs: 60,
             max_tool_calls: 1000,

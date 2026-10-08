@@ -5,7 +5,7 @@
 //! M9.8.13). A protocol-16 (9.5) `run.json` loads with the mode `Off` and writes none of
 //! them back.
 
-use proto::{DesignMode, Effort, Runtime, Strength};
+use proto::{DesignMode, Effort, Runtime};
 
 use super::Run;
 use super::tuning::tests::{count, keys, save_and_load, tmp};
@@ -126,7 +126,6 @@ fn the_state_survives_save_and_load() {
     let route = Route {
         runtime: Runtime::Codex,
         model: "gpt-6".into(),
-        strength: Strength::Frontier,
         effort: Effort::HIGH,
     };
     let design = DesignState {
@@ -261,7 +260,6 @@ fn the_state_survives_save_and_load() {
                 route: Route {
                     runtime: Runtime::Codex,
                     model: "gpt-6".into(),
-                    strength: Strength::Frontier,
                     effort: Effort::HIGH,
                 },
                 sessions: 2,

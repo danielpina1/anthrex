@@ -29,7 +29,6 @@ fn report(id: &str, summary: &str, files: &[&str]) -> ScoutReport {
         route: Route {
             runtime: proto::Runtime::Claude,
             model: "claude-haiku-5".into(),
-            strength: proto::Strength::Fast,
             effort: proto::Effort::LOW,
         },
         window_id: None,

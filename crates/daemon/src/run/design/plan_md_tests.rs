@@ -1,6 +1,6 @@
 //! Task M9.6.4: decision 21's `plan.md`, as a snapshot string.
 
-use proto::{DesignMode, Effort, Route, Runtime, Size, Strength, TaskState, TestMode};
+use proto::{DesignMode, Effort, Route, Runtime, Size, TaskState, TestMode};
 
 use super::render;
 use crate::run::design::requirements::Requirement;
@@ -18,7 +18,6 @@ fn route(runtime: Runtime, model: &str, effort: Effort) -> Route {
     Route {
         runtime,
         model: model.to_string(),
-        strength: Strength::Standard,
         effort,
     }
 }

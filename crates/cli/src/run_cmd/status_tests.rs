@@ -1,7 +1,6 @@
 use super::*;
 use proto::{
-    AgentRole, AgentRoundInfo, Budget, Effort, Runtime, Spend, Strength, TaskKind, TaskState,
-    TokenUsage,
+    AgentRole, AgentRoundInfo, Budget, Effort, Runtime, Spend, TaskKind, TaskState, TokenUsage,
 };
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -10,7 +9,6 @@ fn route(runtime: Runtime, model: &str, effort: Effort) -> Route {
     Route {
         runtime,
         model: model.to_string(),
-        strength: Strength::Standard,
         effort,
     }
 }

@@ -4,11 +4,10 @@
 
 use super::*;
 
-fn route(runtime: Runtime, model: &str, strength: Strength, effort: Effort) -> Route {
+fn route(runtime: Runtime, model: &str, effort: Effort) -> Route {
     Route {
         runtime,
         model: model.to_string(),
-        strength,
         effort,
     }
 }
@@ -47,30 +46,15 @@ fn policy_fills_routes_by_class() {
 
     assert_eq!(
         task(&run, "s").route,
-        route(
-            Runtime::Claude,
-            "claude-sonnet-5",
-            Strength::Standard,
-            Effort::LOW
-        )
+        route(Runtime::Claude, "claude-sonnet-5", Effort::LOW)
     );
     assert_eq!(
         task(&run, "m").route,
-        route(
-            Runtime::Claude,
-            "claude-sonnet-5",
-            Strength::Standard,
-            Effort::MEDIUM
-        )
+        route(Runtime::Claude, "claude-sonnet-5", Effort::MEDIUM)
     );
     assert_eq!(
         task(&run, "hub").route,
-        route(
-            Runtime::Claude,
-            "claude-opus-5-5",
-            Strength::Standard,
-            Effort::HIGH
-        )
+        route(Runtime::Claude, "claude-opus-5-5", Effort::HIGH)
     );
     // Budgets by class: S the S budget, M and hub the M budget.
     let config = config::Orchestrator::default();
@@ -93,7 +77,7 @@ fn default_runtime_comes_from_config() {
     let run = build_with(&text, &config).unwrap_or_else(|e| panic!("{}", show(&e)));
     assert_eq!(
         task(&run, "s").route,
-        route(Runtime::Codex, "", Strength::Standard, Effort::LOW)
+        route(Runtime::Codex, "", Effort::LOW)
     );
 }
 

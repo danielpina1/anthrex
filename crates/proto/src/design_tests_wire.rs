@@ -345,7 +345,7 @@ fn a_gate_info_carries_the_reports_summary() {
 fn planner_info_covers_defaults_and_skips() {
     let old = json!({
         "epic": "mail", "title": "Mail", "area": ["crates/mail/**"],
-        "route": a_route(Runtime::Claude, Strength::Frontier, Effort::HIGH, "m"),
+        "route": a_route(Runtime::Claude, Effort::HIGH, "m"),
         "window_id": null, "state": "planning",
         "started_at": 1, "ended_at": null, "edits_accepted": 0, "edits_rejected": 0,
         "last_rejection": null, "replans": [],

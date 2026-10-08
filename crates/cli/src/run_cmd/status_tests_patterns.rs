@@ -2,8 +2,7 @@
 //! their task, and the header's writer caps.
 
 use proto::{
-    Effort, LaneInfo, LaneState, PairInfo, PairPhase, RaceInfo, RaceLane, Route, Runtime, Strength,
-    TaskState,
+    Effort, LaneInfo, LaneState, PairInfo, PairPhase, RaceInfo, RaceLane, Route, Runtime, TaskState,
 };
 
 use super::run_block;
@@ -13,7 +12,6 @@ fn route(runtime: Runtime) -> Route {
     Route {
         runtime,
         model: String::new(),
-        strength: Strength::Standard,
         effort: Effort::MEDIUM,
     }
 }

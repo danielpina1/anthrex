@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 
 use proto::{
     AgentRole, DesignMode, DocAuthor, DocGateAction, DocGateKind, DocKind, Effort, Route, RunPath,
-    RunState, Runtime, Strength,
+    RunState, Runtime,
 };
 use serde_json::{Value, json};
 
@@ -134,7 +134,6 @@ pub(super) fn brainstormer(label: &str, runtime: Runtime) -> DesignAgent {
         route: Route {
             runtime,
             model: "m".into(),
-            strength: Strength::Frontier,
             effort: Effort::HIGH,
         },
         session: 1,

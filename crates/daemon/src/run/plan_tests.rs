@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use proto::{Budget, Effort, Route, RunState, Runtime, Strength};
+use proto::{Budget, Effort, Route, RunState, Runtime};
 
 use super::*;
 use crate::run::env::profile_env;
@@ -43,7 +43,6 @@ fn the_brief_example_builds_a_run() {
     let expected_route = Route {
         runtime: Runtime::Claude,
         model: "claude-sonnet-5".to_string(),
-        strength: Strength::Standard,
         effort: Effort::MEDIUM,
     };
     assert_eq!(t1.route, expected_route);
@@ -514,7 +513,6 @@ fn limits_are_frozen_at_run_start() {
         note_max_per_task: 4,
         planners: PlannerLimits {
             runtime: Some(Runtime::Codex),
-            strength: Strength::Frontier,
             effort: Effort::HIGH,
             max_tool_calls: 200,
             timeout_secs: 600,
@@ -543,6 +541,36 @@ fn limits_are_frozen_at_run_start() {
     let defaults = build(&text).unwrap_or_else(|e| panic!("{}", show(&e)));
     assert_eq!(old.limits.orch, OrchLimits::default());
     assert_eq!(defaults.limits.orch, OrchLimits::default());
+}
+
+/// M9.8.14: an old plan's `[task.route] strength` still loads and is ignored (strength
+/// is gone; the row decides, M9.8.9); every other unknown route key is still refused.
+#[test]
+fn an_old_plan_with_route_strength_still_loads() {
+    let route = "[task.route]\nstrength = \"frontier\"";
+    let text = plan_with(
+        PROFILE,
+        &[task_toml("s", "S", r#"["crates/a/src/lib.rs"]"#, route)],
+    );
+    let plan = parse_plan(&text).unwrap_or_else(|e| panic!("{e}"));
+    let spec = &plan.tasks[0].route;
+    let written = serde_json::to_value(spec).unwrap();
+    assert!(written.get("strength").is_none(), "{written}");
+    let run = run_ok(&text);
+    let t = task(&run, "s");
+    assert_eq!(t.spec.route, proto::RouteSpec::default());
+    let row = run
+        .limits
+        .models()
+        .route(crate::run::model_roles::RunModels::task_role(t));
+    assert_eq!(t.route, row);
+
+    let unknown = text.replace(
+        "strength = \"frontier\"",
+        "strength = \"frontier\"\ntier = \"x\"",
+    );
+    let err = parse_plan(&unknown).unwrap_err();
+    assert!(err.contains("unknown field `tier`"), "{err}");
 }
 
 #[path = "plan_tests_parse.rs"]

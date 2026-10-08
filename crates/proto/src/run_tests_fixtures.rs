@@ -13,11 +13,10 @@ pub(super) fn a_finding() -> Finding {
     }
 }
 
-pub(super) fn a_route(runtime: Runtime, strength: Strength, effort: Effort, model: &str) -> Route {
+pub(super) fn a_route(runtime: Runtime, effort: Effort, model: &str) -> Route {
     Route {
         runtime,
         model: model.into(),
-        strength,
         effort,
     }
 }
@@ -41,12 +40,7 @@ pub(super) fn an_agent_round() -> AgentRoundInfo {
         session: 1,
         round: 6,
         window_id: Some(9),
-        route: a_route(
-            Runtime::Claude,
-            Strength::Standard,
-            Effort::HIGH,
-            "claude-sonnet-5",
-        ),
+        route: a_route(Runtime::Claude, Effort::HIGH, "claude-sonnet-5"),
         session_id: Some("claude-session-abc".into()),
         started_at: 1_700_000_100,
         ended_at: Some(1_700_000_400),
@@ -71,7 +65,7 @@ pub(super) fn an_agent_round() -> AgentRoundInfo {
 pub(super) fn a_review() -> ReviewInfo {
     ReviewInfo {
         round: 1,
-        route: a_route(Runtime::Codex, Strength::Frontier, Effort::MEDIUM, ""),
+        route: a_route(Runtime::Codex, Effort::MEDIUM, ""),
         verdict: Some(Verdict::Changes),
         summary: "one blocking finding".into(),
         findings: vec![a_finding()],
@@ -96,18 +90,8 @@ pub(super) fn a_task_info() -> TaskInfo {
         deps: vec!["t0".into()],
         implicit_deps: vec!["t0a".into()],
         priority: 3,
-        route: a_route(
-            Runtime::Claude,
-            Strength::Standard,
-            Effort::HIGH,
-            "claude-sonnet-5",
-        ),
-        review_route: Some(a_route(
-            Runtime::Codex,
-            Strength::Frontier,
-            Effort::MEDIUM,
-            "",
-        )),
+        route: a_route(Runtime::Claude, Effort::HIGH, "claude-sonnet-5"),
+        review_route: Some(a_route(Runtime::Codex, Effort::MEDIUM, "")),
         budget: Budget {
             tool_calls: 120,
             minutes: 45,

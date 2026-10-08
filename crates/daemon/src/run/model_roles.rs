@@ -9,7 +9,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use proto::models::{BrainstormChoice, ModelRef, ModelTable, Role, RoleChoice};
-use proto::{CatalogSource, Effort, ModelCatalog, Route, Runtime, Size, Strength, TaskKind};
+use proto::{CatalogSource, Effort, ModelCatalog, Route, Runtime, Size, TaskKind};
 use serde::{Deserialize, Serialize};
 
 use super::globs::any_intersect;
@@ -142,8 +142,6 @@ impl RunModels {
         Route {
             runtime: model.runtime,
             model: model.route_model().to_string(),
-            // removed in M9.8.14; no rule reads it after M9.8.8
-            strength: Strength::Standard,
             effort: Effort::of(effort),
         }
     }

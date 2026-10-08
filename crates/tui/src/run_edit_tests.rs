@@ -3,7 +3,7 @@
 use super::*;
 use crate::tree::run_fixtures::{RUN_ID, task};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use proto::{Effort, Route, RouteSpec, Runtime, Size, Strength, TaskInfo, TaskState, TestMode};
+use proto::{Effort, Route, RouteSpec, Runtime, Size, TaskInfo, TaskState, TestMode};
 
 /// The brief's `t1`: route spec `{ claude, policy, policy, medium }`, resolved to
 /// Claude, `claude-sonnet-5`, standard, medium; M, tdd, brief `Line one\nLine two`.
@@ -18,7 +18,6 @@ pub(crate) fn edit_fixture_task() -> TaskInfo {
     t1.route = Route {
         runtime: Runtime::Claude,
         model: "claude-sonnet-5".into(),
-        strength: Strength::Standard,
         effort: Effort::MEDIUM,
     };
     t1.brief = "Line one\nLine two".into();
@@ -528,7 +527,7 @@ fn the_largest_edit_fits_one_frame() {
         route: Some(proto::RouteSpec {
             runtime: Some(proto::Runtime::Codex),
             model: Some(wide(TEXT_MAX_CHARS)),
-            strength: Some(proto::Strength::Frontier),
+            strength: None,
             effort: Some(proto::Effort::HIGH),
         }),
         test_mode: Some(proto::TestMode::None),

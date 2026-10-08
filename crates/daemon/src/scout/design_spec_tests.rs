@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use proto::{AgentRole, Effort, Route, Runtime, Strength};
+use proto::{AgentRole, Effort, Route, Runtime};
 use serde_json::Value;
 
 use super::*;
@@ -20,7 +20,6 @@ fn route(runtime: Runtime) -> Route {
     Route {
         runtime,
         model: "m".into(),
-        strength: Strength::Frontier,
         effort: Effort::HIGH,
     }
 }

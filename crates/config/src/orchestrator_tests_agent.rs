@@ -2,8 +2,9 @@
 //! Interfaces "`config`").
 
 use super::*;
+use crate::orchestrator::LegacyStrength;
 use crate::orchestrator::agent::{AgentConfig, AgentSettings, PlannerConfig};
-use proto::{Effort, Runtime, Strength};
+use proto::{Effort, Runtime};
 
 fn printed(problems: &[Problem]) -> Vec<String> {
     let mut printed: Vec<String> = problems.iter().map(|p| p.to_string()).collect();
@@ -27,7 +28,7 @@ fn defaults_when_absent() {
         },
         planners: PlannerConfig {
             runtime: None,
-            strength: Strength::Frontier,
+            strength: LegacyStrength::Frontier,
             effort: Effort::HIGH,
             max_tool_calls: 200,
             timeout_secs: 2400,
@@ -168,9 +169,9 @@ fn effort_and_strength_and_runtime_parse() {
         assert_eq!(config.orchestrator.agent.planners.effort, effort);
     }
     for (word, strength) in [
-        ("fast", Strength::Fast),
-        ("standard", Strength::Standard),
-        ("frontier", Strength::Frontier),
+        ("fast", LegacyStrength::Fast),
+        ("standard", LegacyStrength::Standard),
+        ("frontier", LegacyStrength::Frontier),
     ] {
         let (config, problems) =
             parse(&format!("[orchestrator.planners]\nstrength = \"{word}\"\n"));

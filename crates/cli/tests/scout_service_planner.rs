@@ -15,7 +15,7 @@ use daemon::run::orch::contract::PLANNER_NUDGE;
 use daemon::scout::planner::{PlannerSpec, planner_names};
 use daemon::scout::service::{ScoutOutcome, ScoutService};
 use daemon::scout::spec::ScoutContext;
-use proto::{AgentRole, Effort, Route, RunRef, Runtime, Status, Strength};
+use proto::{AgentRole, Effort, Route, RunRef, Runtime, Status};
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
@@ -40,7 +40,6 @@ fn planner_spec(repo: &std::path::Path) -> PlannerSpec {
     let route = Route {
         runtime: Runtime::Claude,
         model: "claude-opus-4-5".into(),
-        strength: Strength::Frontier,
         effort: Effort::HIGH,
     };
     let headless = HeadlessSpec {
@@ -141,7 +140,7 @@ async fn a_planner_session_runs_on_the_scout_machine_and_is_accepted() {
     let scouts: Arc<ScoutService> = ScoutService::new(
         manager.clone(),
         ScoutContext {
-            roster: orchestrator.models.clone().into(),
+            roster: orchestrator.roles.clone().into(),
             default_runtime: Runtime::Claude,
             scouts: orchestrator.scouts.clone(),
             claude: orchestrator.claude.clone(),

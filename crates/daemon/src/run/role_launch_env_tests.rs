@@ -5,7 +5,7 @@
 use super::*;
 use crate::headless::session_vars;
 use crate::run::test_support::{PROFILE, plan_with, run_ok, task_toml};
-use proto::{Effort, Strength};
+use proto::Effort;
 
 fn pins(runtime: Runtime, env: &[(String, String)]) -> usize {
     session_vars(runtime, env)
@@ -19,7 +19,6 @@ fn route(runtime: Runtime) -> Route {
     Route {
         runtime,
         model: "m".into(),
-        strength: Strength::Standard,
         effort: Effort::MEDIUM,
     }
 }

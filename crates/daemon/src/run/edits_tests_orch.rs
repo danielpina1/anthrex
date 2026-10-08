@@ -272,7 +272,7 @@ fn sent_route() -> RouteSpec {
     RouteSpec {
         runtime: Some(proto::Runtime::Codex),
         model: Some("gpt-6-sol".into()),
-        strength: Some(proto::Strength::Frontier),
+        strength: Some("frontier".into()),
         effort: Some(Effort::HIGH),
     }
 }

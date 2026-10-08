@@ -12,7 +12,7 @@ use daemon::run::model::{
 use daemon::run::plan::{BuildContext, Preflight, build_run, parse_plan};
 use proto::{
     AgentRole, BlockInfo, BlockReason, DoneSignal, Effort, Finding, Route, RunRef, Runtime,
-    Severity, Status, Strength, TokenUsage, Verdict, WindowInfo, WindowKind,
+    Severity, Status, TokenUsage, Verdict, WindowInfo, WindowKind,
 };
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -82,7 +82,6 @@ pub fn route() -> Route {
     Route {
         runtime: Runtime::Claude,
         model: "claude-sonnet-5".into(),
-        strength: Strength::Standard,
         effort: Effort::HIGH,
     }
 }

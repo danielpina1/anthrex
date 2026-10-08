@@ -11,7 +11,9 @@
 //! table, or one whose list is empty after validation, leaves that class or role as
 //! it was before 9.5.
 
-use proto::{Effort, ModelEntry, Runtime};
+use proto::{Effort, Runtime};
+
+use super::LegacyModel;
 
 use crate::{Problem, not_a_table_problem, report_unknown_nested, unknown_key_problem};
 
@@ -92,7 +94,7 @@ pub(crate) fn report_unknown_routes(value: &toml::Value, problems: &mut Vec<Prob
 /// `models::migrate` (M9.8 preflight ruling F4).
 pub(crate) fn read_routes(
     orchestrator: &toml::Table,
-    roster: &[ModelEntry],
+    roster: &[LegacyModel],
     problems: &mut Vec<Problem>,
 ) -> RouteLists {
     let mut lists = RouteLists::default();
@@ -141,7 +143,7 @@ pub(crate) fn read_routes(
 fn read_list(
     t: &toml::Table,
     prefix: &str,
-    roster: &[ModelEntry],
+    roster: &[LegacyModel],
     problems: &mut Vec<Problem>,
 ) -> RouteList {
     let mut list = RouteList::default();
@@ -182,7 +184,7 @@ fn read_list(
 fn read_candidate(
     entry: &toml::Value,
     key: &str,
-    roster: &[ModelEntry],
+    roster: &[LegacyModel],
 ) -> Result<Candidate, (String, String)> {
     let fail = |field: &str, message: &str| Err((format!("{key}{field}"), message.to_string()));
     let Some(t) = entry.as_table() else {

@@ -34,6 +34,28 @@ fn catalog() -> ModelCatalog {
     }
 }
 
+/// M9.8.14: a protocol-18 peer's route still carries `strength`; it decodes (JSON and
+/// MessagePack) with the key ignored, and a route is written without it.
+#[test]
+fn a_protocol_18_route_with_strength_decodes() {
+    let old = json!({"runtime": "codex", "model": "", "strength": "standard", "effort": "medium"});
+    let want = Route {
+        runtime: Runtime::Codex,
+        model: String::new(),
+        effort: Effort::MEDIUM,
+    };
+    let route: Route = serde_json::from_value(old.clone()).unwrap();
+    assert_eq!(route, want);
+    let back: Route = rmp_serde::from_slice(&rmp_serde::to_vec_named(&old).unwrap()).unwrap();
+    assert_eq!(back, want);
+    let written = serde_json::to_value(&want).unwrap();
+    assert_eq!(
+        written,
+        json!({"runtime": "codex", "model": "", "effort": "medium"})
+    );
+    both(&want);
+}
+
 #[test]
 fn effort_is_a_string_and_a_protocol_18_value_decodes() {
     let old = json!({"runtime": "claude", "model": "claude-opus-5-5", "strength": "frontier", "effort": "high"});

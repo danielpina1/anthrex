@@ -9,7 +9,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use proto::{
     Effort, ProfileMeta, ProfileReply, ProfileRequest, ProfileStatus, RepoProfile, Route, RunReply,
-    RunRequest, Runtime, ScoutKind, ScoutReport, Strength, TaskInfo,
+    RunRequest, Runtime, ScoutKind, ScoutReport, TaskInfo,
 };
 use serde_json::{Value, json};
 
@@ -222,7 +222,6 @@ impl RunHarness {
             route: Route {
                 runtime: Runtime::Claude,
                 model: "fake".into(),
-                strength: Strength::Fast,
                 effort: Effort::LOW,
             },
             window_id: None,

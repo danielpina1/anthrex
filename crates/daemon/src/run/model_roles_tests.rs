@@ -584,7 +584,7 @@ fn a_users_route_without_a_model_is_refused() {
         "[route] task m: route.model: choose a model; runtime alone no longer selects one"
     );
     let strength = RouteSpec {
-        strength: Some(proto::Strength::Frontier),
+        strength: Some("frontier".into()),
         ..RouteSpec::default()
     };
     assert_eq!(

@@ -18,7 +18,7 @@ use daemon::decider::{
 use daemon::headless::argv::CLI_CAPS;
 use daemon::headless::{SessionEvent, claude_stream, codex_stream};
 use headless_support::*;
-use proto::{DeciderMode, Effort, Route, Runtime, Strength, TokenUsage};
+use proto::{DeciderMode, Effort, Route, Runtime, TokenUsage};
 use serde_json::{Value, json};
 
 /// How long a hanging decider is watched for output before it is killed: an absence
@@ -35,7 +35,6 @@ fn ctx(runtime: Runtime) -> DeciderContext {
         route: Route {
             runtime,
             model: "fast-model".into(),
-            strength: Strength::Fast,
             effort: Effort::LOW,
         },
         timeout: Duration::from_secs(90),

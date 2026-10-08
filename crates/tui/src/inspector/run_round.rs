@@ -2,8 +2,8 @@
 //! Interfaces "Inspector contents, exact": Agent round). Pure, as `run.rs` is.
 
 use super::run_format::{
-    billable, clean, counts_text, effort_text, finding_text, format_duration, format_tokens,
-    kind_glyph, local_hhmm, most_severe, rank, rows, session_text, strength_text,
+    billable, clean, counts_text, finding_text, format_duration, format_tokens, kind_glyph,
+    local_hhmm, most_severe, rank, route_label, rows, session_text,
 };
 use super::run_patterns;
 use super::{Field, Inspection, field};
@@ -39,12 +39,7 @@ pub(crate) fn round_inspection(
     let right = format!("{status} · {} · {}", format_duration(duration), task.id);
     let label = round_label_with_lane(info.role, info.lane, info.session, round.number);
     let route = &info.route;
-    let name = format!(
-        "{label}  {} · {} · {}",
-        route.runtime.label(),
-        strength_text(route.strength),
-        effort_text(route.effort.clone())
-    );
+    let name = format!("{label}  {}", route_label(route));
     let fields = match info.role {
         AgentRole::Reviewer => reviewer_fields(task, round, app),
         AgentRole::Worker | AgentRole::Orchestrator | AgentRole::Scout | AgentRole::Planner => {
@@ -242,20 +237,16 @@ fn reviewer_fields(task: &TaskInfo, round: &DisplayRound<'_>, app: &App) -> Vec<
         let route: &Route = &judged.info.route;
         fields.push(field(
             "judging",
-            format!(
-                "{label} · {} · {}",
-                route.runtime.label(),
-                strength_text(route.strength)
-            ),
+            format!("{label} · {}", route_label(route)),
         ));
     }
-    let author = judged.map_or(task.route.strength, |judged| judged.info.route.strength);
+    let author = judged.map_or(&task.route, |judged| &judged.info.route);
     fields.push(field(
-        "strength",
+        "route",
         format!(
             "{} vs author {}",
-            strength_text(info.route.strength),
-            strength_text(author)
+            route_label(&info.route),
+            route_label(author)
         ),
     ));
     // Ruling T20-2 (I1): a review is its round's and its lane's.

@@ -168,14 +168,13 @@ fn the_latest_spec_is_the_last_gate_version_else_the_last_draft() {
 #[test]
 fn a_live_agent_runs_in_its_window_in_its_role() {
     use super::{DesignAgent, DesignAgentState};
-    use proto::{AgentRole, Effort, Route, Runtime, Strength};
+    use proto::{AgentRole, Effort, Route, Runtime};
     let agent = |role, window, state| DesignAgent {
         label: "x".into(),
         role,
         route: Route {
             runtime: Runtime::Claude,
             model: "m".into(),
-            strength: Strength::Frontier,
             effort: Effort::HIGH,
         },
         session: 1,

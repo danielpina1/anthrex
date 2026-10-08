@@ -308,7 +308,6 @@ fn a_reapproved_phase_pending_at_a_restart_is_appended_and_counted_once() {
         route: proto::Route {
             runtime: proto::Runtime::Codex,
             model: "gpt-6".into(),
-            strength: proto::Strength::Frontier,
             effort: proto::Effort::HIGH,
         },
         calls,
@@ -432,7 +431,6 @@ fn role_line(n: u64, outcome: proto::RoleOutcome) -> HistoryLine {
     let route = proto::Route {
         runtime: proto::Runtime::Claude,
         model: "m".into(),
-        strength: proto::Strength::Fast,
         effort: proto::Effort::LOW,
     };
     let input = proto::RoleRoutingInput::default();
@@ -533,7 +531,6 @@ fn version_1_history_and_an_old_run_json_still_load() {
         proto::Route {
             runtime: proto::Runtime::Claude,
             model: String::new(),
-            strength: proto::Strength::Frontier,
             effort: proto::Effort::HIGH,
         },
         1,

@@ -114,7 +114,6 @@ async fn a_missing_or_changed_pack_is_unreadable() {
             route: proto::Route {
                 runtime: proto::Runtime::Claude,
                 model: "m".into(),
-                strength: proto::Strength::Frontier,
                 effort: proto::Effort::HIGH,
             },
             session: 1,

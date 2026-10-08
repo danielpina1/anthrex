@@ -1,6 +1,6 @@
 use super::*;
 use crate::run::test_support::{PROFILE, plan_with, run_ok, task_toml};
-use proto::{AgentRole, Effort, Runtime, Strength};
+use proto::{AgentRole, Effort, Runtime};
 use std::path::PathBuf;
 
 #[test]
@@ -15,7 +15,6 @@ fn reviewer_spec_is_read_only() {
         let route = Route {
             runtime,
             model: "m".into(),
-            strength: Strength::Standard,
             effort: Effort::MEDIUM,
         };
         let spec = reviewer_spec(&run, task, &route);
@@ -126,7 +125,6 @@ fn codex_sessions_carry_the_base_codex_config_guard() {
     let route = |runtime| Route {
         runtime,
         model: "m".into(),
-        strength: Strength::Standard,
         effort: Effort::MEDIUM,
     };
     let mut task = run.tasks[0].clone();
@@ -193,7 +191,6 @@ fn claude_sessions_deny_writes_to_protected_agent_config() {
     let route = Route {
         runtime: Runtime::Claude,
         model: "m".into(),
-        strength: Strength::Standard,
         effort: Effort::MEDIUM,
     };
     let review = reviewer_spec(&run, &owner, &route).claude_sandbox.unwrap();

@@ -1,8 +1,7 @@
 //! Builders for `history_tests.rs` (split out to keep it under the 600-line rule).
 
 use proto::{
-    AgentRole, Effort, Finding, Route, RoutingDecision, Runtime, Severity, Strength, TokenUsage,
-    Verdict,
+    AgentRole, Effort, Finding, Route, RoutingDecision, Runtime, Severity, TokenUsage, Verdict,
 };
 
 use crate::run::model::{AgentRound, CheckRecord, ProofRecord, ReviewRecord, Run};
@@ -26,11 +25,10 @@ pub(super) fn run_of(tasks: &[&str]) -> Run {
     run
 }
 
-pub(super) fn route(runtime: Runtime, model: &str, strength: Strength, effort: Effort) -> Route {
+pub(super) fn route(runtime: Runtime, model: &str, effort: Effort) -> Route {
     Route {
         runtime,
         model: model.into(),
-        strength,
         effort,
     }
 }
@@ -53,7 +51,7 @@ pub(super) fn round(
 ) -> AgentRound {
     let json = serde_json::json!({
         "role": role, "session": session, "round": session, "window_id": 7,
-        "route": route(Runtime::Claude, "claude-sonnet-5", Strength::Standard, Effort::HIGH),
+        "route": route(Runtime::Claude, "claude-sonnet-5", Effort::HIGH),
         "launch_op": 1, "session_id": "s", "pid": null, "ended": true, "started_at": 1_000,
         "ended_at": 1_500, "turn_open": false, "turns": 1, "turn_had_task_done": true,
         "last_event": 1_500, "tool_calls": tool_calls, "rate_limited_until": null,
@@ -111,7 +109,7 @@ pub(super) fn finding(severity: Severity) -> Finding {
 pub(super) fn review(round: u32, verdict: Verdict, findings: Vec<Finding>) -> ReviewRecord {
     ReviewRecord {
         round,
-        route: route(Runtime::Codex, "", Strength::Standard, Effort::LOW),
+        route: route(Runtime::Codex, "", Effort::LOW),
         base: "b".into(),
         head: "h".into(),
         verdict: Some(verdict),

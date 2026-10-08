@@ -2,7 +2,7 @@
 //! implicit dependencies, cancelled dependencies, live rounds, history (M8a.6 fix
 //! round 1).
 
-use proto::{Effort, Route, Runtime, Strength};
+use proto::{Effort, Route, Runtime};
 
 use super::*;
 use crate::run::validate::combined_cycles;
@@ -104,7 +104,6 @@ fn an_escalated_route_survives_a_test_mode_amend() {
     let escalated = Route {
         runtime: Runtime::Codex,
         model: String::new(),
-        strength: Strength::Standard,
         effort: Effort::HIGH,
     };
     let t2 = task_mut(&mut run, "t2");
@@ -539,7 +538,6 @@ fn an_engine_escalation_to_the_peer_runtime_does_not_block_later_edits() {
     t1.route = Route {
         runtime: Runtime::Codex,
         model: String::new(),
-        strength: Strength::Standard,
         effort: Effort::HIGH,
     };
     t1.rung = 2;

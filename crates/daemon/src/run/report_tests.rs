@@ -1,6 +1,4 @@
-use proto::{
-    AgentRole, DoneSignal, Finding, Route, Runtime, Severity, Strength, TokenUsage, Verdict,
-};
+use proto::{AgentRole, DoneSignal, Finding, Route, Runtime, Severity, TokenUsage, Verdict};
 
 use super::*;
 use crate::run::model::{
@@ -27,7 +25,6 @@ fn round(role: AgentRole, session: u32, turns: u32, tool_calls: u32, denials: u3
         route: Route {
             runtime: Runtime::Claude,
             model: "claude-sonnet-5".to_string(),
-            strength: Strength::Standard,
             effort: proto::Effort::HIGH,
         },
         launch_op: 1,

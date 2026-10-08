@@ -479,14 +479,19 @@ fn the_reviewer_prompt_carries_the_clamped_diff() {
 
 #[test]
 fn the_reviewer_prompt_never_names_the_author() {
-    let roster = config::default_roster();
-    assert_eq!(roster.len(), 4, "the built-in roster");
-    for entry in roster {
+    // The old built-in roster's four models (milestone 9.8 removed the roster).
+    let (claude, codex) = (proto::Runtime::Claude, proto::Runtime::Codex);
+    let models = [
+        (claude, "claude-haiku-4-5"),
+        (claude, "claude-sonnet-5"),
+        (claude, "claude-opus-5-5"),
+        (codex, ""),
+    ];
+    for (runtime, model) in models {
         let (mut fx, window) = working_on(PROFILE, CHECK_MODE);
         fx.task_mut("t1").route = proto::Route {
-            runtime: entry.runtime,
-            model: entry.model.clone(),
-            strength: entry.strength,
+            runtime,
+            model: model.into(),
             effort: proto::Effort::MEDIUM,
         };
         let (op, _) = in_review(&mut fx, window);
@@ -494,18 +499,14 @@ fn the_reviewer_prompt_never_names_the_author() {
         let OpKind::CreateWindow { first_turn, .. } = kind else {
             unreachable!()
         };
-        let label = serde_json::to_value(entry.runtime).unwrap();
+        let label = serde_json::to_value(runtime).unwrap();
         let label = label.as_str().unwrap();
         assert!(
             !first_turn.to_lowercase().contains(label),
             "{label}: {first_turn}"
         );
-        if !entry.model.is_empty() {
-            assert!(
-                !first_turn.contains(&entry.model),
-                "{}: {first_turn}",
-                entry.model
-            );
+        if !model.is_empty() {
+            assert!(!first_turn.contains(model), "{}: {first_turn}", model);
         }
     }
 }

@@ -287,7 +287,6 @@ fn integration_review_prompt_is_exact() {
         route: Route {
             runtime: proto::Runtime::Codex,
             model: "gpt-5".into(),
-            strength: proto::Strength::Frontier,
             effort: proto::Effort::HIGH,
         },
         base: BASE.into(),

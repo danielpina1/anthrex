@@ -2,7 +2,7 @@
 //! outcomes and the design phases' spend line; a run without the design flow's report
 //! is 9.5's.
 
-use proto::{AgentRole, DocAuthor, DocKind, Effort, Route, Runtime, Strength, TaskState};
+use proto::{AgentRole, DocAuthor, DocKind, Effort, Route, Runtime, TaskState};
 
 use super::*;
 use crate::run::design::state::{AgentSpend, DesignState, NewDoc, Requirement, store};
@@ -22,7 +22,6 @@ fn spend(label: &str, role: AgentRole, (calls, tokens): (u32, u64)) -> AgentSpen
         route: Route {
             runtime: Runtime::Codex,
             model: "m".into(),
-            strength: Strength::Frontier,
             effort: Effort::HIGH,
         },
         sessions: 1,

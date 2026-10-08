@@ -7,9 +7,10 @@
 //! and `[orchestrator.deciders]\nmode = "off"` into the same nested table, so one path
 //! reads both. None of these tables names a path or a confinement setting.
 
-use proto::{DeciderMode, Effort, Runtime, Strength};
+use proto::{DeciderMode, Effort, Runtime};
 
 use super::Orchestrator;
+use super::roster::LegacyStrength;
 use crate::{Problem, not_a_table_problem, read_bool_key, read_u64_in_range};
 
 pub(super) const KNOWN_DECIDERS_KEYS: &[&str] = &[
@@ -35,7 +36,8 @@ pub(super) const KNOWN_METERING_KEYS: &[&str] = &["otlp", "otlp_port"];
 pub struct Deciders {
     pub mode: DeciderMode,
     pub timeout_secs: u64,
-    pub strength: Strength,
+    /// Read only to migrate the old keys (task M9.8.14).
+    pub(crate) strength: LegacyStrength,
     pub effort: Effort,
     pub slot_wait_secs: u64,
 }
@@ -45,7 +47,7 @@ impl Default for Deciders {
         Deciders {
             mode: DeciderMode::Claude,
             timeout_secs: 90,
-            strength: Strength::Fast,
+            strength: LegacyStrength::Fast,
             effort: Effort::LOW,
             slot_wait_secs: 30,
         }
@@ -56,7 +58,8 @@ impl Default for Deciders {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Scouts {
     pub runtime: Option<Runtime>,
-    pub strength: Strength,
+    /// Read only to migrate the old keys (task M9.8.14).
+    pub(crate) strength: LegacyStrength,
     pub effort: Effort,
     pub timeout_secs: u64,
     pub max_tool_calls: u32,
@@ -66,7 +69,7 @@ impl Default for Scouts {
     fn default() -> Self {
         Scouts {
             runtime: None,
-            strength: Strength::Fast,
+            strength: LegacyStrength::Fast,
             effort: Effort::LOW,
             timeout_secs: 900,
             max_tool_calls: 120,
@@ -242,25 +245,18 @@ fn read_otlp_port(t: &toml::Table, field: &mut u16, problems: &mut Vec<Problem>)
 pub(super) fn read_strength(
     t: &toml::Table,
     prefix: &str,
-    field: &mut Strength,
+    field: &mut LegacyStrength,
     problems: &mut Vec<Problem>,
 ) {
     let Some(v) = t.get("strength") else {
         return;
     };
-    match v.as_str() {
-        Some("fast") => *field = Strength::Fast,
-        Some("standard") => *field = Strength::Standard,
-        Some("frontier") => *field = Strength::Frontier,
-        _ => problems.push(Problem {
+    match v.as_str().and_then(LegacyStrength::parse) {
+        Some(strength) => *field = strength,
+        None => problems.push(Problem {
             key: format!("{prefix}.strength"),
             message: "must be fast, standard or frontier".to_string(),
-            default: match field {
-                Strength::Fast => "fast",
-                Strength::Standard => "standard",
-                Strength::Frontier => "frontier",
-            }
-            .to_string(),
+            default: field.as_str().to_string(),
         }),
     }
 }

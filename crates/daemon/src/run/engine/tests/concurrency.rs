@@ -2,7 +2,7 @@
 //! A rate-limit event in a task session halves that runtime's writer cap inside the
 //! run, never below one; a quiet `recover_after_secs` adds one back.
 
-use proto::{Effort, GateCounts, LaneState, RaceLane, Route, Runtime, Spend, Strength, TaskState};
+use proto::{Effort, GateCounts, LaneState, RaceLane, Route, Runtime, Spend, TaskState};
 
 use super::fixture::*;
 use super::gates_review::reviewed;
@@ -450,7 +450,6 @@ fn lane(lane: RaceLane, runtime: Runtime, state: LaneState) -> Lane {
     let route = Route {
         runtime,
         model: String::new(),
-        strength: Strength::Standard,
         effort: Effort::MEDIUM,
     };
     Lane {

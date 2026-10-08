@@ -7,7 +7,7 @@
 
 use proto::{
     AgentRole, Budget, ClassBudget, Effort, HISTORY_VERSION, HistoryLine, PhaseAgent, PhaseRecord,
-    Route, Runtime, Strength, TuningFile,
+    Route, Runtime, TuningFile,
 };
 
 use super::tests::NOW;
@@ -17,7 +17,6 @@ fn route() -> Route {
     Route {
         runtime: Runtime::Codex,
         model: "gpt-6".into(),
-        strength: Strength::Frontier,
         effort: Effort::HIGH,
     }
 }

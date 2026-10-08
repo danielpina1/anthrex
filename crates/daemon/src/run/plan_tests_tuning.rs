@@ -2,7 +2,7 @@
 //! built run: budgets by decision 6's precedence, the hub budget, the class routes, and
 //! `Tuned::default()` changing nothing.
 
-use proto::{Budget, ClassBudget, Effort, SizeThresholds, Strength, TuningFile};
+use proto::{Budget, ClassBudget, Effort, SizeThresholds, TuningFile};
 
 use super::*;
 use crate::run::model::Run;
@@ -133,14 +133,11 @@ fn an_applied_class_route_is_ignored_and_the_rows_fill_the_routes() {
         ),
     ]);
     let run = built(&text, &config, tuned(&file, &config));
-    let of = |id: &str| {
-        let r = &task(&run, id).route;
-        (r.strength, r.effort.clone())
-    };
-    assert_eq!(of("s1"), (Strength::Standard, Effort::LOW));
-    assert_eq!(of("m1"), (Strength::Standard, Effort::MEDIUM));
-    assert_eq!(of("h1"), (Strength::Standard, Effort::HIGH));
-    assert_eq!(of("e1").1, Effort::LOW);
+    let of = |id: &str| task(&run, id).route.effort.clone();
+    assert_eq!(of("s1"), Effort::LOW);
+    assert_eq!(of("m1"), Effort::MEDIUM);
+    assert_eq!(of("h1"), Effort::HIGH);
+    assert_eq!(of("e1"), Effort::LOW);
     let log: Vec<&str> = run.log.iter().map(|e| e.text.as_str()).collect();
     assert_eq!(
         log,

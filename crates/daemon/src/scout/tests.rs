@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use proto::{AgentRole, Effort, RunRef, Runtime, ScoutKind, Strength};
+use proto::{AgentRole, Effort, RunRef, Runtime, ScoutKind};
 use serde_json::{Value, json};
 
 use super::report::{report_path, resolve_ref, validate};
@@ -226,7 +226,7 @@ fn the_scout_sandbox_does_not_depend_on_worker_sandbox() {
         ..config::Orchestrator::default()
     };
     let context = ScoutContext {
-        roster: off.models.clone().into(),
+        roster: off.roles.clone().into(),
         default_runtime: off.default_runtime,
         scouts: off.scouts.clone(),
         claude: off.claude.clone(),
@@ -314,7 +314,6 @@ fn decider_ctx(caps: CliCaps) -> crate::decider::DeciderContext {
         route: proto::Route {
             runtime: Runtime::Codex,
             model: String::new(),
-            strength: Strength::Standard,
             effort: Effort::LOW,
         },
         timeout: std::time::Duration::from_secs(90),

@@ -76,10 +76,7 @@ fn want(width: usize, height: usize) -> Vec<String> {
         framed(" test mode  tdd", width),
         framed(" stage      1 of 2", width),
         framed(" deps       unblocks t2, t3", width),
-        framed(
-            " route      codex · gpt-6-sol · standard · medium effort",
-            width,
-        ),
+        framed(" route      codex · gpt-6-sol · medium", width),
         framed(" review     none", width),
     ];
     while want.len() < height - 1 {
@@ -207,10 +204,7 @@ fn the_detail_is_labelled_rows() {
     let got = rows(&draw(&mut app, 80, 24));
     let ascii = |inner: &str| framed(inner, 80).replace('│', "|");
     assert_eq!(got[11], ascii(" done when  . t2 works"));
-    assert_eq!(
-        got[15],
-        ascii(" route      claude - opus - standard - medium effort")
-    );
+    assert_eq!(got[15], ascii(" route      claude - opus - medium"));
 }
 
 #[test]

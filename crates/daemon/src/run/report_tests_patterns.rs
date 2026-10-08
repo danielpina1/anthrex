@@ -1,7 +1,7 @@
 //! Milestone 9.5 task M9.5.21 (decision 30): `REPORT.md`'s race and pair lines per
 //! task, and the run's `## Concurrency` and `tuning:` lines.
 
-use proto::{Effort, LaneState, PairPhase, Route, Runtime, Strength};
+use proto::{Effort, LaneState, PairPhase, Route, Runtime};
 
 use super::render;
 use crate::run::model::{Pair, Run, RuntimeConcurrency};
@@ -11,7 +11,6 @@ fn route(runtime: Runtime, model: &str) -> Route {
     Route {
         runtime,
         model: model.into(),
-        strength: Strength::Standard,
         effort: Effort::MEDIUM,
     }
 }
@@ -96,8 +95,8 @@ fn report_has_race_pair_concurrency_and_tuning() {
         block(&report, "Race: "),
         [
             "Race: racer a won; race cost: 12 calls, 3400 tokens",
-            "- racer a: claude claude-opus-5-5 (standard/medium); won",
-            "- racer b: codex gpt-6.1-sol (standard/medium); lost; salvaged `refs/anthrex/salvage/r1/t1/2`; removed stale index.lock, HEAD.lock; reason: racer a won",
+            "- racer a: claude claude-opus-5-5 (medium); won",
+            "- racer b: codex gpt-6.1-sol (medium); lost; salvaged `refs/anthrex/salvage/r1/t1/2`; removed stale index.lock, HEAD.lock; reason: racer a won",
         ]
     );
     let t2 = &report[report.find("## t2:").unwrap()..];
@@ -105,13 +104,13 @@ fn report_has_race_pair_concurrency_and_tuning() {
         block(t2, "Race: "),
         [
             "Race: racer b adopted after racer a went out; race cost: 0 calls, 0 tokens",
-            "- racer a: claude claude-opus-5-5 (standard/medium); out; salvaged `refs/anthrex/salvage/r1/t2/1`; checkout kept; reason: the check failed twice",
-            "- racer b: codex gpt-6.1-sol (standard/medium); adopted",
+            "- racer a: claude claude-opus-5-5 (medium); out; salvaged `refs/anthrex/salvage/r1/t2/1`; checkout kept; reason: the check failed twice",
+            "- racer b: codex gpt-6.1-sol (medium); adopted",
         ]
     );
     assert!(
         report.contains(
-            "\nPair: test writer codex gpt-6.1-sol (standard/medium); test t_feat; red a1b2c3d, fails at red; writer failures 2; implementing\n"
+            "\nPair: test writer codex gpt-6.1-sol (medium); test t_feat; red a1b2c3d, fails at red; writer failures 2; implementing\n"
         ),
         "{report}"
     );
@@ -176,7 +175,7 @@ fn a_running_race_an_ended_race_and_a_writing_pair() {
     );
     assert!(
         report.contains(
-            "\nPair: test writer codex gpt-6.1-sol (standard/medium); writer failures 1; writing the test\n"
+            "\nPair: test writer codex gpt-6.1-sol (medium); writer failures 1; writing the test\n"
         ),
         "{report}"
     );
@@ -186,7 +185,7 @@ fn a_running_race_an_ended_race_and_a_writing_pair() {
     let report = render(&run, 2_000);
     assert!(
         report.contains(
-            "\nPair: test writer codex gpt-6.1-sol (standard/medium); test t_feat; writer failures 1; writing the test\n"
+            "\nPair: test writer codex gpt-6.1-sol (medium); test t_feat; writer failures 1; writing the test\n"
         ),
         "{report}"
     );

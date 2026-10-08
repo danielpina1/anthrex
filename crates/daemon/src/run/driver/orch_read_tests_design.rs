@@ -3,7 +3,7 @@
 //! reviewer, and the design agents' caller check. Through a real daemon socket with no
 //! agent (`orch_read_rig.rs`); the documents are real files under the rig's data dir.
 
-use proto::{AgentRole, DocAuthor, DocKind, Effort, Route, Runtime, Strength};
+use proto::{AgentRole, DocAuthor, DocKind, Effort, Route, Runtime};
 use serde_json::json;
 
 use super::read_rig::{ANSWER, Rig};
@@ -23,7 +23,6 @@ fn agent(label: &str, role: AgentRole, window: u32) -> DesignAgent {
         route: Route {
             runtime: Runtime::Codex,
             model: "gpt-5.5".into(),
-            strength: Strength::Frontier,
             effort: Effort::HIGH,
         },
         session: 1,

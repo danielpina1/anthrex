@@ -43,21 +43,13 @@ fn a_users_model_without_effort_does_not_take_the_rows_effort() {
         effort: Some("max".into()),
         fallback: None,
     };
-    let mut cfg = config::Orchestrator {
+    let cfg = config::Orchestrator {
         roles: ModelTable {
             rows: [(Role::ImplementerMedium, row)].into(),
             brainstorm: None,
         },
         ..config::Orchestrator::default()
     };
-    if !cfg.models.iter().any(|m| m.model == "gpt-6-luna") {
-        cfg.models.push(proto::ModelEntry {
-            runtime: Runtime::Codex,
-            model: "gpt-6-luna".into(),
-            strength: proto::Strength::Fast,
-            note: String::new(),
-        });
-    }
     let run = build_with(
         &plan_with(PROFILE, &[task_toml("m", "M", "[\"b/**\"]", CHECK)]),
         &cfg,
@@ -105,7 +97,6 @@ fn a_users_model_without_effort_does_not_take_the_rows_effort() {
 #[test]
 fn a_users_route_to_a_model_no_roster_lists_is_accepted() {
     let cfg = config::Orchestrator::default();
-    assert!(!cfg.models.iter().any(|m| m.model == "gpt-9-new"));
     let run = build_with(
         &plan_with(PROFILE, &[task_toml("m", "M", "[\"b/**\"]", CHECK)]),
         &cfg,

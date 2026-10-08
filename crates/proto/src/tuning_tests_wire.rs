@@ -24,7 +24,7 @@ fn reply_both_ways(reply: RunReply) {
 fn a_lane(lane: RaceLane, state: LaneState) -> LaneInfo {
     LaneInfo {
         lane,
-        route: a_route(Runtime::Codex, Strength::Standard, Effort::MEDIUM, "gpt-6"),
+        route: a_route(Runtime::Codex, Effort::MEDIUM, "gpt-6"),
         state,
         checkout: format!("t1.{}", lane.label()),
         head: Some("d1d1d1d".into()),
@@ -157,7 +157,7 @@ fn every_new_or_changed_message_round_trips() {
     });
     task.pair = Some(PairInfo {
         phase: PairPhase::Implementing,
-        writer_route: a_route(Runtime::Claude, Strength::Standard, Effort::LOW, "s"),
+        writer_route: a_route(Runtime::Claude, Effort::LOW, "s"),
         test: Some("a::works".into()),
         red: Some("abcdef1".into()),
         red_checked: Some(true),
@@ -465,7 +465,6 @@ fn a_task_infos_row_round_trips() {
     let mut task = a_task_info();
     task.row = Some(a_route(
         Runtime::Claude,
-        Strength::Frontier,
         Effort::new("max"),
         "claude-opus-5-5",
     ));

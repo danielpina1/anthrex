@@ -296,11 +296,10 @@ fn usage(input: u64, output: u64, cache_read: u64, cache_write: u64) -> proto::T
     }
 }
 
-fn routed(runtime: Runtime, strength: proto::Strength, effort: proto::Effort) -> proto::Route {
+fn routed(runtime: Runtime, effort: proto::Effort) -> proto::Route {
     proto::Route {
         runtime,
         model: String::new(),
-        strength,
         effort,
     }
 }
@@ -324,15 +323,15 @@ fn gemini_task(id: &str, state: TaskState, tool_calls: u32) -> TaskInfo {
 /// Task `t2` of the Gemini fixture (Interfaces "Inspector contents, exact", the task
 /// and agent-round mockups).
 fn gemini_t2(now: u64) -> TaskInfo {
-    use proto::{Effort, Severity, Strength};
+    use proto::{Effort, Severity};
     let mut t2 = gemini_task("t2", TaskState::Review, 104);
     t2.title = "map Gemini hook events to status".into();
     t2.size = Size::M;
     t2.deps = vec!["t0".into(), "t6".into()];
     t2.on_critical_path = true;
     t2.wave = 1;
-    t2.route = routed(Runtime::Codex, Strength::Standard, Effort::HIGH);
-    let mut review_route = routed(Runtime::Claude, Strength::Frontier, Effort::HIGH);
+    t2.route = routed(Runtime::Codex, Effort::HIGH);
+    let mut review_route = routed(Runtime::Claude, Effort::HIGH);
     review_route.model = "claude-opus-5".into();
     t2.review_route = Some(review_route.clone());
     t2.budget = proto::Budget {
@@ -493,11 +492,7 @@ pub(crate) fn gemini_fixture() -> (RunsSnapshot, Vec<WindowInfo>) {
     });
     let mut t7 = gemini_task("t7", TaskState::Working, 58);
     t7.deps = vec!["t2".into()];
-    t7.route = routed(
-        Runtime::Codex,
-        proto::Strength::Standard,
-        proto::Effort::MEDIUM,
-    );
+    t7.route = routed(Runtime::Codex, proto::Effort::MEDIUM);
     let mut limited = worker(1, None, Runtime::Codex, now - 900);
     limited.rate_limited = true;
     limited.rate_limited_since = Some(now - 240);

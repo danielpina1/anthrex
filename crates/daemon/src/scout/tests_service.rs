@@ -24,7 +24,7 @@ fn service() -> Arc<ScoutService> {
     ScoutService::new(
         manager,
         ScoutContext {
-            roster: orchestrator.models.clone().into(),
+            roster: orchestrator.roles.clone().into(),
             default_runtime: proto::Runtime::Claude,
             scouts: orchestrator.scouts.clone(),
             claude: orchestrator.claude.clone(),

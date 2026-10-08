@@ -346,13 +346,10 @@ fn resolve_route(spec: &PlanTask, row: Route, errors: &mut Vec<PlanError>) -> Ro
     } else {
         proto::Effort::DEFAULT
     });
-    // M9.8.13: a named model keeps the strength the route gives, else the row's; no
-    // roster checks it (strength itself goes in M9.8.14).
-    let strength = given.strength.unwrap_or(row.strength);
+    // M9.8.14: an old route's `strength` is read and ignored.
     Route {
         runtime,
         model: model.clone(),
-        strength,
         effort,
     }
 }

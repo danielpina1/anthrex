@@ -4,7 +4,7 @@
 
 use super::fixtures::*;
 use crate::messages::DaemonMsg;
-use crate::run::{Effort, RouteSpec, Runtime, Strength};
+use crate::run::{Effort, RouteSpec, Runtime};
 use crate::run_info::{PlanEditInfo, RunsSnapshot, TaskEventInfo};
 use crate::run_wire::RunReply;
 use crate::{PlannerInfo, PlannerState};
@@ -14,7 +14,7 @@ fn a_planner() -> PlannerInfo {
         epic: "A".into(),
         title: "daemon".into(),
         area: vec!["crates/daemon/**".into()],
-        route: a_route(Runtime::Claude, Strength::Frontier, Effort::HIGH, ""),
+        route: a_route(Runtime::Claude, Effort::HIGH, ""),
         window_id: Some(12),
         state: PlannerState::Finished,
         started_at: 1_700_000_050,
@@ -231,12 +231,7 @@ fn orchestrator_snapshot_fields_round_trip() {
     let mut snapshot = a_view_snapshot();
     let run = &mut snapshot.runs[0];
     run.orchestrator = Some(OrchestratorInfo {
-        route: a_route(
-            Runtime::Claude,
-            Strength::Frontier,
-            Effort::HIGH,
-            "claude-opus-5",
-        ),
+        route: a_route(Runtime::Claude, Effort::HIGH, "claude-opus-5"),
         window_id: Some(21),
         live: true,
         started_at: 1_700_000_020,
@@ -320,7 +315,7 @@ fn new_fields_round_trip() {
     ];
     let run = &mut snapshot.runs[0];
     run.orchestrator = Some(OrchestratorInfo {
-        route: a_route(Runtime::Codex, Strength::Frontier, Effort::HIGH, "gpt-5"),
+        route: a_route(Runtime::Codex, Effort::HIGH, "gpt-5"),
         window_id: Some(4),
         live: true,
         started_at: 1_700_000_020,

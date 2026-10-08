@@ -3,7 +3,7 @@
 //! the same checkout (decisions 24–26; rulings RP-1, RP-2). The implementer's half,
 //! its signals and the slots are in `pair_implementer.rs`.
 
-use proto::{AgentRole, GateCounts, ModelEntry, PairPhase, Runtime, Strength, TaskState};
+use proto::{AgentRole, GateCounts, PairPhase, Runtime, TaskState};
 use serde_json::json;
 
 use super::dispatch::{replies, task_path};
@@ -132,15 +132,6 @@ pub(super) fn implementing() -> (Fixture, Launch, u32, Vec<Effect>) {
     (fx, launch_of(kind), window, effects)
 }
 
-fn entry(runtime: Runtime, model: &str, strength: Strength) -> ModelEntry {
-    ModelEntry {
-        runtime,
-        model: model.to_string(),
-        strength,
-        note: String::new(),
-    }
-}
-
 #[test]
 fn a_paired_task_starts_with_a_test_writer_on_the_peer_runtime() {
     let (fx, launch, _) = paired();
@@ -199,15 +190,8 @@ fn a_paired_task_starts_with_a_test_writer_on_the_peer_runtime() {
     );
     assert_eq!(launch.first_turn, want);
 
-    // A Claude-only roster and a Claude `test_writer` row (milestone 9.8): that row.
-    let mut claude_only = config::Orchestrator {
-        models: vec![
-            entry(Runtime::Claude, "claude-haiku-4-5", Strength::Fast),
-            entry(Runtime::Claude, "claude-sonnet-5", Strength::Standard),
-            entry(Runtime::Claude, "claude-opus-5-5", Strength::Frontier),
-        ],
-        ..config::Orchestrator::default()
-    };
+    // A Claude `test_writer` row (milestone 9.8): that row.
+    let mut claude_only = config::Orchestrator::default();
     let writer = proto::models::RoleChoice {
         model: proto::models::ModelRef::parse("claude:claude-haiku-4-5").unwrap(),
         effort: None,

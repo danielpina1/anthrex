@@ -6,7 +6,7 @@ use super::*;
 use crate::headless::argv::{CLI_CAPS, CODEX_SANDBOX_PINS, CliCaps};
 use crate::headless::codex_sandbox::{CodexSandboxDialect, DialectChoice};
 use crate::headless::credential_scrub_for;
-use proto::{DeciderMode, Effort, Route, Runtime, Strength};
+use proto::{DeciderMode, Effort, Route, Runtime};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -18,7 +18,6 @@ fn ctx(runtime: Runtime, model: &str, caps: CliCaps) -> DeciderContext {
         route: Route {
             runtime,
             model: model.into(),
-            strength: Strength::Fast,
             effort: Effort::LOW,
         },
         timeout: Duration::from_secs(90),

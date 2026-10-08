@@ -541,7 +541,7 @@ async fn pre_run_triage_writes_a_record_even_when_no_run_is_created() {
     assert!(d.record_id.starts_with("triage/"), "{}", d.record_id);
     assert_eq!((d.run_id.as_deref(), d.task_id.as_deref()), (None, None));
     assert_eq!((d.role, d.trigger.as_str()), (AgentRole::Decider, "triage"));
-    assert_eq!(d.source, "decider_config");
+    assert_eq!(d.source, "role_table");
     assert_eq!(d.outcome, Some(RoleOutcome::Fallback));
     let reason = d.result.as_deref().unwrap_or_default();
     assert!(
@@ -552,33 +552,20 @@ async fn pre_run_triage_writes_a_record_even_when_no_run_is_created() {
     assert_eq!(d.input.languages, vec!["rust".to_string()]);
     assert_eq!(d.input.question_kind.as_deref(), Some("triage"));
     assert_eq!(d.candidates[d.selected_index as usize].route, d.chosen);
-    // Review I-2: the full ordered snapshot: the mode's runtime's roster entries at or
-    // above `[orchestrator.deciders] strength`, lowest first; no peer runtime.
+    // Milestone 9.8 (ruling F16; the roster's ladder went with strength, M9.8.14): the
+    // candidates are the triage row's model, then its fallback.
+    use proto::models::{HelperKind, Role};
     let config = config::Orchestrator::default();
-    let mut ladder: Vec<&proto::ModelEntry> = config
-        .models
-        .iter()
-        .filter(|e| e.runtime == proto::Runtime::Claude && e.strength >= config.deciders.strength)
-        .collect();
-    ladder.sort_by_key(|e| e.strength);
-    assert!(ladder.len() > 1, "the default roster has a ladder");
-    let models: Vec<&str> = d
-        .candidates
-        .iter()
+    let row = config::models::resolve(Role::Helper(HelperKind::Triage), None, &config.roles);
+    let models: Vec<&str> = (d.candidates.iter())
         .map(|c| c.route.model.as_str())
         .collect();
-    let want: Vec<&str> = ladder.iter().map(|e| e.model.as_str()).collect();
+    let want: Vec<&str> = std::iter::once(&row.model)
+        .chain(row.fallback.as_ref())
+        .map(|m| m.route_model())
+        .collect();
     assert_eq!(models, want, "{:#?}", d.candidates);
-    for (i, c) in d.candidates.iter().enumerate() {
-        let reason = c.skipped_reason.as_deref();
-        match i.cmp(&(d.selected_index as usize)) {
-            std::cmp::Ordering::Equal => assert_eq!(reason, None),
-            std::cmp::Ordering::Greater => {
-                assert_eq!(reason, Some("an earlier candidate was taken"))
-            }
-            std::cmp::Ordering::Less => assert_eq!(reason, Some("not in the configured list")),
-        }
-    }
+    assert_eq!(d.candidates[d.selected_index as usize].skipped_reason, None);
     // Nothing reached the repository.
     let status = support::run_git::out(&repo.root, &["status", "--porcelain", "--ignored"]);
     assert!(status.trim().is_empty(), "{status}");

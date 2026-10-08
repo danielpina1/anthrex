@@ -97,7 +97,7 @@ fn a_reviewer_with_no_lane_judges_the_latest_racer() {
     let reviewer = inspect_node(&app, &round_key(AgentRole::Reviewer, None, 2, 1));
     assert_eq!(
         value(&reviewer, "judging"),
-        Some("racer a · claude · standard")
+        Some("racer a · claude · medium")
     );
 }
 

@@ -3,8 +3,8 @@
 
 use proto::{
     AgentRole, BlockReason, DiffStats, DoneSignal, Effort, GateCounts, GateTally, HISTORY_VERSION,
-    PhaseSecs, RunPath, RunState, Runtime, Severity, SeverityTally, SizeCheckInfo, Strength,
-    TaskOutcome, TaskRecord, TaskState, TokenUsage, Verdict,
+    PhaseSecs, RunPath, RunState, Runtime, Severity, SeverityTally, SizeCheckInfo, TaskOutcome,
+    TaskRecord, TaskState, TokenUsage, Verdict,
 };
 
 use super::{due, run_outcome, run_record, run_record_due, task_record, task_record_id};
@@ -21,6 +21,41 @@ use fixtures::*;
 mod patterns;
 #[path = "history_tests_routing.rs"]
 mod routing;
+
+/// M9.8.14: the checked-in milestone-9 history (its routes carry `strength`) still
+/// decodes with `HISTORY_VERSION` 5; the key is ignored and never written back.
+#[test]
+fn an_old_routing_line_still_decodes() {
+    assert_eq!(HISTORY_VERSION, 5);
+    let text = include_str!("../../../proto/src/m9_history_v2.jsonl");
+    let lines: Vec<proto::HistoryLine> = (text.lines())
+        .map(|l| serde_json::from_str(l).unwrap_or_else(|e| panic!("{e}: {l}")))
+        .collect();
+    let [
+        proto::HistoryLine::Task(task),
+        proto::HistoryLine::RoleRoute(role),
+    ] = &lines[..]
+    else {
+        panic!("a task line and a role_route line: {lines:?}");
+    };
+    let sonnet = route(Runtime::Claude, "claude-sonnet-5", Effort::HIGH);
+    assert_eq!(task.route, sonnet);
+    assert_eq!(task.review_routes, std::slice::from_ref(&sonnet));
+    let decision = &task.routing_decisions[0];
+    assert_eq!(
+        decision.chosen,
+        route(Runtime::Codex, "gpt-5-codex", Effort::HIGH)
+    );
+    assert_eq!(decision.candidates[0].route, sonnet);
+    assert_eq!(
+        role.chosen,
+        route(Runtime::Claude, "claude-opus-5", Effort::HIGH)
+    );
+    for line in &lines {
+        let json = serde_json::to_string(line).unwrap();
+        assert!(!json.contains("strength"), "{json}");
+    }
+}
 
 #[test]
 fn set_state_accumulates_phase_times() {
@@ -156,7 +191,7 @@ fn task_record_from_a_merged_task() {
     task.phase_since = 900;
     let task = run.tasks[0].clone();
     let record = task_record(&run, &task, TaskOutcome::Merged, 1_000);
-    let reviewer = route(Runtime::Codex, "", Strength::Standard, Effort::LOW);
+    let reviewer = route(Runtime::Codex, "", Effort::LOW);
     let want = TaskRecord {
         v: HISTORY_VERSION,
         record_id: format!("{}/t1", run.id),
@@ -233,12 +268,7 @@ fn task_record_from_a_merged_task() {
 fn routing_history_keeps_choice_time_candidates() {
     let mut run = run_of(&["t1"]);
     run.profile_languages = vec!["rust".into()];
-    let sonnet = route(
-        Runtime::Claude,
-        "claude-sonnet-5",
-        Strength::Standard,
-        Effort::MEDIUM,
-    );
+    let sonnet = route(Runtime::Claude, "claude-sonnet-5", Effort::MEDIUM);
     assert_eq!(run.tasks[0].route, sonnet);
     // The small row back at its built-in `low`, so the task's `medium` is its own (a
     // user's route, decision 10; a plan's before milestone 9.8 decision 31) and the

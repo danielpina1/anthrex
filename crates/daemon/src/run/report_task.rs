@@ -1,9 +1,7 @@
 //! One task's section of the run report (`## <id>: <title>`). Split out of `report.rs`
 //! by AGENTS.md's file-size rule. Pure, same terms as `report.rs`.
 
-use proto::{
-    DeciderSource, Effort, LaneInfo, LaneState, PairPhase, Route, Runtime, Severity, Strength,
-};
+use proto::{DeciderSource, Effort, LaneInfo, LaneState, PairPhase, Route, Runtime, Severity};
 
 use super::contract::{mode_label, sha7, size_label};
 use super::engine::{epoch_spend, ladder, race_cost};
@@ -326,10 +324,9 @@ fn findings_by_severity<'a>(findings: impl Iterator<Item = &'a proto::Finding>, 
 
 fn route_line(route: &Route) -> String {
     format!(
-        "{} {} ({}/{})",
+        "{} {} ({})",
         runtime_label(route.runtime),
         route.model,
-        strength_label(route.strength),
         effort_label(route.effort.clone())
     )
 }
@@ -339,14 +336,6 @@ fn runtime_label(runtime: Runtime) -> &'static str {
         Runtime::Claude => "claude",
         Runtime::Codex => "codex",
         Runtime::Shell => "shell",
-    }
-}
-
-pub(super) fn strength_label(strength: Strength) -> &'static str {
-    match strength {
-        Strength::Fast => "fast",
-        Strength::Standard => "standard",
-        Strength::Frontier => "frontier",
     }
 }
 

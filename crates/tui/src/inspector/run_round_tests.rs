@@ -27,7 +27,7 @@ fn worker_round_fields_match_the_mockup() {
     let app = app_of(gemini_fixture());
     let inspection = inspect_node(&app, &round_key("t2", AgentRole::Worker, 1, 2));
     assert_eq!(inspection.glyph.content, "⠋");
-    assert_eq!(inspection.name, "worker #1 r2  codex · standard · high");
+    assert_eq!(inspection.name, "worker #1 r2  codex · high");
     assert_eq!(inspection.right.as_deref(), Some("working · 6m · t2"));
     assert_eq!(inspection.layout, FieldLayout::Rows);
     assert_eq!(
@@ -46,7 +46,7 @@ fn the_first_display_round_has_no_fixing_and_no_activity() {
     let app = app_of(gemini_fixture());
     let inspection = inspect_node(&app, &round_key("t2", AgentRole::Worker, 1, 1));
     assert_eq!(inspection.glyph.content, "✓");
-    assert_eq!(inspection.name, "worker #1  codex · standard · high");
+    assert_eq!(inspection.name, "worker #1  codex · high");
     assert_eq!(inspection.right.as_deref(), Some("finished · 20m · t2"));
     assert_eq!(
         pairs(&inspection),
@@ -343,13 +343,16 @@ fn reviewer_round_fields_match_the_mockup() {
     let app = app_of(gemini_fixture());
     let inspection = inspect_node(&app, &round_key("t2", AgentRole::Reviewer, 1, 1));
     assert_eq!(inspection.glyph.content, "✗");
-    assert_eq!(inspection.name, "review #1  claude · frontier · high");
+    assert_eq!(inspection.name, "review #1  claude · claude-opus-5 · high");
     assert_eq!(inspection.right.as_deref(), Some("finished · 9m · t2"));
     assert_eq!(
         pairs(&inspection),
         [
-            ("judging", "worker #1 · codex · standard"),
-            ("strength", "frontier vs author standard"),
+            ("judging", "worker #1 · codex · high"),
+            (
+                "route",
+                "claude · claude-opus-5 · high vs author codex · high"
+            ),
             ("verdict", "changes (blocking)"),
             (
                 "findings",
@@ -368,8 +371,11 @@ fn a_live_reviewer_is_reviewing() {
     assert_eq!(
         pairs(&inspection),
         [
-            ("judging", "worker #1 r2 · codex · standard"),
-            ("strength", "frontier vs author standard"),
+            ("judging", "worker #1 r2 · codex · high"),
+            (
+                "route",
+                "claude · claude-opus-5 · high vs author codex · high"
+            ),
             ("verdict", "reviewing"),
             ("findings", "none"),
             ("session", "no window yet"),

@@ -2,7 +2,7 @@
 //! inline problems and warnings, and its save. Every rule is `config::settings`'s own.
 
 use super::actions::tap;
-use super::goal_form::{app, doc, entry};
+use super::goal_form::{FixtureModel, app, doc, entry};
 use super::orch::tagged;
 use super::*;
 use crate::app::screens::Screen;
@@ -10,24 +10,19 @@ use crate::app::settings_screen::{
     SettingsScreen, SettingsSection, hard_stop_calls, hard_stop_minutes,
 };
 use proto::settings::key;
-use proto::{
-    ModelEntry, Origin, RunReply, RunRequest, SettingsDoc, SettingsReply, SettingsRequest, Strength,
-};
+use proto::{Origin, RunReply, RunRequest, SettingsDoc, SettingsReply, SettingsRequest};
 use std::collections::BTreeMap;
 
-fn model(runtime: Runtime, name: &str, strength: Strength) -> ModelEntry {
-    ModelEntry {
-        strength,
-        ..entry(runtime, name)
-    }
+fn model(runtime: Runtime, name: &str) -> FixtureModel {
+    entry(runtime, name)
 }
 
 /// `claude-opus-5-5` (shipped) and a custom `claude-x` fast, plus Codex's default.
 pub(super) fn sample() -> SettingsDoc {
     doc(vec![
-        model(Runtime::Claude, "claude-opus-5-5", Strength::Frontier),
-        model(Runtime::Claude, "claude-x", Strength::Fast),
-        model(Runtime::Codex, "", Strength::Standard),
+        model(Runtime::Claude, "claude-opus-5-5"),
+        model(Runtime::Claude, "claude-x"),
+        model(Runtime::Codex, ""),
     ])
 }
 

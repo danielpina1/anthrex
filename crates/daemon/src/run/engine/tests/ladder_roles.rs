@@ -3,7 +3,7 @@
 //! (`role_step::escalate`), and records the step from the role table (ruling F16).
 
 use proto::models::{ModelRef, ModelTable, Role, RoleChoice};
-use proto::{AgentRole, Effort, Route, Runtime, Strength, TaskState};
+use proto::{AgentRole, Effort, Route, Runtime, TaskState};
 
 use super::control::retry;
 use super::fixture::*;
@@ -159,7 +159,6 @@ fn opus() -> Route {
     Route {
         runtime: Runtime::Claude,
         model: "claude-opus-5-5".into(),
-        strength: Strength::Frontier,
         effort: Effort::MEDIUM,
     }
 }
@@ -169,7 +168,6 @@ fn codex_default() -> Route {
     Route {
         runtime: Runtime::Codex,
         model: String::new(),
-        strength: Strength::Standard,
         effort: Effort::DEFAULT,
     }
 }

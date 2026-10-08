@@ -9,7 +9,7 @@ use serde::de::DeserializeOwned;
 use crate::EditFile;
 use crate::messages::ClientMsg;
 use crate::orch::*;
-use crate::run::{AgentRole, BlockReason, Effort, PlanEdit, Route, RunState, Strength, TaskState};
+use crate::run::{AgentRole, BlockReason, Effort, PlanEdit, Route, RunState, TaskState};
 use crate::run_wire::RunRequest;
 use crate::types::Runtime;
 
@@ -30,7 +30,6 @@ fn a_route(runtime: Runtime, model: &str) -> Route {
     Route {
         runtime,
         model: model.into(),
-        strength: Strength::Frontier,
         effort: Effort::HIGH,
     }
 }

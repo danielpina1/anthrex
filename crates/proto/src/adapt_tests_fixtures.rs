@@ -26,12 +26,7 @@ CARGO_TARGET_DIR = "{worktree}/target"
 "#;
 
 pub(super) fn claude_route() -> Route {
-    a_route(
-        Runtime::Claude,
-        Strength::Standard,
-        Effort::HIGH,
-        "claude-sonnet-5",
-    )
+    a_route(Runtime::Claude, Effort::HIGH, "claude-sonnet-5")
 }
 
 pub(super) fn a_profile() -> RepoProfile {
@@ -239,12 +234,7 @@ pub(super) fn a_task_record() -> TaskRecord {
 
 /// Decision 33a: an escalation whose chosen route is the second candidate.
 pub(super) fn a_routing_decision() -> RoutingDecision {
-    let codex = a_route(
-        Runtime::Codex,
-        Strength::Standard,
-        Effort::HIGH,
-        "gpt-5-codex",
-    );
+    let codex = a_route(Runtime::Codex, Effort::HIGH, "gpt-5-codex");
     RoutingDecision {
         seq: 2,
         at: 1_700_000_500,

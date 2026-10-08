@@ -6,7 +6,7 @@
 //! beats the refit). Read by one call, [`read_tuning`], from `orchestrator::read`,
 //! after the roster; unknown keys are reported by `orchestrator/unknown.rs`.
 
-use proto::ModelEntry;
+use super::LegacyModel;
 
 use super::read_u32_in_range;
 use crate::{Problem, not_a_table_problem, read_bool_key, read_u64_in_range};
@@ -113,7 +113,7 @@ pub struct TuningConfig {
 /// only the migration uses. Never fails.
 pub(crate) fn read_tuning(
     orchestrator: &toml::Table,
-    roster: &[ModelEntry],
+    roster: &[LegacyModel],
     problems: &mut Vec<Problem>,
 ) -> TuningConfig {
     let mut table = Tuning::default();

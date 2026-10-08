@@ -55,7 +55,7 @@ fn task_fields_match_the_mockup() {
             ("pipeline", "done ✓ › proof ✓ › check ✓ › review › merge ◌"),
             (
                 "route",
-                "codex · standard · high effort  →  reviewer claude · frontier"
+                "codex · high  →  reviewer claude · claude-opus-5 · high"
             ),
             (
                 "deps",
@@ -244,7 +244,7 @@ fn task_without_diff_or_review_omits_them() {
         pairs(&inspection),
         [
             ("pipeline", "done ◌ › proof ◌ › check ◌ › merge ✓"),
-            ("route", "claude · standard · medium effort"),
+            ("route", "claude · medium"),
             ("deps", "unblocks t2 · on critical path"),
             (
                 "budget",

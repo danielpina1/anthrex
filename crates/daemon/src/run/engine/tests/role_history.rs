@@ -5,9 +5,7 @@
 
 use std::path::PathBuf;
 
-use proto::{
-    AgentRole, DeciderSource, HistoryLine, RoleOutcome, RoleRoutingDecision, RunState, Strength,
-};
+use proto::{AgentRole, DeciderSource, HistoryLine, RoleOutcome, RoleRoutingDecision, RunState};
 use serde_json::json;
 
 use super::fixture::*;
@@ -93,7 +91,6 @@ fn decider_dispatched(fx: &mut Fixture, op: u64) -> String {
     let route = proto::Route {
         runtime: proto::Runtime::Claude,
         model: "claude-haiku-4-5".into(),
-        strength: Strength::Fast,
         effort: proto::Effort::LOW,
     };
     let input = roles::input_of(run);
@@ -202,7 +199,6 @@ fn each_role_keeps_its_dispatch_snapshot_after_a_config_change() {
     );
     // The configuration changes: every role's settings.
     let run = fx.run_mut();
-    run.limits.orch.planners.strength = Strength::Fast;
     run.limits.orch.agent.effort = proto::Effort::LOW;
     // Milestone 9.8: and the rows (a record never reads them again).
     let (planner, research) = (proto::models::Role::Planner, proto::models::Role::Research);

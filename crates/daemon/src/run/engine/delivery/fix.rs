@@ -139,8 +139,6 @@ pub(crate) fn route_spec(route: &Route) -> RouteSpec {
     RouteSpec {
         runtime: Some(route.runtime),
         model: Some(route.model.clone()),
-        // Milestone 9.8 (task M9.8.8): a row's route says `standard` whatever the
-        // roster says of its model; the strength is left to the model's roster entry.
         strength: None,
         effort: Some(route.effort.clone()),
     }
@@ -166,16 +164,11 @@ pub(super) fn stage_owns(run: &Run, n: u16) -> Vec<String> {
     owns
 }
 
-/// The stage's strongest route: the highest strength, the first task in plan order on
-/// a tie (decision 26).
+/// The stage's strongest route (decision 26): its first approved task's, in plan order.
+/// Milestone 9.8 (task M9.8.14): strength is gone, so every route ties, which is what
+/// every row's route (all `standard`) already did since M9.8.8.
 pub(super) fn strongest(run: &Run, n: u16) -> Option<Route> {
-    let mut best: Option<&Route> = None;
-    for t in approved(run, n) {
-        if best.is_none_or(|b| t.route.strength > b.strength) {
-            best = Some(&t.route);
-        }
-    }
-    best.cloned()
+    approved(run, n).first().map(|t| t.route.clone())
 }
 
 fn spec(n: u16, rec: &CiRecord, owns: Vec<String>, epic: Option<String>) -> fixes::FixSpec {

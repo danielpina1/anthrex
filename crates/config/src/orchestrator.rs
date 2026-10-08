@@ -37,8 +37,8 @@ pub use design::{DesignBudget, DesignConfig};
 
 use budget::read_budgets;
 use profile::{read_profile, report_unknown_profile};
-pub use roster::default_roster;
 use roster::read_models;
+pub(crate) use roster::{LegacyModel, LegacyStrength, default_roster};
 mod unknown;
 pub(crate) use unknown::report_unknown;
 
@@ -97,7 +97,9 @@ pub struct Orchestrator {
     pub confined_localhost_ports: std::collections::BTreeMap<String, Vec<u16>>,
     pub claude: ClaudeHeadless,
     pub builtin_models: bool,
-    pub models: Vec<proto::ModelEntry>,
+    /// The old `[[orchestrator.models]]` roster, read only to migrate the old keys
+    /// (task M9.8.14): its entries' fields are this crate's.
+    pub models: Vec<LegacyModel>,
     pub profile: proto::ProfileSpec,
     /// M8b decision 3: `[orchestrator] fast_path` and the adaptation tables.
     pub fast_path: bool,

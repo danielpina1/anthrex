@@ -58,7 +58,7 @@ fn effort_shown(app: &App) -> String {
 fn the_task_edit_form_picks_a_model_and_its_efforts() {
     // Review minor 8: an opened route with a strength, which a pick drops.
     let mut task = edit_fixture_task();
-    task.route_spec.strength = Some(proto::Strength::Frontier);
+    task.route_spec.strength = Some("frontier".into());
     let mut app = edit_app();
     app.modal = Some(Modal::EditTask(Box::new(TaskEditForm::new(RUN_ID, &task))));
     assert_eq!(form(&app).focus, EditField::Model);
@@ -176,7 +176,6 @@ fn user_route(model: &str, effort: &str) -> TaskEditForm {
     task.route = proto::Route {
         runtime: Runtime::Codex,
         model: model.into(),
-        strength: proto::Strength::Standard,
         effort: Effort::new(effort),
     };
     TaskEditForm::new(RUN_ID, &task)
@@ -308,7 +307,6 @@ fn the_effort_row_shows_the_rows_effort_for_the_rows_model() {
     task.row = Some(proto::Route {
         runtime: Runtime::Claude,
         model: "claude-opus-5-5".into(),
-        strength: proto::Strength::Frontier,
         effort: Effort::new("max"),
     });
     let mut app = edit_app();

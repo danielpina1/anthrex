@@ -321,8 +321,13 @@ fn a_run_json_with_lists_and_class_routes_still_loads() {
     });
     json["tasks"][0]["list_pick"] = pick.clone();
     json["tasks"][0]["list_escalation"] = pick;
+    // Task M9.8.14: a route's `strength` is read and ignored.
     let routes: Vec<serde_json::Value> = (json["tasks"].as_array().expect("tasks").iter())
         .map(|t| t["route"].clone())
+        .map(|mut r| {
+            crate::run::test_support::without_strength(&mut r);
+            r
+        })
         .collect();
 
     let dir = tmp();

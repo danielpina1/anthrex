@@ -347,13 +347,30 @@ fn the_scout_roster_is_live() {
     use crate::scout::spec::Roster;
     let live = LiveSettings::defaults_of(config::Orchestrator::default());
     let roster = Roster::Live(live.clone());
-    assert_eq!(roster.current(), config::default_roster());
-    let mut changed = config::Orchestrator::default();
-    changed.models.truncate(1);
+    assert_eq!(roster.roles(), proto::models::ModelTable::default());
+    let changed = research_on_luna();
     live.swap_owned(&changed, Default::default());
-    assert_eq!(roster.current(), changed.models);
-    let fixed: Roster = config::default_roster().into();
-    assert_eq!(fixed.current(), config::default_roster());
+    assert_eq!(roster.roles(), changed.roles);
+    let fixed: Roster = changed.roles.clone().into();
+    assert_eq!(fixed.roles(), changed.roles);
+}
+
+/// Milestone 9.8 (task M9.8.14): the scouts' roster is the role table now; a config
+/// whose `research` row names Codex Luna.
+fn research_on_luna() -> config::Orchestrator {
+    use proto::models::{ModelRef, ModelTable, Role, RoleChoice};
+    let row = RoleChoice {
+        model: ModelRef::parse("codex:gpt-6-luna").unwrap(),
+        effort: None,
+        fallback: None,
+    };
+    config::Orchestrator {
+        roles: ModelTable {
+            rows: [(Role::Research, row)].into(),
+            brainstorm: None,
+        },
+        ..config::Orchestrator::default()
+    }
 }
 
 /// Decision 37: the runs a profile edit waits for are the project's runs that are
@@ -394,11 +411,10 @@ fn the_wired_scouts_read_the_live_roster() {
     let default = config::Orchestrator::default();
     let profiles = crate::profile::service::wire(&s.manager, &s, &data, &socket, &default);
     let roster = &profiles.scouts().context().roster;
-    assert_eq!(roster.current(), config::default_roster());
-    let mut changed = default.clone();
-    changed.models.truncate(1);
+    assert_eq!(roster.roles(), default.roles);
+    let changed = research_on_luna();
     s.live_settings().swap_owned(&changed, Default::default());
-    assert_eq!(roster.current(), changed.models);
+    assert_eq!(roster.roles(), changed.roles);
 }
 
 async fn repo_request(s: &RunService, request: SettingsRequest) -> SettingsReply {

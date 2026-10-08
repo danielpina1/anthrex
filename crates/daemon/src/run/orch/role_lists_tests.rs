@@ -4,18 +4,17 @@
 //! unsaved rule on both. Milestone 9.5's list tests went with the lists' launches
 //! (task M9.8.7b).
 
-use proto::{Effort, Runtime, Strength};
+use proto::{Effort, Runtime};
 
 use super::*;
 use crate::run::orch::test_support::{orchestrator as record_of, run_of};
 
 const LUNA: &str = "gpt-6-luna";
 
-fn route(runtime: Runtime, model: &str, strength: Strength, effort: Effort) -> Route {
+fn route(runtime: Runtime, model: &str, effort: Effort) -> Route {
     Route {
         runtime,
         model: model.into(),
-        strength,
         effort,
     }
 }
@@ -109,12 +108,7 @@ fn a_brainstormer_whose_cli_cannot_run_unsaved_is_replaced_by_the_other() {
 fn the_document_reviewer_is_never_the_orchestrators_model() {
     let mut run = run_of(1);
     let mut o = record_of();
-    o.route = route(
-        Runtime::Claude,
-        "claude-opus-5-5",
-        Strength::Standard,
-        Effort::HIGH,
-    );
+    o.route = route(Runtime::Claude, "claude-opus-5-5", Effort::HIGH);
     run.orch.orchestrator = Some(o);
     let opus = "claude:claude-opus-5-5";
     let luna = Some("codex:gpt-6-luna");
@@ -138,12 +132,7 @@ fn the_document_reviewer_is_never_the_orchestrators_model() {
 fn reviewing(model: &str, fallback: Option<&str>) -> Run {
     let mut run = run_of(1);
     let mut o = record_of();
-    o.route = route(
-        Runtime::Claude,
-        "claude-opus-5-5",
-        Strength::Standard,
-        Effort::HIGH,
-    );
+    o.route = route(Runtime::Claude, "claude-opus-5-5", Effort::HIGH);
     run.orch.orchestrator = Some(o);
     let reviewer = proto::models::Role::Reviewer;
     crate::run::test_support::set_row(&mut run, reviewer, model, None, fallback);

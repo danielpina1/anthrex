@@ -2,8 +2,8 @@
 //! "Inspector contents, exact": Task). Pure, as `run.rs` is.
 
 use super::run_format::{
-    clean, effort_text, format_tokens, kind_glyph, local_hhmm, progress_bar_in, reason_text, rows,
-    size_letter, strength_text, test_mode_text,
+    clean, format_tokens, kind_glyph, local_hhmm, progress_bar_in, reason_text, route_label, rows,
+    size_letter, test_mode_text,
 };
 use super::run_orch::{messages_text, notes_text};
 use super::run_patterns;
@@ -154,18 +154,9 @@ fn state_stage(task: &TaskInfo) -> String {
 
 fn route_text(task: &TaskInfo) -> String {
     let route = &task.route;
-    let mut text = format!(
-        "{} · {} · {} effort",
-        route.runtime.label(),
-        strength_text(route.strength),
-        effort_text(route.effort.clone())
-    );
+    let mut text = route_label(route);
     if let Some(reviewer) = &task.review_route {
-        text.push_str(&format!(
-            "  →  reviewer {} · {}",
-            reviewer.runtime.label(),
-            strength_text(reviewer.strength)
-        ));
+        text.push_str(&format!("  →  reviewer {}", route_label(reviewer)));
     }
     text
 }

@@ -187,7 +187,7 @@ fn review_renders_at_120x40() {
         line(" done when  ◌ t3 works"),
         line(" test mode  check — templates only"),
         line(" deps       after t1 · unblocks t4"),
-        line(" route      claude · opus · standard · medium effort"),
+        line(" route      claude · opus · medium"),
         line(" review     none"),
     ];
     while want.len() < 38 {
@@ -242,11 +242,11 @@ fn review_scrolls_the_brief() {
     let buffer = draw(&mut app, 80, 24);
     assert_eq!(
         right_of(&app, &buffer, 21),
-        "review     codex · gpt-5 · frontier · high effort"
+        "review     codex · gpt-5 · high"
     );
     assert_eq!(
         right_of(&app, &buffer, 20),
-        "route      claude · opus · standard · medium effort"
+        "route      claude · opus · medium"
     );
 }
 
@@ -512,11 +512,11 @@ fn a_scroll_past_the_end_draws_the_end() {
     let buffer = terminal.backend().buffer().clone();
     assert_eq!(
         right_of(&app, &buffer, 37),
-        "review     codex · gpt-5 · frontier · high effort"
+        "review     codex · gpt-5 · high"
     );
     assert_eq!(
         right_of(&app, &buffer, 36),
-        "route      claude · opus · standard · medium effort"
+        "route      claude · opus · medium"
     );
 }
 
@@ -539,7 +539,7 @@ fn a_shrunk_detail_draws_its_new_end() {
     let buffer = draw(&mut app, 80, 24);
     assert_eq!(
         right_of(&app, &buffer, 21),
-        "review     codex · gpt-5 · frontier · high effort"
+        "review     codex · gpt-5 · high"
     );
     assert_eq!(right_of(&app, &buffer, 10), "           short 3");
     // Two rows past the detail now, so one page up shows the brief's first line.

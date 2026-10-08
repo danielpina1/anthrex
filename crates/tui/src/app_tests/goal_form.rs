@@ -14,25 +14,31 @@ use crate::run_goal::{GoalField, GoalForm};
 use crate::tree::NodeKey;
 use proto::models::{HelperKind, ModelRef, ModelTable, Role, RoleChoice};
 use proto::{
-    ActionKind, BudgetLimit, ModelEntry, OrchestratorChoice, Origin, RunReply, RunRequest,
-    SettingsDoc, SettingsLimits, SettingsReply, SettingsRequest, Strength,
+    ActionKind, BudgetLimit, OrchestratorChoice, Origin, RunReply, RunRequest, SettingsDoc,
+    SettingsLimits, SettingsReply, SettingsRequest,
 };
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-pub(super) fn entry(runtime: Runtime, model: &str) -> ModelEntry {
-    ModelEntry {
+/// A fixture's model: a runtime and a model id (`proto::ModelEntry`, the roster's
+/// entry, went with strength in M9.8.14).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct FixtureModel {
+    pub(super) runtime: Runtime,
+    pub(super) model: String,
+}
+
+pub(super) fn entry(runtime: Runtime, model: &str) -> FixtureModel {
+    FixtureModel {
         runtime,
         model: model.into(),
-        strength: Strength::Standard,
-        note: String::new(),
     }
 }
 
 /// M9.8.12: the roster left the settings document. A fixture's entries become helper
 /// kind rows (one per kind, in order), which tell documents apart without changing
 /// what the orchestrator row or the goal form's `role table` entry reads.
-pub(super) fn table(models: Vec<ModelEntry>) -> ModelTable {
+pub(super) fn table(models: Vec<FixtureModel>) -> ModelTable {
     let mut out = ModelTable::default();
     for (m, kind) in models.into_iter().zip(HelperKind::ALL) {
         let id = if m.model.is_empty() {
@@ -51,7 +57,7 @@ pub(super) fn table(models: Vec<ModelEntry>) -> ModelTable {
     out
 }
 
-pub(super) fn doc(models: Vec<ModelEntry>) -> SettingsDoc {
+pub(super) fn doc(models: Vec<FixtureModel>) -> SettingsDoc {
     let budget = BudgetLimit {
         tool_calls: 10,
         minutes: 5,
@@ -71,7 +77,7 @@ pub(super) fn doc(models: Vec<ModelEntry>) -> SettingsDoc {
     }
 }
 
-pub(super) fn roster() -> Vec<ModelEntry> {
+pub(super) fn roster() -> Vec<FixtureModel> {
     vec![
         entry(Runtime::Claude, "claude-haiku-4-5"),
         entry(Runtime::Codex, "gpt-6-sol"),
@@ -87,7 +93,7 @@ pub(super) fn reply(reply: SettingsReply, id: u64) -> DaemonMsg {
     })
 }
 
-fn current(models: Vec<ModelEntry>) -> SettingsReply {
+fn current(models: Vec<FixtureModel>) -> SettingsReply {
     SettingsReply::Current {
         doc: doc(models),
         origin: BTreeMap::from([("models".to_string(), Origin::File)]),
@@ -95,7 +101,7 @@ fn current(models: Vec<ModelEntry>) -> SettingsReply {
     }
 }
 
-fn saved(models: Vec<ModelEntry>) -> SettingsReply {
+fn saved(models: Vec<FixtureModel>) -> SettingsReply {
     SettingsReply::Saved {
         doc: doc(models),
         origin: BTreeMap::from([("models".to_string(), Origin::File)]),
@@ -121,7 +127,7 @@ pub(super) fn app() -> App {
 }
 
 /// An app whose settings fetch was answered with `models`.
-pub(super) fn app_with_cache(models: Vec<ModelEntry>) -> App {
+pub(super) fn app_with_cache(models: Vec<FixtureModel>) -> App {
     let mut app = app();
     let id = gets(&[app.settings_fetch()])[0];
     assert!(app.on_daemon(reply(current(models), id)).is_empty());

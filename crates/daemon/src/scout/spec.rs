@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use proto::models::{ModelTable, Role};
-use proto::{AgentRole, ModelEntry, Route, RunRef, Runtime, ScoutKind};
+use proto::{AgentRole, Route, RunRef, Runtime, ScoutKind};
 
 use super::contract::{ONBOARDING_CONTRACT, SCOUT_CONTRACT};
 use crate::headless::argv::{CliCaps, CodexProjectConfig};
@@ -58,36 +58,28 @@ pub struct ScoutContext {
     pub data_dir: PathBuf,
 }
 
-/// Where a scout's roster comes from (milestone 9.0.6 decision 29): the daemon's live
-/// settings, read at each spawn, or a fixed list (tests).
+/// Where a scout's role table comes from (milestone 9.0.6 decision 29, a roster until
+/// milestone 9.8): the daemon's live settings, read at each spawn, or a fixed table
+/// (tests).
 #[derive(Debug, Clone)]
 pub enum Roster {
-    Fixed(Vec<ModelEntry>),
+    Fixed(ModelTable),
     Live(Arc<LiveSettings>),
 }
 
 impl Roster {
-    /// The roster now.
-    pub fn current(&self) -> Vec<ModelEntry> {
-        match self {
-            Roster::Fixed(models) => models.clone(),
-            Roster::Live(live) => live.current().orchestrator.models.clone(),
-        }
-    }
-
-    /// Milestone 9.8: the global role table now (a fixed roster's is empty: the
-    /// built-ins).
+    /// Milestone 9.8: the global role table now.
     pub fn roles(&self) -> ModelTable {
         match self {
-            Roster::Fixed(_) => ModelTable::default(),
+            Roster::Fixed(roles) => roles.clone(),
             Roster::Live(live) => live.current().orchestrator.roles.clone(),
         }
     }
 }
 
-impl From<Vec<ModelEntry>> for Roster {
-    fn from(models: Vec<ModelEntry>) -> Self {
-        Roster::Fixed(models)
+impl From<ModelTable> for Roster {
+    fn from(roles: ModelTable) -> Self {
+        Roster::Fixed(roles)
     }
 }
 

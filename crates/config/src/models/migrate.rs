@@ -10,10 +10,11 @@
 //! ruling F3). Each old key present gives one note (decision 18), in the order the
 //! parsed `[orchestrator]` table lists its keys.
 
-use proto::{DeciderMode, Effort, ModelEntry, Runtime, Strength};
+use proto::{DeciderMode, Effort, Runtime};
 
 use super::{BrainstormChoice, ModelRef, ModelTable, Role, RoleChoice};
 use super::{builtin_brainstorm, builtin_choice};
+use crate::orchestrator::{LegacyModel, LegacyStrength};
 use crate::{Orchestrator, RouteList, RouteLists};
 
 /// What the `[[orchestrator.models]]` roster and `builtin_models` are replaced by.
@@ -48,12 +49,12 @@ struct Old {
     runtime: Runtime,
     /// Empty: the CLI's default.
     model: String,
-    strength: Strength,
+    strength: LegacyStrength,
     effort: Effort,
 }
 
 impl Old {
-    fn of(entry: &ModelEntry, effort: Effort) -> Old {
+    fn of(entry: &LegacyModel, effort: Effort) -> Old {
         Old {
             runtime: entry.runtime,
             model: entry.model.clone(),
@@ -82,14 +83,6 @@ fn effort_name(e: &Effort) -> String {
     e.as_str().to_string()
 }
 
-fn strength_name(s: Strength) -> &'static str {
-    match s {
-        Strength::Fast => "fast",
-        Strength::Standard => "standard",
-        Strength::Frontier => "frontier",
-    }
-}
-
 // ---- private ports of the daemon's roster helpers (`run/roster.rs`, `scout/spec.rs`) ----
 
 fn peer(runtime: Runtime) -> Runtime {
@@ -100,19 +93,23 @@ fn peer(runtime: Runtime) -> Runtime {
     }
 }
 
-fn first_at(roster: &[ModelEntry], runtime: Runtime, strength: Strength) -> Option<&ModelEntry> {
+fn first_at(
+    roster: &[LegacyModel],
+    runtime: Runtime,
+    strength: LegacyStrength,
+) -> Option<&LegacyModel> {
     (roster.iter()).find(|e| e.runtime == runtime && e.strength == strength)
 }
 
 /// The entry on `runtime` with the lowest strength at or above `min`, first in roster
 /// order among ties, skipping `exclude_model`.
 fn lowest_at_or_above<'a>(
-    roster: &'a [ModelEntry],
+    roster: &'a [LegacyModel],
     runtime: Runtime,
-    min: Strength,
+    min: LegacyStrength,
     exclude_model: Option<&str>,
-) -> Option<&'a ModelEntry> {
-    let mut best: Option<&ModelEntry> = None;
+) -> Option<&'a LegacyModel> {
+    let mut best: Option<&LegacyModel> = None;
     for entry in roster {
         if entry.runtime != runtime || entry.strength < min {
             continue;
@@ -129,8 +126,8 @@ fn lowest_at_or_above<'a>(
 }
 
 /// The highest-strength entry on `runtime`, first in roster order among ties.
-fn strongest_of(roster: &[ModelEntry], runtime: Runtime) -> Option<&ModelEntry> {
-    let mut best: Option<&ModelEntry> = None;
+fn strongest_of(roster: &[LegacyModel], runtime: Runtime) -> Option<&LegacyModel> {
+    let mut best: Option<&LegacyModel> = None;
     for entry in roster.iter().filter(|e| e.runtime == runtime) {
         best = match best {
             Some(current) if current.strength >= entry.strength => Some(current),
@@ -143,9 +140,9 @@ fn strongest_of(roster: &[ModelEntry], runtime: Runtime) -> Option<&ModelEntry> 
 /// `scout::spec::route_within` with the peer allowed (every runtime counts as
 /// installed at load).
 fn route_within(
-    roster: &[ModelEntry],
+    roster: &[LegacyModel],
     runtime: Runtime,
-    strength: Strength,
+    strength: LegacyStrength,
     effort: Effort,
 ) -> Old {
     let entry = lowest_at_or_above(roster, runtime, strength, None)
@@ -165,7 +162,7 @@ fn route_within(
 /// `roster::pick_reviewer` at the `Medium` level: the other runtime's lowest entry at
 /// or above the author's strength; else the same runtime's, another model preferred;
 /// else its strongest; else the author's route. At `medium`.
-fn pick_reviewer(roster: &[ModelEntry], author: &Old) -> Old {
+fn pick_reviewer(roster: &[LegacyModel], author: &Old) -> Old {
     let (required, effort) = (author.strength, Effort::MEDIUM);
     lowest_at_or_above(roster, peer(author.runtime), required, None)
         .or_else(|| lowest_at_or_above(roster, author.runtime, required, Some(&author.model)))
@@ -180,7 +177,7 @@ fn pick_reviewer(roster: &[ModelEntry], author: &Old) -> Old {
 }
 
 /// A list's candidates that are in the roster, at their own effort or else `effort`.
-fn candidates(list: &RouteList, roster: &[ModelEntry], effort: &Effort) -> Vec<Old> {
+fn candidates(list: &RouteList, roster: &[LegacyModel], effort: &Effort) -> Vec<Old> {
     (list.candidates.iter())
         .filter_map(|c| {
             let entry = roster
@@ -196,7 +193,7 @@ fn candidates(list: &RouteList, roster: &[ModelEntry], effort: &Effort) -> Vec<O
 
 /// MR §6.2: a list's first candidate in the roster as the model, the next as the
 /// fallback. `None` with no usable candidate.
-fn listed(list: &RouteList, roster: &[ModelEntry], effort: &Effort) -> Option<(Old, Option<Old>)> {
+fn listed(list: &RouteList, roster: &[LegacyModel], effort: &Effort) -> Option<(Old, Option<Old>)> {
     let mut found = candidates(list, roster, effort).into_iter();
     let first = found.next()?;
     Some((first, found.next()))
@@ -222,7 +219,7 @@ pub fn unknown_lists(o: &Orchestrator, raw: &toml::Table) -> Vec<&'static str> {
     };
     // Fix round 2 (N1): the reviewer comes from the `review` list only through
     // `review_pick` against the medium route, as `derived_rows` takes it.
-    let (m, standard, medium) = (&lists.m, Strength::Standard, &Effort::MEDIUM);
+    let (m, standard, medium) = (&lists.m, LegacyStrength::Standard, &Effort::MEDIUM);
     let medium_route = class_route(m, roster, o.default_runtime, standard, medium);
     let migrated = |name: &str| {
         let listed = candidates(of(name), roster, &Effort::MEDIUM);
@@ -246,7 +243,7 @@ pub fn review_unfit(o: &Orchestrator, raw: &toml::Table) -> Option<Runtime> {
     let roster = &o.models[..];
     let lists = crate::orchestrator::read_routes(raw, roster, &mut Vec::new());
     let listed = candidates(&lists.review, roster, &Effort::MEDIUM);
-    let (m, standard, medium) = (&lists.m, Strength::Standard, &Effort::MEDIUM);
+    let (m, standard, medium) = (&lists.m, LegacyStrength::Standard, &Effort::MEDIUM);
     let (medium_route, _) = class_route(m, roster, o.default_runtime, standard, medium)?;
     let unfit = !listed.is_empty() && review_pick(&listed, &medium_route).is_none();
     unfit.then_some(medium_route.runtime)
@@ -255,9 +252,9 @@ pub fn review_unfit(o: &Orchestrator, raw: &toml::Table) -> Option<Runtime> {
 /// A class's route: its list, else `runtime`'s first entry at `strength`, at `effort`.
 fn class_route(
     list: &RouteList,
-    roster: &[ModelEntry],
+    roster: &[LegacyModel],
     runtime: Runtime,
-    strength: Strength,
+    strength: LegacyStrength,
     effort: &Effort,
 ) -> Option<(Old, Option<Old>)> {
     listed(list, roster, effort)
@@ -392,7 +389,7 @@ pub fn migrate(o: &Orchestrator, raw: Option<&toml::Table>) -> (ModelTable, Vec<
 fn orchestrator_row(
     o: &Orchestrator,
     lists: &RouteLists,
-    roster: &[ModelEntry],
+    roster: &[LegacyModel],
 ) -> (Old, Option<Old>) {
     let agent = &o.agent.agent;
     if let Some(found) = listed(&lists.orchestrator, roster, &agent.effort) {
@@ -412,7 +409,7 @@ fn orchestrator_row(
         None => Old {
             runtime,
             model: agent.model.clone(),
-            strength: Strength::Standard,
+            strength: LegacyStrength::Standard,
             effort: agent.effort.clone(),
         },
     };
@@ -425,7 +422,7 @@ fn orchestrator_row(
 fn implementer_rows(
     o: &Orchestrator,
     lists: &RouteLists,
-    roster: &[ModelEntry],
+    roster: &[LegacyModel],
     present: &Present,
     table: &mut ModelTable,
 ) -> (Option<Old>, Vec<String>) {
@@ -434,21 +431,21 @@ fn implementer_rows(
             Role::ImplementerSmall,
             &lists.s,
             "s",
-            Strength::Standard,
+            LegacyStrength::Standard,
             Effort::LOW,
         ),
         (
             Role::ImplementerMedium,
             &lists.m,
             "m",
-            Strength::Standard,
+            LegacyStrength::Standard,
             Effort::MEDIUM,
         ),
         (
             Role::ImplementerHub,
             &lists.hub,
             "hub",
-            Strength::Frontier,
+            LegacyStrength::Frontier,
             Effort::HIGH,
         ),
     ];
@@ -458,7 +455,7 @@ fn implementer_rows(
         let runtime = o.default_runtime;
         let found = class_route(list, roster, runtime, strength, &effort);
         let Some((route, fallback)) = found else {
-            let (rt, s) = (runtime.label(), strength_name(strength));
+            let (rt, s) = (runtime.label(), strength.as_str());
             let keeps = builtin_choice(role).model.label();
             unresolved.push(format!(
                 "config: orchestrator.default_runtime = \"{rt}\" has no {rt} model at {s} strength in the roster; {} keeps {keeps}",
@@ -483,7 +480,7 @@ fn implementer_rows(
 fn derived_rows(
     medium: &Old,
     review: &RouteList,
-    roster: &[ModelEntry],
+    roster: &[LegacyModel],
     fed: bool,
     table: &mut ModelTable,
 ) {
@@ -513,7 +510,11 @@ fn derived_rows(
 /// else its first two, one entry twice; else the strongest of Claude then Codex, one
 /// twice, none the orchestrator's twice. At the first's effort (the orchestrator's
 /// where a candidate names none).
-fn brainstorm_row(list: &RouteList, roster: &[ModelEntry], orchestrator: &Old) -> BrainstormChoice {
+fn brainstorm_row(
+    list: &RouteList,
+    roster: &[LegacyModel],
+    orchestrator: &Old,
+) -> BrainstormChoice {
     let effort = orchestrator.effort.clone();
     let listed = candidates(list, roster, &effort);
     let (first, second) = match listed.first() {
@@ -547,7 +548,7 @@ fn brainstorm_row(list: &RouteList, roster: &[ModelEntry], orchestrator: &Old) -
 /// The helpers: the `decider` list, else the mode's runtime's lowest entry at or above
 /// `deciders.strength`, else that runtime's first entry, else its default
 /// (`decider::call::ladder_route`, removed in M9.8.7b).
-fn helpers_row(o: &Orchestrator, lists: &RouteLists, roster: &[ModelEntry]) -> (Old, Option<Old>) {
+fn helpers_row(o: &Orchestrator, lists: &RouteLists, roster: &[LegacyModel]) -> (Old, Option<Old>) {
     let d = &o.deciders;
     if let Some(found) = listed(&lists.decider, roster, &d.effort) {
         return found;

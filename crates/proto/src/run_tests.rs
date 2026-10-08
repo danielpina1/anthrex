@@ -79,7 +79,7 @@ fn plan_parses_the_brief_example() {
     assert_eq!(plan.tasks.len(), 1);
     let task = &plan.tasks[0];
     assert_eq!(task.size, Size::M);
-    assert_eq!(task.route.strength, Some(Strength::Standard));
+    assert_eq!(task.route.strength.as_deref(), Some("standard"));
     assert_eq!(
         plan.profile.env.as_ref().unwrap()["CARGO_TARGET_DIR"],
         "{worktree}/target"
@@ -121,9 +121,7 @@ fn size_serializes_as_a_capital_letter() {
 }
 
 #[test]
-fn strength_and_effort_order() {
-    assert!(Strength::Fast < Strength::Standard);
-    assert!(Strength::Standard < Strength::Frontier);
+fn effort_order() {
     assert!(Effort::LOW < Effort::MEDIUM);
     assert!(Effort::MEDIUM < Effort::HIGH);
     assert_eq!(Size::M.raised(), Size::L);
@@ -179,7 +177,7 @@ fn plan_edits_parse_from_an_edit_file() {
             route: Some(RouteSpec {
                 runtime: Some(Runtime::Codex),
                 model: None,
-                strength: Some(Strength::Frontier),
+                strength: None,
                 effort: Some(Effort::HIGH),
             }),
             test_mode: Some(TestMode::Check),

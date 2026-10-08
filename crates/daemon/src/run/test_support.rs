@@ -427,4 +427,19 @@ pub(crate) fn without_pre_9_8_keys(stored: &mut serde_json::Value) {
     if let Some(orch) = limits.get_mut("orch").and_then(|o| o.as_object_mut()) {
         orch.remove("scouts");
     }
+    // Task M9.8.14: every `strength` (a route's, a route spec's, the planners') is read
+    // and ignored, never written back.
+    without_strength(stored);
+}
+
+/// Every `strength` key in `value`, at any depth, removed.
+pub(crate) fn without_strength(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            map.remove("strength");
+            map.values_mut().for_each(without_strength);
+        }
+        serde_json::Value::Array(items) => items.iter_mut().for_each(without_strength),
+        _ => {}
+    }
 }

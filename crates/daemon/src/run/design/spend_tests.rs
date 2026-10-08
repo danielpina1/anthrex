@@ -1,7 +1,7 @@
 //! Ruling T13-1: an agent's sessions in a phase are summed; phases and rounds are kept
 //! apart.
 
-use proto::{AgentRole, Effort, Route, Runtime, Strength};
+use proto::{AgentRole, Effort, Route, Runtime};
 
 use super::*;
 
@@ -9,7 +9,6 @@ fn route(model: &str) -> Route {
     Route {
         runtime: Runtime::Codex,
         model: model.into(),
-        strength: Strength::Frontier,
         effort: Effort::HIGH,
     }
 }
