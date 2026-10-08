@@ -16,7 +16,7 @@ use super::merge::{commit, doc_task, start_on, window_of};
 use super::propagate::{land_propagates, propagate, stages_on};
 use super::tiers::{proved, working};
 use crate::run::engine::{EventKind, OpKind, OpResult};
-use crate::run::roster::peer;
+use crate::run::model_roles::peer;
 use crate::run::test_support::task_toml;
 use crate::run::tiers::StepKind;
 

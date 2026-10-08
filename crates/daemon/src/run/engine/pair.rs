@@ -20,7 +20,7 @@ use crate::run::contract_patterns::{
 use crate::run::model::{Pair, ProofRecord, Run, Task};
 use crate::run::model_roles::writer_route;
 use crate::run::phases::set_state;
-use crate::run::route_pick::{writer_route_failed, writer_step};
+use crate::run::role_step::{writer_route_failed, writer_step};
 
 /// Whether task `task` is a paired task whose test writer is (or will be) at work.
 pub(crate) fn writing(task: &Task) -> bool {
@@ -92,7 +92,7 @@ pub(super) fn writer_launched(run: &mut Run, i: usize) {
 
 /// Decision 38's rung 2 (and `run retry`) while the test writer works: the fresh
 /// session is a test writer on the workers' skipping ladder from its route (ruling
-/// T16-2, `route_pick::writer_step`, with the every-route-failed line); the
+/// T16-2, `role_step::writer_step`, with the every-route-failed line); the
 /// implementer's route is left as it is. Returns whether it applied.
 pub(super) fn escalate_writer(run: &mut Run, i: usize, now: u64) -> bool {
     let Some(current) = (run.tasks[i].pair.as_ref())

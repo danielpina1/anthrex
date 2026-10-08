@@ -7,7 +7,7 @@ use super::fixture::*;
 use super::merge::{doc_task, start_on};
 use crate::run::engine::fixes::{FixSpec, add_fix, next_fix_id};
 use crate::run::model::FixOf;
-use crate::run::roster::peer;
+use crate::run::model_roles::peer;
 
 pub(super) fn spec(origin: TaskOrigin, owns: &str, route: RouteSpec) -> FixSpec {
     let fixes = match origin {

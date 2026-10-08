@@ -20,7 +20,7 @@ use crate::run::delivery::quote;
 use crate::run::delivery::{CiPhase, CiRecord};
 use crate::run::model::{BisectRecord, FixOf, Run, Task};
 use crate::run::model_roles::Mover;
-use crate::run::route_pick::escalate_for;
+use crate::run::role_step::escalate_for;
 
 /// Decision 26's reason for a CI fix task's `check` test mode.
 pub(crate) const CI_FIX_TEST_MODE_REASON: &str = "fix task: the failing checks are the proof";

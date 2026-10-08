@@ -453,8 +453,7 @@ pub fn forecast(
 
 #[path = "route_pick_step.rs"]
 mod step;
-pub(crate) use step::escalate_for;
-pub use step::{every_route_failed, next_candidate, rung2_route, writer_route_failed, writer_step};
+pub use step::next_candidate;
 
 #[cfg(test)]
 #[path = "route_pick_tests.rs"]

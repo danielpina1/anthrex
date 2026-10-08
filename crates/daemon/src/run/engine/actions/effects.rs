@@ -170,8 +170,8 @@ pub(super) fn effect(run: &Run, node: &ActionNode, kind: &ActionKind) -> String 
             let route = i.map(|i| {
                 let task = &run.tasks[i];
                 match task.pair.as_ref().filter(|_| crate::run::phases::writing(task)) {
-                    Some(pair) => crate::run::route_pick::writer_step(run, i, &pair.writer_route),
-                    None => crate::run::route_pick::rung2_route(run, i).0,
+                    Some(pair) => crate::run::role_step::writer_step(run, i, &pair.writer_route),
+                    None => crate::run::role_step::rung2_route(run, i).0,
                 }
             });
             let (runtime, model, effort) = route.map_or_else(Default::default, |r| {

@@ -1,6 +1,6 @@
 //! Milestone 9.7 decision 16 (DH §4.2): an engine-made fix task for a culprit (9.1's
 //! bisect fix and 9.2's CI culprit fix) escalates from the culprit's route as its
-//! worker's rung 2 would (`route_pick::escalate_for`): past a runtime the run's start
+//! worker's rung 2 would (`role_step::escalate_for`): past a runtime the run's start
 //! recorded as not installed, and past a route that failed in the culprit's task.
 //! Milestone 9.8 (task M9.8.8): along the culprit's row (decision 29).
 
@@ -16,7 +16,7 @@ use super::merge::{commit, doc_task, start_on};
 use crate::run::engine::EventKind;
 use crate::run::model_roles::{Mover, RunModels};
 use crate::run::proof::proof_command;
-use crate::run::route_pick::escalate_for;
+use crate::run::role_step::escalate_for;
 use crate::run::test_support::{set_row, task_toml, with_efforts};
 
 const SINGLE: &str = "cargo test -- --exact {test}";

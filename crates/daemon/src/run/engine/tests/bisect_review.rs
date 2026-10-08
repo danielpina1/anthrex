@@ -174,7 +174,7 @@ fn an_overlapping_open_task_keeps_the_fix_task_on_the_culprits_runtime() {
         .position(|t| t.id() == "t2")
         .unwrap();
     let mover = crate::run::model_roles::Mover::Worker;
-    let up = crate::run::route_pick::escalate_for(fx.run(), i, &route, mover);
+    let up = crate::run::role_step::escalate_for(fx.run(), i, &route, mover);
     assert_eq!(up, route, "the premise: the overlap skip leaves no step");
     answer(&mut fx, 2);
     let refused = (fx.run().log.iter()).any(|e| e.text.starts_with("bisect fix for "));

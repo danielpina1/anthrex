@@ -104,7 +104,7 @@ fn the_retry_preview_names_the_writers_route() {
     assert_eq!(fx.task("t1").state, TaskState::Blocked);
     let i = fx.run().tasks.iter().position(|t| t.id() == "t1").unwrap();
     let current = fx.task("t1").pair.as_ref().unwrap().writer_route.clone();
-    let next = crate::run::route_pick::writer_step(fx.run(), i, &current);
+    let next = crate::run::role_step::writer_step(fx.run(), i, &current);
     assert_eq!(next.runtime, Runtime::Codex, "{next:?}");
     let preview = actions::available(fx.run(), &ActionNode::Task("t1"))
         .into_iter()

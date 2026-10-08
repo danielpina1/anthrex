@@ -7,9 +7,10 @@
 //! (design decision 1).
 
 use proto::models::{ModelRef, Role};
-use proto::{Effort, Route};
+use proto::{Effort, Route, Runtime};
 
-use super::model_roles::{RunModels, failed_in};
+use super::model::{ListPick, Run};
+use super::model_roles::{Mover, RunModels, failed_in, failed_routes, missing, runtime_open};
 
 /// Decision 29: the next route for `role` from `current`, skipping `failed` (by runtime
 /// and model, `model_roles::failed_in`); `None` when there is none.
@@ -70,6 +71,93 @@ fn above(models: &RunModels, model: &ModelRef, effort: &Effort) -> Vec<Route> {
 /// Whether `a` and `b` name the same model (runtime and id).
 fn same(a: &ModelRef, b: &ModelRef) -> bool {
     a.runtime == b.runtime && a.route_model() == b.route_model()
+}
+
+/// The route rung 2 and `run retry` give task `i` (milestone 9.8 decision 29, ruling
+/// RL-1): `role_step::escalate` along its row ([`RunModels::task_role`]) from its route,
+/// stepping over a route that failed in this task and a runtime [`runtime_open`] holds
+/// the worker off (ruling T10a-6); with nothing left, the task's own route
+/// ([`every_route_failed`] says so when it failed). No list step since M9.8.8: the
+/// `ListPick` is always `None` (the list code goes in M9.8.13).
+pub fn rung2_route(run: &Run, i: usize) -> (Route, Option<ListPick>) {
+    let task = &run.tasks[i];
+    let role = RunModels::task_role(task);
+    let open = |runtime| runtime_open(run, i, runtime, Mover::Worker);
+    let next = step(run, i, role, &task.route, open);
+    (next.unwrap_or_else(|| task.route.clone()), None)
+}
+
+/// Ruling T16-2: rung 2's and `run retry`'s step for a test writer on `current`: the
+/// `test_writer` row's escalation (decision 29), held to the overlap rule as a
+/// transient lane; with nothing left, `current`.
+pub fn writer_step(run: &Run, i: usize, current: &Route) -> Route {
+    let open = |runtime| runtime_open(run, i, runtime, Mover::Transient);
+    step(run, i, Role::TestWriter, current, open).unwrap_or_else(|| current.clone())
+}
+
+/// Milestone 9.7 decision 16 (DH §4.2, BR-15): the route an engine-made fix task for
+/// culprit task `culprit` (its index) takes one rung up from `current`: the culprit's
+/// row's escalation (decision 29), past the runtimes [`runtime_open`] holds off for
+/// `mover` and the routes that failed in the culprit's task, as its worker's rung 2
+/// would ([`rung2_route`]); with nothing left, `current`.
+pub(crate) fn escalate_for(run: &Run, culprit: usize, current: &Route, mover: Mover) -> Route {
+    let role = RunModels::task_role(&run.tasks[culprit]);
+    let open = |runtime| runtime_open(run, culprit, runtime, mover);
+    step(run, culprit, role, current, open).unwrap_or_else(|| current.clone())
+}
+
+/// `role_step::escalate` for task `i`'s `role` from `current`, skipping the routes that
+/// failed in the task (RL-1) and every step on a runtime `open` refuses.
+fn step(
+    run: &Run,
+    i: usize,
+    role: Role,
+    current: &Route,
+    open: impl Fn(Runtime) -> bool,
+) -> Option<Route> {
+    let models = run.limits.models();
+    let mut skip = failed_routes(&run.tasks[i]);
+    skip.extend((steps(models, role, current).into_iter()).filter(|r| !open(r.runtime)));
+    escalate(models, role, current, &skip)
+}
+
+/// Rulings T10a-3, T10a-5, T10a-6: the run-log line when task `i`'s next route, `route`
+/// (from [`rung2_route`]), failed in this task too, and the original is retried: every
+/// route of its row failed, or only a route the overlap rule holds task `i` off has not.
+pub fn every_route_failed(run: &Run, i: usize, route: &Route) -> Option<String> {
+    let role = RunModels::task_role(&run.tasks[i]);
+    route_failed_line(run, i, role, &run.tasks[i].route, route)
+}
+
+/// [`every_route_failed`] for a test writer stepping from `from`, its own route (ruling
+/// T16-7, N3), as the worker's steps from the task's route.
+pub fn writer_route_failed(run: &Run, i: usize, from: &Route, route: &Route) -> Option<String> {
+    route_failed_line(run, i, Role::TestWriter, from, route)
+}
+
+fn route_failed_line(
+    run: &Run,
+    i: usize,
+    role: Role,
+    from: &Route,
+    route: &Route,
+) -> Option<String> {
+    let task = &run.tasks[i];
+    if !failed_in(&failed_routes(task), route) {
+        return None;
+    }
+    let (id, runtime, model) = (task.id(), route.runtime.label(), &route.model);
+    // Only the installed skip: a step left is one the overlap rule held off.
+    let installed = |r: Runtime| r == task.route.runtime || !missing(&run.orch.installed, r);
+    let held = step(run, i, role, from, installed).is_some();
+    Some(if held {
+        format!(
+            "no route for task {id} keeps the overlap rule and has not failed in this task; \
+             retrying {runtime}/{model}"
+        )
+    } else {
+        format!("every route for task {id} failed in this task; retrying {runtime}/{model}")
+    })
 }
 
 #[cfg(test)]

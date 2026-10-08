@@ -1,5 +1,5 @@
 //! Milestone 9.8 decision 29 on a run (task M9.8.8): rung 2 and `run retry`
-//! (`route_pick::rung2_route`), the test writer's step (`writer_step`) and an engine fix
+//! (`role_step::rung2_route`), the test writer's step (`writer_step`) and an engine fix
 //! task's step up (`escalate_for`) go through `role_step::escalate` along the row,
 //! stepping over a model that failed in the task (ruling RL-1) and a runtime not
 //! installed or held off by the overlap rule (ruling T10a-6).
@@ -9,7 +9,7 @@ use proto::{AgentRole, Route, TaskState};
 
 use crate::run::model::{AgentRound, Run};
 use crate::run::model_roles::{ModelEfforts, Mover, RunModels};
-use crate::run::route_pick::{escalate_for, every_route_failed, rung2_route, writer_step};
+use crate::run::role_step::{escalate_for, every_route_failed, rung2_route, writer_step};
 use crate::run::test_support::{PROFILE, build_with_models, plan_with, set_row, show, task_toml};
 
 const SONNET: &str = "claude:claude-sonnet-5";

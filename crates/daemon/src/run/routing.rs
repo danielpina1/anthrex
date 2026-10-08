@@ -14,9 +14,9 @@ use proto::{
 };
 
 use super::model::{ReviewLevel, Run, Task};
+use super::model_roles::peer;
 use super::model_roles::{NOT_INSTALLED, OVERLAPPING_OWNS, RunModels, missing};
 use super::role_step;
-use super::roster::peer;
 use proto::models::Role;
 
 #[path = "routing_lists.rs"]

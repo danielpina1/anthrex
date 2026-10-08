@@ -235,6 +235,16 @@ pub fn row_route_over(choice: &RoleChoice, installed: &Installed) -> (Route, Opt
     }
 }
 
+/// The other runtime: Claude and Codex swap; anything else (there is no third
+/// orchestrated runtime today) maps to itself.
+pub fn peer(runtime: Runtime) -> Runtime {
+    match runtime {
+        Runtime::Claude => Runtime::Codex,
+        Runtime::Codex => Runtime::Claude,
+        Runtime::Shell => Runtime::Shell,
+    }
+}
+
 /// A skip reason: the overlap rule holds the route off (decision 28; rulings FW-1, FW-5).
 pub const OVERLAPPING_OWNS: &str = "overlapping owns";
 pub const NOT_INSTALLED: &str = super::orch::roles::NOT_INSTALLED;

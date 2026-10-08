@@ -345,7 +345,7 @@ fn submit_edit(
 
 /// `run retry` (decision 42) of a blocked task that is neither L nor `dep_cancelled`:
 /// `failures = 1`, `bounces`, `budget_exceeded` and `conflicts` cleared, rung 2 on
-/// `route_pick::rung2_route` (decision 38's rung 2; milestone 9.5's lists and RL-1), and
+/// `role_step::rung2_route` (decision 38's rung 2; milestone 9.5's lists and RL-1), and
 /// a fresh session in the same worktree from the task's own start commit (carry M8a.11),
 /// with decision 30's hand-over prompt; its old session, if alive, is killed first. The
 /// hand-back context ends (carry T14-R2), so the fresh session's claim passes every
@@ -422,10 +422,10 @@ pub(super) fn rung2(
     let writer = super::pair::escalate_writer(run, i, now);
     let (route, step) = match writer {
         true => (run.tasks[i].route.clone(), None),
-        false => crate::run::route_pick::rung2_route(run, i),
+        false => crate::run::role_step::rung2_route(run, i),
     };
     if let Some(text) = (!writer)
-        .then(|| crate::run::route_pick::every_route_failed(run, i, &route))
+        .then(|| crate::run::role_step::every_route_failed(run, i, &route))
         .flatten()
     {
         log(run, now, text);

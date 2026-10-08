@@ -5,6 +5,7 @@
 use proto::{Effort, ModelEntry, Route, Runtime, Strength};
 
 use super::model::ReviewLevel;
+use super::model_roles::peer;
 
 /// The roster's entry for one `(runtime, model)`, if any. *(Decision 23.)*
 pub fn find<'a>(roster: &'a [ModelEntry], runtime: Runtime, model: &str) -> Option<&'a ModelEntry> {
@@ -22,16 +23,6 @@ pub fn first_at(
     roster
         .iter()
         .find(|entry| entry.runtime == runtime && entry.strength == strength)
-}
-
-/// The other runtime: Claude and Codex swap; anything else (there is no third
-/// orchestrated runtime today) maps to itself.
-pub fn peer(runtime: Runtime) -> Runtime {
-    match runtime {
-        Runtime::Claude => Runtime::Codex,
-        Runtime::Codex => Runtime::Claude,
-        Runtime::Shell => Runtime::Shell,
-    }
 }
 
 /// The roster entry on `runtime` with the lowest strength at or above `min`, first in

@@ -11,8 +11,8 @@ use proto::{ModelEntry, Route, TaskKind, TestMode};
 use super::edits_state::has_started;
 use super::model::Task;
 use super::model_roles::Installed;
+use super::model_roles::peer;
 use super::plan::PlanError;
-use super::roster::peer;
 use super::validate::strength_label;
 
 /// Where the second racer and the test writer come from: the run's roster and what its

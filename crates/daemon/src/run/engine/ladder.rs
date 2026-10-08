@@ -10,7 +10,7 @@ use super::dispatch::{block, history, launch_fresh};
 use super::schedule::op_in_flight;
 use super::{Effect, OpKind, OpResult, done, emit_op, next_op, outbox};
 use crate::run::model::{AgentRound, FreshSession, Run, Task, writes};
-use crate::run::route_pick::{every_route_failed, rung2_route};
+use crate::run::role_step::{every_route_failed, rung2_route};
 use crate::run::validate::resolve_task_lenient;
 
 pub(super) use super::ladder_budget::{breached, ceiling, check_budget, reached};
@@ -260,7 +260,7 @@ pub(super) fn breach(run: &mut Run, i: usize, what: String, now: u64, fx: &mut V
 }
 
 /// Rung 2: the session killed; a fresh one on the next route of the task's row
-/// (milestone 9.8 decision 29, `route_pick::rung2_route` over `role_step::escalate`)
+/// (milestone 9.8 decision 29, `role_step::rung2_route` over `role_step::escalate`)
 /// starts in the same worktree once the old one has exited ([`start_fresh_sessions`]).
 /// Ruling RL-1 skips a route that failed in this task.
 pub(super) fn rung2(run: &mut Run, i: usize, reason: String, now: u64, fx: &mut Vec<Effect>) {
