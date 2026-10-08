@@ -56,7 +56,11 @@ fn effort_shown(app: &App) -> String {
 
 #[test]
 fn the_task_edit_form_picks_a_model_and_its_efforts() {
+    // Review minor 8: an opened route with a strength, which a pick drops.
+    let mut task = edit_fixture_task();
+    task.route_spec.strength = Some(proto::Strength::Frontier);
     let mut app = edit_app();
+    app.modal = Some(Modal::EditTask(Box::new(TaskEditForm::new(RUN_ID, &task))));
     assert_eq!(form(&app).focus, EditField::Model);
     assert!(
         app.on_key(key(KeyCode::Enter)).is_empty(),
@@ -66,7 +70,7 @@ fn the_task_edit_form_picks_a_model_and_its_efforts() {
     assert_eq!(picker.target, PickerFor::TaskEdit);
     assert_eq!(
         picker.entries[0],
-        PickerEntry::RoleTable("role table".into())
+        PickerEntry::RoleTable("role table (Claude · Sonnet 5)".into())
     );
     assert_eq!(picker.selected, 0, "a policy model: on the role table");
     let luna = mref("codex:gpt-6-luna");
@@ -84,10 +88,12 @@ fn the_task_edit_form_picks_a_model_and_its_efforts() {
     );
     app.on_key(key(KeyCode::Tab));
     assert_eq!(form(&app).focus, EditField::Effort);
+    // Fix round 1 (controller ruling I2): a picked model with no effort runs at its
+    // default, and says so.
     assert_eq!(
         effort_shown(&app),
-        "‹ role table ›",
-        "a new model: its row's effort"
+        "‹ default ›",
+        "a new model: its default"
     );
     let mut seen = Vec::new();
     for _ in 0..5 {
@@ -96,7 +102,7 @@ fn the_task_edit_form_picks_a_model_and_its_efforts() {
     }
     assert_eq!(
         seen,
-        ["low", "medium", "high", "xhigh", "role table"].map(|e| format!("‹ {e} ›"))
+        ["low", "medium", "high", "xhigh", "default"].map(|e| format!("‹ {e} ›"))
     );
     app.on_key(key(KeyCode::Left));
     assert_eq!(
@@ -113,7 +119,10 @@ fn the_task_edit_form_picks_a_model_and_its_efforts() {
     let mut app = edit_app();
     app.on_key(key(KeyCode::Enter));
     app.on_key(key(KeyCode::Enter));
-    assert_eq!(form(&app).value_parts(EditField::Model).0, "‹ role table ›");
+    assert_eq!(
+        form(&app).value_parts(EditField::Model).0,
+        "‹ role table (Claude · Sonnet 5) ›"
+    );
     // On the model row `⏎` is the picker's; from the next row it saves.
     app.on_key(key(KeyCode::Tab));
     assert_eq!(
@@ -147,7 +156,146 @@ fn the_edit_forms_picker_opens_on_the_plans_model_and_cancels() {
     // Its efforts are the catalog's.
     app.on_key(key(KeyCode::Tab));
     app.on_key(key(KeyCode::Char(' ')));
-    assert_eq!(effort_shown(&app), "‹ role table ›", "max, then the row's");
+    assert_eq!(
+        effort_shown(&app),
+        "‹ default ›",
+        "max, then the model's default"
+    );
     app.on_key(key(KeyCode::Char(' ')));
     assert_eq!(effort_shown(&app), "‹ low ›");
+}
+
+fn user_route(model: &str, effort: &str) -> TaskEditForm {
+    let mut task = edit_fixture_task();
+    task.route_spec = RouteSpec {
+        runtime: Some(Runtime::Codex),
+        model: Some(model.into()),
+        strength: None,
+        effort: Some(Effort::new(effort)),
+    };
+    task.route = proto::Route {
+        runtime: Runtime::Codex,
+        model: model.into(),
+        strength: proto::Strength::Standard,
+        effort: Effort::new(effort),
+    };
+    TaskEditForm::new(RUN_ID, &task)
+}
+
+/// Review I1: `⏎⏎` on the model row (the picker opens on the route's model, `⏎`
+/// picks it again) keeps the user's effort: nothing changed.
+#[test]
+fn re_picking_the_same_model_keeps_its_effort() {
+    let mut app = edit_app();
+    app.modal = Some(Modal::EditTask(Box::new(user_route("gpt-6-sol", "max"))));
+    app.on_key(key(KeyCode::Enter));
+    app.on_key(key(KeyCode::Enter));
+    assert!(form(&app).picker.is_none());
+    assert_eq!(form(&app).route.effort, Some(Effort::new("max")));
+    assert_eq!(effort_shown(&app), "‹ max ›");
+    app.on_key(key(KeyCode::Tab));
+    assert!(app.on_key(key(KeyCode::Enter)).is_empty());
+    assert_eq!(app.toast_text(), Some("nothing changed"));
+}
+
+/// Review I3: after `role table` clears a user's model, the effort row has no catalog
+/// to cycle: the task's resolution is the old model's, not the row's.
+#[test]
+fn role_table_after_a_users_model_cycles_no_stale_efforts() {
+    let mut app = edit_app();
+    app.modal = Some(Modal::EditTask(Box::new(user_route("gpt-6-luna", "xhigh"))));
+    app.on_key(key(KeyCode::Enter));
+    for _ in 0..10 {
+        app.on_key(key(KeyCode::Char('k')));
+    }
+    let picker = form(&app).picker.as_ref().unwrap();
+    assert_eq!(picker.selected, 0);
+    assert_eq!(
+        picker.entries[0],
+        PickerEntry::RoleTable("role table".into())
+    );
+    app.on_key(key(KeyCode::Enter));
+    assert_eq!(form(&app).route, RouteSpec::default());
+    assert_eq!(form(&app).value_parts(EditField::Model).0, "‹ role table ›");
+    assert_eq!(form(&app).effort_model(), None);
+    app.on_key(key(KeyCode::Tab));
+    app.on_key(key(KeyCode::Char(' ')));
+    assert_eq!(
+        form(&app).route.effort,
+        None,
+        "luna's efforts are not offered"
+    );
+    assert_eq!(
+        form(&app).value_parts(EditField::Effort),
+        ("‹ role table ›".into(), None)
+    );
+}
+
+/// Fix round 1 (controller ruling I2): with no route the model row names what the
+/// table runs, the model and its effort; a picked model with no effort reads
+/// `default`.
+#[test]
+fn the_form_draws_the_effective_choice() {
+    let mut task = edit_fixture_task();
+    task.route_spec = RouteSpec::default();
+    let mut app = edit_app();
+    let _ = app.set_terminal_size(120, 40);
+    app.modal = Some(Modal::EditTask(Box::new(TaskEditForm::new(RUN_ID, &task))));
+    // The app labels the table's model from the catalogs before each key.
+    app.on_key(key(KeyCode::Tab));
+    app.on_key(key(KeyCode::BackTab));
+    let draw = |app: &App| crate::ui::audit::rows(&crate::ui::audit::draw(app, 120, 40)).join("\n");
+    let rows = draw(&app);
+    assert!(
+        rows.contains("▌ model      ‹ role table (Claude · Sonnet 5 · medium) ›"),
+        "{rows}"
+    );
+    assert!(
+        rows.contains("  effort     ‹ role table ›  medium"),
+        "{rows}"
+    );
+    app.on_key(key(KeyCode::Enter));
+    app.on_key(key(KeyCode::Char('j')));
+    app.on_key(key(KeyCode::Enter));
+    let rows = draw(&app);
+    assert!(
+        rows.contains("▌ model      ‹ Claude · Haiku 4.5 ›"),
+        "{rows}"
+    );
+    assert!(rows.contains("  effort     ‹ default ›"), "{rows}");
+}
+
+/// Review minor 9: a `Models` reply refreshes the edit form's open picker, the
+/// selection kept; `r` there asks for a live probe.
+#[test]
+fn a_models_reply_refreshes_the_edit_forms_open_picker() {
+    let mut app = edit_app();
+    app.catalogs.list[1].models.pop();
+    app.on_key(key(KeyCode::Enter));
+    let luna = mref("codex:gpt-6-luna");
+    for _ in 0..10 {
+        if selected_model(form(&app).picker.as_ref().unwrap()) == Some(luna.clone()) {
+            break;
+        }
+        app.on_key(key(KeyCode::Char('j')));
+    }
+    let has_sol = |app: &App| {
+        (form(app).picker.as_ref().unwrap().entries.iter())
+            .any(|e| matches!(e, PickerEntry::Model { label, .. } if label == "gpt-6.1 sol"))
+    };
+    assert!(!has_sol(&app));
+    let catalogs = crate::app::model_picker::tests::fixture_catalogs().list;
+    app.on_daemon(proto::DaemonMsg::Models { catalogs });
+    assert!(has_sol(&app));
+    assert_eq!(
+        selected_model(form(&app).picker.as_ref().unwrap()),
+        Some(luna)
+    );
+    assert_eq!(
+        app.on_key(key(KeyCode::Char('r'))),
+        [Effect::Send(ClientMsg::ListModels {
+            runtime: None,
+            refresh: true
+        })]
+    );
 }

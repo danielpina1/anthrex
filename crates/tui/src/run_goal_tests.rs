@@ -302,3 +302,43 @@ fn the_goal_dialog_has_a_design_row_defaulting_from_config() {
     );
     assert_eq!(design(&form), None);
 }
+
+/// Review I1: picking the chosen model again keeps its effort; review minor 9: a
+/// `Models` reply refreshes the goal form's open picker, the selection kept.
+#[test]
+fn re_picking_keeps_the_effort_and_a_models_reply_refreshes_the_picker() {
+    use crate::app::model_picker::PickerEntry;
+    use crate::app::model_picker::tests::{mref, selected_model};
+    let mut app = goal_app();
+    app.catalogs.list[1].models.pop();
+    app.on_key(key(KeyCode::Tab));
+    app.on_key(key(KeyCode::Enter));
+    let luna = mref("codex:gpt-6-luna");
+    for _ in 0..10 {
+        if selected_model(open_form(&app).picker.as_ref().unwrap()) == Some(luna.clone()) {
+            break;
+        }
+        app.on_key(key(KeyCode::Char('j')));
+    }
+    let has_sol = |app: &crate::app::App| {
+        (open_form(app).picker.as_ref().unwrap().entries.iter())
+            .any(|e| matches!(e, PickerEntry::Model { label, .. } if label == "gpt-6.1 sol"))
+    };
+    assert!(!has_sol(&app));
+    let catalogs = crate::app::model_picker::tests::fixture_catalogs().list;
+    app.on_daemon(proto::DaemonMsg::Models { catalogs });
+    assert!(has_sol(&app));
+    assert_eq!(
+        selected_model(open_form(&app).picker.as_ref().unwrap()),
+        Some(luna.clone())
+    );
+    app.on_key(key(KeyCode::Enter));
+    app.on_key(key(KeyCode::Tab));
+    app.on_key(key(KeyCode::Char(' ')));
+    assert_eq!(open_form(&app).effort.as_deref(), Some("low"));
+    app.on_key(key(KeyCode::BackTab));
+    app.on_key(key(KeyCode::Enter));
+    app.on_key(key(KeyCode::Enter));
+    assert_eq!(open_form(&app).model, Some(luna));
+    assert_eq!(open_form(&app).effort.as_deref(), Some("low"), "kept");
+}

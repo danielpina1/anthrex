@@ -343,11 +343,11 @@ fn the_edit_form_sends_only_what_changed() {
     assert_eq!(
         tap(&mut app, KeyCode::Enter),
         form_edit(vec![amend(
+            // Fix round 1 (review minor 4): a route naming no model sends its effort
+            // alone; the daemon refuses a runtime without a model.
             Some(RouteSpec {
-                runtime: Some(Runtime::Claude),
-                model: None,
-                strength: None,
                 effort: Some(Effort::HIGH),
+                ..RouteSpec::default()
             }),
             Some(Size::S)
         )])
@@ -372,9 +372,10 @@ fn the_role_table_is_a_choice() {
     assert!(form(&app).picker.is_some());
     tap(&mut app, KeyCode::Enter);
     assert!(form(&app).picker.is_none());
+    // Fix round 1: the entry names what the table runs (no catalog here: the id).
     assert_eq!(
         form(&app).value_parts(EditField::Model),
-        ("‹ role table ›".into(), None)
+        ("‹ role table (Claude · claude-sonnet-5) ›".into(), None)
     );
     focus(&mut app, EditField::Size);
     assert_eq!(

@@ -378,11 +378,12 @@ fn value_parts_show_the_role_table_with_the_resolved_value() {
     let mut t = edit_fixture_task();
     t.route_spec = RouteSpec::default();
     let form = TaskEditForm::new(RUN_ID, &t);
+    // Fix round 1 (controller ruling I2): the table's model and effort, named.
     assert_eq!(
         form.value_parts(EditField::Model),
         (
-            "‹ role table ›".into(),
-            Some("Claude · claude-sonnet-5".into())
+            "‹ role table (Claude · claude-sonnet-5 · medium) ›".into(),
+            None
         )
     );
     assert_eq!(
@@ -404,12 +405,8 @@ fn a_pinned_effort_back_to_the_role_table_sends_none() {
     };
     assert_eq!(
         route,
-        Some(RouteSpec {
-            runtime: Some(Runtime::Claude),
-            model: None,
-            strength: None,
-            effort: None,
-        }),
+        // Fix round 1 (review minor 4): with no model the legacy runtime goes too.
+        Some(RouteSpec::default()),
         "the role table's is sent as none, never as the value it resolved to"
     );
 }
@@ -499,14 +496,14 @@ fn after_a_new_model_the_role_table_rows_show_no_stale_resolved_value() {
     );
     assert_eq!(
         form.value_parts(EditField::Effort),
-        ("‹ role table ›".into(), None),
-        "the resolution is the old route's"
+        ("‹ default ›".into(), None),
+        "fix round 1: a named model with no effort runs at its default"
     );
     form.choose(None, String::new());
     assert_eq!(form.route, RouteSpec::default());
     assert_eq!(
         form.value_parts(EditField::Model),
-        ("‹ role table ›".into(), None)
+        ("‹ role table (Claude · claude-sonnet-5) ›".into(), None)
     );
 }
 

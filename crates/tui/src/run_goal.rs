@@ -228,8 +228,13 @@ impl GoalForm {
     }
 
     /// Decision 39: the picker chose `model` (`None`: the role table), labelled
-    /// `label`; its effort starts at the model's default.
+    /// `label`; a new model's effort starts at its default, the same one keeps it.
     pub fn choose(&mut self, model: Option<ModelRef>, label: String) {
+        // Review I1: the same model again keeps its effort.
+        if model.is_some() && model == self.model {
+            self.model_label = label;
+            return;
+        }
         self.model = model;
         self.model_label = label;
         self.effort = None;

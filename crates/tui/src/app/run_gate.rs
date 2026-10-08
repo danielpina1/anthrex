@@ -98,7 +98,11 @@ impl App {
         let modal = match (key, task) {
             ('a', _) => confirm(approve_message(run), PendingAction::ApproveRun(run_id)),
             ('x', _) => confirm(reject_message(run), PendingAction::RejectRun(run_id)),
-            ('e', Some(task)) => Modal::EditTask(Box::new(TaskEditForm::in_run(run, task))),
+            ('e', Some(task)) => {
+                let mut form = TaskEditForm::in_run(run, task);
+                form.role_label = form.table_model().map(|m| self.catalogs.label(&m, false));
+                Modal::EditTask(Box::new(form))
+            }
             (_, Some(task)) => confirm(
                 format!("Remove {} from run {run_id}'s plan?", task.id),
                 PendingAction::RemoveTask {
@@ -127,6 +131,7 @@ impl App {
         };
         // Milestone 9.8 decision 39: the route model's efforts, as the catalogs say now.
         form.efforts = (form.effort_model()).map_or_else(Vec::new, |m| catalogs.efforts(&m));
+        form.role_label = form.table_model().map(|m| catalogs.label(&m, false));
         if let Some(picker) = &mut form.picker {
             match form_picker::on_key(picker, key) {
                 FormPick::Stay => {}
@@ -149,7 +154,7 @@ impl App {
                     PickerFor::TaskEdit,
                     catalogs,
                     current.as_ref(),
-                    crate::run_edit::ROLE_TABLE.to_string(),
+                    form.role_table_text(),
                 ));
                 vec![]
             }

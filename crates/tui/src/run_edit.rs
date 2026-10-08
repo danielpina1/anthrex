@@ -77,6 +77,9 @@ pub struct TaskEditForm {
     pub model_label: Option<String>,
     /// The route model's catalog efforts, refreshed by the app before each key.
     pub efforts: Vec<String>,
+    /// The table's model as the catalogs label it (`Claude · Sonnet 5`), set by the app;
+    /// `None` reads the resolved id.
+    pub role_label: Option<String>,
     /// The model picker, while it is open over the form.
     pub picker: Option<ModelPicker>,
     pub size: Size,
@@ -192,6 +195,7 @@ impl TaskEditForm {
             route: spec.clone(),
             model_label: None,
             efforts: Vec::new(),
+            role_label: None,
             picker: None,
             size: task.size,
             test_mode: task.test_mode,
@@ -293,19 +297,46 @@ impl TaskEditForm {
     /// The model whose catalog efforts the effort row cycles: the route's, else (the
     /// route names no model) the one the task resolves to, on its runtime.
     pub fn effort_model(&self) -> Option<ModelRef> {
+        self.current_model().or_else(|| self.table_model())
+    }
+
+    /// The model the table runs the task on, while the task's resolution is the
+    /// table's: the route the form opened with named no model (review I3).
+    pub fn table_model(&self) -> Option<ModelRef> {
         let resolved = &self.resolved;
-        self.current_model().or_else(|| {
-            let runtime = self.route.runtime.unwrap_or(resolved.runtime);
-            (self.route.model.is_none() && runtime == resolved.runtime)
-                .then(|| route_model(Some(runtime), Some(&resolved.model)))
-                .flatten()
-        })
+        let runtime = self.route.runtime.unwrap_or(resolved.runtime);
+        (self.original.route_spec.model.is_none() && runtime == resolved.runtime)
+            .then(|| route_model(Some(runtime), Some(&resolved.model)))
+            .flatten()
+    }
+
+    /// `role table (<model> · <effort>)`: what the table runs, while the resolution is
+    /// the table's (the effort only when the opened route set none); else `role table`.
+    pub fn role_table_text(&self) -> String {
+        let Some(model) = self.table_model() else {
+            return ROLE_TABLE.to_string();
+        };
+        let label = self.role_label.clone().unwrap_or_else(|| {
+            let id = model.id.as_deref().map_or_else(|| "default".into(), clean);
+            format!("{} · {id}", runtime_name(model.runtime))
+        });
+        let effort = &self.resolved.effort;
+        match &self.original.route_spec.effort {
+            None if effort.is_default() => format!("{ROLE_TABLE} ({label} · default)"),
+            None => format!("{ROLE_TABLE} ({label} · {})", clean(effort.as_str())),
+            Some(_) => format!("{ROLE_TABLE} ({label})"),
+        }
     }
 
     /// Decision 39: the picker chose `model` (labelled `label`), or the role table
     /// (`None`), which clears the whole route. A new model's effort is the role
     /// table's until cycled.
     pub fn choose(&mut self, model: Option<ModelRef>, label: String) {
+        // Review I1: the same model again keeps the route, its effort with it.
+        if model.is_some() && model == self.current_model() {
+            self.model_label = Some(label).filter(|l| !l.is_empty());
+            return;
+        }
         self.route = match model {
             Some(m) => RouteSpec {
                 runtime: Some(m.runtime),
@@ -434,8 +465,16 @@ impl TaskEditForm {
     /// than `tdd` needs a non-blank reason whenever the mode or its reason is sent.
     pub fn edits(&self) -> Result<Vec<PlanEdit>, (EditField, String)> {
         let original = &self.original;
-        let route = self.route.clone();
-        let route_changed = route != original.route_spec;
+        let route_changed = self.route != original.route_spec;
+        // Review minor 4: a route naming no model carries only its effort (the daemon
+        // refuses a runtime or a strength alone).
+        let route = match &self.route.model {
+            Some(_) => self.route.clone(),
+            None => RouteSpec {
+                effort: self.route.effort.clone(),
+                ..RouteSpec::default()
+            },
+        };
 
         let mode_changed = self.test_mode != original.test_mode;
         let reason_changed =
@@ -505,18 +544,14 @@ impl TaskEditForm {
                     choice(&format!("{} · {ROLE_TABLE}", runtime_name(runtime))),
                     muted(clean(&resolved.model)),
                 ),
-                (None, None) => (
-                    choice(ROLE_TABLE),
-                    muted(format!(
-                        "{} · {}",
-                        runtime_name(resolved.runtime),
-                        clean(&resolved.model)
-                    )),
-                ),
+                (None, None) => (choice(&self.role_table_text()), None),
             },
-            EditField::Effort => match &self.route.effort {
-                Some(effort) => (choice(&effort_word(effort.clone())), None),
-                None => (
+            EditField::Effort => match (&self.route.effort, &self.route.model) {
+                (Some(effort), _) => (choice(&effort_word(effort.clone())), None),
+                // Fix round 1 (controller ruling I2): a named model with no effort runs
+                // at its default.
+                (None, Some(_)) => (choice("default"), None),
+                (None, None) => (
                     choice(ROLE_TABLE),
                     muted(effort_word(resolved.effort.clone())),
                 ),

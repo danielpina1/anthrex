@@ -172,8 +172,8 @@ fn warnings_at(app: &App, w: u16, h: u16) {
 }
 
 /// Milestone 9.8: the screen opens on `models`, drawn whole as the spec's table
-/// (`ui/models_table_tests.rs` checks its rows); the screen's own notes follow it, and
-/// the status bar keeps the section's hints.
+/// (`ui/models_table_tests.rs` checks its rows); the roster's warnings stay on
+/// `limits`, and the status bar keeps the section's hints.
 #[test]
 fn models_section_renders_at_80x24_and_120x40() {
     let mut app = opened(false, sample());
@@ -194,12 +194,12 @@ fn models_section_renders_at_80x24_and_120x40() {
             all[3].starts_with("▸orchestrator          Claude · Opus 5.5       high     —"),
             "{w}x{h}: {all:?}"
         );
-        assert_eq!(all[13], "", "{w}x{h}");
-        if w == 80 {
-            assert_eq!(all[14..20], WARN_80, "{w}x{h}");
-        } else {
-            assert_eq!(all[14..17], WARN_120, "{w}x{h}");
-        }
+        // Fix round 1 (review minor 5): the roster's strength warnings (F18) are not
+        // the models table's; only what blocks `w` shows here.
+        assert!(
+            all[13..all.len() - 1].iter().all(|r| r.is_empty()),
+            "{w}x{h}: {all:?}"
+        );
         assert_eq!(
             all.last().unwrap(),
             " ⏎ choose model   e effort   f if-it-struggles   x reset   w save   esc back"
@@ -236,12 +236,6 @@ fn limits_section_renders_at_80x24_and_120x40() {
         );
         warnings_at(&app, w, h);
     }
-    // On `models` at 80x24 the notes take only what the table leaves, the cut marked.
-    let mut short = opened(false, sample());
-    short.catalogs = crate::app::model_picker::tests::fixture_catalogs();
-    let all = rows(&short, 80, 22);
-    assert_eq!(all[14..17], WARN_80[..3]);
-    assert!(all[17].contains("3 more"), "{all:#?}");
     // Out of range: the value in `Failed`, config's own message above the hints.
     let at = screen_mut(&mut app)
         .limits
