@@ -3,13 +3,15 @@
 //! (`RunModels.efforts`); at the top, or with no list, it switches to the row's
 //! fallback at the fallback's default effort; on the fallback it climbs the fallback's
 //! list; then nothing is left. A route that failed in the task (ruling RL-1) is
-//! stepped over. Never a model the row (or the route itself) does not name. Pure
-//! (design decision 1).
+//! stepped over. Never a model the row (or the route itself) does not name. Task
+//! M9.8.13 moved here (preflight ruling F13) the run-bound steps that use it: rung 2's
+//! and `run retry`'s, the test writer's and an engine fix task's, with their
+//! every-route-failed lines. Pure (design decision 1).
 
 use proto::models::{ModelRef, Role};
 use proto::{Effort, Route, Runtime};
 
-use super::model::{ListPick, Run};
+use super::model::Run;
 use super::model_roles::{Mover, RunModels, failed_in, failed_routes, missing, runtime_open};
 
 /// Decision 29: the next route for `role` from `current`, skipping `failed` (by runtime
@@ -77,14 +79,13 @@ fn same(a: &ModelRef, b: &ModelRef) -> bool {
 /// RL-1): `role_step::escalate` along its row ([`RunModels::task_role`]) from its route,
 /// stepping over a route that failed in this task and a runtime [`runtime_open`] holds
 /// the worker off (ruling T10a-6); with nothing left, the task's own route
-/// ([`every_route_failed`] says so when it failed). No list step since M9.8.8: the
-/// `ListPick` is always `None` (the list code goes in M9.8.13).
-pub fn rung2_route(run: &Run, i: usize) -> (Route, Option<ListPick>) {
+/// ([`every_route_failed`] says so when it failed).
+pub fn rung2_route(run: &Run, i: usize) -> Route {
     let task = &run.tasks[i];
     let role = RunModels::task_role(task);
     let open = |runtime| runtime_open(run, i, runtime, Mover::Worker);
     let next = step(run, i, role, &task.route, open);
-    (next.unwrap_or_else(|| task.route.clone()), None)
+    next.unwrap_or_else(|| task.route.clone())
 }
 
 /// Ruling T16-2: rung 2's and `run retry`'s step for a test writer on `current`: the

@@ -164,7 +164,6 @@ fn moved_overlap(fx: &mut Fixture, id: &str, culprit: &str) {
     let t = fx.task_mut(id);
     t.spec.owns = owns;
     assert_eq!(t.spec.route.runtime, None, "planned on the default runtime");
-    assert!(t.list_pick.is_none());
     t.route = at(CODEX, "");
     if t.state.is_finished() {
         t.state = TaskState::Working;
@@ -252,29 +251,23 @@ fn a_ci_culprit_fix_task_refused_by_rule_9_falls_back_to_the_culprits_own_route(
     );
 }
 
-/// M9.8.8 fix round 1 (review minor 2): a culprit on a model the roster does not list
-/// (a catalog model the user chose): its step up and its own route are refused by the
-/// roster check (`validate::resolve_route`, until M9.8.13), so the bisect fix takes the
-/// row's route, as the CI fix's last resort does, and the run log says why.
+/// M9.8.8 fix round 1 (review minor 2), then M9.8.13 (the follow-up from M9.8.8): a
+/// culprit on a catalog model the old roster never listed. With `Run.roster` gone,
+/// `validate::resolve_route` checks no roster membership, so the bisect fix takes the
+/// step up along the culprit's row, and the run log names no refusal.
 #[test]
-fn a_bisect_fix_task_off_the_roster_takes_the_row_and_says_so() {
+fn a_bisect_fix_task_off_the_roster_takes_its_step_up() {
     let mut fx = merged(&["t1", "t2", "t3"], "");
     with_orchestrator(&mut fx);
     let sol = "codex:gpt-6-sol";
     row(&mut fx, "t2", (sol, "codex:gpt-6-luna"), at(sol, "medium"));
-    assert!(fx.run().roster.iter().all(|e| e.model != "gpt-6-sol"));
     red_full(&mut fx);
     answer(&mut fx, 2);
     assert_eq!(
         key(&fx.task("fix1").route),
-        key(&at(sol, "")),
-        "the row's route"
+        key(&at(sol, "high")),
+        "the step up"
     );
-    let line = (fx.run().log.iter()).find(|e| e.text.starts_with("bisect fix for t2: "));
-    let line = line.map(|e| e.text.as_str()).unwrap_or_default();
-    assert!(
-        line.contains("codex/gpt-6-sol at high was refused") && line.ends_with("its row's route"),
-        "{:#?}",
-        fx.run().log
-    );
+    let refused = (fx.run().log.iter()).find(|e| e.text.starts_with("bisect fix for t2: "));
+    assert!(refused.is_none(), "{:#?}", fx.run().log);
 }

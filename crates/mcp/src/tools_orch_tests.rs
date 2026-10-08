@@ -35,8 +35,8 @@ fn pairs(list: &[(&str, &str)]) -> Vec<(String, String)> {
         .collect()
 }
 
-const GET_CONTEXT: &str = "Read the run's context: the repository profile, the models you can \
-    route to, the limits, scout reports, epics and the plan so far.";
+const GET_CONTEXT: &str = "Read the run's context: the repository profile, the role table \
+    (which model each size runs on), the limits, scout reports, epics and the plan so far.";
 
 /// Milestone 9.3 task M9.3.7: `edit_plan` names its `iterate`, which comes alone (the
 /// schema cannot say so). `edits` may be left out in every call (fix round 1).

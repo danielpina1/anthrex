@@ -193,13 +193,6 @@ fn tuning_file_round_trips_and_rejects_unknown_keys() {
             m_lines: 100,
         })
     );
-    assert_eq!(
-        file.routes["s"],
-        ClassRoute {
-            strength: Strength::Standard,
-            effort: Effort::MEDIUM,
-        }
-    );
     assert_eq!(file.dismissed["route-m"], "frontier/high");
 
     let text = toml::to_string(&file).unwrap();
@@ -227,10 +220,6 @@ fn tuning_file_round_trips_and_rejects_unknown_keys() {
         (
             TUNING_TOML.replace("hub_secs = 1650", "hub_secs = 1650\nl_secs = 1"),
             "l_secs",
-        ),
-        (
-            TUNING_TOML.replace("effort = \"medium\"", "effort = \"medium\"\nmodel = \"x\""),
-            "model",
         ),
     ] {
         let error = toml::from_str::<TuningFile>(&bad)
@@ -295,3 +284,16 @@ mod wire;
 
 #[path = "tuning_tests_kept.rs"]
 mod kept;
+
+/// Milestone 9.8 decision 30 and preflight ruling F20 (task M9.8.13): the class routes
+/// are no longer applied. A `tuning.toml` that 9.5's `run stats --apply route.<class>`
+/// wrote, `[routes.<class>]` with its `strength`, still loads; the tables are ignored and
+/// never written back.
+#[test]
+fn a_tuning_file_with_routes_loads_and_writes_them_no_more() {
+    let text = "v = 1\n\n[routes.s]\nstrength = \"fast\"\neffort = \"medium\"\n\n\
+                [routes.m]\nstrength = \"frontier\"\neffort = \"high\"\n";
+    let file: TuningFile = toml::from_str(text).expect("an old file with routes loads");
+    assert_eq!(toml::to_string(&file).unwrap().trim(), "v = 1");
+    assert_eq!(file, TuningFile::default());
+}

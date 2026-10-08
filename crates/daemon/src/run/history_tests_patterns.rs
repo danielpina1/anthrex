@@ -10,7 +10,7 @@ use proto::{
 use super::super::task_record;
 use super::fixtures::*;
 use crate::run::model::{Pair, Task};
-use crate::run::refit::{SizeClass, budget_samples, route_samples, threshold_samples};
+use crate::run::refit::{SizeClass, budget_samples, threshold_samples};
 use crate::run::test_support::race_of;
 
 fn pair(phase: PairPhase, writer_failures: u8) -> Pair {
@@ -202,11 +202,4 @@ fn refit_excludes_race_records_it_wrote() {
     let single = vec!["t2".to_string()];
     assert_eq!(ids(budget_samples(&lines, SizeClass::S, &t)), single);
     assert_eq!(ids(threshold_samples(&lines, SizeClass::S, &t)), single);
-    let at = proto::ClassRoute {
-        strength: run.tasks[1].route.strength,
-        effort: run.tasks[1].route.effort.clone(),
-    };
-    // Milestone 9.8 (ruling F16): a worker on its row records `role_table`, which the
-    // route refit (removed in M9.8.13) never counts as a class default.
-    assert!(ids(route_samples(&lines, SizeClass::S, &t, at)).is_empty());
 }

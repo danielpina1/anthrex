@@ -91,7 +91,7 @@ pub(crate) fn add_fix(
         pair: false,
         covers: Vec::new(),
     };
-    let (mut task, mut errors) = resolve_task_lenient(plan, &run.profile, &run.limits, &run.roster);
+    let (mut task, mut errors) = resolve_task_lenient(plan, &run.profile, &run.limits);
     task.branch = task_branch(&run.id, &id);
     task.worktree = task_path(&run.wt_dir, &run.id, &task.checkout_name());
     task.notes
@@ -116,7 +116,6 @@ pub(crate) fn add_fix(
         &EditScope::Run,
         (run.limits.max_tasks, run.round()),
         run.limits.models(),
-        (&run.roster, &run.orch.installed),
     ));
     let implicit = implicit_deps(&tasks);
     for (task, deps) in tasks.iter_mut().zip(implicit) {

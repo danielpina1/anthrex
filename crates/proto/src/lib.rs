@@ -235,7 +235,7 @@ pub use settings::{
 pub use task_detail::{ACTIVITY_MAX, SummarySource, TaskDetailInfo, WORKER_SUMMARY_MAX};
 pub use tiers::{FullInfo, FullState, SignalInfo, StageInfo, TaskOrigin, TierInfo};
 pub use tuning::{
-    ClassBudget, ClassRoute, ClassTuning, LaneInfo, LaneState, PairInfo, PairPhase, PathWeights,
+    ClassBudget, ClassTuning, Ignored, LaneInfo, LaneState, PairInfo, PairPhase, PathWeights,
     ProposalValue, RaceInfo, RaceLane, RefitState, SizeThresholds, TUNING_VERSION, TaskPattern,
     TuningChange, TuningFile, TuningProposal, TuningReport,
 };

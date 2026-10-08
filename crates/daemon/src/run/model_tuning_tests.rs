@@ -14,16 +14,14 @@ use crate::run::model::{DoneClaim, Run};
 const M93_RUN: &str = include_str!("../../tests/fixtures/run/m93-run.json");
 
 /// Every key milestone 9.5 adds to the persisted run. `lane` is also an older key, a
-/// routing decision's (milestone 9), so it is counted rather than looked for.
-const NEW_KEYS: [&str; 9] = [
+/// routing decision's (milestone 9), so it is counted rather than looked for. Milestone
+/// 9.8 (task M9.8.13) removed 9.5's `route_lists`, `list_pick` and `list_escalation`.
+const NEW_KEYS: [&str; 6] = [
     "race",
     "pair",
     "race_wait_since",
     "race_decision",
     "concurrency",
-    "route_lists",
-    "list_pick",
-    "list_escalation",
     "environment_failed",
 ];
 
@@ -180,28 +178,6 @@ fn a_run_with_race_pair_and_caps_round_trips() {
         .find(|op| op.task_id.as_deref() == Some("t1"))
         .expect("t1 has a pending op");
     op.lane = Some(RaceLane::B);
-    // Task M9.5.10a: a frozen model list and the picks it made.
-    let candidate = proto::RoutingCandidate {
-        route: route.clone(),
-        skipped_reason: None,
-    };
-    let pick = ListPick {
-        candidates: vec![candidate],
-        chosen: Some(0),
-        pick: ListPolicy::Spread,
-        slot: Some(0),
-    };
-    run.limits.route_lists.m = FrozenList {
-        candidates: vec![ListCandidate {
-            runtime: route.runtime,
-            model: route.model.clone(),
-            strength: route.strength,
-            effort: None,
-        }],
-        pick: ListPolicy::Spread,
-    };
-    run.tasks[0].list_pick = Some(pick.clone());
-    run.tasks[0].list_escalation = Some(pick);
     // Ruling T17a-1: a latched race decision.
     run.tasks[1].race_decision = Some(super::RaceDecision::Single {
         reason: "race skipped: max_writers is 1".into(),
@@ -250,6 +226,10 @@ fn an_old_run_json_still_loads() {
     assert_eq!(count(&written, "lane"), count(&before, "lane"));
     // `save_and_load` moved the run's data directory under the temp dir.
     again["data_dir"] = captured["data_dir"].clone();
+    // Milestone 9.8 (task M9.8.13): the roster and the scouts' routing keys are no
+    // longer part of the run; the rest is written back as 9.3 wrote it.
+    let mut captured = captured;
+    crate::run::test_support::without_pre_9_8_keys(&mut captured);
     assert_eq!(again, captured);
 }
 
@@ -307,4 +287,67 @@ fn limits_written_with_budget_configured_still_load() {
     assert_eq!(runs.remove(0).0, run);
     let (_, text) = save_and_load(&mut run, dir.path());
     assert!(!text.contains("budget_configured"), "{text}");
+}
+
+/// Milestone 9.8 task M9.8.13 (decision 30, preflight ruling F15): the model lists, the
+/// class routes, the roster, the scouts' routing and the list picks are gone from the
+/// run's schema. The 9.3 run (which already carries `roster` and `limits.orch.scouts`),
+/// with 9.5's `class_routes`, `route_lists` and a task's `list_pick` and
+/// `list_escalation` added as JSON, still loads through the daemon's own load, its
+/// tasks' routes unchanged, and is written back without any of them.
+#[test]
+fn a_run_json_with_lists_and_class_routes_still_loads() {
+    let mut json: serde_json::Value = serde_json::from_str(M93_RUN).expect("fixture");
+    assert!(json["roster"].is_array(), "the 9.3 run froze a roster");
+    assert!(
+        json["limits"]["orch"]["scouts"].is_object(),
+        "and its scouts"
+    );
+    let route = json["tasks"][0]["route"].clone();
+    json["limits"]["class_routes"] = serde_json::json!({
+        "s": {"strength": "fast", "effort": "medium"},
+        "m": {"strength": "standard", "effort": "medium"},
+        "hub": {"strength": "frontier", "effort": "high"},
+    });
+    json["limits"]["route_lists"] = serde_json::json!({
+        "m": {"candidates": [{"runtime": "codex", "model": "gpt-6-sol", "strength": "standard"}],
+              "pick": "spread"},
+        "scout": {"candidates": [{"runtime": "claude", "model": "claude-haiku-5", "strength": "fast",
+                                  "effort": "low"}], "pick": "first"},
+    });
+    let pick = serde_json::json!({
+        "candidates": [{"route": route.clone(), "skipped_reason": null}],
+        "chosen": 0, "pick": "spread", "slot": 0,
+    });
+    json["tasks"][0]["list_pick"] = pick.clone();
+    json["tasks"][0]["list_escalation"] = pick;
+    let routes: Vec<serde_json::Value> = (json["tasks"].as_array().expect("tasks").iter())
+        .map(|t| t["route"].clone())
+        .collect();
+
+    let dir = tmp();
+    let run_dir = journal::runs_dir(dir.path()).join(json["id"].as_str().expect("id"));
+    std::fs::create_dir_all(&run_dir).expect("run dir");
+    json["data_dir"] = serde_json::json!(run_dir);
+    std::fs::write(run_dir.join(RUN_FILE), json.to_string()).expect("write run.json");
+    let (mut runs, problems) = journal::load_all(dir.path());
+    assert!(problems.is_empty(), "{problems:?}");
+    let mut run = runs.remove(0).0;
+    let loaded: Vec<serde_json::Value> = (run.tasks.iter())
+        .map(|t| serde_json::to_value(&t.route).expect("route"))
+        .collect();
+    assert_eq!(loaded, routes);
+
+    let (_, text) = save_and_load(&mut run, dir.path());
+    let written = keys(&serde_json::from_str(&text).expect("run.json is JSON"));
+    for gone in [
+        "roster",
+        "scouts",
+        "class_routes",
+        "route_lists",
+        "list_pick",
+        "list_escalation",
+    ] {
+        assert_eq!(count(&written, gone), 0, "run.json still writes {gone}");
+    }
 }

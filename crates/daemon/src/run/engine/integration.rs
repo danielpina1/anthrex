@@ -168,7 +168,7 @@ fn add_round(run: &mut Run, k: usize, now: u64) {
         pair: false,
         covers: Vec::new(),
     };
-    let (mut task, _) = resolve_task_lenient(spec, &run.profile, &run.limits, &run.roster);
+    let (mut task, _) = resolve_task_lenient(spec, &run.profile, &run.limits);
     task.branch = task_branch(&run.id, &id);
     task.worktree = task_path(&run.wt_dir, &run.id, &task.checkout_name());
     let author = author.unwrap_or_else(|| task.route.clone());

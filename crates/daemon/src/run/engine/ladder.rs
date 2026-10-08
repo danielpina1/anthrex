@@ -278,12 +278,11 @@ pub(super) fn rung2(run: &mut Run, i: usize, reason: String, now: u64, fx: &mut 
     drop_queued(run, i);
     // Milestone 9.5 decision 25: a fresh test writer, while the test is being written.
     if !super::pair::escalate_writer(run, i, now) {
-        let (route, step) = rung2_route(run, i);
+        let route = rung2_route(run, i);
         if let Some(text) = every_route_failed(run, i, &route) {
             super::requests::log(run, now, text);
         }
         let task = &mut run.tasks[i];
-        task.list_escalation = step;
         // M8b decision 33a: the next worker launch records this escalation, its pool
         // stepping from the route the selector stepped from (a second escalation
         // before the launch overwrites the first: the intermediate route never ran).
@@ -329,7 +328,7 @@ pub(super) fn rung3(run: &mut Run, i: usize, text: String, now: u64, fx: &mut Ve
 pub(crate) fn reresolve(run: &mut Run, i: usize) -> proto::Route {
     let mut spec = run.tasks[i].spec.clone();
     spec.size = spec.size.max(run.tasks[i].size);
-    let (resolved, _) = resolve_task_lenient(spec, &run.profile, &run.limits, &run.roster);
+    let (resolved, _) = resolve_task_lenient(spec, &run.profile, &run.limits);
     let task = &mut run.tasks[i];
     task.review_level = resolved.review_level;
     // Milestone 9.8 decision 27: the reviewer row against the task's route.

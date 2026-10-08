@@ -53,7 +53,6 @@ fn a_tuning_report() -> TuningReport {
         }),
         weight_secs: Some(550),
         weight_derived: true,
-        route: "standard/low".into(),
     };
     TuningReport {
         path: PathBuf::from("/tmp/data/repos/p-1234/tuning.toml"),
@@ -66,39 +65,23 @@ fn a_tuning_report() -> TuningReport {
             class("hub", RefitState::Configured),
             class("hub", RefitState::Off),
         ],
-        proposals: vec![
-            TuningProposal {
-                id: "threshold-s".into(),
-                text: "S tasks reach 35 lines".into(),
-                current: "20".into(),
-                proposed: "35".into(),
-                change: TuningChange::Threshold {
-                    class: "S".into(),
-                    lines: 35,
-                },
+        proposals: vec![TuningProposal {
+            id: "threshold-s".into(),
+            text: "S tasks reach 35 lines".into(),
+            current: "20".into(),
+            proposed: "35".into(),
+            change: TuningChange::Threshold {
+                class: "S".into(),
+                lines: 35,
             },
-            TuningProposal {
-                id: "route-m".into(),
-                text: "M tasks escalate".into(),
-                current: "standard/medium".into(),
-                proposed: "frontier/high".into(),
-                change: TuningChange::Route {
-                    class: "M".into(),
-                    route: ClassRoute {
-                        strength: Strength::Frontier,
-                        effort: Effort::HIGH,
-                    },
-                },
-            },
-        ],
+        }],
         moved_bad_file: Some(PathBuf::from("/tmp/data/repos/p-1234/tuning.toml.bad-1")),
         parse_error: Some("TOML parse error at line 1, column 1".into()),
-        applied: vec!["route-m".into()],
+        applied: vec!["threshold-s".into()],
         dismissed: vec![ProposalValue {
             id: "threshold-s".into(),
             value: "35".into(),
         }],
-        orchestrator_list: Some("codex/gpt-6.1-sol high".into()),
         project: Some(PathBuf::from("/r/demo")),
     }
 }

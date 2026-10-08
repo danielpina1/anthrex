@@ -345,7 +345,7 @@ fn submit_edit(
 
 /// `run retry` (decision 42) of a blocked task that is neither L nor `dep_cancelled`:
 /// `failures = 1`, `bounces`, `budget_exceeded` and `conflicts` cleared, rung 2 on
-/// `role_step::rung2_route` (decision 38's rung 2; milestone 9.5's lists and RL-1), and
+/// `role_step::rung2_route` (decision 38's rung 2; milestone 9.8 decision 29 and RL-1), and
 /// a fresh session in the same worktree from the task's own start commit (carry M8a.11),
 /// with decision 30's hand-over prompt; its old session, if alive, is killed first. The
 /// hand-back context ends (carry T14-R2), so the fresh session's claim passes every
@@ -420,8 +420,8 @@ pub(super) fn rung2(
     // Milestone 9.5 decision 26: while the test is being written, the test writer's
     // route escalates and the implementer's stays.
     let writer = super::pair::escalate_writer(run, i, now);
-    let (route, step) = match writer {
-        true => (run.tasks[i].route.clone(), None),
+    let route = match writer {
+        true => run.tasks[i].route.clone(),
         false => crate::run::role_step::rung2_route(run, i),
     };
     if let Some(text) = (!writer)
@@ -450,12 +450,6 @@ pub(super) fn rung2(
     // the launch overwrites the first: the intermediate route never ran).
     if !writer {
         task.escalated_from = Some(std::mem::replace(&mut task.route, route));
-    }
-    // A research or review task's pick is its `list_pick` (its review records it,
-    // ruling RL-4); a worker's escalation is recorded at its next launch.
-    match super::schedule::is_reader_task(task) {
-        true => task.list_pick = step.or(task.list_pick.take()),
-        false => task.list_escalation = step,
     }
     // Ruling T15-C1: a new budget epoch; rung 4 counts from the fresh session.
     super::clock::new_epoch(task);

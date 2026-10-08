@@ -7,7 +7,7 @@ use crate::settings::{doc_of, save};
 /// The brief's fixture, but for the `review` candidate: fix round 2 (N1) keeps a list
 /// the reviewer did not come from, and the brief's `codex` / `gpt-6-sol` is on the
 /// medium route's own runtime (`default_runtime = "codex"`), so it never was the
-/// reviewer. Claude Sonnet is, as `pick_reviewer` chose before; the test's point (every
+/// reviewer. Claude Sonnet is, as the old reviewer pick chose; the test's point (every
 /// old key goes) holds.
 const OLD: &str = r#"# my settings
 prefix = "a"
@@ -651,7 +651,7 @@ fn an_emptied_old_table_takes_its_comments() {
 
 /// Fix round 2 (N1): a `review` list counts as migrated only when the reviewer came
 /// from it. Here its one model, in the roster, is on the medium route's own runtime,
-/// so the reviewer is `pick_reviewer`'s `codex:default`: the list is kept and noted.
+/// so the reviewer is the old reviewer pick's `codex:default`: the list is kept and noted.
 #[test]
 fn a_review_list_the_reviewer_did_not_come_from_is_kept() {
     let text = "[orchestrator.routes.review]\ncandidates = [{ runtime = \"claude\", model = \"claude-sonnet-5\" }]\n";

@@ -160,8 +160,7 @@ fn raises_are_recorded_as_notes() {
     .unwrap()
     .tasks
     .remove(0);
-    let big = resolve_task(spec, &profile, &limits, &config.models)
-        .unwrap_or_else(|e| panic!("{}", show(&e)));
+    let big = resolve_task(spec, &profile, &limits).unwrap_or_else(|e| panic!("{}", show(&e)));
     assert_eq!(big.size, Size::L);
     assert_eq!(
         big.notes,

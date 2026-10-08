@@ -93,7 +93,8 @@ pub(super) fn dispatch_reviewers(run: &mut Run, fx: &mut Vec<Effect>) {
 }
 
 /// The result of the `PrepareReview` the task awaits: a fresh reviewer session
-/// (decision 35) on `pick_reviewer` against the author's current route, and the
+/// (decision 35) on the reviewer row against the author's current route (milestone 9.8
+/// decision 27), and the
 /// round's `ReviewRecord`, whose verdict `submit_review` fills. Reviewers are
 /// read-only and their worktree is never watched.
 pub(super) fn review_ready(
@@ -141,16 +142,9 @@ pub(super) fn review_ready(
         "task {} is in review with no review level",
         task.id()
     );
-    let listed;
     let mut same_model = None;
     let (author, level, route) = if reader {
-        // Milestone 9 decisions 36, 37: a review task's own route and level; milestone
-        // 9.5 ruling RL-4: a route the `review` list gave it records that list.
-        let picked = task
-            .list_pick
-            .as_ref()
-            .filter(|p| p.chosen_route() == Some(&task.route));
-        listed = picked.map(|p| (Some(task.route.clone()), p.candidates.clone()));
+        // Milestone 9 decisions 36, 37: a review task's own route and level.
         super::kinds::review_route(task)
     } else {
         let level = task.review_level.unwrap_or(ReviewLevel::Medium);
@@ -172,7 +166,6 @@ pub(super) fn review_ready(
         let failed = failed_routes(task);
         let (route, line) = reviewer_at_launch(run.limits.models(), &author, &failed);
         same_model = line;
-        listed = None;
         (author, level, route)
     };
     let mut spec = if reader {
@@ -212,10 +205,7 @@ pub(super) fn review_ready(
         super::requests::log(run, now, line);
     }
     // M8b decision 33a: decided before the session-start op.
-    match listed {
-        Some((_, list)) => routing::record_listed_reviewer(run, i, list, &route, round_no, now),
-        None => routing::record_reviewer(run, i, (&author, level), &route, round_no, now),
-    }
+    routing::record_reviewer(run, i, (&author, level), &route, round_no, now);
     let task = &mut run.tasks[i];
     task.review_route = Some(route.clone());
     weakening::new_review(task);

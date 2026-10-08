@@ -1,43 +1,31 @@
 //! Milestone 9.5 decisions 17 and 24: the plan rules of `race` and `pair` (rulings
-//! RR-5 to RR-8, review ruling I9), the second racer's and the test writer's peer route,
-//! and the refusal of an amend of either on a task that has started. Called from
+//! RR-5 to RR-8, review ruling I9), and the refusal of an amend of either on a task that has started. Called from
 //! `validate_graph::validate_tasks_with`, after each task's own resolution, so a task's
 //! test mode is the resolved one (rule 8.3 applied). Pure (design decision 1).
 
 use std::collections::BTreeSet;
 
-use proto::{ModelEntry, Route, TaskKind, TestMode};
+use proto::{TaskKind, TestMode};
 
 use super::edits_state::has_started;
 use super::model::Task;
-use super::model_roles::Installed;
-use super::model_roles::peer;
 use super::plan::PlanError;
-use super::validate::strength_label;
-
-/// Where the second racer and the test writer come from: the run's roster and what its
-/// start found installed (`run.orch.installed`; empty for a plan file, so every runtime
-/// counts as installed).
-pub type Peers<'a> = (&'a [ModelEntry], &'a Installed);
 
 /// The race and pair rules for every task of `touched` that has not started, each exact
 /// (decisions 17 and 24). A started task is never judged again: its race and pair were
 /// decided at dispatch and cannot change (RR-8), and the engine may since have moved its
 /// route where no peer exists (review I1, the same reason as final review A-I1). A
-/// task's other problems are reported by the other rules.
-pub fn validate(
-    tasks: &[Task],
-    touched: &BTreeSet<String>,
-    roster: &[ModelEntry],
-    installed: &Installed,
-) -> Vec<PlanError> {
+/// task's other problems are reported by the other rules. Milestone 9.8 (task
+/// M9.8.13): a race needs no peer model; its second racer is its row's fallback, else the
+/// task's own route (decision 28).
+pub fn validate(tasks: &[Task], touched: &BTreeSet<String>) -> Vec<PlanError> {
     (tasks.iter())
         .filter(|t| !has_started(t) && touched.contains(t.id()))
-        .flat_map(|t| task_rules(t, roster, installed))
+        .flat_map(task_rules)
         .collect()
 }
 
-fn task_rules(task: &Task, roster: &[ModelEntry], installed: &Installed) -> Vec<PlanError> {
+fn task_rules(task: &Task) -> Vec<PlanError> {
     let id = task.id();
     let e =
         |field: &str, rule: &str, message: String| PlanError::new(Some(id), field, rule, message);
@@ -48,12 +36,6 @@ fn task_rules(task: &Task, roster: &[ModelEntry], installed: &Installed) -> Vec<
             Some("only code tasks can race".to_string())
         } else if task.hub {
             Some("a hub task cannot race, because a hub runs alone".to_string())
-        } else if peer_route(roster, &task.route, installed).is_none() {
-            Some(format!(
-                "the roster has no {} model at strength {} for the second racer",
-                peer(task.route.runtime).label(),
-                strength_label(task.route.strength)
-            ))
         } else {
             None
         };
@@ -78,24 +60,6 @@ fn task_rules(task: &Task, roster: &[ModelEntry], installed: &Installed) -> Vec<
         }
     }
     errors
-}
-
-/// The route of a racing task's second racer, and of a paired task's test writer when
-/// there is one (decisions 19 and 25): the peer runtime's first roster entry at the
-/// route's strength whose runtime is installed (decision 9a's skip), at the route's
-/// effort. A runtime `installed` does not name counts as installed.
-pub fn peer_route(roster: &[ModelEntry], route: &Route, installed: &Installed) -> Option<Route> {
-    let runtime = peer(route.runtime);
-    if installed.get(runtime.label()) == Some(&false) {
-        return None;
-    }
-    let entry = super::roster::first_at(roster, runtime, route.strength)?;
-    Some(Route {
-        runtime,
-        model: entry.model.clone(),
-        strength: entry.strength,
-        effort: route.effort.clone(),
-    })
 }
 
 /// Ruling RR-8: an amend naming `race` or `pair` on a task that has started is refused,

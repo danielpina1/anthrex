@@ -10,12 +10,6 @@ use proto::{
     Strength, TaskKind, TaskOrigin, TaskOutcome, TaskRecord, TestMode, TokenUsage,
 };
 
-/// The S class default the fixture records ran on.
-pub(crate) const S_AT: proto::ClassRoute = proto::ClassRoute {
-    strength: Strength::Standard,
-    effort: Effort::LOW,
-};
-
 /// `refit_budget`'s `now`, and the CLI block's (review ruling I5): 2026-09-27 09:06:40
 /// UTC.
 pub(crate) const NOW: u64 = 1_790_500_000;

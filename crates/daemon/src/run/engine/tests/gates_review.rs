@@ -479,7 +479,7 @@ fn the_reviewer_prompt_carries_the_clamped_diff() {
 
 #[test]
 fn the_reviewer_prompt_never_names_the_author() {
-    let roster = working_on(PROFILE, CHECK_MODE).0.run().roster.clone();
+    let roster = config::default_roster();
     assert_eq!(roster.len(), 4, "the built-in roster");
     for entry in roster {
         let (mut fx, window) = working_on(PROFILE, CHECK_MODE);

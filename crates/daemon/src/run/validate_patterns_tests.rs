@@ -21,13 +21,6 @@ fn shown(errors: &[PlanError]) -> Vec<String> {
     errors.iter().map(ToString::to_string).collect()
 }
 
-fn errors_with(text: &str, config: &config::Orchestrator) -> Vec<String> {
-    match build_with(text, config) {
-        Ok(_) => panic!("expected errors, the run built"),
-        Err(errors) => shown(&errors),
-    }
-}
-
 fn claude_only() -> config::Orchestrator {
     config::Orchestrator {
         models: (config::default_roster().into_iter())
@@ -74,10 +67,11 @@ fn flat() -> Run {
     ))
 }
 
-const NO_PEER: &str = "task t1: race: the roster has no codex model at strength standard for the second racer (rule 4.1.race)";
-
+/// Milestone 9.8 (task M9.8.13): a race needs a code task, never a peer model: its
+/// second racer is the row's fallback, else the task's own route (decision 28), so a
+/// Claude-only roster or a Codex the start found missing no longer refuses it.
 #[test]
-fn race_needs_code_and_a_peer_at_strength() {
+fn race_needs_code_and_no_peer() {
     // A docs task.
     let docs = task_toml(
         "t1",
@@ -89,25 +83,14 @@ fn race_needs_code_and_a_peer_at_strength() {
         shown(&errors_of(&plan_with(PROFILE, &[docs]))),
         ["task t1: race: only code tasks can race (rule 4.1.race)"]
     );
-    // A Claude-only roster has no second racer.
     let text = plan_with(PROFILE, &[code("t1", "race = true")]);
-    assert_eq!(errors_with(&text, &claude_only()), [NO_PEER]);
-    // Nor does one whose Codex the run's start found not installed.
-    let mut run = flat();
-    run.orch.installed = [("claude".to_string(), true), ("codex".to_string(), false)].into();
-    let mut moved = run.clone();
+    let built = build_with(&text, &claude_only()).unwrap_or_else(|e| panic!("{}", show(&e)));
+    assert!(built.task("t1").unwrap().spec.race);
+    let mut moved = flat();
+    moved.orch.installed = [("claude".to_string(), true), ("codex".to_string(), false)].into();
     moved.tasks.retain(|t| t.id() != "t1");
-    assert_eq!(
-        apply(&moved, vec![add(&code("t1", "race = true"))]).unwrap_err(),
-        [NO_PEER]
-    );
-    // With Codex installed (or nothing recorded, as for a plan file) it builds.
-    run.orch.installed.insert("codex".into(), true);
-    moved.orch.installed = run.orch.installed.clone();
     let added = apply(&moved, vec![add(&code("t1", "race = true"))]).unwrap();
     assert!(added.task("t1").unwrap().spec.race);
-    let built = run_ok(&text);
-    assert!(built.task("t1").unwrap().spec.race);
 }
 
 #[test]
@@ -279,24 +262,12 @@ fn race_and_pair_widen_reach() {
     for field in ["race", "pair"] {
         assert!(edits_may_widen(&[amend("t1", field, true)]), "{field}");
     }
-    // The peer route the reach counts: the roster's first Codex entry at the strength.
-    let run = flat();
-    let peer = peer_route(&run.roster, &run.tasks[0].route, &run.orch.installed).unwrap();
-    assert_eq!(
-        (peer.runtime, peer.strength, peer.effort),
-        (
-            Runtime::Codex,
-            run.tasks[0].route.strength,
-            run.tasks[0].route.effort.clone()
-        )
-    );
-    let none = [("codex".to_string(), false)].into();
-    assert_eq!(peer_route(&run.roster, &run.tasks[0].route, &none), None);
 }
 
 /// Review I1 (the A-I1 class): a race is decided at dispatch, so a started racing task
-/// is not judged again. Here rung 2 moved its route to Frontier, where the default
-/// roster has no Codex peer, and a brief or an acceptance amend still applies.
+/// is not judged again. Here rung 2 moved its route to Frontier and the task became a
+/// hub (milestone 9.8: a race no longer needs a peer, so a hub is what the race rule
+/// refuses), and a brief or an acceptance amend still applies.
 #[test]
 fn a_started_racing_task_on_a_moved_route_still_takes_a_brief() {
     let mut run = run_ok(&plan_with(PROFILE, &[code("t1", "race = true")]));
@@ -309,6 +280,7 @@ fn a_started_racing_task_on_a_moved_route_still_takes_a_brief() {
         strength: proto::Strength::Frontier,
         effort: proto::Effort::HIGH,
     };
+    t1.hub = true;
     let brief = json!({"op": "amend_task", "task_id": "t1", "brief": "New brief"});
     let accept = json!({"op": "amend_task", "task_id": "t1", "acceptance": ["New"]});
     for edit in [brief, accept] {
@@ -321,9 +293,7 @@ fn a_started_racing_task_on_a_moved_route_still_takes_a_brief() {
     let brief = json!({"op": "amend_task", "task_id": "t1", "brief": "New brief"});
     assert_eq!(
         apply(&run, vec![serde_json::from_value(brief).unwrap()]).unwrap_err(),
-        [
-            "task t1: race: the roster has no codex model at strength frontier for the second racer (rule 4.1.race)"
-        ]
+        ["task t1: race: a hub task cannot race, because a hub runs alone (rule 4.1.race)"]
     );
 }
 

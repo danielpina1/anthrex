@@ -1,8 +1,9 @@
 //! `[orchestrator.routes.<name>]`, the user's model lists (milestone 9.5 decision 9a):
 //! one ordered list of candidates and a `pick` per task class (`s`, `m`, `hub`) and per
 //! role (`review`, `scout`, `decider`, `planner`, `orchestrator`, and milestone 9.6's
-//! `brainstorm`). Read by
-//! `tuning::read_tuning`; unknown tables and keys are reported by
+//! `brainstorm`). Milestone 9.8 (task M9.8.13): no run uses them; they are read only so
+//! `models::migrate` can turn them into role-table rows, and `tuning::read_tuning` reads
+//! them for their problems alone. Unknown tables and keys are reported by
 //! [`report_unknown_routes`], which `orchestrator/unknown.rs` calls for `routes`.
 //!
 //! A candidate outside the merged roster, or with a bad `runtime`, `effort` or an empty
@@ -31,7 +32,7 @@ const KNOWN_CANDIDATE_KEYS: &[&str] = &["runtime", "model", "effort"];
 
 /// One entry of a model list. `effort` `None` takes the class's or role's default.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Candidate {
+pub(crate) struct Candidate {
     pub runtime: Runtime,
     pub model: String,
     pub effort: Option<Effort>,
@@ -39,7 +40,7 @@ pub struct Candidate {
 
 /// How a list hands out its candidates: the first unskipped one, or round-robin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Pick {
+pub(crate) enum Pick {
     #[default]
     First,
     Spread,
@@ -47,14 +48,14 @@ pub enum Pick {
 
 /// One `[orchestrator.routes.<name>]` table, validated. Empty means "no list".
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct RouteList {
+pub(crate) struct RouteList {
     pub candidates: Vec<Candidate>,
     pub pick: Pick,
 }
 
 /// Every `[orchestrator.routes.<name>]` table.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct RouteLists {
+pub(crate) struct RouteLists {
     pub s: RouteList,
     pub m: RouteList,
     pub hub: RouteList,

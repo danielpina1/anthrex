@@ -11,12 +11,12 @@ use proto::{
 
 use super::{
     SizeClass, active_secs, budget_samples, ceiling, class_of, lower_median, percentile, refit,
-    report, route_samples, threshold_samples, tuned,
+    report, threshold_samples, tuned,
 };
 
 #[path = "refit_tests_fixtures.rs"]
 mod fixtures;
-pub(super) use fixtures::{FIXTURES, NOW, S_AT, fixture_records, record, sized_m};
+pub(super) use fixtures::{FIXTURES, NOW, fixture_records, record, sized_m};
 use fixtures::{fixture_path, jsonl, task};
 
 pub(super) fn ids(records: &[&TaskRecord]) -> Vec<String> {
@@ -98,7 +98,6 @@ fn samples_take_plan_code_tasks_only() {
     let only = vec![plan.record_id.clone()];
     assert_eq!(ids(&budget_samples(&lines, SizeClass::S, &t)), only);
     assert_eq!(ids(&threshold_samples(&lines, SizeClass::S, &t)), only);
-    assert_eq!(ids(&route_samples(&lines, SizeClass::S, &t, S_AT)), only);
 }
 
 #[test]
@@ -155,13 +154,6 @@ fn samples_filter_cap_and_window() {
         ["r1/t0", "r1/t4", "r1/t6"]
     );
     assert_eq!(ids(&threshold_samples(&lines, s, &t)), ["r1/t0", "r1/t4"]);
-    // Route samples: whatever the outcome, with a session; a race never.
-    assert_eq!(
-        ids(&route_samples(&lines, s, &t, S_AT)),
-        [
-            "r1/t0", "r1/t1", "r1/t2", "r1/t4", "r1/t6", "r1/t7", "r2/t0"
-        ]
-    );
 
     // The per-(run, round) cap keeps the newest.
     let capped = config::Tuning {
@@ -277,7 +269,6 @@ fn refit_fixture_budgets_weights_and_proposals() {
         })
     );
     assert_eq!(file.thresholds, None, "thresholds are only proposed");
-    assert!(file.routes.is_empty(), "routes are only proposed");
     assert_eq!(
         log,
         [
@@ -290,17 +281,8 @@ fn refit_fixture_budgets_weights_and_proposals() {
         .iter()
         .map(|p| (p.id.as_str(), p.current.as_str(), p.proposed.as_str()))
         .collect();
-    assert_eq!(
-        got,
-        [
-            ("thresholds.s", "20", "35"),
-            ("route.s", "standard/low", "standard/medium")
-        ]
-    );
-    assert_eq!(
-        proposals[1].text,
-        "S route standard/low → standard/medium (14 of 34 S tasks, 41%, reached rung 2 or higher)"
-    );
+    // Milestone 9.8 decision 30: no route proposal follows.
+    assert_eq!(got, [("thresholds.s", "20", "35")]);
     // A second refit at a later time changes nothing: within min_change_percent.
     let (again, log) = refit(&lines, &file, &cfg, NOW + 3600);
     assert_eq!(again, file);
@@ -424,4 +406,36 @@ fn the_rung_4_ceiling_follows_the_effective_m_budget() {
         budget(150, 60)
     );
     assert_eq!(t.effective(&configured, SizeClass::Hub), budget(150, 60));
+}
+
+/// Milestone 9.8 decision 30 (task M9.8.13): the route refit is gone. A `tuning.toml`
+/// with a `[routes.s]` table (9.5's `run stats --apply route.s`) still loads, and no
+/// route is proposed even when every S task of the history reached rung 2.
+#[test]
+fn a_tuning_file_with_routes_loads_and_proposes_no_route() {
+    let dir = tempfile::Builder::new()
+        .prefix("ax-refit-routes-")
+        .tempdir_in("/tmp")
+        .expect("temp dir");
+    let text = "v = 1\n\n[routes.s]\nstrength = \"standard\"\neffort = \"low\"\n";
+    std::fs::write(dir.path().join(crate::run::tuning_io::TUNING_FILE), text).expect("write");
+    let file = match crate::run::tuning_io::load(dir.path(), NOW).expect("read") {
+        crate::run::tuning_io::Loaded::File(file) => file,
+        other => panic!("a tuning file with routes loads: {other:?}"),
+    };
+    let lines: Vec<HistoryLine> = (fixture_records("refit").into_iter())
+        .map(|line| match line {
+            HistoryLine::Task(mut r) => {
+                r.max_rung = 2;
+                HistoryLine::Task(r)
+            }
+            other => other,
+        })
+        .collect();
+    let cfg = config::Orchestrator::default();
+    let proposals = super::proposals(&lines, &file, &cfg);
+    assert!(
+        proposals.iter().all(|p| !p.id.starts_with("route.")),
+        "{proposals:?}"
+    );
 }

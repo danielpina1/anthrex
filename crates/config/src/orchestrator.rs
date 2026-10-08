@@ -28,7 +28,8 @@ mod profile;
 mod roster;
 mod tuning;
 pub(crate) use tuning::read_routes;
-pub use tuning::{Candidate, ConfiguredBudgets, Pick, RouteList, RouteLists, Tuning, TuningConfig};
+pub use tuning::{ConfiguredBudgets, Tuning, TuningConfig};
+pub(crate) use tuning::{RouteList, RouteLists};
 
 pub use adapt::{Deciders, Metering, Onboarding, Scouts};
 pub use agent::AgentConfig;

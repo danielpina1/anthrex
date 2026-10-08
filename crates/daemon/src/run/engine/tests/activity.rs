@@ -195,7 +195,9 @@ fn a_run_json_without_the_new_fields_loads() {
         }
     }
     strip_m91_defaults(&mut back);
-    let stored: serde_json::Value = serde_json::from_str(text).unwrap();
+    let mut stored: serde_json::Value = serde_json::from_str(text).unwrap();
+    // Milestone 9.8 (task M9.8.13): the roster and the scouts' keys are not written back.
+    crate::run::test_support::without_pre_9_8_keys(&mut stored);
     assert_eq!(back, stored);
 }
 

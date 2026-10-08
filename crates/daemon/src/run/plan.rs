@@ -215,10 +215,8 @@ pub fn run_limits(
         testing: testing.into(),
         // Milestone 9.5: nothing learned until `RunLimits::freeze`.
         budget_hub: None,
-        class_routes: Default::default(),
         path_weights: None,
         thresholds: Default::default(),
-        route_lists: Default::default(),
         // Decision 16 (ruling T9-2), frozen at start.
         adaptive_concurrency: config.tuning.table.adaptive_concurrency,
         recover_after_secs: config.tuning.table.recover_after_mins.saturating_mul(60),
@@ -368,7 +366,7 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
     let mut routed = false;
     for mut spec in plan.tasks {
         routed |= std::mem::take(&mut spec.route) != proto::RouteSpec::default();
-        let (mut task, task_errors) = resolve_task_lenient(spec, &profile, &limits, &config.models);
+        let (mut task, task_errors) = resolve_task_lenient(spec, &profile, &limits);
         errors.extend(task_errors);
         errors.extend(super::validate::reserved_new_id(task.id()));
         task.branch = task_branch(&ctx.id, task.id());
@@ -388,8 +386,6 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         // Milestone 9.3 decision 14: a new plan is round 1's.
         (limits.max_tasks, proto::first_round()),
         limits.models(),
-        // What is installed is recorded on the run after the build (`make_planned`).
-        (&config.models, &Default::default()),
     ));
     if !errors.is_empty() {
         return Err(errors);
@@ -433,7 +429,6 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         approved_by: ctx.yes.then(|| "--yes".to_string()),
         profile,
         limits,
-        roster: config.models.clone(),
         tasks,
         merge_queue: Vec::new(),
         outbox: Vec::new(),

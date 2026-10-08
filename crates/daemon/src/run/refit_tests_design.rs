@@ -298,26 +298,10 @@ fn a_design_class_is_held_to_the_floor_and_the_ceiling() {
     assert_eq!((fit.tool_calls, fit.minutes), (2_000, 1_440));
 }
 
-/// Ruling T13-5 (m6): a design class has no class route and no class model list; the
-/// task-class helpers answer `None` for it, never M's values.
-#[test]
-fn a_design_class_has_no_class_route_or_list() {
-    use super::propose::{current_route, list_of};
-    let (file, lists) = (TuningFile::default(), config::RouteLists::default());
-    for class in SizeClass::DESIGN {
-        assert_eq!(current_route(&file, class), None, "{class:?}");
-        assert!(list_of(&lists, class).is_none(), "{class:?}");
-    }
-    for class in SizeClass::ALL {
-        assert!(current_route(&file, class).is_some(), "{class:?}");
-        assert!(list_of(&lists, class).is_some(), "{class:?}");
-    }
-}
-
 /// Task M9.6.16 (carried from M9.6.13): `run stats` lists the design classes after the
 /// task classes, as `brainstorm` and `doc review`, with their samples, budgets and
-/// refits, `-` for a route (none exists) and for a weight, and never a proposal (ruling
-/// T13-2). The class column widens to fit their labels.
+/// refits, `-` for a weight, and never a proposal (ruling T13-2). Milestone 9.8 (task
+/// M9.8.13): no class shows a route any more. The class column widens to fit their labels.
 #[test]
 fn stats_list_the_design_classes_without_proposals() {
     use super::super::refit_render::render;
@@ -325,14 +309,11 @@ fn stats_list_the_design_classes_without_proposals() {
     let lines = history();
     let (file, _) = refit(&lines, &TuningFile::default(), &cfg, NOW);
     let r = super::report(&lines, &file, &cfg, std::path::Path::new("/tmp/t/t.toml"));
-    let rows: Vec<(&str, u32, &str)> = (r.classes.iter())
-        .map(|c| (c.class.as_str(), c.samples, c.route.as_str()))
+    let rows: Vec<(&str, u32)> = (r.classes.iter())
+        .map(|c| (c.class.as_str(), c.samples))
         .collect();
     assert_eq!(rows.len(), 5, "{rows:?}");
-    assert_eq!(
-        rows[3..],
-        [("brainstorm", 64, "-"), ("doc review", 64, "-")]
-    );
+    assert_eq!(rows[3..], [("brainstorm", 64), ("doc review", 64)]);
     let brainstorm = &r.classes[3];
     assert_eq!(brainstorm.budget, budget(75, 38));
     assert_eq!(brainstorm.refit, proto::RefitState::Written { at: NOW });

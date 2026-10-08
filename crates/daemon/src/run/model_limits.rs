@@ -6,7 +6,6 @@ use proto::{Budget, PathWeights, Runtime, SizeThresholds};
 use serde::{Deserialize, Serialize};
 
 use super::adapt;
-use super::tuning::{ClassRoutes, RouteListsFrozen};
 use crate::run::model_roles::RunModels;
 use crate::run::refit::{SizeClass, Tuned};
 
@@ -92,18 +91,12 @@ pub struct RunLimits {
     /// what an older run reads it as.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub budget_hub: Option<Budget>,
-    /// Decision 9: each class's default strength and effort.
-    #[serde(default, skip_serializing_if = "ClassRoutes::is_default")]
-    pub class_routes: ClassRoutes,
     /// Decision 7: the critical-path weights, when history gave them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path_weights: Option<PathWeights>,
     /// Decision 13: the line thresholds in the deciders' and planners' rubric.
     #[serde(default, skip_serializing_if = "default_thresholds")]
     pub thresholds: SizeThresholds,
-    /// Decision 9a: the user's model lists, frozen with each candidate's strength.
-    #[serde(default, skip_serializing_if = "RouteListsFrozen::is_empty")]
-    pub route_lists: RouteListsFrozen,
     /// Decision 16 (ruling T9-2): `[orchestrator.tuning] adaptive_concurrency`. Absent
     /// from an older run: `false`, so it keeps every cap at `max_writers`, as 9.3 did.
     #[serde(default, skip_serializing_if = "is_false")]
@@ -166,11 +159,8 @@ impl RunLimits {
             doc_reviewer: tuned.budget_doc_review,
             lines: tuned.design_lines.clone(),
         };
-        self.class_routes = tuned.routes.clone();
         self.path_weights = tuned.weights.clone();
         self.thresholds = tuned.thresholds;
-        // Ruling T9-2: the lists against the roster the run freezes (`Run.roster`).
-        self.route_lists = RouteListsFrozen::freeze(&tuned.lists, &config.models);
     }
 
     /// Decision 9: the run's frozen role table. A run always has one: `build_run` sets

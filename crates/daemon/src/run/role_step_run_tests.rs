@@ -64,12 +64,12 @@ fn failed(route: Route) -> AgentRound {
 fn rung_2_climbs_the_rows_efforts_then_takes_its_fallback_then_stays() {
     let mut run = built(&[("t1", "[\"crates/a/**\"]", "")]);
     assert_eq!(run.tasks[0].route, at(SONNET, "medium"));
-    assert_eq!(rung2_route(&run, 0), (at(SONNET, "high"), None));
+    assert_eq!(rung2_route(&run, 0), at(SONNET, "high"));
     run.tasks[0].route = at(SONNET, "high");
-    assert_eq!(rung2_route(&run, 0), (at(SOL, ""), None));
+    assert_eq!(rung2_route(&run, 0), at(SOL, ""));
     // On the fallback, which reports no efforts: nothing left, the route stays.
     run.tasks[0].route = at(SOL, "");
-    let (next, _) = rung2_route(&run, 0);
+    let next = rung2_route(&run, 0);
     assert_eq!(next, at(SOL, ""));
     assert_eq!(every_route_failed(&run, 0, &next), None);
 }
@@ -78,12 +78,12 @@ fn rung_2_climbs_the_rows_efforts_then_takes_its_fallback_then_stays() {
 fn rung_2_steps_over_a_model_that_failed_in_the_task() {
     let mut run = built(&[("t1", "[\"crates/a/**\"]", "")]);
     run.tasks[0].rounds = vec![failed(at(SONNET, "medium"))];
-    let (next, _) = rung2_route(&run, 0);
+    let next = rung2_route(&run, 0);
     assert_eq!(next, at(SOL, ""));
     assert_eq!(every_route_failed(&run, 0, &next), None);
     // Every model of the row failed: the original is retried, and the log says so.
     run.tasks[0].rounds.push(failed(at(SOL, "")));
-    let (next, _) = rung2_route(&run, 0);
+    let next = rung2_route(&run, 0);
     assert_eq!(next, at(SONNET, "medium"));
     assert_eq!(
         every_route_failed(&run, 0, &next).as_deref(),
@@ -96,7 +96,7 @@ fn rung_2_keeps_to_installed_and_overlap_free_runtimes() {
     let mut run = built(&[("t1", "[\"crates/a/**\"]", "")]);
     run.tasks[0].route = at(SONNET, "high");
     run.orch.installed = [("claude".into(), true), ("codex".into(), false)].into();
-    assert_eq!(rung2_route(&run, 0).0, at(SONNET, "high"));
+    assert_eq!(rung2_route(&run, 0), at(SONNET, "high"));
     // Codex installed, but `t2`, unfinished on Claude, overlaps `t1`'s owns; ruling
     // FW-5: for a worker, even though `t2` waits on `t1`.
     let tasks = [
@@ -105,9 +105,9 @@ fn rung_2_keeps_to_installed_and_overlap_free_runtimes() {
     ];
     let mut run = built(&tasks);
     run.tasks[0].route = at(SONNET, "high");
-    assert_eq!(rung2_route(&run, 0).0, at(SONNET, "high"));
+    assert_eq!(rung2_route(&run, 0), at(SONNET, "high"));
     run.tasks[0].rounds = vec![failed(at(SONNET, "high"))];
-    let (next, _) = rung2_route(&run, 0);
+    let next = rung2_route(&run, 0);
     assert_eq!(next, at(SONNET, "high"));
     assert_eq!(
         every_route_failed(&run, 0, &next).as_deref(),
@@ -118,7 +118,7 @@ fn rung_2_keeps_to_installed_and_overlap_free_runtimes() {
     );
     // `t2` merged: the overlap no longer holds `t1` to Claude.
     run.tasks[1].state = TaskState::Merged;
-    assert_eq!(rung2_route(&run, 0).0, at(SOL, ""));
+    assert_eq!(rung2_route(&run, 0), at(SOL, ""));
 }
 
 #[test]

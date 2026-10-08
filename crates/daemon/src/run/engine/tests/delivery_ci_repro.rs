@@ -198,9 +198,10 @@ fn reproduced_with_a_culprit_adds_a_ci_fix_with_the_culprits_owns_one_rung_up() 
     );
 }
 
-/// The roster's weakest and strongest routes, at `effort`.
+/// The built-in roster's weakest and strongest routes, at `effort` (the run froze its
+/// roster until M9.8.13).
 fn routes(fx: &Fixture) -> (Route, Route) {
-    let roster = &fx.run().roster;
+    let roster = &config::default_roster();
     let effort = fx.task("t1").route.effort.clone();
     let route = |e: &proto::ModelEntry| Route {
         runtime: e.runtime,
@@ -219,7 +220,10 @@ fn assert_stage_fix(fx: &Fixture, owns: &[&str], route: &Route) -> String {
     let fix = ci_fixes(fx).pop().expect("a stage fix");
     let task = fx.task(&fix);
     assert_eq!(task.spec.owns, owns);
-    assert_eq!(&task.route, route);
+    // Milestone 9.8 (task M9.8.13): the fix task names the model; with no roster its
+    // strength is no longer looked up, so the route is compared without it.
+    let key = |r: &Route| (r.runtime, r.model.clone(), r.effort.clone());
+    assert_eq!(key(&task.route), key(route));
     assert!(
         task.spec
             .brief

@@ -1,7 +1,8 @@
 //! Milestone 9.5 decisions 4–9 and 11 (rulings RH-1 to RH-5, RH-7): what a repository's
 //! history teaches. Budgets and critical-path weights are refitted into `tuning.toml`
-//! automatically; line thresholds and class routes are only proposed, applied by
-//! `anthrex run stats --apply <id>` and silenced by `--dismiss <id>`. [`tuned`] is what a
+//! automatically; line thresholds are only proposed, applied by
+//! `anthrex run stats --apply <id>` and silenced by `--dismiss <id>` (milestone 9.8
+//! decision 30: the class routes are no longer refitted). [`tuned`] is what a
 //! run freezes at start (decision 12).
 //!
 //! Pure (decision 1): no I/O, no clock (`now` is passed in), and integers only
@@ -11,12 +12,11 @@ use std::collections::{HashMap, HashSet};
 
 use config::{ConfiguredBudgets, Tuning};
 use proto::{
-    AgentRole, Budget, ClassBudget, ClassRoute, Effort, HistoryLine, PhaseSecs, Size, Strength,
-    TaskKind, TaskOrigin, TaskOutcome, TaskPattern, TaskRecord, TokenUsage, TuningFile,
+    AgentRole, Budget, ClassBudget, HistoryLine, PhaseSecs, Size, TaskKind, TaskOrigin,
+    TaskOutcome, TaskPattern, TaskRecord, TokenUsage, TuningFile,
 };
 
 use super::history_io::effective_reverts;
-use super::routing::CLASS_DEFAULT;
 use weights::{fit_weights, weights_moved, weights_text};
 
 /// A class the refit learns per (decision 4): a task class, or (milestone 9.6 decision
@@ -81,26 +81,6 @@ pub fn class_of(record: &TaskRecord) -> Option<SizeClass> {
         (false, Size::L) => None,
     }
 }
-
-const fn class_route(strength: Strength, effort: Effort) -> ClassRoute {
-    ClassRoute { strength, effort }
-}
-
-/// Decision 9's ladder for S, bottom first; M8a's default is `standard/low`.
-pub const S_ROUTE_LADDER: [ClassRoute; 4] = [
-    class_route(Strength::Fast, Effort::LOW),
-    class_route(Strength::Fast, Effort::MEDIUM),
-    class_route(Strength::Standard, Effort::LOW),
-    class_route(Strength::Standard, Effort::MEDIUM),
-];
-
-/// Decision 9's ladder for M, bottom first; M8a's default is `standard/medium`.
-pub const M_ROUTE_LADDER: [ClassRoute; 4] = [
-    class_route(Strength::Standard, Effort::MEDIUM),
-    class_route(Strength::Standard, Effort::HIGH),
-    class_route(Strength::Frontier, Effort::MEDIUM),
-    class_route(Strength::Frontier, Effort::HIGH),
-];
 
 // ---- samples (decision 4) ----
 
@@ -214,85 +194,6 @@ pub fn threshold_samples<'a>(
         .filter(|r| !reverted.names(r) && r.diff.is_some())
         .collect();
     cap_and_window(records, t)
-}
-
-/// Route samples at the class's current route `cur`: every task that ran a session,
-/// whatever its outcome (the tasks that escalated and never merged are what a routing
-/// rule needs), whose first worker took the class default at `cur`'s strength and
-/// effort. Whole-branch review B, I2: a sample on another route, or on the planner's
-/// explicit one, is no evidence about `cur`, so an applied step is not climbed again on
-/// the history that proposed it.
-pub fn route_samples<'a>(
-    lines: &'a [HistoryLine],
-    class: SizeClass,
-    t: &Tuning,
-    cur: ClassRoute,
-) -> Vec<&'a TaskRecord> {
-    let records = task_records(lines)
-        .filter(|r| plan_code(r, class) && r.sessions >= 1 && ran_on(r, cur.clone()))
-        .collect();
-    cap_and_window(records, t)
-}
-
-/// Whether `record`'s first worker routing decision took the class default at `cur`.
-fn ran_on(record: &TaskRecord, cur: ClassRoute) -> bool {
-    (record.routing_decisions.iter())
-        .filter(|d| d.role == AgentRole::Worker)
-        .min_by_key(|d| d.seq)
-        .is_some_and(|d| {
-            d.source == CLASS_DEFAULT
-                && d.chosen.strength == cur.strength
-                && d.chosen.effort == cur.effort
-        })
-}
-
-/// Ruling RH-2's quality evidence for `record`: a revert in effect names it (or its
-/// run's accept); a bisect of its run names it as the culprit; or a CI or review fix
-/// task of its run and stage exists (such a fix task names a stage, never a task, so it
-/// counts against every plan task of that stage, the conservative reading).
-#[cfg(test)]
-fn failed_on_quality(record: &TaskRecord, lines: &[HistoryLine]) -> bool {
-    Quality::of(lines).fails(record)
-}
-
-/// [`failed_on_quality`]'s evidence, read once per pass over the history.
-pub(super) struct Quality<'a> {
-    reverted: Reverted<'a>,
-    /// `(run, task)` a bisect named as its culprit.
-    culprits: HashSet<(&'a str, &'a str)>,
-    /// `(run, stage)` with a CI or review fix task.
-    fixed_stages: HashSet<(&'a str, u16)>,
-}
-
-impl<'a> Quality<'a> {
-    pub(super) fn of(lines: &'a [HistoryLine]) -> Self {
-        let mut q = Quality {
-            reverted: Reverted::of(lines),
-            culprits: HashSet::new(),
-            fixed_stages: HashSet::new(),
-        };
-        for line in lines {
-            match line {
-                HistoryLine::Bisect(b) => {
-                    if let Some(culprit) = &b.culprit {
-                        q.culprits.insert((b.run_id.as_str(), culprit.as_str()));
-                    }
-                }
-                HistoryLine::Task(t) if matches!(t.origin, TaskOrigin::Ci | TaskOrigin::Review) => {
-                    q.fixed_stages.insert((t.run_id.as_str(), t.stage));
-                }
-                _ => {}
-            }
-        }
-        q
-    }
-
-    pub(super) fn fails(&self, record: &TaskRecord) -> bool {
-        let run = record.run_id.as_str();
-        self.reverted.names(record)
-            || self.culprits.contains(&(run, record.task_id.as_str()))
-            || self.fixed_stages.contains(&(run, record.stage))
-    }
 }
 
 // ---- statistics (decision 5) ----

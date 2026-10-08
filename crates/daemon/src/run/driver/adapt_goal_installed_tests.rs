@@ -446,15 +446,8 @@ async fn an_edit_of_a_run_started_with_trust_project_is_not_refused() {
         Ok(run) => run,
         Err(error) => panic!("{}", error.text()),
     };
-    // It reaches Claude only (Codex's one model is below every route), so a task added
-    // on Codex reaches `.codex/config.toml`, which the start never checked.
-    run.roster.retain(|e| e.runtime == Runtime::Claude);
-    run.roster.push(proto::ModelEntry {
-        runtime: Runtime::Codex,
-        model: "codex-mini".into(),
-        strength: proto::Strength::Fast,
-        ..run.roster[0].clone()
-    });
+    // It reaches Claude only (every row is Claude's), so a task added on Codex reaches
+    // `.codex/config.toml`, which the start never checked.
     run.trusted_project.clear();
     // Milestone 9.8: Claude rows keep it on Claude; the added task names Codex's model.
     crate::run::test_support::claude_rows(&mut run);

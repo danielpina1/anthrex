@@ -1,10 +1,9 @@
 //! `[orchestrator.tuning]`, the explicit budgets and the `[orchestrator.routes.*]` model
 //! lists (milestone 9.5 task M9.5.7).
 
-use proto::{Effort, Runtime, Strength};
+use proto::{Effort, Runtime};
 
 use super::*;
-use crate::settings::SHIPPED_CODEX;
 use crate::{Problem, parse};
 
 fn tuning_of(text: &str) -> (TuningConfig, Vec<Problem>) {
@@ -28,26 +27,35 @@ fn candidate(runtime: Runtime, model: &str, effort: Option<Effort>) -> Candidate
     }
 }
 
-/// `[[orchestrator.models]]` entries for the named shipped Codex models, so the roster
-/// holds them (the built-in roster has only Codex's default).
-fn shipped_codex_models(names: &[&str]) -> String {
+/// `[[orchestrator.models]]` entries for the named Codex models, so the roster holds them
+/// (the built-in roster has only Codex's default). The strengths are the ones the old
+/// Settings screen shipped (`settings/shipped.rs`, removed in M9.8.13).
+fn codex_models(names: &[&str]) -> String {
     let mut text = String::new();
     for name in names {
-        let shipped = SHIPPED_CODEX
-            .iter()
-            .find(|s| s.model == *name)
-            .expect("a shipped Codex model");
-        let strength = match shipped.strength {
-            Strength::Fast => "fast",
-            Strength::Standard => "standard",
-            Strength::Frontier => "frontier",
+        let strength = match *name {
+            "gpt-6.1-sol" => "frontier",
+            "gpt-6-luna" => "fast",
+            other => panic!("no strength for {other}"),
         };
         text.push_str(&format!(
-            "[[orchestrator.models]]\nruntime = \"codex\"\nmodel = \"{}\"\nstrength = \"{strength}\"\n\n",
-            shipped.model
+            "[[orchestrator.models]]\nruntime = \"codex\"\nmodel = \"{name}\"\nstrength = \"{strength}\"\n\n"
         ));
     }
     text
+}
+
+/// Milestone 9.8 (task M9.8.13): `TuningConfig` no longer keeps the model lists; the
+/// migration reads them from the raw `[orchestrator]` table with `read_routes`, as here.
+/// The problems are the whole parse's, which still reports the lists' own.
+fn lists_of(text: &str) -> (RouteLists, Vec<Problem>) {
+    let (config, problems) = parse(text);
+    let raw: toml::Table = toml::from_str(text).expect("TOML");
+    let orchestrator = (raw.get("orchestrator").and_then(|o| o.as_table()))
+        .cloned()
+        .unwrap_or_default();
+    let lists = read_routes(&orchestrator, &config.orchestrator.models, &mut Vec::new());
+    (lists, problems)
 }
 
 #[test]
@@ -63,7 +71,6 @@ fn defaults_when_absent() {
             budget_factor_percent: 250,
             threshold_percentile: 90,
             min_change_percent: 20,
-            escalate_above_percent: 25,
             refit_budgets: true,
             refit_tokens: false,
             path_weights: true,
@@ -73,7 +80,7 @@ fn defaults_when_absent() {
             race_slot_wait_secs: 120,
         }
     );
-    let lists = &t.routes;
+    let (lists, _) = lists_of("");
     for list in [
         &lists.s,
         &lists.m,
@@ -102,7 +109,6 @@ window = 300
 budget_factor_percent = 200
 threshold_percentile = 75
 min_change_percent = 10
-escalate_above_percent = 50
 refit_budgets = false
 refit_tokens = true
 path_weights = false
@@ -122,7 +128,6 @@ race_slot_wait_secs = 600
             budget_factor_percent: 200,
             threshold_percentile: 75,
             min_change_percent: 10,
-            escalate_above_percent: 50,
             refit_budgets: false,
             refit_tokens: true,
             path_weights: false,
@@ -295,12 +300,12 @@ candidates = [
   {{ runtime = "claude", model = "claude-sonnet-5", effort = "low" }},
 ]
 "#,
-        models = shipped_codex_models(&["gpt-6.1-sol", "gpt-6-luna"]),
+        models = codex_models(&["gpt-6.1-sol", "gpt-6-luna"]),
     );
-    let (t, problems) = tuning_of(&text);
+    let (lists, problems) = lists_of(&text);
     assert!(problems.is_empty(), "{problems:?}");
     assert_eq!(
-        t.routes.m,
+        lists.m,
         RouteList {
             candidates: vec![
                 candidate(Runtime::Codex, "gpt-6.1-sol", Some(Effort::HIGH)),
@@ -310,7 +315,7 @@ candidates = [
         }
     );
     assert_eq!(
-        t.routes.scout,
+        lists.scout,
         RouteList {
             candidates: vec![
                 candidate(Runtime::Codex, "gpt-6-luna", None),
@@ -323,7 +328,7 @@ candidates = [
         RouteLists {
             m: RouteList::default(),
             scout: RouteList::default(),
-            ..t.routes.clone()
+            ..lists.clone()
         },
         RouteLists::default()
     );
@@ -346,11 +351,11 @@ candidates = [
 [orchestrator.routes.xl]
 candidates = [{{ runtime = "claude", model = "claude-sonnet-5" }}]
 "#,
-        models = shipped_codex_models(&["gpt-6.1-sol"]),
+        models = codex_models(&["gpt-6.1-sol"]),
     );
-    let (t, problems) = tuning_of(&text);
+    let (lists, problems) = lists_of(&text);
     assert_eq!(
-        t.routes.m,
+        lists.m,
         RouteList {
             candidates: vec![
                 candidate(Runtime::Codex, "gpt-6.1-sol", None),
@@ -360,9 +365,9 @@ candidates = [{{ runtime = "claude", model = "claude-sonnet-5" }}]
         }
     );
     assert_eq!(
-        t.routes,
+        lists,
         RouteLists {
-            m: t.routes.m.clone(),
+            m: lists.m.clone(),
             ..RouteLists::default()
         }
     );
@@ -406,7 +411,7 @@ candidates = [{{ runtime = "claude", model = "claude-sonnet-5" }}]
 
 #[test]
 fn a_list_naming_only_skipped_entries_is_empty_and_bad_shapes_are_problems() {
-    let (t, problems) = tuning_of(
+    let (lists, problems) = lists_of(
         r#"
 [orchestrator.routes.review]
 candidates = [{ runtime = "claude", model = "claude-opus-9" }]
@@ -419,7 +424,7 @@ candidates = "claude-sonnet-5"
 planner = 3
 "#,
     );
-    assert_eq!(t.routes, RouteLists::default());
+    assert_eq!(lists, RouteLists::default());
     assert_eq!(
         problems,
         vec![
@@ -449,7 +454,7 @@ planner = 3
 
 #[test]
 fn a_bad_candidate_model_or_entry_says_what_is_wrong() {
-    let (t, problems) = tuning_of(
+    let (lists, problems) = lists_of(
         r#"
 [orchestrator.routes.s]
 candidates = [
@@ -461,7 +466,7 @@ candidates = [
 "#,
     );
     assert_eq!(
-        t.routes.s.candidates,
+        lists.s.candidates,
         vec![candidate(Runtime::Claude, "claude-haiku-4-5", None)]
     );
     assert_eq!(
@@ -552,5 +557,25 @@ fn min_samples_alone_above_the_default_window_raises_it() {
     assert_eq!(
         problems.iter().map(|p| p.to_string()).collect::<Vec<_>>(),
         vec!["orchestrator.tuning.window: must be at least min_samples (500) (using 500)"]
+    );
+}
+
+/// Milestone 9.8 decision 30 (task M9.8.13): the route refit is gone, so
+/// `escalate_above_percent` stays a known key whose value nothing uses: one problem
+/// saying so, and no unknown-key problem.
+#[test]
+fn escalate_above_percent_is_known_and_unused() {
+    let (_, problems) = tuning_of("[orchestrator.tuning]\nescalate_above_percent = 40\n");
+    assert_eq!(
+        problems,
+        [problem(
+            "orchestrator.tuning.escalate_above_percent",
+            "no longer used; models come from the role table",
+            "nothing",
+        )]
+    );
+    assert_eq!(
+        problems[0].to_string(),
+        "orchestrator.tuning.escalate_above_percent: no longer used; models come from the role table (using nothing)"
     );
 }

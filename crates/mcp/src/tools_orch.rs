@@ -64,8 +64,8 @@ pub fn task_note() -> Tool {
 fn get_context() -> Tool {
     Tool::new(
         GET_CONTEXT,
-        "Read the run's context: the repository profile, the models you can route to, the \
-         limits, scout reports, epics and the plan so far.",
+        "Read the run's context: the repository profile, the role table (which model each \
+         size runs on), the limits, scout reports, epics and the plan so far.",
         closed(json!({"scouts": array(text(48), None, 50)}), &[]),
     )
 }

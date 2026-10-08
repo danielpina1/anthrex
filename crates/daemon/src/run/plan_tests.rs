@@ -75,7 +75,6 @@ fn the_brief_example_builds_a_run() {
     assert_eq!(limits.budget_m, config.budget_m);
     assert_eq!(limits.stall_after_secs, config.stall_after_secs);
     assert_eq!(limits.worker_allowed_tools, config.worker_allowed_tools);
-    assert_eq!(run.roster, config.models);
     assert_eq!(run.run_branch(), format!("anthrex/{RUN_ID}/integration"));
     assert_eq!(run.short(), "3f9a");
 }
@@ -527,13 +526,6 @@ fn limits_are_frozen_at_run_start() {
             model: "claude-sonnet-5".into(),
             effort: Effort::HIGH,
         },
-        // Whole-branch review, item 1: the run scouts' route keys are frozen too.
-        scouts: Some(crate::scout::spec::ScoutRouting {
-            runtime: None,
-            default_runtime: Runtime::Claude,
-            strength: Strength::Fast,
-            effort: Effort::LOW,
-        }),
         // Milestone 9.6 (task M9.6.3): `[orchestrator.design]` is frozen too.
         design: DesignLimits {
             phase_minutes: 45,

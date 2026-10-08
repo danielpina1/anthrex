@@ -10,7 +10,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-use proto::{AgentRole, DoneSignal, Finding, ModelEntry, Route, RunState, TokenUsage, Verdict};
+use proto::{AgentRole, DoneSignal, Finding, Route, RunState, TokenUsage, Verdict};
 use serde::{Deserialize, Serialize};
 
 use super::engine::OpKind;
@@ -198,7 +198,6 @@ pub struct Run {
     pub approved_by: Option<String>,
     pub profile: Profile,
     pub limits: RunLimits,
-    pub roster: Vec<ModelEntry>,
     pub tasks: Vec<Task>,
     pub merge_queue: Vec<String>,
     pub outbox: Vec<Outgoing>,

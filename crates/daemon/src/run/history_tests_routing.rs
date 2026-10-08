@@ -6,7 +6,6 @@ use proto::{Effort, Runtime, Strength};
 
 use super::fixtures::*;
 use crate::run::model::ReviewLevel;
-use crate::run::roster::pick_reviewer;
 use crate::run::routing::{record_reviewer, record_worker};
 use crate::run::test_support::{escalated, with_efforts};
 
@@ -29,7 +28,7 @@ fn a_run_without_history_records_no_routing_decisions() {
         task.escalated_from = Some(std::mem::replace(&mut task.route, up.clone()));
         record_worker(&mut run, 0, 100);
         assert_eq!(run.tasks[0].escalated_from, None, "history {history}");
-        let chosen = pick_reviewer(&run.roster, &up, ReviewLevel::Medium);
+        let chosen = run.limits.models().reviewer_route(&up).0;
         record_reviewer(&mut run, 0, (&up, ReviewLevel::Medium), &chosen, 1, 200);
         let recorded = run.tasks[0].routing_decisions.len();
         assert_eq!(recorded, if history { 2 } else { 0 }, "history {history}");

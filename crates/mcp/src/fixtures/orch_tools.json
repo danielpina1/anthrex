@@ -3,7 +3,7 @@
   "orchestrator": [
     {
       "name": "get_context",
-      "description": "Read the run's context: the repository profile, the models you can route to, the limits, scout reports, epics and the plan so far.",
+      "description": "Read the run's context: the repository profile, the role table (which model each size runs on), the limits, scout reports, epics and the plan so far.",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,
@@ -841,7 +841,7 @@
   "planner": [
     {
       "name": "get_context",
-      "description": "Read the run's context: the repository profile, the models you can route to, the limits, scout reports, epics and the plan so far.",
+      "description": "Read the run's context: the repository profile, the role table (which model each size runs on), the limits, scout reports, epics and the plan so far.",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,

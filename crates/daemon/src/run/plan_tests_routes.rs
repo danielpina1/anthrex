@@ -97,52 +97,32 @@ fn default_runtime_comes_from_config() {
     );
 }
 
-/// A user's route (milestone 9.8 decision 31; a plan's before).
+/// A user's route (milestone 9.8 decision 31; a plan's before). Task M9.8.13: the run
+/// has no roster, so the named model is taken as named; no roster strength is looked up
+/// for it, and none contradicts the route's (strength itself goes in M9.8.14).
 #[test]
-fn a_given_model_fixes_the_strength() {
-    let run = users_tasks(&[task_toml(
-        "s",
-        "S",
-        r#"["crates/a/src/lib.rs"]"#,
-        "[task.route]\nmodel = \"claude-haiku-4-5\"",
-    )])
-    .unwrap_or_else(|e| panic!("{}", show(&e)));
-    // S policy would give standard; the model is fast in the roster, so fast it is.
-    // M9.8.11 fix round 1 (changed expectation): no effort given on another model than
-    // the row's runs at that model's default, not the row's `low`.
-    assert_eq!(
-        task(&run, "s").route,
-        route(
-            Runtime::Claude,
-            "claude-haiku-4-5",
-            Strength::Fast,
-            Effort::DEFAULT
-        )
-    );
+fn a_given_model_is_taken_as_named() {
+    for extra in ["", "\nstrength = \"frontier\""] {
+        let run = users_tasks(&[task_toml(
+            "s",
+            "S",
+            r#"["crates/a/src/lib.rs"]"#,
+            &format!("[task.route]\nmodel = \"claude-haiku-4-5\"{extra}"),
+        )])
+        .unwrap_or_else(|e| panic!("{}", show(&e)));
+        // M9.8.11 fix round 1: no effort given on another model than the row's runs at
+        // that model's default, not the row's `low`.
+        let r = &task(&run, "s").route;
+        assert_eq!(
+            (r.runtime, r.model.as_str(), r.effort.clone()),
+            (Runtime::Claude, "claude-haiku-4-5", Effort::DEFAULT),
+            "{extra}"
+        );
+    }
 }
 
-/// A user's route (milestone 9.8 decision 31; a plan's before).
-#[test]
-fn a_contradicting_strength_is_an_error() {
-    let errors = users_tasks(&[task_toml(
-        "s",
-        "S",
-        r#"["crates/a/src/lib.rs"]"#,
-        "[task.route]\nmodel = \"claude-sonnet-5\"\nstrength = \"frontier\"",
-    )])
-    .unwrap_err();
-    assert_eq!(
-        errors,
-        vec![err(
-            Some("s"),
-            "route.strength",
-            "route",
-            "claude-sonnet-5 is standard in the roster, not frontier"
-        )]
-    );
-}
-
-/// A user's routes (milestone 9.8 decision 31; a plan's before).
+/// A user's routes (milestone 9.8 decision 31; a plan's before). Task M9.8.13: a model
+/// no roster lists (`a`) is no longer an error.
 #[test]
 fn route_problems_are_errors() {
     let errors = users_tasks(&[
@@ -170,20 +150,12 @@ fn route_problems_are_errors() {
     .unwrap_err();
     assert_eq!(
         errors,
-        vec![
-            err(
-                Some("a"),
-                "route.model",
-                "route",
-                "gpt-9 is not in the roster for claude"
-            ),
-            err(
-                Some("b"),
-                "route.runtime",
-                "route",
-                "must be claude or codex"
-            ),
-        ]
+        vec![err(
+            Some("b"),
+            "route.runtime",
+            "route",
+            "must be claude or codex"
+        ),]
     );
 }
 

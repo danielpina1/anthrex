@@ -8,7 +8,6 @@ use crate::run::contract::amend_message;
 use crate::run::edits_state::{has_live_worker, has_started, is_paused, not_started};
 use crate::run::orch::EditSource;
 use crate::run::plan::PlanError;
-use crate::run::route_pick::repicks;
 use crate::run::validate::resolve_task_lenient;
 use crate::run::validate_patterns;
 
@@ -227,8 +226,7 @@ impl Batch {
     fn reresolve(&mut self, i: usize, spec: PlanTask, route_named: bool) {
         let run = &self.run;
         let old = &run.tasks[i];
-        let (planned, _) =
-            resolve_task_lenient(old.spec.clone(), &run.profile, &run.limits, &run.roster);
+        let (planned, _) = resolve_task_lenient(old.spec.clone(), &run.profile, &run.limits);
         // The recorded rung-3 raise, never a guess from the spec (fix round 2, N1).
         let floor = old.raised_size.unwrap_or(Size::S);
         let escalated = (old.route != planned.route).then(|| old.route.clone());
@@ -242,17 +240,11 @@ impl Batch {
         let mut sized = spec.clone();
         sized.size = sized.size.max(floor);
         let resolved = self.resolve(sized);
-        // Milestone 9.5 decision 9a: a route named again, or a list's route whose class
-        // changed (review m2), is picked again from the run's lists.
-        let old = &self.run.tasks[i];
-        let repick = route_named || repicks(old, &resolved);
+        // A route named again replaces an escalated one.
         let route = match escalated {
-            Some(route) if !repick => route,
+            Some(route) if !route_named => route,
             _ => resolved.route,
         };
-        if repick {
-            self.picks.insert(spec.id.clone());
-        }
         // Milestone 9.8 decision 27: the reviewer row against the task's route.
         let models = self.run.limits.models();
         let review_route = (resolved.review_level).map(|_| models.reviewer_route(&route).0);

@@ -7,15 +7,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use proto::{
-    Budget, ModelEntry, PlanTask, Route, Runtime, Size, Strength, TaskKind, TaskState, TestMode,
-};
+use proto::{Budget, PlanTask, Route, Runtime, Size, TaskKind, TaskState, TestMode};
 
 use super::globs::{ModuleSpan, OwnsMatcher, any_intersect, modules_spanned, validate_glob};
 use super::model::{Profile, ReviewLevel, RunLimits, Task};
 use super::model_roles::RunModels;
 use super::plan::PlanError;
-use super::roster;
 use super::validate_kinds::{READER_TEST_MODE_NOTE, check_reader_fields, is_reader};
 use super::validate_stages::check_stage_fields;
 pub(super) use super::validate_stages::{reserved_new_id, split_child_stage};
@@ -31,14 +28,6 @@ const RESERVED_ID: &str = "integration";
 /// Milestone 9's message target for every running task (`proto::MessageTarget::Running`,
 /// M9.2 review ruling 5). `stage:<n>` needs no reservation: an id cannot hold `:`.
 const RUNNING_ID: &str = "running";
-
-pub(super) fn strength_label(s: Strength) -> &'static str {
-    match s {
-        Strength::Fast => "fast",
-        Strength::Standard => "standard",
-        Strength::Frontier => "frontier",
-    }
-}
 
 fn size_label(s: Size) -> &'static str {
     match s {
@@ -71,9 +60,8 @@ pub fn resolve_task(
     spec: PlanTask,
     profile: &Profile,
     limits: &RunLimits,
-    roster: &[ModelEntry],
 ) -> Result<Task, Vec<PlanError>> {
-    let (task, errors) = resolve_task_lenient(spec, profile, limits, roster);
+    let (task, errors) = resolve_task_lenient(spec, profile, limits);
     if errors.is_empty() {
         Ok(task)
     } else {
@@ -88,7 +76,6 @@ pub(super) fn resolve_task_lenient(
     spec: PlanTask,
     profile: &Profile,
     limits: &RunLimits,
-    roster: &[ModelEntry],
 ) -> (Task, Vec<PlanError>) {
     let id = spec.id.clone();
     let mut errors = Vec::new();
@@ -191,7 +178,7 @@ pub(super) fn resolve_task_lenient(
     // Route, milestone 9.8 decision 10: the task's row of the run's role table.
     let models = limits.models();
     let row = models.route(RunModels::role_of(spec.kind, hub, size));
-    let route = resolve_route(&spec, roster, row, &mut errors);
+    let route = resolve_route(&spec, row, &mut errors);
 
     // Budget, decision 40.
     let budget = match spec.budget {
@@ -323,18 +310,13 @@ fn check_budget(id: &str, b: &Budget, errors: &mut Vec<PlanError>) {
     }
 }
 
-/// Milestone 9.8 decision 10: the task's row (`row`), unless the plan's route names a
-/// model (until M9.8.9 clears plan routes; a user's amend keeps its route): then that
-/// model on the route's runtime (the row's when it names none), checked against the
-/// roster as before. Either way at the route's effort when it names one (the task edit
-/// form's effort over the row's model), else the row's for the row's own model, and the
-/// named model's default for another (M9.8.11 fix round 1).
-fn resolve_route(
-    spec: &PlanTask,
-    roster: &[ModelEntry],
-    row: Route,
-    errors: &mut Vec<PlanError>,
-) -> Route {
+/// Milestone 9.8 decision 10: the task's row (`row`), unless the route names a model (a
+/// user's amend, or an engine fix task's step up): then that model on the route's
+/// runtime (the row's when it names none), as given: no roster checks it since
+/// `Run.roster` went (task M9.8.13). Either way at the route's effort when it names one
+/// (the task edit form's effort over the row's model), else the row's for the row's own
+/// model, and the named model's default for another (M9.8.11 fix round 1).
+fn resolve_route(spec: &PlanTask, row: Route, errors: &mut Vec<PlanError>) -> Route {
     let id = spec.id.as_str();
     let e = |field: &str, message: String| PlanError::new(Some(id), field, "route", message);
     let given = &spec.route;
@@ -357,30 +339,9 @@ fn resolve_route(
     } else {
         proto::Effort::DEFAULT
     });
-    let strength = match roster::find(roster, runtime, model) {
-        Some(entry) => {
-            if let Some(s) = given.strength
-                && s != entry.strength
-            {
-                errors.push(e(
-                    "route.strength",
-                    format!(
-                        "{model} is {} in the roster, not {}",
-                        strength_label(entry.strength),
-                        strength_label(s)
-                    ),
-                ));
-            }
-            entry.strength
-        }
-        None => {
-            errors.push(e(
-                "route.model",
-                format!("{model} is not in the roster for {runtime}"),
-            ));
-            given.strength.unwrap_or(Strength::Standard)
-        }
-    };
+    // M9.8.13: a named model keeps the strength the route gives, else the row's; no
+    // roster checks it (strength itself goes in M9.8.14).
+    let strength = given.strength.unwrap_or(row.strength);
     Route {
         runtime,
         model: model.clone(),
@@ -482,8 +443,6 @@ fn new_task(
         pair: None,
         race_wait_since: None,
         race_decision: None,
-        list_pick: None,
-        list_escalation: None,
         paused: Default::default(),
         lane_view: None,
         parked_readers: 0,

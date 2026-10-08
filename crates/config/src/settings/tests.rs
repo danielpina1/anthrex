@@ -1,71 +1,9 @@
 use super::*;
+use proto::Runtime;
 use proto::settings::key;
-use proto::{Runtime, Strength};
 
 fn default_doc() -> SettingsDoc {
     doc_of(&crate::Orchestrator::default())
-}
-
-#[test]
-fn every_builtin_model_is_shipped() {
-    for m in crate::default_roster() {
-        let shipped = SHIPPED_CLAUDE
-            .iter()
-            .chain(SHIPPED_CODEX.iter())
-            .find(|s| s.runtime == m.runtime && s.model == m.model);
-        let shipped = shipped.unwrap_or_else(|| panic!("{m:?} is not shipped"));
-        assert_eq!(shipped.strength, m.strength, "{m:?}");
-    }
-}
-
-#[test]
-fn shipped_lists_are_the_spec_s() {
-    let claude: Vec<_> = SHIPPED_CLAUDE
-        .iter()
-        .map(|s| (s.runtime, s.model, s.strength, s.label))
-        .collect();
-    assert_eq!(
-        claude,
-        [
-            (
-                Runtime::Claude,
-                "claude-haiku-4-5",
-                Strength::Fast,
-                "claude-haiku-4-5"
-            ),
-            (
-                Runtime::Claude,
-                "claude-sonnet-5",
-                Strength::Standard,
-                "claude-sonnet-5"
-            ),
-            (
-                Runtime::Claude,
-                "claude-opus-5-5",
-                Strength::Frontier,
-                "claude-opus-5-5"
-            ),
-        ]
-    );
-    let codex: Vec<_> = SHIPPED_CODEX
-        .iter()
-        .map(|s| (s.runtime, s.model, s.strength))
-        .collect();
-    assert_eq!(
-        codex,
-        [
-            (Runtime::Codex, "gpt-6.1-sol", Strength::Frontier),
-            (Runtime::Codex, "gpt-6-sol", Strength::Standard),
-            (Runtime::Codex, "gpt-6-astra", Strength::Standard),
-            (Runtime::Codex, "gpt-6-luna", Strength::Fast),
-            (Runtime::Codex, "gpt-5.6-sol", Strength::Standard),
-            (Runtime::Codex, "gpt-5.6-terra", Strength::Standard),
-            (Runtime::Codex, "gpt-5.6-luna", Strength::Fast),
-            (Runtime::Codex, "", Strength::Standard),
-        ]
-    );
-    assert_eq!(SHIPPED_CODEX[7].label, "Codex default");
-    assert!(SHIPPED_CODEX[..7].iter().all(|s| s.label == s.model));
 }
 
 #[test]

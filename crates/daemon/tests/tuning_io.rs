@@ -11,10 +11,7 @@ use daemon::run::driver::tuning::{
 };
 use daemon::run::refit_render::render;
 use daemon::run::tuning_io::{Loaded, TUNING_FILE, load, save, thresholds};
-use proto::{
-    ClassBudget, ClassRoute, Effort, PathWeights, SizeThresholds, Strength, TuningFile,
-    TuningReport,
-};
+use proto::{ClassBudget, PathWeights, SizeThresholds, TuningFile, TuningReport};
 
 /// M9.5.8's injected clock (review ruling I5).
 const NOW: u64 = 1_790_500_000;
@@ -69,13 +66,6 @@ fn every_section() -> TuningFile {
         s_lines: 35,
         m_lines: 140,
     });
-    file.routes.insert(
-        "s".into(),
-        ClassRoute {
-            strength: Strength::Standard,
-            effort: Effort::MEDIUM,
-        },
-    );
     file.dismissed
         .insert("route.m".into(), "frontier/medium".into());
     file
@@ -197,7 +187,6 @@ async fn an_unparseable_file_is_moved_aside_and_tuning_restarts() {
         moved_bad_file: Some(moved.clone()),
         applied: Vec::new(),
         dismissed: Vec::new(),
-        orchestrator_list: None,
         parse_error: Some("expected an integer".into()),
         project: None,
     };
@@ -435,16 +424,16 @@ async fn an_apply_of_a_changed_proposal_is_refused() {
     assert_eq!(report.applied, ["thresholds.s"]);
     assert!(!unchanged(&dir), "applied");
 
-    let dismiss = vec!["route.s".to_string()];
+    // Milestone 9.8 decision 30: `route.s` is no longer proposed, so the dismissal is
+    // shown on a second repository's `thresholds.s`.
+    let (_tmp2, other) = repo_dir(true);
+    let at = (other.as_path(), Path::new("/r/demo"));
+    let dismiss = vec!["thresholds.s".to_string()];
     let ask = StatsAsk {
         apply: &[],
         dismiss: &dismiss,
         read_only: false,
     };
     let report = stats_with_tuning(&cfg, &locks, at, ask, NOW).await.unwrap();
-    let stored = proto::ProposalValue {
-        id: "route.s".into(),
-        value: "standard/medium".into(),
-    };
-    assert_eq!(report.dismissed, [stored]);
+    assert_eq!(report.dismissed, [threshold_s("35")]);
 }

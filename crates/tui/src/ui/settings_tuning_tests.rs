@@ -1,9 +1,9 @@
 //! Milestone 9.5 decision 48 and ruling RH-5: on opening, the Settings screen asks the
 //! daemon for the project's tuning with a read-only `Stats` (which writes nothing), and
 //! draws, muted, `refit: <calls> calls <m>m` beside a class's budget when a refit exists
-//! and the class is not configured, and `overridden by [orchestrator.routes.orchestrator]`
-//! beside the orchestrator default when that list exists. Nothing is drawn with no
-//! project, or before the reply.
+//! and the class is not configured. Nothing is drawn with no project, or before the
+//! reply. (The `overridden by [orchestrator.routes.orchestrator]` note went with the
+//! orchestrator section in milestone 9.8.)
 
 use super::tests::{opened, sample};
 use crate::app::screens::Screen;

@@ -415,3 +415,16 @@ pub fn race_of(task: &Task, states: [proto::LaneState; 2]) -> super::model::Race
         ended: false,
     }
 }
+
+/// Milestone 9.8 (task M9.8.13): what a stored pre-9.8 `run.json` holds that the run no
+/// longer writes back: the roster, the scouts' route keys and the model lists. Removed
+/// from `stored` so a load-and-write-back test compares the rest.
+pub(crate) fn without_pre_9_8_keys(stored: &mut serde_json::Value) {
+    stored.as_object_mut().expect("a run").remove("roster");
+    let limits = stored["limits"].as_object_mut().expect("limits");
+    limits.remove("route_lists");
+    limits.remove("class_routes");
+    if let Some(orch) = limits.get_mut("orch").and_then(|o| o.as_object_mut()) {
+        orch.remove("scouts");
+    }
+}

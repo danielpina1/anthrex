@@ -222,14 +222,6 @@ pub struct Task {
     /// Ruling T17a-1: the race decision, latched once per dispatch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub race_decision: Option<super::RaceDecision>,
-    /// Decision 9a: the plan's model-list choice for its worker route (made when the
-    /// task was built or added), when its class has a list.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub list_pick: Option<super::ListPick>,
-    /// Decision 9a: rung 2's list step, beside `escalated_from`; the next worker launch
-    /// records it and clears it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub list_escalation: Option<super::ListPick>,
     /// Milestone 9.5 ruling T12-2: the run's paused time in the task's phases.
     #[serde(default, skip_serializing_if = "super::TaskPaused::is_zero")]
     pub paused: super::TaskPaused,

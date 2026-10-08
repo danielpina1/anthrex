@@ -200,9 +200,8 @@ fn each_role_keeps_its_dispatch_snapshot_after_a_config_change() {
         dispatched[3].input.question_kind.as_deref(),
         Some("check_summary")
     );
-    // The configuration changes: the roster and every role's settings.
+    // The configuration changes: every role's settings.
     let run = fx.run_mut();
-    run.roster.retain(|e| e.strength == Strength::Frontier);
     run.limits.orch.planners.strength = Strength::Fast;
     run.limits.orch.agent.effort = proto::Effort::LOW;
     // Milestone 9.8: and the rows (a record never reads them again).

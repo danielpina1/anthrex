@@ -22,10 +22,6 @@ pub struct OrchLimits {
     /// `[orchestrator.agent]`, frozen too (task M9.7): `run promote` and a promotion
     /// recorded before milestone 9 resolve the orchestrator's route from the run alone.
     pub agent: AgentLimits,
-    /// The run scouts' route keys, frozen (whole-branch review, item 1). `None` on a
-    /// run recorded before them: the scout service's live keys and roster.
-    #[serde(default)]
-    pub scouts: Option<crate::scout::spec::ScoutRouting>,
     /// Milestone 9.6: `[orchestrator.design]`, frozen with the run's mode
     /// (`Run.design_mode`). Not written while it is the default, so a run recorded
     /// before 9.6 is written back as it was read.
@@ -129,7 +125,6 @@ impl OrchLimits {
                 model: a.agent.model.clone(),
                 effort: a.agent.effort.clone(),
             },
-            scouts: Some(crate::scout::spec::ScoutRouting::from_config(config)),
             design: DesignLimits::from_config(&config.design),
         }
     }

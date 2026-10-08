@@ -4,7 +4,8 @@
 use proto::{Budget, DesignMode, Effort, Runtime};
 
 use super::*;
-use crate::{Candidate, Pick, Problem, RouteList, parse};
+use crate::orchestrator::tuning::{Candidate, Pick, RouteList};
+use crate::{Problem, parse};
 
 fn design_of(text: &str) -> (DesignConfig, Vec<Problem>) {
     let (config, problems) = parse(text);
@@ -47,12 +48,6 @@ fn the_defaults_are_the_spec_defaults() {
     assert_eq!(design, expected);
     assert_eq!(DesignConfig::default(), expected);
     assert_eq!(config_default().orchestrator.design, expected);
-    // No brainstorm list: decision 10's runtime defaults apply.
-    let (config, _) = parse("");
-    assert_eq!(
-        config.orchestrator.tuning.routes.brainstorm,
-        RouteList::default()
-    );
 }
 
 fn config_default() -> crate::Config {
@@ -300,25 +295,29 @@ fn bad_design_table_shapes_are_problems() {
 }
 
 /// Decision 10: `[orchestrator.routes.brainstorm]` is a 9.5 route list, read like the
-/// others and checked against the roster.
+/// others and checked against the roster. Milestone 9.8 (task M9.8.13): only the
+/// migration reads the lists, from the raw table (`read_routes`), as here.
 #[test]
 fn the_brainstorm_route_list_is_read() {
-    let (config, problems) = parse(
-        r#"
+    const TEXT: &str = r#"
 [orchestrator.routes.brainstorm]
 candidates = [
   { runtime = "claude", model = "claude-opus-5-5", effort = "high" },
   { runtime = "claude", model = "claude-sonnet-5" },
   { runtime = "claude", model = "not-in-the-roster" },
 ]
-"#,
-    );
+"#;
+    let (config, problems) = parse(TEXT);
     assert_eq!(
         problems.iter().map(|p| p.key.as_str()).collect::<Vec<_>>(),
         ["orchestrator.routes.brainstorm.candidates[2]"]
     );
+    let raw: toml::Table = toml::from_str(TEXT).expect("TOML");
+    let orchestrator = raw["orchestrator"].as_table().expect("table");
+    let models = &config.orchestrator.models;
+    let lists = crate::orchestrator::read_routes(orchestrator, models, &mut Vec::new());
     assert_eq!(
-        config.orchestrator.tuning.routes.brainstorm,
+        lists.brainstorm,
         RouteList {
             candidates: vec![
                 Candidate {

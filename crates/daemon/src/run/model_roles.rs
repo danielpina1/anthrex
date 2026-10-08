@@ -1,10 +1,10 @@
 //! Milestone 9.8 (MR §3.1, §3.4): the run's resolved role table ([`RunModels`], frozen
 //! at start, decision 9) and the rules that read it: which row a task takes (decision
 //! 10), the reviewer (decision 27, D3), the racer and the test writer (decision 28).
-//! Task M9.8.7a first moved here, unchanged, the parts of `route_pick.rs` and
-//! `route_pick_step.rs` that outlive them (preflight ruling F13): what a start found
-//! installed, the routes that failed in a task (ruling RL-1), and the overlap rule's
-//! movers (rulings FW-1, FW-5). Pure (design decision 1).
+//! Tasks M9.8.7a and M9.8.13 moved here, unchanged, the parts of milestone 9.5's list
+//! picker that outlive it (preflight ruling F13): what a start found installed, the
+//! routes that failed in a task (ruling RL-1), the overlap rule's movers (rulings FW-1,
+//! FW-5) and the peer runtime. Pure (design decision 1).
 
 use std::collections::{BTreeMap, BTreeSet};
 

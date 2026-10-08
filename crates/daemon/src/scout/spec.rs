@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use proto::models::{ModelTable, Role};
-use proto::{AgentRole, Effort, ModelEntry, Route, RunRef, Runtime, ScoutKind, Strength};
+use proto::{AgentRole, ModelEntry, Route, RunRef, Runtime, ScoutKind};
 
 use super::contract::{ONBOARDING_CONTRACT, SCOUT_CONTRACT};
 use crate::headless::argv::{CliCaps, CodexProjectConfig};
@@ -97,30 +97,6 @@ impl From<Vec<ModelEntry>> for Roster {
 pub fn scout_route(ctx: &ScoutContext) -> Route {
     let choice = config::models::resolve(Role::Research, None, &ctx.roster.roles());
     RunModels::route_of(&choice.model, choice.effort.as_deref())
-}
-
-/// `[orchestrator.scouts]`'s route keys and `orchestrator.default_runtime`, as a run
-/// froze them at its start (whole-branch review, item 1). Milestone 9.8: no route is
-/// taken from them (the run's `research` row is); kept so a `run.json` that has them
-/// still loads (preflight ruling F15), until M9.8.13.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct ScoutRouting {
-    pub runtime: Option<Runtime>,
-    pub default_runtime: Runtime,
-    pub strength: Strength,
-    pub effort: Effort,
-}
-
-impl ScoutRouting {
-    /// The keys `config` gives a run built now.
-    pub fn from_config(config: &config::Orchestrator) -> ScoutRouting {
-        ScoutRouting {
-            runtime: config.scouts.runtime,
-            default_runtime: config.default_runtime,
-            strength: config.scouts.strength,
-            effort: config.scouts.effort.clone(),
-        }
-    }
 }
 
 /// Decision 12's read-only session for `scout`, on [`scout_route`].

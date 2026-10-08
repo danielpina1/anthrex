@@ -306,18 +306,10 @@ async fn promote_repeats_the_project_settings_check() {
         Ok(run) => run,
         Err(error) => panic!("{}", error.text()),
     };
-    // A fast-path run whose roster's one Codex model is `fast`, below every route and
-    // review its task can take, and whose start trusted nothing: it reaches Claude only.
-    // Promoted with a Codex orchestrator, it would reach Codex.
+    // A fast-path run whose start trusted nothing and whose rows are all Claude's: it
+    // reaches Claude only. Promoted with a Codex orchestrator, it would reach Codex.
     run.path = Some(proto::RunPath::Fast);
     run.state = proto::RunState::Running;
-    run.roster.retain(|e| e.runtime == proto::Runtime::Claude);
-    run.roster.push(proto::ModelEntry {
-        runtime: proto::Runtime::Codex,
-        model: "codex-mini".into(),
-        strength: proto::Strength::Fast,
-        ..run.roster[0].clone()
-    });
     run.trusted_project.clear();
     run.trust_project = false;
     // Milestone 9.8: Claude rows keep it on Claude.

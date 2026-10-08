@@ -31,10 +31,11 @@ pub use git::{
 use git::{KNOWN_GIT_KEYS, read_git};
 pub use models::{ModelRef, ModelTable, Role, RoleChoice};
 pub use orchestrator::{
-    AgentConfig, Candidate, ClaudeAuth, ClaudeHeadless, ConfiguredBudgets, Deciders, DesignBudget,
-    DesignConfig, Metering, Onboarding, Orchestrator, Pick, RouteList, RouteLists, Scouts, Tuning,
-    TuningConfig, default_roster,
+    AgentConfig, ClaudeAuth, ClaudeHeadless, ConfiguredBudgets, Deciders, DesignBudget,
+    DesignConfig, Metering, Onboarding, Orchestrator, Scouts, Tuning, TuningConfig, default_roster,
 };
+// Milestone 9.8 (task M9.8.13): the model lists are read for the migration only.
+pub(crate) use orchestrator::{RouteList, RouteLists};
 use runtimes::{read_runtimes, report_unknown_runtimes};
 pub use testing::{
     BISECT_FIX_MAX_RANGE, FLAKY_QUARANTINE_AFTER_RANGE, FLAKY_WINDOW_DAYS_RANGE,

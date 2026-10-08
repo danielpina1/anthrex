@@ -1,27 +1,20 @@
 //! M8b decision 33a (spec §15): the routing decision behind every task-bound agent
 //! session, recorded in the task before its session-start op is emitted. A decision
-//! snapshots the candidates the selector could use from the run's frozen roster, in
+//! snapshots the candidates the selector could use from the run's role table, in
 //! the selector's own order and each skipped one with its reason, and the task as it
 //! stood at dispatch. Nothing here changes a route: the engine's selectors
-//! (`validate::resolve_route`, `role_step::escalate`, `roster::pick_reviewer`) choose, and
+//! (`validate::resolve_route`, `role_step::escalate`, `RunModels::reviewer_route`) choose, and
 //! this module only records. Pure (M8b decision 1). Milestone 9.8 (preflight ruling
 //! F16): a first worker's, a racer's, a test writer's and a reviewer's decision records
 //! the role table's row (source `role_table`, policy `m9.8-roles-v1`): the row's model,
 //! then its fallback; an escalation, M9.8.8's `role_step` steps along the row.
 
-use proto::{
-    AgentRole, Effort, ModelEntry, Route, RoutingCandidate, RoutingDecision, RoutingInput, Strength,
-};
+use proto::{AgentRole, Route, RoutingCandidate, RoutingDecision, RoutingInput};
 
 use super::model::{ReviewLevel, Run, Task};
-use super::model_roles::peer;
 use super::model_roles::{NOT_INSTALLED, OVERLAPPING_OWNS, RunModels, missing};
 use super::role_step;
 use proto::models::Role;
-
-#[path = "routing_lists.rs"]
-mod lists;
-pub use lists::record_listed_reviewer;
 
 /// Decision 33a's policy versions: the selectors milestone 8a shipped.
 pub const WORKER_POLICY: &str = "m8a-worker-v1";
@@ -43,19 +36,6 @@ pub const PASSED_OVER: &str = "passed over for the selected route";
 /// One candidate before the choice: its route, and why the selector could not take it
 /// (`None`: it could).
 type Raw = (Route, Option<String>);
-
-fn route_of(entry: &ModelEntry, effort: Effort) -> Route {
-    Route {
-        runtime: entry.runtime,
-        model: entry.model.clone(),
-        strength: entry.strength,
-        effort,
-    }
-}
-
-fn strength_label(strength: Strength) -> String {
-    format!("{strength:?}").to_lowercase()
-}
 
 /// Ruling F16: a row's candidates, its model at its effort then its fallback at its
 /// default effort, each with the reason `skip` gives it.
@@ -117,35 +97,6 @@ pub fn select(raw: Vec<Raw>, chosen: &Route) -> (Vec<RoutingCandidate>, u32) {
     (candidates, selected as u32)
 }
 
-/// A first worker's pool (`validate::resolve_route`): every roster entry in roster
-/// order at the chosen effort. With a model named by the task only that entry is
-/// selectable; otherwise the entries on the task's runtime at its strength are, the
-/// first of them being the selector's pick.
-pub fn worker_pool(roster: &[ModelEntry], chosen: &Route, explicit: bool) -> Vec<Raw> {
-    roster
-        .iter()
-        .map(|entry| {
-            let reason = if entry.runtime != chosen.runtime {
-                Some(format!(
-                    "runtime {}, the task runs on {}",
-                    entry.runtime, chosen.runtime
-                ))
-            } else if explicit && entry.model != chosen.model {
-                Some(format!("the task names the model {}", chosen.model))
-            } else if !explicit && entry.strength != chosen.strength {
-                Some(format!(
-                    "strength {}, the task needs {}",
-                    strength_label(entry.strength),
-                    strength_label(chosen.strength)
-                ))
-            } else {
-                None
-            };
-            (route_of(entry, chosen.effort.clone()), reason)
-        })
-        .collect()
-}
-
 /// An escalated session's pool (milestone 9.8 decision 29, ruling F16), in
 /// `role_step::escalate`'s order from `from` along `role`'s row: every step it can
 /// reach, then `from` unchanged (rung 2 with nothing left); then the row's model and
@@ -161,87 +112,6 @@ pub fn escalation_pool(models: &RunModels, role: Role, from: &Route) -> Vec<Raw>
     for route in std::iter::once(models.route(role)).chain(fallback) {
         if !raw.iter().any(|(r, _)| *r == route) {
             raw.push((route, Some(not_a_step.clone())));
-        }
-    }
-    raw
-}
-
-/// `entries` weakest first, or strongest first; stable, so ties stay in roster order,
-/// as the selectors pick among them.
-fn rank(mut entries: Vec<&ModelEntry>, strongest: bool) -> Vec<&ModelEntry> {
-    if strongest {
-        entries.sort_by_key(|e| std::cmp::Reverse(e.strength));
-    } else {
-        entries.sort_by_key(|e| e.strength);
-    }
-    entries
-}
-
-/// A reviewer's pool, in `roster::pick_reviewer`'s order against `author` at `level`:
-/// the peer runtime's entries at or above the required strength, weakest first; the
-/// author runtime's other models at or above it, weakest first; the author runtime's
-/// remaining entries, strongest first (its fallback); the author's own route when the
-/// roster has no entry on its runtime; then the peer runtime's weaker entries.
-pub fn reviewer_pool(roster: &[ModelEntry], author: &Route, level: ReviewLevel) -> Vec<Raw> {
-    let (required, effort) = match level {
-        ReviewLevel::Small => (Strength::Fast, Effort::LOW),
-        ReviewLevel::Medium => (author.strength, Effort::MEDIUM),
-        ReviewLevel::Frontier => (Strength::Frontier, Effort::HIGH),
-    };
-    let below = format!("below the required {} strength", strength_label(required));
-    let peer_rt = peer(author.runtime);
-    let tier1 = rank(
-        roster
-            .iter()
-            .filter(|e| e.runtime == peer_rt && e.strength >= required)
-            .collect(),
-        false,
-    );
-    let tier2 = rank(
-        roster
-            .iter()
-            .filter(|e| {
-                e.runtime == author.runtime && e.strength >= required && e.model != author.model
-            })
-            .collect(),
-        false,
-    );
-    let open = tier1.is_empty() && tier2.is_empty();
-    let mut raw: Vec<Raw> = tier1
-        .into_iter()
-        .chain(tier2)
-        .map(|e| (route_of(e, effort.clone()), None))
-        .collect();
-    let rest = rank(
-        roster
-            .iter()
-            .filter(|e| e.runtime == author.runtime)
-            .filter(|e| !raw.iter().any(|(r, _)| *r == route_of(e, effort.clone())))
-            .collect(),
-        true,
-    );
-    for entry in rest {
-        let reason = if open {
-            None
-        } else if entry.model == author.model {
-            Some("the author's own model".to_string())
-        } else {
-            Some(below.clone())
-        };
-        raw.push((route_of(entry, effort.clone()), reason));
-    }
-    if !roster.iter().any(|e| e.runtime == author.runtime) {
-        let fallback = Route {
-            effort: effort.clone(),
-            ..author.clone()
-        };
-        let last = "the author's own route, used only when no roster entry fits";
-        raw.push((fallback, (!open).then(|| last.to_string())));
-    }
-    for entry in roster.iter().filter(|e| e.runtime == peer_rt) {
-        let route = route_of(entry, effort.clone());
-        if !raw.iter().any(|(r, _)| *r == route) {
-            raw.push((route, Some(below.clone())));
         }
     }
     raw
@@ -316,7 +186,6 @@ fn decision(
 /// 9.5 decision 9a: a model list's choice records the list's snapshot.
 pub fn record_worker(run: &mut Run, i: usize, now: u64) {
     let from = run.tasks[i].escalated_from.take();
-    let step = run.tasks[i].list_escalation.take();
     if !run.history {
         return;
     }
@@ -324,10 +193,6 @@ pub fn record_worker(run: &mut Run, i: usize, now: u64) {
     let chosen = task.route.clone();
     let id = (AgentRole::Worker, task.session, None);
     let first = !(task.routing_decisions.iter()).any(|d| d.role == AgentRole::Worker);
-    let listed = (from.is_some(), step, first);
-    if let Some(d) = lists::worker(run, task, id, listed, &chosen, now) {
-        return push(&mut run.tasks[i], d);
-    }
     let decision = match from {
         Some(from) => decision(
             run,
@@ -381,10 +246,8 @@ pub fn record_worker(run: &mut Run, i: usize, now: u64) {
 }
 
 /// Milestone 9.5 decision 9a: a paired task's test writer session is being launched on
-/// `chosen`. Its first session records trigger `test_writer`, its source naming the
-/// pick (`peer_route` for the peer runtime's route, else the task route's own source,
-/// a model list's `configured_list` with its snapshot when the list chose it);
-/// a session after rung 2 or `run retry` records `escalation` from the route it stepped
+/// `chosen`. Its first session records trigger `test_writer`, source `role_table` (the
+/// `test_writer` row, milestone 9.8); a session after rung 2 or `run retry` records `escalation` from the route it stepped
 /// from; any other fresh session (a lost resume, say) records nothing, as a worker's.
 /// Nothing for a run without history.
 pub fn record_test_writer(run: &mut Run, i: usize, chosen: &Route, now: u64) {
@@ -410,13 +273,6 @@ pub fn record_test_writer(run: &mut Run, i: usize, chosen: &Route, now: u64) {
             now,
         ),
         None if first => {
-            // Ruling T16-7 (N3): on the task's route a list chose, the list's record.
-            let listed = (*chosen == task.route)
-                .then(|| lists::test_writer(run, task, id, chosen, now))
-                .flatten();
-            if let Some(d) = listed {
-                return push(&mut run.tasks[i], d);
-            }
             // Milestone 9.8 (ruling F16): the `test_writer` row; a candidate the
             // overlap rule held off says why (decision 28).
             let held = |route: &Route| {

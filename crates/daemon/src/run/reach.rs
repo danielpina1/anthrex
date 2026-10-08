@@ -7,11 +7,9 @@
 //! escalates the route it finds, so any number of steps can be taken); and for each of
 //! those routes, its reviewer at every review level the task can have: its own, and the
 //! level rung 3 re-resolves for each larger size (decision 38 raises the size one step
-//! at a time, and an unreviewed `S` task is reviewed once raised). The roster's
-//! fallbacks (the peer runtime, else the same runtime) are those of `escalate` and
-//! `pick_reviewer` themselves. The task's current reviewer route is counted as well, and
-//! (milestone 9.5) a racing task's second racer and a paired task's test writer, whose
-//! peer route escalation reaches too, so naming them changes no reach today.
+//! at a time, and an unreviewed `S` task is reviewed once raised). The task's current
+//! reviewer route is counted as well, and (milestone 9.5) a racing task's second racer
+//! and a paired task's test writer.
 //! A run's sessions change routes only by those steps, so the set does not grow
 //! while the run goes on; it grows only by a plan edit.
 //!
@@ -29,7 +27,6 @@ use proto::{Route, Runtime, Size};
 use super::model::{ReviewLevel, Run, Task};
 use super::model_roles::{RunModels, missing};
 use super::role_step;
-use super::route_pick::task_list;
 use super::validate::resolve_task_lenient;
 use proto::models::Role;
 
@@ -60,10 +57,6 @@ pub fn reachable_runtimes(run: &Run) -> Vec<Runtime> {
     for t in &run.tasks {
         let reviewed = !review_levels(run, t).is_empty();
         found.extend(t.review_route.as_ref().map(|r| r.runtime));
-        // Milestone 9.5 decision 9a: rung 2 can take any candidate of its list.
-        let lists = &run.limits.route_lists;
-        let listed =
-            (task_list(lists, t).candidates.iter()).map(|c| c.route(t.route.effort.clone()));
         // Milestone 9.8 decision 28: lane b's route (the row's fallback), and the test
         // writer's (its row); each may be the task's own route instead.
         let racer = (t.spec.race).then(|| models.racer_route(RunModels::task_role(t), &t.route));
@@ -73,7 +66,7 @@ pub fn reachable_runtimes(run: &Run) -> Vec<Runtime> {
             .then(|| roles.iter().skip(1).map(|role| models.route(*role)))
             .into_iter()
             .flatten();
-        let starts: Vec<Route> = (std::iter::once(t.route.clone()).chain(listed))
+        let starts: Vec<Route> = (std::iter::once(t.route.clone()))
             .chain(racer)
             .chain(raised)
             .collect();
@@ -148,7 +141,7 @@ fn review_levels(run: &Run, t: &Task) -> Vec<ReviewLevel> {
         }
         let mut spec = t.spec.clone();
         spec.size = spec.size.max(size);
-        let (resolved, _) = resolve_task_lenient(spec, &run.profile, &run.limits, &run.roster);
+        let (resolved, _) = resolve_task_lenient(spec, &run.profile, &run.limits);
         if let Some(level) = resolved.review_level
             && !levels.contains(&level)
         {

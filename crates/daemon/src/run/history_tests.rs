@@ -376,12 +376,11 @@ fn routing_history_keeps_choice_time_candidates() {
         assert!(!d.input.hub && !d.input.interface_change);
     }
 
-    // Amending the brief and the size, and changing the roster, rewrites none of it,
-    // and the task's record copies them in order.
+    // Amending the brief and the size rewrites none of it, and the task's record copies
+    // them in order.
     let task = &mut run.tasks[0];
     task.spec.brief = "Something else".into();
     task.size = proto::Size::M;
-    run.roster.retain(|e| e.runtime == Runtime::Claude);
     run.profile_languages.clear();
     assert_eq!(run.tasks[0].routing_decisions, decisions);
     let task = run.tasks[0].clone();

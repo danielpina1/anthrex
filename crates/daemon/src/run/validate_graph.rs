@@ -15,7 +15,6 @@ use super::globs::{any_intersect, inside_area, intersects, literal_prefix};
 use super::model::Task;
 use super::model_roles::RunModels;
 use super::plan::PlanError;
-use super::validate_patterns::Peers;
 use super::validate_stages::stage_rules;
 
 /// Where an edit batch may reach: the whole run, or (for M9's sub-planners) only an
@@ -45,25 +44,15 @@ pub(crate) fn is_valid_area_glob(glob: &str) -> bool {
 /// rows') and applies to a pair only when the batch touches one of the
 /// two: a runtime the engine escalated to (rung 2, `run retry`) is not the plan's, and
 /// must not block every later edit (final review A-I1, the same reason as the L
-/// exemption); the profile-dependent rules run per task, in `resolve_task`. `peers` is
-/// what milestone 9.5's race and pair rules take a second runtime from.
+/// exemption); the profile-dependent rules run per task, in `resolve_task`.
 pub fn validate_tasks(
     tasks: &[Task],
     touched: &BTreeSet<String>,
     scope: &EditScope,
     (max_tasks, round): (u32, u32),
     models: &RunModels,
-    peers: Peers<'_>,
 ) -> Vec<PlanError> {
-    validate_tasks_with(
-        tasks,
-        touched,
-        None,
-        scope,
-        (max_tasks, round),
-        models,
-        peers,
-    )
+    validate_tasks_with(tasks, touched, None, scope, (max_tasks, round), models)
 }
 
 /// Milestone 9.8 decision 33: the runtime the plan gives `task`, its resolved route's:
@@ -101,7 +90,6 @@ pub fn validate_tasks_with(
     scope: &EditScope,
     (max_tasks, round): (u32, u32),
     models: &RunModels,
-    (roster, installed): Peers<'_>,
 ) -> Vec<PlanError> {
     let mut errors = Vec::new();
     // Milestone 9.3 decision 14: `max_tasks` counts the tasks of `round`, the run's
@@ -211,9 +199,7 @@ pub fn validate_tasks_with(
     }
     errors.extend(stage_rules(tasks, &by_id));
     // Milestone 9.5 decisions 17 and 24: `race` and `pair`, on the touched tasks.
-    errors.extend(super::validate_patterns::validate(
-        tasks, touched, roster, installed,
-    ));
+    errors.extend(super::validate_patterns::validate(tasks, touched));
     errors.extend(cycles(tasks));
     errors
 }

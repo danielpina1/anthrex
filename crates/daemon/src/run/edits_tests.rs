@@ -154,10 +154,10 @@ fn ids(run: &Run) -> Vec<&str> {
 fn add_task_is_validated_like_a_plan_task() {
     let base = [one("t1", ""), one("t2", "deps = [\"t1\"]")];
 
-    // Invalid in four rule families at once: spans two modules with interface_change
-    // (7.2.2 raise, then 7.2.4), check without a reason (8), an unknown model (route),
-    // and a blank acceptance item (fields). Milestone 9.8 decision 31: a plan file's
-    // route is ignored, so only the user's added task is refused for its model.
+    // Invalid in three rule families at once: spans two modules with interface_change
+    // (7.2.2 raise, then 7.2.4), check without a reason (8), and a blank acceptance item
+    // (fields). Milestone 9.8 decision 31: a plan file's route is ignored; since M9.8.13
+    // the user's model is taken as named (no roster), so both refuse the same.
     let bad = task_toml(
         "t9",
         "S",
@@ -178,15 +178,7 @@ fn add_task_is_validated_like_a_plan_task() {
 
     let run = run_ok(&plan_with(PROFILE, &base));
     let from_edit = rejected(&run, vec![PlanEdit::AddTask { task: spec(&bad) }]);
-    let extra: Vec<&String> = (from_edit.iter())
-        .filter(|e| !from_plan.contains(e))
-        .collect();
-    assert_eq!(
-        extra,
-        ["task t9: route.model: no-such-model is not in the roster for claude"],
-        "{from_edit:?}"
-    );
-    assert_eq!(from_edit.len(), from_plan.len() + 1, "{from_edit:?}");
+    assert_eq!(from_edit, from_plan);
 
     // A valid task is resolved exactly as the plan resolves it: spanning two modules
     // raises it to M with a note, and it gets its branch and worktree.

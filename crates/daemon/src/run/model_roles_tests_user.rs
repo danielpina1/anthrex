@@ -97,3 +97,28 @@ fn a_users_model_without_effort_does_not_take_the_rows_effort() {
         (Runtime::Claude, "claude-opus-5-5", "max")
     );
 }
+
+/// Milestone 9.8 task M9.8.13 (the follow-up from M9.8.8): with `Run.roster` gone, a
+/// user's route naming any catalog model is accepted as given, whatever an old roster
+/// listed: no roster membership, and no roster strength checked against it.
+#[test]
+fn a_users_route_to_any_catalog_model_is_accepted() {
+    let cfg = config::Orchestrator::default();
+    assert!(!cfg.models.iter().any(|m| m.model == "gpt-9-new"));
+    let run = build_with(
+        &plan_with(PROFILE, &[task_toml("m", "M", "[\"b/**\"]", CHECK)]),
+        &cfg,
+    )
+    .unwrap_or_else(|e| panic!("{}", show(&e)));
+    let mut edit = amend(Runtime::Codex, "gpt-9-new");
+    if let PlanEdit::AmendTask { route: Some(r), .. } = &mut edit {
+        r.effort = Some(Effort::HIGH);
+    }
+    let (edited, _) = apply_edits(&run, &[edit], &EditScope::Run, &EditSource::User, 5_000)
+        .unwrap_or_else(|e| panic!("{}", show(&e)));
+    let route = &edited.tasks[0].route;
+    assert_eq!(
+        (route.runtime, route.model.as_str(), route.effort.as_str()),
+        (Runtime::Codex, "gpt-9-new", "high")
+    );
+}

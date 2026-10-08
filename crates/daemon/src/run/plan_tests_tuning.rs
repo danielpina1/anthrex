@@ -2,10 +2,10 @@
 //! built run: budgets by decision 6's precedence, the hub budget, the class routes, and
 //! `Tuned::default()` changing nothing.
 
-use proto::{Budget, ClassBudget, ClassRoute, Effort, SizeThresholds, Strength, TuningFile};
+use proto::{Budget, ClassBudget, Effort, SizeThresholds, Strength, TuningFile};
 
 use super::*;
-use crate::run::model::{ClassRoutes, Run};
+use crate::run::model::Run;
 use crate::run::refit::{Tuned, tuned};
 
 fn budget(tool_calls: u32, minutes: u32) -> Budget {
@@ -109,17 +109,17 @@ fn hub_uses_its_own_budget_else_m() {
     assert_eq!(task(&run, "m").budget, configured.budget_m);
 }
 
-/// Milestone 9.8 (task M9.8.7a): a tuned class route is still frozen and logged (the
-/// route refit goes in M9.8.13), but no longer fills a route: each task takes its row.
+/// Milestone 9.8 (task M9.8.7a): a tuned class route no longer fills a route: each
+/// task takes its row. Task M9.8.13 (decision 30): an applied class route is neither
+/// frozen nor logged; the tuning file's `[routes.<class>]` loads and is ignored.
 #[test]
-fn class_routes_are_frozen_but_the_rows_fill_the_routes() {
+fn an_applied_class_route_is_ignored_and_the_rows_fill_the_routes() {
     let config = config::Orchestrator::default();
-    let route = |strength, effort| ClassRoute { strength, effort };
-    let mut file = TuningFile::default();
-    file.routes
-        .insert("s".into(), route(Strength::Standard, Effort::MEDIUM));
-    file.routes
-        .insert("m".into(), route(Strength::Frontier, Effort::MEDIUM));
+    let file: TuningFile = toml::from_str(
+        "v = 1\n\n[routes.s]\nstrength = \"standard\"\neffort = \"medium\"\n\n\
+         [routes.m]\nstrength = \"frontier\"\neffort = \"medium\"\n",
+    )
+    .expect("an old tuning file loads");
     let text = plan(&[
         task_toml("s1", "S", "[\"crates/a/src/x.rs\"]", ""),
         task_toml("m1", "M", "[\"crates/b/src/y.rs\"]", ""),
@@ -141,20 +141,11 @@ fn class_routes_are_frozen_but_the_rows_fill_the_routes() {
     assert_eq!(of("m1"), (Strength::Standard, Effort::MEDIUM));
     assert_eq!(of("h1"), (Strength::Standard, Effort::HIGH));
     assert_eq!(of("e1").1, Effort::LOW);
-    assert_eq!(
-        run.limits.class_routes,
-        ClassRoutes {
-            s: route(Strength::Standard, Effort::MEDIUM),
-            m: route(Strength::Frontier, Effort::MEDIUM),
-            ..ClassRoutes::default()
-        }
-    );
     let log: Vec<&str> = run.log.iter().map(|e| e.text.as_str()).collect();
     assert_eq!(
         log,
         [
-            "tuning: route S standard/medium (applied)",
-            "tuning: route M frontier/medium (applied)",
+            "tuning: none (history has fewer than 30 samples per class)",
             crate::run::orch::contract::ROUTE_IGNORED,
         ]
     );
@@ -192,12 +183,11 @@ fn default_tuning_reproduces_today() {
         (config.budget_s, config.budget_m, config.budget_l)
     );
     assert_eq!(limits.budget_hub, None);
-    assert_eq!(limits.class_routes, ClassRoutes::default());
     assert_eq!(limits.path_weights, None);
     assert_eq!(limits.thresholds, SizeThresholds::default());
     // A run with nothing tuned writes none of the new limit keys.
     let json = serde_json::to_value(limits).unwrap();
-    for key in ["budget_hub", "class_routes", "path_weights", "thresholds"] {
+    for key in ["budget_hub", "path_weights", "thresholds"] {
         assert!(json.get(key).is_none(), "{key}: {json}");
     }
 }

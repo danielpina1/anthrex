@@ -79,7 +79,6 @@ pub fn apply_edits(
         added_deps: BTreeSet::new(),
         errors: Vec::new(),
         consequences: Vec::new(),
-        picks: BTreeSet::new(),
         now,
     };
     for edit in edits {
@@ -91,11 +90,8 @@ pub fn apply_edits(
         added_deps,
         mut errors,
         consequences,
-        picks,
         ..
     } = batch;
-    // Milestone 9.5 decision 9a: added tasks, and routes amended, take the run's lists.
-    super::route_pick::pick_named(&mut edited, &picks);
     errors.extend(validate_tasks_with(
         &edited.tasks,
         &touched,
@@ -103,7 +99,6 @@ pub fn apply_edits(
         scope,
         (edited.limits.max_tasks, edited.round()),
         edited.limits.models(),
-        (&run.roster, &run.orch.installed),
     ));
     errors.extend(super::validate_stages::single_layout_rule(&edited));
     errors.extend(super::orch::rules::apply(&mut edited, run, source));
@@ -165,8 +160,6 @@ pub(super) struct Batch {
     pub(super) added_deps: BTreeSet<(String, String)>,
     pub(super) errors: Vec<PlanError>,
     pub(super) consequences: Vec<EditConsequence>,
-    /// Decision 9a: the tasks whose route the model lists pick after the batch.
-    pub(super) picks: BTreeSet<String>,
     pub(super) now: u64,
 }
 
@@ -247,7 +240,7 @@ impl Batch {
     /// Resolves a spec exactly as `build_run` resolves a plan task, keeping its errors.
     fn resolve(&mut self, spec: PlanTask) -> Task {
         let run = &self.run;
-        let (mut task, errors) = resolve_task_lenient(spec, &run.profile, &run.limits, &run.roster);
+        let (mut task, errors) = resolve_task_lenient(spec, &run.profile, &run.limits);
         self.errors.extend(errors);
         task.branch = task_branch(&run.id, task.id());
         task.worktree = task_path(&run.wt_dir, &run.id, &task.checkout_name());
@@ -298,7 +291,6 @@ impl Batch {
         self.errors.extend(reserved_new_id(&spec.id));
         let task = self.resolve(spec);
         self.add_deps_of(&task);
-        self.picks.insert(task.spec.id.clone());
         self.run.tasks.push(task);
         let last = self.run.tasks.len() - 1;
         self.log(last, "added by a plan edit".to_string());
@@ -397,7 +389,6 @@ impl Batch {
         let children: Vec<Task> = specs.into_iter().map(|s| self.resolve(s)).collect();
         for child in &children {
             self.add_deps_of(child);
-            self.picks.insert(child.spec.id.clone());
         }
         let child_ids: Vec<String> = children.iter().map(|c| c.spec.id.clone()).collect();
         for task in self.run.tasks.iter_mut() {
