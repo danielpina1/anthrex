@@ -1,8 +1,9 @@
 //! Milestone 9.8 decision 31, task M9.8.9's fix round 1 (controller ruling): a route
 //! from the orchestrator, a sub-planner or a plan file is ignored, so none of its values
 //! may refuse the call or the plan, not even ones `RouteSpec`'s serde shape cannot hold
-//! (an unknown runtime; any strength is read and ignored since M9.8.14). Before serde reads them, such a route is replaced
-//! by [`NAMED`]'s stand-in when it named anything, and dropped when it named nothing;
+//! (an unknown runtime; any strength is read and ignored since M9.8.14). Before serde
+//! reads them, such a route is replaced by [`NAMED`]'s stand-in when it named anything,
+//! and dropped when it named nothing;
 //! the edit batch and `build_run` then clear the stand-in and note it
 //! (`contract::ROUTE_IGNORED`). The bounds `tools_bounds` checks on the raw value come
 //! first and stay. A user's route (`run edit`, the task edit form) never comes here.

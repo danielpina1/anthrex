@@ -164,11 +164,17 @@ pub(super) fn stage_owns(run: &Run, n: u16) -> Vec<String> {
     owns
 }
 
-/// The stage's strongest route (decision 26): its first approved task's, in plan order.
-/// Milestone 9.8 (task M9.8.14): strength is gone, so every route ties, which is what
-/// every row's route (all `standard`) already did since M9.8.8.
+/// The stage's strongest route (decision 26): the approved route with the highest
+/// effort, the first task in plan order on a tie. Milestone 9.8 (task M9.8.14, fix
+/// round 1): strength is gone, so effort ranks the routes.
 pub(super) fn strongest(run: &Run, n: u16) -> Option<Route> {
-    approved(run, n).first().map(|t| t.route.clone())
+    let mut best: Option<&Route> = None;
+    for t in approved(run, n) {
+        if best.is_none_or(|b| t.route.effort > b.effort) {
+            best = Some(&t.route);
+        }
+    }
+    best.cloned()
 }
 
 fn spec(n: u16, rec: &CiRecord, owns: Vec<String>, epic: Option<String>) -> fixes::FixSpec {

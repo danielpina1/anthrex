@@ -1,7 +1,7 @@
 //! Milestone 9.2 task M9.2.9, decision 27 step 4: a CI red reproduced at the PR head
 //! with 9.1's probe (only the failing tests, `build_check` for a build or lint red),
 //! bisected on a tiered profile (a culprit's fix one rung up, `bisect_fix_max`
-//! untouched), and otherwise a stage fix with the stage's first task's route, or TT's
+//! untouched), and otherwise a stage fix with the stage's strongest route, or TT's
 //! environment fix when it does not reproduce. Probes are answered with
 //! `Fixture::done`.
 
@@ -198,20 +198,16 @@ fn reproduced_with_a_culprit_adds_a_ci_fix_with_the_culprits_owns_one_rung_up() 
     );
 }
 
-/// Two distinct routes at t1's effort: the stage's first task's, and another's.
-/// Milestone 9.8 (task M9.8.14): with strength gone every route ties, so the stage's
-/// "strongest" route (decision 26) is its first task's.
-fn routes(fx: &Fixture) -> (Route, Route) {
-    let effort = fx.task("t1").route.effort.clone();
-    let route = |model: &str| Route {
+/// A route on `model` at `effort`.
+fn route(model: &str, effort: proto::Effort) -> Route {
+    Route {
         runtime: proto::Runtime::Claude,
         model: model.into(),
-        effort: effort.clone(),
-    };
-    (route("claude-opus-5-5"), route("claude-haiku-4-5"))
+        effort,
+    }
 }
 
-/// A stage fix's checks: the union of the stage's owns and the first task's route.
+/// A stage fix's checks: the union of the stage's owns and the strongest route.
 fn assert_stage_fix(fx: &Fixture, owns: &[&str], route: &Route) -> String {
     let fix = ci_fixes(fx).pop().expect("a stage fix");
     let task = fx.task(&fix);
@@ -230,7 +226,7 @@ fn assert_stage_fix(fx: &Fixture, owns: &[&str], route: &Route) -> String {
 }
 
 #[test]
-fn reproduced_without_a_culprit_adds_a_stage_fix_with_the_first_tasks_route() {
+fn reproduced_without_a_culprit_adds_a_stage_fix_with_the_strongest_route() {
     // An untiered profile: nothing is bisected.
     let (mut fx, windows) = pr_on(PROFILE, &[doc_task("t1", ""), doc_task("t2", "")]);
     fast(fx.run_mut());
@@ -240,9 +236,10 @@ fn reproduced_without_a_culprit_adds_a_stage_fix_with_the_first_tasks_route() {
     }
     green(&mut fx, 1);
     open_stage(&mut fx, 1, PR);
-    let (first, other) = routes(&fx);
-    fx.task_mut("t1").route = first.clone();
-    fx.task_mut("t2").route = other;
+    // Fix round 1 (controller ruling): the strongest route is the highest effort; t2's.
+    let strong = route("claude-opus-5-5", proto::Effort::HIGH);
+    fx.task_mut("t1").route = route("claude-haiku-4-5", proto::Effort::LOW);
+    fx.task_mut("t2").route = strong.clone();
     // Deciders off: the fallback's `unknown`, reproduced with tier 2 at the PR head.
     poll_with(&mut fx, red_view(&commit(2), test_red(RUN_A)));
     answer_logs(&mut fx, "boom");
@@ -256,7 +253,7 @@ fn reproduced_without_a_culprit_adds_a_stage_fix_with_the_first_tasks_route() {
         Some(commit(2))
     );
     fx.done(op, tier(outcome(2, &[TEST])));
-    let fix = assert_stage_fix(&fx, &["docs/t1/**", "docs/t2/**"], &first);
+    let fix = assert_stage_fix(&fx, &["docs/t1/**", "docs/t2/**"], &strong);
     let brief = &fx.task(&fix).spec.brief;
     assert!(
         brief.contains("Category: unknown. It reproduces locally with: cargo test.\n"),
@@ -266,9 +263,10 @@ fn reproduced_without_a_culprit_adds_a_stage_fix_with_the_first_tasks_route() {
     // A tiered profile whose bisect finds no single culprit (red at G already).
     let mut fx = tiered_watched(&["t1", "t2"]);
     fx.run_mut().stages[0].full.green_at = Some(commit(1));
-    let (first, other) = routes(&fx);
+    // Equal efforts: the first task's route.
+    let first = route("claude-opus-5-5", proto::Effort::MEDIUM);
     fx.task_mut("t1").route = first.clone();
-    fx.task_mut("t2").route = other;
+    fx.task_mut("t2").route = route("claude-haiku-4-5", proto::Effort::MEDIUM);
     red_summarised(&mut fx, &commit(2), &[TEST], CiCategory::Test);
     let (op, spec) = reproduction(&fx);
     fx.done(op, red_probe(&spec.commands[0]));

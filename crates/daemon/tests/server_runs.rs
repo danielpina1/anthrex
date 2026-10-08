@@ -565,7 +565,16 @@ async fn pre_run_triage_writes_a_record_even_when_no_run_is_created() {
         .map(|m| m.route_model())
         .collect();
     assert_eq!(models, want, "{:#?}", d.candidates);
-    assert_eq!(d.candidates[d.selected_index as usize].skipped_reason, None);
+    for (i, c) in d.candidates.iter().enumerate() {
+        let reason = c.skipped_reason.as_deref();
+        match i.cmp(&(d.selected_index as usize)) {
+            std::cmp::Ordering::Equal => assert_eq!(reason, None),
+            std::cmp::Ordering::Greater => {
+                assert_eq!(reason, Some("an earlier candidate was taken"))
+            }
+            std::cmp::Ordering::Less => assert_eq!(reason, Some("not installed")),
+        }
+    }
     // Nothing reached the repository.
     let status = support::run_git::out(&repo.root, &["status", "--porcelain", "--ignored"]);
     assert!(status.trim().is_empty(), "{status}");

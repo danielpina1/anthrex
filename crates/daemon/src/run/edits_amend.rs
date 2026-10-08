@@ -156,7 +156,12 @@ impl Batch {
             changed.push("acceptance");
         }
         if let Some(v) = route {
-            spec.route = v.clone();
+            // M9.8.14 fix round 1: an old `strength` is never kept, so the spec in
+            // memory is the one `run.json` reloads.
+            spec.route = proto::RouteSpec {
+                strength: None,
+                ..v.clone()
+            };
             changed.push("route");
         }
         if let Some(v) = test_mode {
