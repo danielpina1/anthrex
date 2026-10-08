@@ -6,17 +6,16 @@
 //! model name, note, path and daemon problem passes `safe_text` here or in the kit.
 //! Pure: `&App` in.
 
-use crate::app::model_picker::PickerEntry;
-use crate::app::models_table::{Scope, TableRow};
 use crate::app::replies::NOT_SENT;
 use crate::app::settings_screen::{
-    DISCARD_ASK, LINK_LOST, SAVED, SaveOutcome, SettingsPage, SettingsScreen, SettingsSection,
-    hard_stop_calls, hard_stop_minutes,
+    DISCARD_ASK, LINK_LOST, MODELS_SAVED, SAVED, SaveOutcome, SettingsPage, SettingsScreen,
+    SettingsSection, hard_stop_calls, hard_stop_minutes,
 };
 use crate::app::{App, region::KeyRegion};
 use crate::safe_text::one_line;
 use crate::theme::{Glyph, Palette, Role, dot, dot_sep, ellipsis, glyph, role};
 use crate::ui::kit::{self, Hint, cut, wrap_words};
+use crate::ui::{model_picker, models_table};
 use proto::settings::{
     BUDGET_MIN, MAX_BOUNCES_RANGE, MAX_READERS_RANGE, MAX_WRITERS_RANGE, STALL_AFTER_SECS_RANGE,
     key,
@@ -102,104 +101,6 @@ fn sel(on: bool, keys: bool, p: Palette) -> Span<'static> {
         "  ".to_string()
     };
     Span::styled(text, role(kit::bar_role(keys), p))
-}
-
-/// `text` padded to `width`, and at least one space after it.
-fn cell(text: &str, width: usize) -> String {
-    pad(text, width.max(text.width() + 1))
-}
-
-/// `text` with the table's glyphs in ASCII when the palette asks for it.
-fn glyphs(text: &str, p: Palette) -> String {
-    if !p.ascii {
-        return text.to_string();
-    }
-    let mut out = text.replace('·', dot(p)).replace('…', "...");
-    for (from, to) in [('—', "-"), ('▸', ">"), ('▾', "v"), ('●', "*"), ('⚠', "!")] {
-        out = out.replace(from, to);
-    }
-    out
-}
-
-/// Milestone 9.8 (interim until M9.8.11 draws it as the spec): the models table, one
-/// line per row (marker, role, model, effort, fallback), its warnings, or, while the
-/// picker is open, its entries. Every text here was cleaned by the state.
-fn models_lines(
-    s: &SettingsScreen,
-    app: &App,
-    keys: bool,
-    p: Palette,
-) -> (Vec<Line<'static>>, usize) {
-    let m = &s.models;
-    if let Some(picker) = &m.picker {
-        let lines = (picker.entries.iter().enumerate())
-            .map(|(i, e)| {
-                let text = match e {
-                    PickerEntry::Header { text, .. } => text.clone(),
-                    PickerEntry::Model {
-                        label,
-                        description,
-                        efforts,
-                        current,
-                        ..
-                    } => format!(
-                        "{} {} {description}  {efforts}",
-                        if *current { "●" } else { " " },
-                        pad(label, 17)
-                    ),
-                    PickerEntry::NoFallback => "  none".to_string(),
-                    PickerEntry::RoleTable(text) => format!("  {text}"),
-                    PickerEntry::Custom => format!("  custom{}", ellipsis(p)),
-                };
-                Line::from(vec![
-                    sel(i == picker.selected, keys, p),
-                    Span::raw(glyphs(&text, p)),
-                ])
-            })
-            .collect();
-        return (lines, picker.selected);
-    }
-    let scope = match m.scope {
-        Scope::Everywhere => "everywhere",
-        Scope::Repo => "this repo",
-    };
-    let mut out = vec![Line::styled(
-        format!("scope {}", kit::choice_in(scope, p)),
-        role(Role::Muted, p),
-    )];
-    let rows: Vec<TableRow> = m.rows(&app.catalogs);
-    for (i, r) in rows.iter().enumerate() {
-        let style = if r.inherited {
-            role(Role::Muted, p)
-        } else {
-            Style::default()
-        };
-        let mark = if r.overridden { "● " } else { "" };
-        out.push(Line::from(vec![
-            sel(i == m.selected, keys, p),
-            Span::styled(
-                glyphs(
-                    &format!(
-                        "{mark}{}{}{}{}",
-                        cell(&r.role, 22),
-                        cell(&r.model, 24),
-                        cell(&r.effort, 9),
-                        r.fallback
-                    ),
-                    p,
-                ),
-                style,
-            ),
-        ]));
-    }
-    for r in &rows {
-        for w in &r.warnings {
-            let text = format!("{}: {}", r.role.trim(), w.trim_start_matches("⚠ "));
-            let text = glyphs(&format!("⚠ {text}"), p);
-            out.push(Line::styled(text, role(Role::Attention, p)));
-        }
-    }
-    (out, m.selected + 1)
 }
 
 /// A limit's allowed range, from the ranges `config` itself reads.
@@ -308,21 +209,14 @@ fn limit_lines(s: &SettingsScreen, keys: bool, p: Palette) -> (Vec<Line<'static>
     (out, selected)
 }
 
-/// The section's lines and the selected line's index; `loading…` before the first doc.
-fn section_lines(
-    app: &App,
-    s: &SettingsScreen,
-    keys: bool,
-    p: Palette,
-) -> (Vec<Line<'static>>, usize) {
+/// The `limits` section's lines and the selected line's index; `loading…` before the
+/// first doc. The `models` section draws whole (`models_table::lines`).
+fn section_lines(s: &SettingsScreen, keys: bool, p: Palette) -> (Vec<Line<'static>>, usize) {
     if !s.loaded {
         let text = format!("loading{}", ellipsis(p));
         return (vec![Line::styled(text, role(Role::Muted, p))], 0);
     }
-    match s.section {
-        SettingsSection::Models => models_lines(s, app, keys, p),
-        SettingsSection::Limits => limit_lines(s, keys, p),
-    }
+    limit_lines(s, keys, p)
 }
 
 /// `glyph text`, wrapped under itself, in `r`.
@@ -339,8 +233,8 @@ fn marked(g: Glyph, text: &str, width: usize, r: Role, p: Palette) -> Vec<Line<'
         .collect()
 }
 
-/// What blocks `w`, what only warns, and the last save's outcome.
-fn footer(app: &App, s: &SettingsScreen, width: u16, p: Palette) -> Vec<Line<'static>> {
+/// What blocks `w` and what only warns.
+fn notes(s: &SettingsScreen, width: u16, p: Palette) -> Vec<Line<'static>> {
     let w = usize::from(width).max(1);
     let mut out = Vec::new();
     for problem in s.problems() {
@@ -349,34 +243,58 @@ fn footer(app: &App, s: &SettingsScreen, width: u16, p: Palette) -> Vec<Line<'st
     for warning in s.warnings() {
         out.extend(marked(Glyph::Warning, &warning, w, Role::Attention, p));
     }
+    out
+}
+
+/// The last save's outcome, or `saving…` while it is awaited. On the `models` section
+/// a save says so of the models (MR §5.1).
+fn outcome(app: &App, s: &SettingsScreen, width: u16, p: Palette) -> Vec<Line<'static>> {
+    let w = usize::from(width).max(1);
+    let mut out = Vec::new();
     if app.settings_saving() {
         let text = format!("saving{}", ellipsis(p));
         out.push(Line::styled(text, role(Role::Working, p)));
-    } else {
-        match &s.outcome {
-            Some(SaveOutcome::Saved) => {
-                let text = SAVED.replace('·', dot(p));
-                out.push(Line::styled(
-                    cut(&text, w, ellipsis(p)),
-                    role(Role::Done, p),
-                ));
-            }
-            Some(SaveOutcome::Refused(problems)) => {
-                out.push(Line::styled("not saved", role(Role::Failed, p)));
-                for problem in problems {
-                    out.extend(marked(Glyph::Failed, problem, w, Role::Failed, p));
-                }
-            }
-            Some(SaveOutcome::LinkLost) => {
-                out.push(Line::styled(LINK_LOST, role(Role::Failed, p)));
-            }
-            Some(SaveOutcome::NotSent) => {
-                out.push(Line::styled(NOT_SENT, role(Role::Failed, p)));
-            }
-            None => {}
+        return out;
+    }
+    match &s.outcome {
+        Some(SaveOutcome::Saved) => {
+            let saved = match s.section {
+                SettingsSection::Models => MODELS_SAVED,
+                SettingsSection::Limits => SAVED,
+            };
+            let text = saved.replace('·', dot(p));
+            out.push(Line::styled(
+                cut(&text, w, ellipsis(p)),
+                role(Role::Done, p),
+            ));
         }
+        Some(SaveOutcome::Refused(problems)) => {
+            out.push(Line::styled("not saved", role(Role::Failed, p)));
+            for problem in problems {
+                out.extend(marked(Glyph::Failed, problem, w, Role::Failed, p));
+            }
+        }
+        Some(SaveOutcome::LinkLost) => {
+            out.push(Line::styled(LINK_LOST, role(Role::Failed, p)));
+        }
+        Some(SaveOutcome::NotSent) => {
+            out.push(Line::styled(NOT_SENT, role(Role::Failed, p)));
+        }
+        None => {}
     }
     out
+}
+
+/// What blocks `w`, what only warns, and the last save's outcome.
+fn footer(app: &App, s: &SettingsScreen, width: u16, p: Palette) -> Vec<Line<'static>> {
+    let mut out = notes(s, width, p);
+    out.extend(outcome(app, s, width, p));
+    out
+}
+
+/// Whether the `models` section draws (it draws whole, `models_table::lines`).
+fn models_shown(s: &SettingsScreen) -> bool {
+    s.loaded && s.section == SettingsSection::Models
 }
 
 /// `lines` cut to at most `rows`, what is cut marked on the last row.
@@ -399,7 +317,19 @@ pub(crate) fn body_lines(app: &App, s: &SettingsScreen, width: u16) -> Vec<Line<
     let p = app.palette();
     let mut out = vec![section_row(s, p)];
     let keys = app.key_region() == KeyRegion::Screen;
-    out.extend(section_lines(app, s, keys, p).0);
+    if models_shown(s) {
+        let (notes, outcome) = (notes(s, width, p), outcome(app, s, width, p));
+        out.extend(models_table::lines(
+            app,
+            s,
+            (width, 60),
+            keys,
+            notes,
+            outcome,
+        ));
+        return out;
+    }
+    out.extend(section_lines(s, keys, p).0);
     out.extend(footer(app, s, width, p));
     out
 }
@@ -414,7 +344,8 @@ pub fn render(frame: &mut Frame, app: &App, s: &SettingsScreen, area: Rect) {
     };
     // Decision 5: the one accented border is the dialog's while one is open.
     let bars = app.key_region() == KeyRegion::Screen;
-    let keys_here = s.page.is_none() && bars;
+    let picker = s.models.picker.as_ref().filter(|_| models_shown(s));
+    let keys_here = s.page.is_none() && picker.is_none() && bars;
     let block = kit::screen_frame(&title, keys_here, p);
     let inner = block.inner(area);
     frame.render_widget(Clear, area);
@@ -422,10 +353,30 @@ pub fn render(frame: &mut Frame, app: &App, s: &SettingsScreen, area: Rect) {
     if inner.width == 0 || inner.height == 0 {
         return;
     }
+    if models_shown(s) {
+        let (notes, outcome) = (notes(s, inner.width, p), outcome(app, s, inner.width, p));
+        let size = (inner.width, inner.height);
+        let lines = models_table::lines(app, s, size, keys_here, notes, outcome);
+        frame.render_widget(Paragraph::new(lines), inner);
+        if let Some(picker) = picker {
+            let age = app.catalogs.updated_age(app.ticked_at);
+            model_picker::render(frame, picker, age, area, p);
+        }
+    } else {
+        draw_limits(frame, app, s, inner, bars);
+    }
+    if let Some(page) = &s.page {
+        render_page(frame, page, area, p);
+    }
+}
+
+/// The `limits` section (or `loading…`) in the frame's interior.
+fn draw_limits(frame: &mut Frame, app: &App, s: &SettingsScreen, inner: Rect, bars: bool) {
+    let p = app.palette();
     let height = usize::from(inner.height);
     // The footer may take up to half the screen; the section keeps the rest.
     let foot = capped(footer(app, s, inner.width, p), height / 2, p);
-    let (lines, at) = section_lines(app, s, bars, p);
+    let (lines, at) = section_lines(s, bars, p);
     let rows = height.saturating_sub(2 + foot.len());
     let mut all = vec![section_row(s, p), Line::default()];
     all.extend(kit::window(lines, at, rows, p));
@@ -437,9 +388,6 @@ pub fn render(frame: &mut Frame, app: &App, s: &SettingsScreen, area: Rect) {
     }
     all.extend(foot);
     frame.render_widget(Paragraph::new(all), inner);
-    if let Some(page) = &s.page {
-        render_page(frame, page, area, p);
-    }
 }
 
 /// A page's title, whether it is destructive, its body and its hint line.

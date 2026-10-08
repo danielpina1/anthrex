@@ -199,14 +199,14 @@ fn j_k_and_pages_scroll_and_esc_closes() {
         assert!(tap(&mut app, code).is_empty(), "{code:?}");
         assert_eq!(scroll(&app), 0, "{code:?} does nothing");
     }
-    // The end: 112 lines from line 92 fill (task M9.6.18 added three, ruling T18-4; the
+    // The end: 116 lines from line 96 fill (task M9.6.18 added three, ruling T18-4; M9.8.11 four; the
     // final fix wave's FW-76 thirteen) the 21 rows under the `↑` mark.
     for _ in 0..10 {
         tap(&mut app, KeyCode::PageDown);
     }
-    assert_eq!(scroll(&app), 92);
+    assert_eq!(scroll(&app), 96);
     tap(&mut app, KeyCode::Char('j'));
-    assert_eq!(scroll(&app), 92, "j stops where the view stops");
+    assert_eq!(scroll(&app), 96, "j stops where the view stops");
     tap(&mut app, KeyCode::Char('q'));
     assert!(app.modal.is_none(), "q closes");
     chord(&mut app, '?');
@@ -246,7 +246,7 @@ fn tab_jumps_between_groups() {
     for _ in 0..12 {
         tap(&mut app, KeyCode::Tab);
     }
-    assert_eq!(scroll(&app), 92);
+    assert_eq!(scroll(&app), 96);
 }
 
 /// Task 6's ruling: `C-b ?` works over the Alerts view, and closing the help gives the
@@ -290,9 +290,9 @@ fn an_opened_group_past_the_end_holds_its_place() {
     assert_eq!(drawn_headers(&app, 120, 40), ["settings"]);
     let rows = crate::ui::audit::rows(&crate::ui::audit::draw(&app, 120, 40));
     assert!(rows[2].contains("│ settings "), "{rows:#?}");
-    assert!(rows[10].contains("esc          back (asks before discarding changes)"));
+    assert!(rows[14].contains("esc          back (asks before discarding changes)"));
     assert_eq!(
-        rows[11]
+        rows[15]
             .chars()
             .skip(29)
             .take(62)
@@ -306,7 +306,7 @@ fn an_opened_group_past_the_end_holds_its_place() {
     for _ in 0..12 {
         tap(&mut app, KeyCode::Tab);
     }
-    assert_eq!(scroll(&app), 92);
+    assert_eq!(scroll(&app), 96);
 }
 
 /// Minor 1: Shift+Tab goes back a group, whether it arrives as BackTab or as Tab with

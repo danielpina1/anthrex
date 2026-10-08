@@ -74,6 +74,14 @@ impl Catalogs {
             .map(|at| now.saturating_duration_since(at))
     }
 
+    /// The picker's `updated <age> ago` at `now`: the oldest catalog's age, since `r`
+    /// refreshes them all; `None` before any arrived.
+    pub fn updated_age(&self, now: Instant) -> Option<Duration> {
+        (self.received_at.iter())
+            .map(|(_, at)| now.saturating_duration_since(*at))
+            .max()
+    }
+
     pub fn of(&self, runtime: Runtime) -> Option<&ModelCatalog> {
         self.list.iter().find(|c| c.runtime == runtime)
     }

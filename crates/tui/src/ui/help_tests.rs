@@ -160,7 +160,7 @@ fn the_help_renders_at_80x24_and_120x40() {
     for (k, w) in &group(&help_groups("C-b"), "global")[..19] {
         body.push(row_text(k, w));
     }
-    body.push("↓ 92 more".into());
+    body.push("↓ 96 more".into());
     body.push("j/k scroll · tab group · esc close".into());
     for line in &body {
         want.push(format!("│ {line:<60} │"));
@@ -199,7 +199,7 @@ fn the_help_renders_at_80x24_and_120x40() {
             .iter()
             .map(|(k, w)| row_text(k, w)),
     );
-    body.push("↓ 76 more".into());
+    body.push("↓ 80 more".into());
     body.push("j/k scroll · tab group · esc close".into());
     for line in &body {
         want.push(format!("│ {line:<60} │"));
@@ -283,12 +283,20 @@ fn help_in_ascii() {
     }
     let rows = drawn(&app, 80, 24).join("\n");
     assert!(rows.contains("+ keys ---"), "{rows}");
-    assert!(rows.contains("^ 92 more"), "{rows}");
+    assert!(rows.contains("^ 96 more"), "{rows}");
     assert!(
-        rows.contains("  <- / ->      strength, or the orchestrator's choice"),
+        rows.contains("  <- / ->      scope: everywhere / this repo"),
         "{rows}"
     );
-    assert!(rows.contains("  enter        add a custom model"), "{rows}");
+    assert!(
+        rows.contains("  enter        choose the row's model"),
+        "{rows}"
+    );
+    assert!(
+        rows.contains("  f            its fallback (if it struggles)"),
+        "{rows}"
+    );
+    assert!(!rows.contains("strength"), "{rows}");
     assert!(
         rows.contains("j/k scroll - tab group - esc close"),
         "{rows}"

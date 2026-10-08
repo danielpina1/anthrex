@@ -43,6 +43,13 @@ impl App {
                 runtime: None,
                 refresh: true,
             })],
+            Intent::Models(ModelsIntent::BrainstormEffort) => {
+                let effort = (self.settings_screen_mut())
+                    .and_then(|s| s.models.brainstorm().effort)
+                    .unwrap_or_else(|| "default".to_string());
+                self.toast(format!("brainstorm effort: {effort}"));
+                vec![]
+            }
             Intent::Close => {
                 self.set_screen(None);
                 vec![]

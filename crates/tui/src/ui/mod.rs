@@ -19,6 +19,8 @@ pub mod help;
 pub mod idle_menu;
 pub mod kit;
 pub mod modal;
+pub mod model_picker;
+pub mod models_table;
 pub mod overview;
 pub mod plan_review;
 pub mod profile;

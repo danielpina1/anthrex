@@ -17,6 +17,8 @@ use std::collections::BTreeMap;
 
 /// Interfaces "Exact user-visible text": a `Saved` reply.
 pub const SAVED: &str = "saved · new runs use these settings · runs in progress keep theirs";
+/// Milestone 9.8 (MR §5.1): the status line after `w` on the `models` section.
+pub const MODELS_SAVED: &str = "saved · new runs use these models · runs in progress keep theirs";
 /// Interfaces "Exact user-visible text": `Esc` with unsaved changes.
 pub const DISCARD_ASK: &str = "discard unsaved settings? y";
 /// `C-b a`, `C-b m` and `C-b t` while the screen is open (as the Profile screen's).

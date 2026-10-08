@@ -94,14 +94,14 @@ pub(crate) fn opened(ascii: bool, doc: SettingsDoc) -> App {
     app
 }
 
-fn screen_mut(app: &mut App) -> &mut SettingsScreen {
+pub(crate) fn screen_mut(app: &mut App) -> &mut SettingsScreen {
     match &mut app.screen {
         Some(Screen::Settings(s)) => s,
         _ => panic!("no settings screen"),
     }
 }
 
-fn draw(app: &App, w: u16, h: u16) -> Buffer {
+pub(crate) fn draw(app: &App, w: u16, h: u16) -> Buffer {
     let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
     terminal
         .draw(|f| {
@@ -120,7 +120,7 @@ pub(crate) fn screen_text(app: &App, w: u16, h: u16) -> String {
 }
 
 /// The screen's interior rows (inside the frame), trailing spaces trimmed.
-fn rows(app: &App, w: u16, h: u16) -> Vec<String> {
+pub(crate) fn rows(app: &App, w: u16, h: u16) -> Vec<String> {
     let buffer = draw(app, w, h);
     (1..h - 2)
         .map(|y| {
@@ -139,7 +139,7 @@ fn section(app: &mut App, s: SettingsSection) {
 }
 
 /// Rows `1..` of the interior, cut to the section's lines (the footer is checked apart).
-fn head(app: &App, w: u16, h: u16, n: usize) -> Vec<String> {
+pub(crate) fn head(app: &App, w: u16, h: u16, n: usize) -> Vec<String> {
     rows(app, w, h).into_iter().take(n).collect()
 }
 
@@ -171,8 +171,9 @@ fn warnings_at(app: &App, w: u16, h: u16) {
     }
 }
 
-/// Milestone 9.8: the screen opens on `models` (M9.8.11 draws the table as the spec;
-/// this checks the section row, the scope and the role rows over the built-ins).
+/// Milestone 9.8: the screen opens on `models`, drawn whole as the spec's table
+/// (`ui/models_table_tests.rs` checks its rows); the screen's own notes follow it, and
+/// the status bar keeps the section's hints.
 #[test]
 fn models_section_renders_at_80x24_and_120x40() {
     let mut app = opened(false, sample());
@@ -183,14 +184,26 @@ fn models_section_renders_at_80x24_and_120x40() {
             text.starts_with("┌ settings · /cfg/config.toml ─"),
             "{text}"
         );
-        let head = head(&app, w, h, 5);
-        assert_eq!(head[0], "models  limits", "{w}x{h}");
-        assert_eq!(head[2], "scope ‹ everywhere ›", "{w}x{h}");
+        let all = rows(&app, w, h);
         assert!(
-            head[3].starts_with("▌ orchestrator          Claude · Opus 5.5       high     —"),
-            "{w}x{h}: {head:?}"
+            all[0].starts_with(" models · scope ‹ everywhere › / this repo (tmp)"),
+            "{w}x{h}: {all:?}"
         );
-        warnings_at(&app, w, h);
+        assert!(all[0].ends_with("tab: limits"), "{w}x{h}");
+        assert!(
+            all[3].starts_with("▸orchestrator          Claude · Opus 5.5       high     —"),
+            "{w}x{h}: {all:?}"
+        );
+        assert_eq!(all[13], "", "{w}x{h}");
+        if w == 80 {
+            assert_eq!(all[14..20], WARN_80, "{w}x{h}");
+        } else {
+            assert_eq!(all[14..17], WARN_120, "{w}x{h}");
+        }
+        assert_eq!(
+            all.last().unwrap(),
+            " ⏎ choose model   e effort   f if-it-struggles   x reset   w save   esc back"
+        );
         let bar = text.lines().last().unwrap().trim_end().to_string();
         assert!(bar.contains("⏎ choose model"), "{bar}");
         assert!(bar.contains("esc back"), "{bar}");
@@ -223,6 +236,12 @@ fn limits_section_renders_at_80x24_and_120x40() {
         );
         warnings_at(&app, w, h);
     }
+    // On `models` at 80x24 the notes take only what the table leaves, the cut marked.
+    let mut short = opened(false, sample());
+    short.catalogs = crate::app::model_picker::tests::fixture_catalogs();
+    let all = rows(&short, 80, 22);
+    assert_eq!(all[14..17], WARN_80[..3]);
+    assert!(all[17].contains("3 more"), "{all:#?}");
     // Out of range: the value in `Failed`, config's own message above the hints.
     let at = screen_mut(&mut app)
         .limits
@@ -260,15 +279,38 @@ fn ascii_mode_draws_only_ascii() {
     }
     for want in [
         "+ settings - /cfg/config.toml -",
-        "> orchestrator          Claude - Opus 5.5       high     -",
-        "  helpers >             Claude - Haiku 4.5      -        -",
+        " models - scope < everywhere > / this repo (tmp)",
+        ">orchestrator          Claude - Opus 5.5       high     -",
+        " implementer - small   Claude - Sonnet 5       low      -",
+        " helpers >             Claude - Haiku 4.5      -        -",
         "! no codex model is fast",
+        " enter choose model   e effort",
         "enter choose model",
     ] {
         assert!(seen.contains(want), "{want}\n{seen}");
     }
     screen_mut(&mut app).page = None;
     screen_mut(&mut app).outcome = Some(SaveOutcome::Saved);
+    section(&mut app, SettingsSection::Models);
+    let text = screen_text(&app, 120, 40);
+    assert!(
+        text.contains("saved - new runs use these models - runs in progress keep theirs"),
+        "{text}"
+    );
+    // The picker in ASCII.
+    let catalogs = app.catalogs.clone();
+    screen_mut(&mut app).models.open_picker(&catalogs, false);
+    let text = screen_text(&app, 120, 40);
+    assert!(text.is_ascii(), "{text}");
+    for want in [
+        "+ choose model - orchestrator -",
+        "> * Opus 5.5         Most capable for complex work         low ... max",
+        "    custom...   type any model name",
+        " j/k move  enter select  r refresh  esc cancel",
+    ] {
+        assert!(text.contains(want), "{want}\n{text}");
+    }
+    screen_mut(&mut app).section = SettingsSection::Limits;
     let text = screen_text(&app, 120, 40);
     assert!(
         text.contains("saved - new runs use these settings - runs in progress keep theirs"),
@@ -335,15 +377,23 @@ fn problems_warnings_and_outcomes_render() {
     let s = screen_mut(&mut app);
     s.load(&sample(), &origin());
     s.outcome = Some(SaveOutcome::Refused(vec!["one".into(), "two".into()]));
-    let t = tail(&app, 120, 40, 3);
-    assert_eq!(t, vec!["not saved", "✗ one", "✗ two"]);
+    // On `models`, the outcome sits above the keys.
+    let t = tail(&app, 120, 40, 4);
+    assert_eq!(t[..3], ["not saved", "✗ one", "✗ two"]);
     screen_mut(&mut app).outcome = Some(SaveOutcome::Saved);
+    let t = tail(&app, 120, 40, 2);
+    assert_eq!(
+        t[0],
+        "saved · new runs use these models · runs in progress keep theirs"
+    );
+    let done = role(Role::Done, app.palette()).fg.unwrap();
+    assert_eq!(draw(&app, 120, 40)[(1, 36)].fg, done);
+    section(&mut app, SettingsSection::Limits);
     let t = tail(&app, 120, 40, 1);
     assert_eq!(
         t,
         vec!["saved · new runs use these settings · runs in progress keep theirs"]
     );
-    let done = role(Role::Done, app.palette()).fg.unwrap();
     assert_eq!(draw(&app, 120, 40)[(1, 37)].fg, done);
 }
 

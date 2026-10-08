@@ -188,6 +188,9 @@ pub struct App {
     pub settings_cache: Option<screens::SettingsCache>,
     /// Milestone 9.8 decision 37: the discovered model catalogs (`DaemonMsg::Models`).
     pub catalogs: model_picker::Catalogs,
+    /// Milestone 9.8 (preflight F10): the last tick's clock, which the picker's
+    /// `updated <age> ago` is measured against; the renderer never reads the clock.
+    pub ticked_at: Instant,
     pub screen: Option<screens::Screen>, // Decision 33: the open full-body screen.
     /// Milestone 9.3 decision 8: each project's goal draft, and the goal request a
     /// closed dialog still waits on (its success clears that project's draft).
@@ -253,6 +256,7 @@ impl App {
             replies: Default::default(),
             settings_cache: None,
             catalogs: Default::default(),
+            ticked_at: Instant::now(),
             screen: None,
             goal_drafts: Default::default(),
             goal_sent: None,
@@ -507,8 +511,9 @@ impl App {
     /// Called every 100 ms: advances the spinner, expires toasts, retries a dropped
     /// `Subscribe`, flushes a debounced resize.
     pub fn on_tick(&mut self) -> Vec<Effect> {
+        self.ticked_at = Instant::now();
         let mut effects = self.expire_replies();
-        effects.extend(self.screens_tick(Instant::now()));
+        effects.extend(self.screens_tick(self.ticked_at));
         effects.extend(self.tick());
         effects
     }

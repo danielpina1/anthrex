@@ -6,7 +6,7 @@
 //! intent for the app to send.
 
 use super::model_picker::{Catalogs, Picked};
-use super::models_table::Scope;
+use super::models_table::{RowKey, Scope};
 use super::settings_screen::SettingsScreen;
 use crossterm::event::{KeyCode, KeyEvent};
 
@@ -22,6 +22,9 @@ pub(crate) enum ModelsIntent {
     AskRepo,
     /// `r` in the picker: `ListModels { runtime: None, refresh: true }`.
     Refresh,
+    /// Preflight F17: `e` changed brainstorm's effort, which its row does not draw; the
+    /// status line says it.
+    BrainstormEffort,
 }
 
 /// A bare key on the `models` section (`esc` and `tab` are the screen's, unless the
@@ -73,6 +76,13 @@ pub(crate) fn models_key(
         }
         KeyCode::Char('f') => {
             m.open_picker(catalogs, true);
+            false
+        }
+        KeyCode::Char('e') if m.selected_key() == RowKey::Brainstorm => {
+            if m.cycle_effort(catalogs) {
+                s.touched();
+                return ModelsIntent::BrainstormEffort;
+            }
             false
         }
         KeyCode::Char('e') => m.cycle_effort(catalogs),
