@@ -333,3 +333,72 @@ fn the_effort_row_shows_the_rows_effort_for_the_rows_model() {
     pick(&mut app, "Haiku 4.5");
     assert_eq!(effort_shown(&app), "‹ default ›");
 }
+
+/// The task's row, Opus 5.5 at `max` (`TaskInfo.row`), on `task`.
+fn with_opus_row(mut task: proto::TaskInfo) -> proto::TaskInfo {
+    task.row = Some(proto::Route {
+        runtime: Runtime::Claude,
+        model: "claude-opus-5-5".into(),
+        effort: Effort::new("max"),
+    });
+    task
+}
+
+/// M9.8.15 (Task 11's parked minor 1): a pinned effort over the row's model runs at the
+/// pinned effort, so the role table text never names the row's: it names the model, and
+/// the effort row the pinned effort.
+#[test]
+fn a_pinned_effort_is_never_contradicted_by_the_rows() {
+    let mut task = with_opus_row(edit_fixture_task());
+    task.route_spec = RouteSpec {
+        effort: Some(Effort::new("low")),
+        ..RouteSpec::default()
+    };
+    let form = TaskEditForm::new(RUN_ID, &task);
+    assert_eq!(
+        form.role_table_text(),
+        "role table (Claude · claude-opus-5-5)"
+    );
+    assert_eq!(form.value_parts(EditField::Effort).0, "‹ low ›");
+    // With no pinned effort, the row's effort is what runs.
+    let mut task = with_opus_row(edit_fixture_task());
+    task.route_spec = RouteSpec::default();
+    let form = TaskEditForm::new(RUN_ID, &task);
+    assert_eq!(
+        form.role_table_text(),
+        "role table (Claude · claude-opus-5-5 · max)"
+    );
+}
+
+/// M9.8.15 (Task 11's parked minor 2): a size change can move the task to another row,
+/// which the form does not hold: it says the row is resolved on save, shows no stale
+/// resolved effort and cycles no stale model's efforts; back at the opened size, the
+/// row shows again. A hub task keeps its row at any size.
+#[test]
+fn a_size_change_says_the_row_is_resolved_on_save() {
+    let mut task = with_opus_row(edit_fixture_task());
+    task.route_spec = RouteSpec::default();
+    let mut form = TaskEditForm::new(RUN_ID, &task);
+    assert_eq!(form.size, proto::Size::M);
+    form.size = proto::Size::S;
+    assert_eq!(form.role_table_text(), "role table (resolved on save)");
+    assert_eq!(form.table_model(), None);
+    assert_eq!(form.effort_model(), None);
+    assert_eq!(
+        form.value_parts(EditField::Effort),
+        ("‹ role table ›".to_string(), None)
+    );
+    form.size = proto::Size::M;
+    assert_eq!(
+        form.role_table_text(),
+        "role table (Claude · claude-opus-5-5 · max)"
+    );
+    // A hub task's row does not depend on its size.
+    task.hub = true;
+    let mut form = TaskEditForm::new(RUN_ID, &task);
+    form.size = proto::Size::S;
+    assert_eq!(
+        form.role_table_text(),
+        "role table (Claude · claude-opus-5-5 · max)"
+    );
+}

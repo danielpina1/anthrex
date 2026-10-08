@@ -8,7 +8,7 @@
 //! decision 35): Ctrl-J and a pasted newline are real `\n`s, sent as they are.
 //! Opening, submitting and the replies are `app/runs.rs`; rendering is `ui/run_edit.rs`.
 
-use crate::app::form_picker::{cycle_effort, route_model};
+use crate::app::form_picker::cycle_effort;
 use crate::app::model_picker::{ModelPicker, runtime_name};
 use crate::dialog::{TextInput, apply_text_key};
 use crate::text_area::TextArea;
@@ -16,7 +16,9 @@ use crate::theme::Palette;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use cycle::{next_size, next_test_mode};
 use proto::models::ModelRef;
-use proto::{Effort, PlanEdit, Route, RouteSpec, RunInfo, Size, TaskInfo, TaskState, TestMode};
+use proto::{
+    Effort, PlanEdit, Route, RouteSpec, RunInfo, Size, TaskInfo, TaskKind, TaskState, TestMode,
+};
 
 /// The most characters a text field takes, by typing or pasting: a 1 MB paste stops
 /// here rather than growing a request the daemon would carry into its plan.
@@ -65,6 +67,8 @@ struct TaskInfoValues {
     raw_reason: Option<String>,
     raw_brief: String,
     stage: u16,
+    /// Decision 10: the size picks the task's row (not a hub, research or review task).
+    sized_row: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -220,6 +224,7 @@ impl TaskEditForm {
                 raw_reason: task.test_mode_reason.clone(),
                 raw_brief: task.brief.clone(),
                 stage: task.stage,
+                sized_row: !task.hub && !matches!(task.kind, TaskKind::Research | TaskKind::Review),
             },
         }
     }
@@ -288,68 +293,6 @@ impl TaskEditForm {
         match self.focus {
             EditField::Reason => Some(&mut self.reason),
             _ => None,
-        }
-    }
-
-    /// The route's model, when the plan (or the picker) names both its runtime and its
-    /// model.
-    pub fn current_model(&self) -> Option<ModelRef> {
-        route_model(self.route.runtime, self.route.model.as_deref())
-    }
-
-    /// The model whose catalog efforts the effort row cycles: the route's, else (the
-    /// route names no model) the one the task resolves to, on its runtime.
-    pub fn effort_model(&self) -> Option<ModelRef> {
-        self.current_model().or_else(|| self.table_model())
-    }
-
-    /// The model the table runs the task on, while the task's resolution is the
-    /// table's: the route the form opened with named no model (review I3).
-    pub fn table_model(&self) -> Option<ModelRef> {
-        if let Some(row) = &self.row {
-            return route_model(Some(row.runtime), Some(&row.model));
-        }
-        let resolved = &self.resolved;
-        let runtime = self.route.runtime.unwrap_or(resolved.runtime);
-        (self.original.route_spec.model.is_none() && runtime == resolved.runtime)
-            .then(|| route_model(Some(runtime), Some(&resolved.model)))
-            .flatten()
-    }
-
-    /// `role table (<model> · <effort>)`: what the table runs, while the resolution is
-    /// the table's (the effort only when the opened route set none); else `role table`.
-    pub fn role_table_text(&self) -> String {
-        let Some(model) = self.table_model() else {
-            return ROLE_TABLE.to_string();
-        };
-        let label = self.role_label.clone().unwrap_or_else(|| {
-            let id = model.id.as_deref().map_or_else(|| "default".into(), clean);
-            format!("{} · {id}", runtime_name(model.runtime))
-        });
-        if let Some(row) = &self.row {
-            let effort = Some(row.effort.as_str()).filter(|e| !e.is_empty());
-            let effort = clean(effort.unwrap_or("default"));
-            return format!("{ROLE_TABLE} ({label} · {effort})");
-        }
-        let effort = &self.resolved.effort;
-        match &self.original.route_spec.effort {
-            None if effort.is_default() => format!("{ROLE_TABLE} ({label} · default)"),
-            None => format!("{ROLE_TABLE} ({label} · {})", clean(effort.as_str())),
-            Some(_) => format!("{ROLE_TABLE} ({label})"),
-        }
-    }
-
-    /// A named model's blank effort: the row's (`<effort> (role table)`) for the row's
-    /// own model, which the daemon runs at the row's effort, else `default`.
-    fn picked_default(&self) -> String {
-        match &self.row {
-            Some(row)
-                if self.current_model() == route_model(Some(row.runtime), Some(&row.model)) =>
-            {
-                let effort = Some(row.effort.as_str()).filter(|e| !e.is_empty());
-                format!("{} ({ROLE_TABLE})", clean(effort.unwrap_or("default")))
-            }
-            _ => "default".to_string(),
         }
     }
 
@@ -553,7 +496,7 @@ impl TaskEditForm {
     pub fn value_parts_in(&self, field: EditField, p: Palette) -> (String, Option<String>) {
         let fold = |text: &str| crate::theme::fold(text, p.ascii);
         let choice = |word: &str| crate::theme::choice(&fold(word), p);
-        let opened = self.route == self.original.route_spec;
+        let opened = self.route == self.original.route_spec && !self.size_moved_row();
         let muted = |resolved: String| Some(fold(&resolved)).filter(|r| opened && !r.is_empty());
         let resolved = &self.resolved;
         match field {
@@ -592,6 +535,9 @@ impl TaskEditForm {
 
 #[path = "run_edit_cycle.rs"]
 mod cycle;
+
+#[path = "run_edit_row.rs"]
+mod row;
 
 #[cfg(test)]
 #[path = "run_edit_tests.rs"]
