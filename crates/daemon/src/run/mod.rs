@@ -44,6 +44,7 @@ pub mod git;
 pub mod globs;
 pub mod history;
 pub mod history_io;
+pub mod ignored_route;
 pub mod journal;
 pub mod messages;
 pub mod model;

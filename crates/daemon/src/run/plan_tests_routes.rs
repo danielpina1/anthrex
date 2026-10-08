@@ -234,3 +234,35 @@ fn a_plan_files_route_is_ignored_and_noted() {
         run.log
     );
 }
+
+/// Fix round 1 (controller ruling): a plan file's route is ignored, so its values never
+/// refuse the plan, even ones no route could hold. `run edit --file`'s, a user's, are
+/// still read as before.
+#[test]
+fn a_plan_files_unknown_route_values_are_ignored_not_refused() {
+    let text = plan_with(
+        PROFILE,
+        &[task_toml(
+            "s",
+            "S",
+            r#"["crates/a/src/lib.rs"]"#,
+            "[task.route]\nruntime = \"openai\"\nstrength = \"ultra\"\neffort = \"xhigh\"",
+        )],
+    );
+    let plan = parse_plan_file(&text).unwrap_or_else(|e| panic!("{e}"));
+    let run = build_with_plan(plan);
+    assert_eq!(task(&run, "s").spec.route, proto::RouteSpec::default());
+    assert_eq!(
+        run.log.last().unwrap().text,
+        crate::run::orch::contract::ROUTE_IGNORED
+    );
+    // A plan whose route is valid reads as before (the route cleared at build).
+    let valid = text
+        .replace("\"openai\"", "\"codex\"")
+        .replace("\"ultra\"", "\"fast\"");
+    assert_eq!(parse_plan_file(&valid), parse_plan(&valid));
+    // A user's edit file is not lenient.
+    let edit =
+        "[[edit]]\nop = \"amend_task\"\ntask_id = \"s\"\n[edit.route]\nruntime = \"openai\"\n";
+    assert!(parse_edits(edit).is_err());
+}

@@ -338,6 +338,6 @@ fn a_paused_run_keeps_the_step_of_the_phase_it_paused_in() {
 /// `ORCHESTRATOR_CONTRACT`'s SHA-256 at 9.5's head (`f4df79c4`), whose text the design
 /// flow has not changed (`git diff f4df79c4 -- crates/daemon/src/run/orch/contract.rs`
 /// touches only `first_prompt`'s body, never the constant), with milestone 9.8's rules
-/// 4, 21 and 22 (task M9.8.9, decision 31; 9.5's was `e1cd7e40…54ed`).
+/// 4, 21, 22 and 28 (task M9.8.9, decision 31; 9.5's was `e1cd7e40…54ed`).
 const NINE_FIVE_CONTRACT_SHA256: &str =
-    "5eee57378ca588e1be040a63c84beb72ced582e737217afbd02d21ba9bfab5da";
+    "b888a5a58cc873836561d8cb69d763a5f57cae82c888d83c626e8e3fdf06ffaf";

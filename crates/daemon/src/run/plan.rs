@@ -116,6 +116,12 @@ pub fn parse_plan(text: &str) -> Result<Plan, String> {
     toml::from_str(text).map_err(|e| e.to_string())
 }
 
+/// Milestone 9.8 decision 31 (fix round 1): a plan file as `run start --plan` reads it.
+/// Its routes are ignored, so their values never refuse it (`ignored_route`).
+pub fn parse_plan_file(text: &str) -> Result<Plan, String> {
+    super::ignored_route::plan_file(text)
+}
+
 /// Parses an edit batch (`[[edit]]` tables, `proto::EditFile`).
 pub fn parse_edits(text: &str) -> Result<Vec<PlanEdit>, String> {
     toml::from_str::<EditFile>(text)

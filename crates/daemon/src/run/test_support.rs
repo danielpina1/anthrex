@@ -100,6 +100,13 @@ pub fn preflight() -> Preflight {
     }
 }
 
+/// The one task spec a `[[task]]` table parses to, as a plan file gives it.
+pub fn spec_of(table: &str) -> proto::PlanTask {
+    let mut plan = parse_plan(&plan_with(PROFILE, &[table.to_string()]))
+        .unwrap_or_else(|e| panic!("fixture task must parse: {e}"));
+    plan.tasks.pop().expect("one task")
+}
+
 pub fn build_full(
     text: &str,
     config: &config::Orchestrator,
@@ -150,9 +157,27 @@ fn build_frozen(
     config: &config::Orchestrator,
     pre: Preflight,
     tuning: super::refit::Tuned,
-    (models, models_log): (RunModels, Vec<String>),
+    models: (RunModels, Vec<String>),
 ) -> Result<Run, Vec<PlanError>> {
     let plan = parse_plan(text).unwrap_or_else(|e| panic!("fixture plan must parse: {e}"));
+    build_parsed(plan, config, pre, tuning, models)
+}
+
+/// A run of an already parsed `plan`, with the default config and its table.
+pub fn build_with_plan(plan: proto::Plan) -> Run {
+    let config = config::Orchestrator::default();
+    let models = (RunModels::resolve(&config.roles, None), Vec::new());
+    build_parsed(plan, &config, preflight(), Default::default(), models)
+        .unwrap_or_else(|e| panic!("expected a run, got errors: {}", show(&e)))
+}
+
+fn build_parsed(
+    plan: proto::Plan,
+    config: &config::Orchestrator,
+    pre: Preflight,
+    tuning: super::refit::Tuned,
+    (models, models_log): (RunModels, Vec<String>),
+) -> Result<Run, Vec<PlanError>> {
     build_run(
         plan,
         pre,
