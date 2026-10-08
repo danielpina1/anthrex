@@ -2005,3 +2005,7 @@ A Claude worker on Ubuntu 26.04 could not commit (reported with Claude Code 2.1.
 
 - **`get_context`'s tool description still says "the models you can route to".** `mcp/src/tools_orch.rs` (the `get_context` tool) and its fixture `mcp/src/fixtures/orch_tools.json` keep milestone 9's text, while contract rule 4 now says "the role table (which model each size runs on)" and `get_context` answers `roles` (decision 34). The brief's file list names only `route()`. Fix direction: reword the description to match rule 4, in the code, the fixture and `tools_orch_tests.rs::GET_CONTEXT`.
 - **`route_pick::context_routes` has no caller left.** `get_context` no longer reads `limits.route_lists`; the function stays with the rest of `route_pick.rs` until M9.8.13 deletes it.
+
+## From M9.8.12 (2026-10-08, saving the role table), for later
+
+- **A save writes the daemon's live table, not the file's (review M10).** A `[models.*]` row hand-edited in `config.toml` while the daemon runs is reverted by the next C-b S save, which sends the live table loaded at start (the limits always behaved so, decision 29). Fix: refuse when the file's owned values differ from the screen's `base` ("config.toml changed since the daemon read it; reopen C-b S").
