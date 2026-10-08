@@ -151,6 +151,12 @@ impl App {
             None => return Some(vec![]),
             Some(PendingWhat::SettingsGet) => false,
             Some(PendingWhat::SettingsPut) => true,
+            Some(PendingWhat::RepoModels { project, put }) => {
+                let (project, put) = (project.clone(), *put);
+                self.replies.take(Some(id));
+                self.settings_repo_reply(id, project, put, reply);
+                return Some(vec![]);
+            }
             Some(_) => return None,
         };
         // The open Settings screen shows its own save's outcome; no toast for it.

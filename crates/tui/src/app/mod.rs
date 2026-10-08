@@ -568,6 +568,8 @@ mod lifecycle;
 mod link;
 mod modal_keys;
 pub(crate) mod model_picker;
+mod models_keys;
+pub(crate) mod models_table;
 mod paste;
 pub(crate) mod plan_review;
 pub(crate) mod plan_summary;

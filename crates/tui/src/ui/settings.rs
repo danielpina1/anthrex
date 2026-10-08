@@ -6,16 +6,17 @@
 //! model name, note, path and daemon problem passes `safe_text` here or in the kit.
 //! Pure: `&App` in.
 
+use crate::app::model_picker::PickerEntry;
+use crate::app::models_table::{Scope, TableRow};
 use crate::app::replies::NOT_SENT;
 use crate::app::settings_screen::{
-    DISCARD_ASK, LINK_LOST, SAVED, SHIPPED_FIXED, SaveOutcome, SettingsPage, SettingsScreen,
-    SettingsSection, hard_stop_calls, hard_stop_minutes, strength_name,
+    DISCARD_ASK, LINK_LOST, SAVED, SaveOutcome, SettingsPage, SettingsScreen, SettingsSection,
+    hard_stop_calls, hard_stop_minutes,
 };
 use crate::app::{App, region::KeyRegion};
 use crate::safe_text::one_line;
 use crate::theme::{Glyph, Palette, Role, dot, dot_sep, ellipsis, glyph, role};
 use crate::ui::kit::{self, Hint, cut, wrap_words};
-use proto::Runtime;
 use proto::settings::{
     BUDGET_MIN, MAX_BOUNCES_RANGE, MAX_READERS_RANGE, MAX_WRITERS_RANGE, STALL_AFTER_SECS_RANGE,
     key,
@@ -29,9 +30,6 @@ use unicode_width::UnicodeWidthStr;
 
 /// Interfaces "Settings default mark".
 const DEFAULT_MARK: &str = "(default)";
-/// Ruling RH-5: beside the orchestrator default when `[orchestrator.routes.orchestrator]`
-/// is set.
-const OVERRIDDEN: &str = "overridden by [orchestrator.routes.orchestrator]";
 
 fn hint(key: &str, word: &str, priority: u8) -> Hint {
     Hint {
@@ -51,19 +49,23 @@ pub(crate) fn hints(s: &SettingsScreen, ascii: bool) -> Vec<Hint> {
         return vec![hint("esc", "back", 9)];
     }
     let arrows = if ascii { "left/right" } else { "←/→" };
-    let mut out = match s.section.runtime() {
-        Some(runtime) => {
-            let rows = s.rows(runtime);
-            match rows.get(s.selected) {
-                None => vec![hint("⏎", "add a model", 7)],
-                Some(row) if row.custom => {
-                    vec![hint("space", "toggle", 7), hint(arrows, "strength", 6)]
-                }
-                Some(_) => vec![hint("space", "toggle", 7)],
-            }
+    let mut out = match s.section {
+        SettingsSection::Models if s.models.picker.is_some() => {
+            return vec![
+                hint("⏎", "select", 9),
+                hint("r", "refresh", 7),
+                hint("j/k", "move", 6),
+                hint("esc", "cancel", 9),
+            ];
         }
-        None if s.section == SettingsSection::Orchestrator => vec![hint(arrows, "change", 7)],
-        None => vec![hint("0-9", "edit", 7)],
+        SettingsSection::Models => vec![
+            hint("⏎", "choose model", 7),
+            hint("e", "effort", 6),
+            hint("f", "if-it-struggles", 3),
+            hint("x", "reset", 3),
+            hint(arrows, "scope", 2),
+        ],
+        SettingsSection::Limits => vec![hint("0-9", "edit", 7)],
     };
     out.extend([
         hint("w", "save", 8),
@@ -102,94 +104,102 @@ fn sel(on: bool, keys: bool, p: Palette) -> Span<'static> {
     Span::styled(text, role(kit::bar_role(keys), p))
 }
 
-fn default_span(on: bool, p: Palette) -> Option<Span<'static>> {
-    on.then(|| Span::styled(format!("  {DEFAULT_MARK}"), role(Role::Muted, p)))
+/// `text` padded to `width`, and at least one space after it.
+fn cell(text: &str, width: usize) -> String {
+    pad(text, width.max(text.width() + 1))
 }
 
-/// A model table: its head, one row per model, then `custom…`; and the selected line.
-fn model_lines(
+/// `text` with the table's glyphs in ASCII when the palette asks for it.
+fn glyphs(text: &str, p: Palette) -> String {
+    if !p.ascii {
+        return text.to_string();
+    }
+    let mut out = text.replace('·', dot(p)).replace('…', "...");
+    for (from, to) in [('—', "-"), ('▸', ">"), ('▾', "v"), ('●', "*"), ('⚠', "!")] {
+        out = out.replace(from, to);
+    }
+    out
+}
+
+/// Milestone 9.8 (interim until M9.8.11 draws it as the spec): the models table, one
+/// line per row (marker, role, model, effort, fallback), its warnings, or, while the
+/// picker is open, its entries. Every text here was cleaned by the state.
+fn models_lines(
     s: &SettingsScreen,
-    runtime: Runtime,
-    width: usize,
+    app: &App,
     keys: bool,
     p: Palette,
 ) -> (Vec<Line<'static>>, usize) {
-    let bold = Style::default().add_modifier(Modifier::BOLD);
-    let mut head = vec![Span::styled("enabled models", bold)];
-    head.extend(default_span(s.is_default(key::MODELS), p));
-    let mut out = vec![Line::from(head)];
-    let rows = s.rows(runtime);
-    let label = |m: &str, l: &str| {
-        if m.is_empty() && runtime == Runtime::Codex {
-            "Codex default".to_string()
-        } else {
-            one_line(l)
-        }
-    };
-    let name_w = rows
-        .iter()
-        .map(|r| label(&r.entry.model, &r.label).width())
-        .max()
-        .unwrap_or(0)
-        .max(14)
-        .min(width.saturating_sub(24).max(8));
-    for (i, row) in rows.iter().enumerate() {
-        let name = cut(&label(&row.entry.model, &row.label), name_w, ellipsis(p));
-        let strength = strength_name(row.entry.strength);
-        let mut spans = vec![
-            sel(i == s.selected, keys, p),
-            Span::raw(if row.enabled { "[x] " } else { "[ ] " }),
-            Span::raw(pad(&name, name_w + 2)),
-        ];
-        if row.custom {
-            spans.push(Span::raw(kit::choice_in(strength, p)));
-            spans.push(Span::styled("  custom", role(Role::Muted, p)));
-        } else {
-            spans.push(Span::raw(strength.to_string()));
-        }
-        if !row.entry.note.is_empty() {
-            let used: usize = spans.iter().map(|s| s.content.width()).sum();
-            let room = width.saturating_sub(used + 2);
-            let note = cut(&one_line(&row.entry.note), room, ellipsis(p));
-            spans.push(Span::styled(format!("  {note}"), role(Role::Muted, p)));
-        }
-        out.push(Line::from(spans));
+    let m = &s.models;
+    if let Some(picker) = &m.picker {
+        let lines = (picker.entries.iter().enumerate())
+            .map(|(i, e)| {
+                let text = match e {
+                    PickerEntry::Header { text, .. } => text.clone(),
+                    PickerEntry::Model {
+                        label,
+                        description,
+                        efforts,
+                        current,
+                        ..
+                    } => format!(
+                        "{} {} {description}  {efforts}",
+                        if *current { "●" } else { " " },
+                        pad(label, 17)
+                    ),
+                    PickerEntry::NoFallback => "  none".to_string(),
+                    PickerEntry::RoleTable(text) => format!("  {text}"),
+                    PickerEntry::Custom => format!("  custom{}", ellipsis(p)),
+                };
+                Line::from(vec![
+                    sel(i == picker.selected, keys, p),
+                    Span::raw(glyphs(&text, p)),
+                ])
+            })
+            .collect();
+        return (lines, picker.selected);
     }
-    out.push(Line::from(vec![
-        sel(s.selected == rows.len(), keys, p),
-        Span::raw(format!("custom{}", ellipsis(p))),
-    ]));
-    (out, s.selected + 1)
-}
-
-/// `runtime ‹ configured ›` and `model ‹ default ›`.
-fn orchestrator_lines(s: &SettingsScreen, keys: bool, p: Palette) -> (Vec<Line<'static>>, usize) {
-    let runtime = s.runtime.map_or("configured", |r| r.label());
-    let model = if s.model.is_empty() {
-        "default".to_string()
-    } else {
-        one_line(&s.model)
+    let scope = match m.scope {
+        Scope::Everywhere => "everywhere",
+        Scope::Repo => "this repo",
     };
-    let row = |i: usize, label: &str, value: &str, default: bool| {
-        let mut spans = vec![
-            sel(s.selected == i, keys, p),
-            Span::styled(pad(label, 9), role(Role::Muted, p)),
-            Span::raw(kit::choice_in(value, p)),
-        ];
-        spans.extend(default_span(default, p));
-        Line::from(spans)
-    };
-    let mut lines = vec![
-        row(0, "runtime", runtime, s.is_default(key::AGENT_RUNTIME)),
-        row(1, "model", &model, s.is_default(key::AGENT_MODEL)),
-    ];
-    // Ruling RH-5: a model list wins over this default; said under it, in the value
-    // column (beside `runtime ‹ configured ›  (default)` it would be cut at 80 columns).
-    if s.orchestrator_overridden() {
-        let text = format!("{}{OVERRIDDEN}", " ".repeat(2 + 9));
-        lines.push(Line::styled(text, role(Role::Muted, p)));
+    let mut out = vec![Line::styled(
+        format!("scope {}", kit::choice_in(scope, p)),
+        role(Role::Muted, p),
+    )];
+    let rows: Vec<TableRow> = m.rows(&app.catalogs);
+    for (i, r) in rows.iter().enumerate() {
+        let style = if r.inherited {
+            role(Role::Muted, p)
+        } else {
+            Style::default()
+        };
+        let mark = if r.overridden { "● " } else { "" };
+        out.push(Line::from(vec![
+            sel(i == m.selected, keys, p),
+            Span::styled(
+                glyphs(
+                    &format!(
+                        "{mark}{}{}{}{}",
+                        cell(&r.role, 22),
+                        cell(&r.model, 24),
+                        cell(&r.effort, 9),
+                        r.fallback
+                    ),
+                    p,
+                ),
+                style,
+            ),
+        ]));
     }
-    (lines, s.selected)
+    for r in &rows {
+        for w in &r.warnings {
+            let text = format!("{}: {}", r.role.trim(), w.trim_start_matches("⚠ "));
+            let text = glyphs(&format!("⚠ {text}"), p);
+            out.push(Line::styled(text, role(Role::Attention, p)));
+        }
+    }
+    (out, m.selected + 1)
 }
 
 /// A limit's allowed range, from the ranges `config` itself reads.
@@ -300,8 +310,8 @@ fn limit_lines(s: &SettingsScreen, keys: bool, p: Palette) -> (Vec<Line<'static>
 
 /// The section's lines and the selected line's index; `loading…` before the first doc.
 fn section_lines(
+    app: &App,
     s: &SettingsScreen,
-    width: u16,
     keys: bool,
     p: Palette,
 ) -> (Vec<Line<'static>>, usize) {
@@ -309,10 +319,9 @@ fn section_lines(
         let text = format!("loading{}", ellipsis(p));
         return (vec![Line::styled(text, role(Role::Muted, p))], 0);
     }
-    match s.section.runtime() {
-        Some(runtime) => model_lines(s, runtime, usize::from(width), keys, p),
-        None if s.section == SettingsSection::Orchestrator => orchestrator_lines(s, keys, p),
-        None => limit_lines(s, keys, p),
+    match s.section {
+        SettingsSection::Models => models_lines(s, app, keys, p),
+        SettingsSection::Limits => limit_lines(s, keys, p),
     }
 }
 
@@ -390,7 +399,7 @@ pub(crate) fn body_lines(app: &App, s: &SettingsScreen, width: u16) -> Vec<Line<
     let p = app.palette();
     let mut out = vec![section_row(s, p)];
     let keys = app.key_region() == KeyRegion::Screen;
-    out.extend(section_lines(s, width, keys, p).0);
+    out.extend(section_lines(app, s, keys, p).0);
     out.extend(footer(app, s, width, p));
     out
 }
@@ -416,7 +425,7 @@ pub fn render(frame: &mut Frame, app: &App, s: &SettingsScreen, area: Rect) {
     let height = usize::from(inner.height);
     // The footer may take up to half the screen; the section keeps the rest.
     let foot = capped(footer(app, s, inner.width, p), height / 2, p);
-    let (lines, at) = section_lines(s, inner.width, bars, p);
+    let (lines, at) = section_lines(app, s, bars, p);
     let rows = height.saturating_sub(2 + foot.len());
     let mut all = vec![section_row(s, p), Line::default()];
     all.extend(kit::window(lines, at, rows, p));
@@ -429,7 +438,7 @@ pub fn render(frame: &mut Frame, app: &App, s: &SettingsScreen, area: Rect) {
     all.extend(foot);
     frame.render_widget(Paragraph::new(all), inner);
     if let Some(page) = &s.page {
-        render_page(frame, page, area, bars, p);
+        render_page(frame, page, area, p);
     }
 }
 
@@ -437,7 +446,6 @@ pub fn render(frame: &mut Frame, app: &App, s: &SettingsScreen, area: Rect) {
 fn page_parts(
     page: &SettingsPage,
     width: u16,
-    keys: bool,
     p: Palette,
 ) -> (String, bool, Vec<Line<'static>>, Line<'static>) {
     let hints = |list: &[(&str, &str)]| {
@@ -460,55 +468,21 @@ fn page_parts(
             );
             ("discard changes".into(), true, body, h)
         }
-        SettingsPage::Custom(c) => {
-            let label = |text: &str, on: bool| {
-                vec![
-                    sel(on, keys, p),
-                    Span::styled(pad(text, 10), role(Role::Muted, p)),
-                ]
-            };
-            let inner = width.saturating_sub(12);
-            let mut line = kit::text_area_focus(&c.model, 1, inner, !c.on_strength, p).remove(0);
-            let mut spans = label("model", !c.on_strength);
-            spans.append(&mut line.spans);
-            let mut strength = label("strength", c.on_strength);
-            strength.push(Span::raw(kit::choice_in(strength_name(c.strength), p)));
-            let mut body = vec![Line::from(spans), Line::from(strength)];
-            if c.shipped() {
-                let text = SHIPPED_FIXED.replace('·', dot(p));
-                body.push(Line::styled(text, role(Role::Muted, p)));
-            }
-            if let Some(error) = &c.error {
-                body.push(Line::styled(one_line(error), role(Role::Failed, p)));
-            }
-            let h = hints(&[("⏎", "add"), ("tab", "next"), ("esc", "cancel")]);
-            (
-                format!("custom {} model", c.runtime.label()),
-                false,
-                body,
-                h,
-            )
-        }
     }
 }
 
 /// A page's lines (its body, a blank, its hints), for `width` interior columns.
 #[cfg(test)]
 pub(crate) fn page_lines(app: &App, page: &SettingsPage, width: u16) -> Vec<Line<'static>> {
-    let (_, _, mut body, hints) = page_parts(
-        page,
-        width,
-        app.key_region() == KeyRegion::Screen,
-        app.palette(),
-    );
+    let (_, _, mut body, hints) = page_parts(page, width, app.palette());
     body.push(Line::default());
     body.push(hints);
     body
 }
 
-fn render_page(frame: &mut Frame, page: &SettingsPage, area: Rect, keys: bool, p: Palette) {
+fn render_page(frame: &mut Frame, page: &SettingsPage, area: Rect, p: Palette) {
     let width = area.width.min(kit::DIALOG_MAX).saturating_sub(4);
-    let (title, destructive, body, hints) = page_parts(page, width, keys, p);
+    let (title, destructive, body, hints) = page_parts(page, width, p);
     let room = usize::from(area.height.saturating_sub(4));
     let mut lines: Vec<Line<'static>> = body.into_iter().take(room).collect();
     lines.push(Line::default());

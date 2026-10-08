@@ -1,15 +1,19 @@
 //! The Settings screen's requests and replies (decision 36), split from
 //! `settings_screen.rs` by responsibility (`AGENTS.md` hard rule 8): opening it from the
 //! cache, `w`'s tagged `Settings(Put)`, and what the screen does with its own save's
-//! reply, a new cache, an expiry and a lost link. While its `Put` is awaited the screen
+//! reply, a new cache, an expiry and a lost link; milestone 9.8: the catalogs asked for
+//! on opening, and the `this repo` scope's `RepoModels` and `PutRepoModels` with their
+//! replies (decision 36). While its `Put` is awaited the screen
 //! owns the save's feedback: `route_settings_reply` and `expire_replies` toast only for
 //! a save that is not the open screen's. Pure: every request leaves as an `Effect`.
 
 use super::{NO_CHANGES, SaveOutcome, SettingsScreen};
+use crate::app::models_table::{RepoTable, Scope};
 use crate::app::replies::PendingWhat;
 use crate::app::screens::Screen;
 use crate::app::{App, Effect, ToastLevel};
-use proto::{RunReply, RunRequest, SettingsReply};
+use proto::{ClientMsg, RunReply, RunRequest, SettingsReply, SettingsRequest};
+use std::path::PathBuf;
 
 impl App {
     /// `C-b S` (decision 36): the screen from the cache, or a loading screen and one
@@ -23,7 +27,7 @@ impl App {
         if matches!(self.screen, Some(Screen::Settings(_))) {
             return vec![];
         }
-        let (screen, effects) = match &self.settings_cache {
+        let (mut screen, mut effects) = match &self.settings_cache {
             Some(cache) => {
                 let mut s = SettingsScreen::from_doc(&cache.doc, &cache.origin);
                 s.path = cache.path.display().to_string();
@@ -34,6 +38,14 @@ impl App {
             }
             None => (SettingsScreen::loading(), vec![self.settings_fetch()]),
         };
+        screen.models.project = self.goal_project();
+        // Milestone 9.8 decision 37: the picker's lists, once, while there are none.
+        if self.catalogs.list.is_empty() {
+            effects.push(Effect::Send(ClientMsg::ListModels {
+                runtime: None,
+                refresh: false,
+            }));
+        }
         self.set_screen(Some(Screen::Settings(Box::new(screen))));
         effects
             .into_iter()
@@ -87,6 +99,123 @@ impl App {
         matches!(&self.screen, Some(Screen::Settings(s)) if s.tuning_request == Some(id))
     }
 
+    /// Decision 36: `this repo` entered for the first time: one tagged `RepoModels` for
+    /// the screen's project, unless one is on its way.
+    pub(in crate::app) fn settings_repo_ask(&mut self) -> Vec<Effect> {
+        let Some(project) = self
+            .settings_screen_mut()
+            .and_then(|s| s.models.project.clone())
+        else {
+            return vec![];
+        };
+        let what = PendingWhat::RepoModels {
+            project: project.clone(),
+            put: false,
+        };
+        if self.replies.waits_for(&what) {
+            return vec![];
+        }
+        let request = RunRequest::Settings(SettingsRequest::RepoModels { project });
+        let timeout = crate::app::replies::reply_timeout(&request);
+        let (id, effect) = self.tagged_request(request);
+        self.replies.insert(id, what, timeout);
+        vec![effect]
+    }
+
+    /// `w` in `this repo`: the repository's table as a tagged `PutRepoModels`, unless it
+    /// is unchanged (`no changes to save`), not read yet, already being saved, or the
+    /// link is down. The daemon writes the file (M9.8.12).
+    pub(in crate::app) fn settings_save_repo(&mut self) -> Vec<Effect> {
+        let connected = self.connected();
+        let Some(s) = self.settings_screen_mut() else {
+            return vec![];
+        };
+        let (Some(project), Some(repo)) = (s.models.project.clone(), &s.models.repo) else {
+            return vec![];
+        };
+        if repo.put_id.is_some() {
+            return vec![];
+        }
+        if repo.table == repo.base {
+            self.toast_at(ToastLevel::Info, NO_CHANGES);
+            return vec![];
+        }
+        if !connected {
+            self.toast_at(ToastLevel::Warn, "not connected");
+            return vec![];
+        }
+        let table = repo.table.clone();
+        let request = RunRequest::Settings(SettingsRequest::PutRepoModels {
+            project: project.clone(),
+            table,
+        });
+        let timeout = crate::app::replies::reply_timeout(&request);
+        let (id, effect) = self.tagged_request(request);
+        self.replies
+            .insert(id, PendingWhat::RepoModels { project, put: true }, timeout);
+        if let Some(s) = self.settings_screen_mut() {
+            if let Some(repo) = &mut s.models.repo {
+                repo.put_id = Some(id);
+            }
+            s.outcome = None;
+        }
+        vec![effect]
+    }
+
+    /// `route_settings_reply`'s share for the repository's table (request `id`, a `put`
+    /// or a read of `project`): the open screen takes it when it is still on that
+    /// project; a refusal of a read toasts and leaves `this repo`, a refused save is
+    /// listed on the screen.
+    pub(in crate::app) fn settings_repo_reply(
+        &mut self,
+        id: u64,
+        project: PathBuf,
+        put: bool,
+        reply: &SettingsReply,
+    ) {
+        let mut toast = None;
+        if let Some(s) = self
+            .settings_screen_mut()
+            .filter(|s| s.models.project.as_ref() == Some(&project))
+        {
+            match reply {
+                SettingsReply::RepoModels { table, path, .. } if !put => {
+                    if s.models.repo.is_none() {
+                        s.models.repo = Some(RepoTable {
+                            table: table.clone(),
+                            base: table.clone(),
+                            path: path.clone(),
+                            put_id: None,
+                        });
+                    }
+                }
+                SettingsReply::RepoSaved { table, .. } if put => {
+                    if let Some(repo) = s.models.repo.as_mut().filter(|r| r.put_id == Some(id)) {
+                        repo.put_id = None;
+                        repo.base = table.clone();
+                        s.outcome = Some(SaveOutcome::Saved);
+                    }
+                }
+                SettingsReply::Refused { problems } if put => {
+                    if let Some(repo) = s.models.repo.as_mut() {
+                        repo.put_id = None;
+                    }
+                    s.outcome = Some(SaveOutcome::Refused(problems.clone()));
+                }
+                SettingsReply::Refused { problems } => {
+                    if s.models.repo.is_none() {
+                        s.models.scope = Scope::Everywhere;
+                    }
+                    toast = Some(problems.join("; "));
+                }
+                _ => {}
+            }
+        }
+        if let Some(text) = toast {
+            self.toast_at(ToastLevel::Error, text);
+        }
+    }
+
     pub(crate) fn settings_screen_mut(&mut self) -> Option<&mut SettingsScreen> {
         match &mut self.screen {
             Some(Screen::Settings(s)) => Some(s),
@@ -123,7 +252,7 @@ impl App {
         let Some(s) = self.settings_screen_mut().filter(|s| s.loaded) else {
             return vec![];
         };
-        if !s.dirty() {
+        if !s.doc_dirty() {
             self.toast_at(ToastLevel::Info, NO_CHANGES);
             return vec![];
         }
@@ -188,7 +317,6 @@ impl App {
                     // cleaned as the next save will store them.
                     s.base = doc.clone();
                     s.origin = origin.clone();
-                    drop_hidden(s);
                 }
                 s.outcome = Some(SaveOutcome::Saved);
             }
@@ -249,20 +377,4 @@ impl App {
         }
         vec![]
     }
-}
-
-/// `config::settings::cleaned`'s rule on the screen's own fields: every hidden format
-/// character dropped from each model's name and note (and a custom row's label, its
-/// name) and from the orchestrator default's model. Everything else, a disabled custom
-/// row and the digits typed in a limit included, is kept as it is.
-fn drop_hidden(s: &mut SettingsScreen) {
-    use config::settings::{clean_entry, strip_hidden};
-    for row in s.claude.iter_mut().chain(s.codex.iter_mut()) {
-        clean_entry(&mut row.entry);
-        if row.custom {
-            row.label = strip_hidden(&row.label);
-        }
-    }
-    // The orchestrator default's model, `cleaned`'s `orchestrator.model`.
-    s.model = strip_hidden(&s.model);
 }

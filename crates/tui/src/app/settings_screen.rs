@@ -1,21 +1,18 @@
 //! Milestone 9.0.6 decision 36: the Settings screen's state, its requests and replies.
 //! `C-b S` opens it from `App.settings_cache` (one `Settings(Get)` only when there is no
-//! cache yet). Its sections are `claude`, `codex` (the shipped models, then the doc's
-//! other models of that runtime, then `custom…`), `orchestrator` (the default runtime
-//! and model, over the enabled models) and `limits`. Every rule is the daemon's own:
+//! cache yet). Its sections are `models` (milestone 9.8 decision 35: the role table,
+//! `models_table.rs`, and its picker, `model_picker.rs`) and `limits`. Every rule is the
+//! daemon's own:
 //! `config::settings::validate` and `warnings` decide what blocks `w` and what only
 //! warns; this file never re-implements a range. `w` sends one tagged `Settings(Put)`
 //! (`App::settings_put`); its reply comes back by `request_id` through
 //! `app/screens.rs::route_settings_reply`. Keys are `settings_keys.rs`; drawing is
 //! `ui/settings.rs`. Pure: every request leaves as an `Effect`.
 
-use crate::text_area::TextArea;
-use config::settings::{SHIPPED_CLAUDE, SHIPPED_CODEX, ShippedModel, validate, warnings};
+use super::models_table::ModelsTable;
+use config::settings::{validate, warnings};
 use proto::settings::key;
-use proto::{
-    BudgetLimit, ModelEntry, OrchestratorDefault, Origin, Runtime, SettingsDoc, SettingsLimits,
-    Strength, TuningReport,
-};
+use proto::{BudgetLimit, OrchestratorDefault, Origin, SettingsDoc, SettingsLimits, TuningReport};
 use std::collections::BTreeMap;
 
 /// Interfaces "Exact user-visible text": a `Saved` reply.
@@ -28,56 +25,25 @@ pub const LEAVE_SETTINGS_FIRST: &str = "leave the settings first (esc)";
 pub const NO_CHANGES: &str = "no changes to save";
 /// The screen's `Put` lost its link before any reply.
 pub const LINK_LOST: &str = "not saved: link lost";
-/// The custom dialog, when the typed name is a shipped model of its runtime.
-pub const SHIPPED_FIXED: &str = "shipped model · strength is fixed";
 /// Another screen asked for while this one holds unsaved changes.
 pub const UNSAVED_FIRST: &str = "unsaved settings: w saves, esc discards";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsSection {
-    Claude,
-    Codex,
-    Orchestrator,
+    Models,
     Limits,
 }
 
 impl SettingsSection {
-    pub const ALL: [SettingsSection; 4] = [
-        SettingsSection::Claude,
-        SettingsSection::Codex,
-        SettingsSection::Orchestrator,
-        SettingsSection::Limits,
-    ];
+    pub const ALL: [SettingsSection; 2] = [SettingsSection::Models, SettingsSection::Limits];
 
     /// Interfaces "Settings sections".
     pub fn name(self) -> &'static str {
         match self {
-            SettingsSection::Claude => "claude",
-            SettingsSection::Codex => "codex",
-            SettingsSection::Orchestrator => "orchestrator",
+            SettingsSection::Models => "models",
             SettingsSection::Limits => "limits",
         }
     }
-
-    /// The model table's runtime.
-    pub fn runtime(self) -> Option<Runtime> {
-        match self {
-            SettingsSection::Claude => Some(Runtime::Claude),
-            SettingsSection::Codex => Some(Runtime::Codex),
-            _ => None,
-        }
-    }
-}
-
-/// One row of a model table: a shipped model (enabled when the doc has it) or one of the
-/// doc's other models of that runtime (`custom`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ModelRow {
-    pub entry: ModelEntry,
-    /// What the row shows: the shipped label, or the custom model's name.
-    pub label: String,
-    pub enabled: bool,
-    pub custom: bool,
 }
 
 /// One limit: its key path (`proto::settings::key`), its label and the digits typed.
@@ -102,34 +68,9 @@ pub const LIMITS: [(&str, &str); 10] = [
     (key::MAX_BOUNCES, "max bounces"),
 ];
 
-/// The two-field dialog `custom…` opens.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CustomModel {
-    pub runtime: Runtime,
-    pub model: TextArea,
-    pub strength: Strength,
-    /// Focus is on the strength field.
-    pub on_strength: bool,
-    pub error: Option<String>,
-}
-
-impl CustomModel {
-    /// The typed name is one of the runtime's shipped models: its row is enabled with
-    /// the shipped strength (decision 36), so the dialog says so.
-    pub fn shipped(&self) -> bool {
-        let name = crate::safe_text::one_line(self.model.text());
-        let shipped: &[ShippedModel] = match self.runtime {
-            Runtime::Codex => &SHIPPED_CODEX,
-            _ => &SHIPPED_CLAUDE,
-        };
-        shipped.iter().any(|m| m.model == name.trim())
-    }
-}
-
 /// A dialog over the screen.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SettingsPage {
-    Custom(CustomModel),
     /// `Esc` with unsaved changes: `discard unsaved settings? y`.
     Discard,
 }
@@ -150,13 +91,10 @@ pub enum SaveOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsScreen {
     pub section: SettingsSection,
-    pub claude: Vec<ModelRow>,
-    pub codex: Vec<ModelRow>,
-    /// The orchestrator default: `None` is `configured`; `""` is `default`.
-    pub runtime: Option<Runtime>,
-    pub model: String,
+    /// Milestone 9.8: the role table, its scopes and its picker.
+    pub models: ModelsTable,
     pub limits: Vec<LimitField>,
-    /// The selected row of the section (a model table's `custom…` is its last row).
+    /// The selected limit (the models table keeps its own selection).
     pub selected: usize,
     /// `false` until the first `Current` (no cache when it opened).
     pub loaded: bool,
@@ -177,40 +115,6 @@ pub struct SettingsScreen {
     /// orchestrator default; none before it, or with no project).
     pub tuning_request: Option<u64>,
     pub tuning: Option<Box<TuningReport>>,
-}
-
-fn row_of(s: &ShippedModel, doc: &SettingsDoc) -> ModelRow {
-    let found = doc
-        .models
-        .iter()
-        .find(|m| m.runtime == s.runtime && m.model == s.model);
-    ModelRow {
-        entry: found.cloned().unwrap_or(ModelEntry {
-            runtime: s.runtime,
-            model: s.model.to_string(),
-            strength: s.strength,
-            note: String::new(),
-        }),
-        label: s.label.to_string(),
-        enabled: found.is_some(),
-        custom: false,
-    }
-}
-
-/// The table of `runtime`: every shipped model, then the doc's other models of it.
-fn table(shipped: &[ShippedModel], runtime: Runtime, doc: &SettingsDoc) -> Vec<ModelRow> {
-    let mut rows: Vec<ModelRow> = shipped.iter().map(|s| row_of(s, doc)).collect();
-    for m in doc.models.iter().filter(|m| m.runtime == runtime) {
-        if !rows.iter().any(|r| r.entry.model == m.model) {
-            rows.push(ModelRow {
-                entry: m.clone(),
-                label: m.model.clone(),
-                enabled: true,
-                custom: true,
-            });
-        }
-    }
-    rows
 }
 
 /// A limit's value in `l`.
@@ -268,26 +172,6 @@ pub fn hard_stop_minutes(n: u64) -> String {
     }
 }
 
-/// The strength after (or before) `s`, wrapping.
-pub(crate) fn next_strength(s: Strength, forward: bool) -> Strength {
-    const ORDER: [Strength; 3] = [Strength::Fast, Strength::Standard, Strength::Frontier];
-    let at = ORDER.iter().position(|o| *o == s).unwrap_or(0);
-    let next = if forward {
-        at + 1
-    } else {
-        at + ORDER.len() - 1
-    };
-    ORDER[next % ORDER.len()]
-}
-
-pub fn strength_name(s: Strength) -> &'static str {
-    match s {
-        Strength::Fast => "fast",
-        Strength::Standard => "standard",
-        Strength::Frontier => "frontier",
-    }
-}
-
 impl SettingsScreen {
     /// The screen before any `Current` has come: nothing to edit yet.
     pub fn loading() -> Self {
@@ -314,11 +198,8 @@ impl SettingsScreen {
             roles: Default::default(),
         };
         let mut s = Self {
-            section: SettingsSection::Claude,
-            claude: vec![],
-            codex: vec![],
-            runtime: None,
-            model: String::new(),
+            section: SettingsSection::Models,
+            models: ModelsTable::default(),
             limits: vec![],
             selected: 0,
             loaded: false,
@@ -344,12 +225,10 @@ impl SettingsScreen {
         s
     }
 
-    /// Replaces every value with `doc`'s, keeping the section and the selection.
+    /// Replaces every value with `doc`'s, keeping the section, the selection, the
+    /// scope and the repository's table.
     pub fn load(&mut self, doc: &SettingsDoc, origin: &BTreeMap<String, Origin>) {
-        self.claude = table(&SHIPPED_CLAUDE, Runtime::Claude, doc);
-        self.codex = table(&SHIPPED_CODEX, Runtime::Codex, doc);
-        self.runtime = doc.orchestrator.runtime;
-        self.model = doc.orchestrator.model.clone();
+        self.models.global = doc.roles.clone();
         self.limits = LIMITS
             .iter()
             .map(|(key, label)| LimitField {
@@ -364,69 +243,27 @@ impl SettingsScreen {
         self.selected = self.selected.min(self.last_row());
     }
 
-    pub fn rows(&self, runtime: Runtime) -> &[ModelRow] {
-        match runtime {
-            Runtime::Codex => &self.codex,
-            _ => &self.claude,
-        }
-    }
-
-    pub(crate) fn rows_mut(&mut self, runtime: Runtime) -> &mut Vec<ModelRow> {
-        match runtime {
-            Runtime::Codex => &mut self.codex,
-            _ => &mut self.claude,
-        }
-    }
-
-    /// The section's last selectable row.
+    /// The limits' last row.
     pub fn last_row(&self) -> usize {
-        match self.section.runtime() {
-            Some(r) => self.rows(r).len(),
-            None if self.section == SettingsSection::Orchestrator => 1,
-            None => self.limits.len().saturating_sub(1),
-        }
+        self.limits.len().saturating_sub(1)
     }
 
-    /// The document the screen holds, valid or not. The roster keeps the order the
-    /// screen opened on; a model enabled since follows, Claude's table first.
+    /// The document the screen holds, valid or not. Preflight F18: until M9.8.12 the
+    /// roster and the orchestrator default go back as they were read, so a save in
+    /// between cannot wipe them; the role table is the `everywhere` scope's.
     pub fn built(&self) -> SettingsDoc {
-        let enabled: Vec<&ModelRow> = self
-            .claude
-            .iter()
-            .chain(&self.codex)
-            .filter(|r| r.enabled)
-            .collect();
-        let same =
-            |r: &ModelRow, m: &ModelEntry| r.entry.runtime == m.runtime && r.entry.model == m.model;
-        let mut models: Vec<ModelEntry> = Vec::new();
-        for m in &self.base.models {
-            if let Some(r) = enabled.iter().find(|r| same(r, m))
-                && !models.iter().any(|e| same(r, e))
-            {
-                models.push(r.entry.clone());
-            }
-        }
-        for r in enabled {
-            if !models.iter().any(|e| same(r, e)) {
-                models.push(r.entry.clone());
-            }
-        }
         let mut limits = self.base.limits.clone();
         for f in &self.limits {
             // Blank reads 0, which every range refuses with its own message.
             set_limit(&mut limits, f.key, f.text.parse().unwrap_or(0));
         }
         SettingsDoc {
-            models,
-            orchestrator: OrchestratorDefault {
-                runtime: self.runtime,
-                model: self.model.clone(),
-            },
+            models: self.base.models.clone(),
+            orchestrator: self.base.orchestrator.clone(),
             limits,
             // Ruling T18-2: read-only here; the screen carries what the daemon said.
             design_default: self.base.design_default,
-            // M9.8.10 edits the table here; until then a save sends back what was read.
-            roles: self.base.roles.clone(),
+            roles: self.models.global.clone(),
         }
     }
 
@@ -459,24 +296,16 @@ impl SettingsScreen {
         }
     }
 
-    /// Whether anything differs from the document the screen opened on.
-    pub fn dirty(&self) -> bool {
+    /// Whether the global document differs from the one the screen opened on: what
+    /// `w` in `everywhere` (or on `limits`) would save.
+    pub fn doc_dirty(&self) -> bool {
         self.loaded && self.built() != self.base
     }
 
-    /// The orchestrator model picker's options: `""` (`default`), then the enabled
-    /// models of the chosen runtime; with runtime `configured`, `default` only.
-    pub fn model_options(&self) -> Vec<String> {
-        let mut out = vec![String::new()];
-        if let Some(runtime) = self.runtime {
-            out.extend(
-                self.rows(runtime)
-                    .iter()
-                    .filter(|r| r.enabled && !r.entry.model.is_empty())
-                    .map(|r| r.entry.model.clone()),
-            );
-        }
-        out
+    /// Whether anything differs from what the daemon last said: the document or the
+    /// repository's table (`esc` asks before discarding either).
+    pub fn dirty(&self) -> bool {
+        self.doc_dirty() || (self.loaded && self.models.repo_dirty())
     }
 
     /// Decision 26: `key`'s value comes from the built-in defaults and is unchanged.
@@ -485,12 +314,7 @@ impl SettingsScreen {
             return false;
         }
         let (now, base) = (self.built(), &self.base);
-        match key {
-            key::MODELS => now.models == base.models,
-            key::AGENT_RUNTIME => now.orchestrator.runtime == base.orchestrator.runtime,
-            key::AGENT_MODEL => now.orchestrator.model == base.orchestrator.model,
-            k => limit_value(&now.limits, k) == limit_value(&base.limits, k),
-        }
+        limit_value(&now.limits, key) == limit_value(&base.limits, key)
     }
 
     /// Ruling RH-5: `refit: <budget>` beside the budget of `class` (`"S"` or `"M"`) when
@@ -502,11 +326,6 @@ impl SettingsScreen {
             "refit: {}",
             daemon::run::refit::budget_text(budget)
         ))
-    }
-
-    /// Ruling RH-5: the orchestrator default is overridden by a model list.
-    pub fn orchestrator_overridden(&self) -> bool {
-        (self.tuning.as_ref()).is_some_and(|t| t.orchestrator_list.is_some())
     }
 
     /// An edit makes the last outcome stale.

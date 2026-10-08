@@ -67,6 +67,12 @@ pub enum PendingWhat {
     SettingsGet,
     /// A `Settings(Put)`; its `Saved` replaces the cache, any other reply re-syncs it.
     SettingsPut,
+    /// Milestone 9.8 decision 36: the Settings screen's `RepoModels` (`put: false`) or
+    /// `PutRepoModels` (`put: true`) for `project` (`app/settings_flow.rs`).
+    RepoModels {
+        project: std::path::PathBuf,
+        put: bool,
+    },
     /// A Profile screen request on `dir` (decision 34, `app/profile_screen.rs`).
     Profile {
         dir: std::path::PathBuf,

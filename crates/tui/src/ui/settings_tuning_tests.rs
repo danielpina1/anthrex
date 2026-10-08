@@ -17,7 +17,6 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use proto::{Budget, ClientMsg, DaemonMsg, RunReply, RunRequest, TuningReport};
 
 const SIZES: [(u16, u16); 2] = [(80, 24), (120, 40)];
-const OVERRIDDEN: &str = "overridden by [orchestrator.routes.orchestrator]";
 
 /// `C-b S`'s effects.
 fn open(app: &mut App) -> Vec<Effect> {
@@ -104,6 +103,8 @@ fn refits() -> TuningReport {
 #[test]
 fn opening_settings_sends_a_read_only_stats() {
     let mut app = cached("/r/demo");
+    // Milestone 9.8: with no catalog held, the screen also asks for the model lists.
+    app.catalogs = crate::app::model_picker::tests::fixture_catalogs();
     let effects = open(&mut app);
     assert_eq!(
         effects.len(),
@@ -124,6 +125,7 @@ fn opening_settings_sends_a_read_only_stats() {
     assert!(open(&mut app).is_empty());
     // No project: nothing at all (the cache is read).
     let mut none = cached("");
+    none.catalogs = crate::app::model_picker::tests::fixture_catalogs();
     assert!(open(&mut none).is_empty());
     assert!(matches!(none.screen, Some(Screen::Settings(_))));
     // The stats screen still sends a plain one (decision 48).
@@ -172,27 +174,6 @@ fn settings_shows_a_muted_refit_beside_an_unconfigured_class() {
         s.section = SettingsSection::Limits;
     }
     assert_eq!(drawn(&none, 120, 40, "refit:"), None);
-}
-
-#[test]
-fn settings_shows_the_orchestrator_list_override() {
-    let mut report = tuning_report();
-    report.orchestrator_list = Some("claude/claude-opus-5-5 high".into());
-    let app = with_report(Some(report), SettingsSection::Orchestrator);
-    for (w, h) in SIZES {
-        let (row, above, muted) = drawn(&app, w, h, OVERRIDDEN).expect("the override note");
-        // Under the default's two rows, in the value column.
-        assert!(
-            above.contains("model"),
-            "beside the default: {above}\n{row}"
-        );
-        assert_eq!(row.find("overridden"), above.find("‹ "), "{above}\n{row}");
-        assert!(muted, "muted: {row}");
-    }
-    let plain = with_report(Some(tuning_report()), SettingsSection::Orchestrator);
-    assert_eq!(drawn(&plain, 120, 40, "overridden"), None);
-    let waiting = with_report(None, SettingsSection::Orchestrator);
-    assert_eq!(drawn(&waiting, 120, 40, "overridden"), None);
 }
 
 /// A reply to the read-only `Stats` never opens or changes the stats screen, and the
