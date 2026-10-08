@@ -25,8 +25,9 @@ pub struct Saved {
 /// back, temporary files, fsync, `cancel` check, rename, fsync the directory. The check
 /// swaps `cancel` to `true`, so exactly one of this save and a caller that swaps it
 /// later reads `false`. A missing file (and its directory) is created. When the edit
-/// removed an old model key, the file as it was is kept as `config.toml.bak` (decision
-/// 40), renamed into place just before the file is. On any refusal the file is
+/// removed an old model key and no `.bak` exists yet, the file as it was is kept as
+/// `config.toml.bak` (decision 40, fix round 1's M1), renamed into place just before
+/// the file is; an existing `.bak` is never replaced. On any refusal the file is
 /// untouched and no temporary file is left.
 pub fn save(path: &Path, doc: &SettingsDoc, cancel: &AtomicBool) -> Result<Saved, Vec<String>> {
     // M9.2.6 fix round 2: what is written, validated and read back is the cleaned doc.
@@ -53,9 +54,10 @@ pub fn save(path: &Path, doc: &SettingsDoc, cancel: &AtomicBool) -> Result<Saved
     std::fs::create_dir_all(&dir)
         .map_err(|e| vec![format!("could not create {}: {e}", dir.display())])?;
     let temp = temp_path(&dir, path);
-    let bak = edited
-        .removed
-        .then(|| (temp_path(&dir, &bak_path(path)), bak_path(path)));
+    // Fix round 1 (M1): the first save that removes old keys keeps the file as it was;
+    // an existing `.bak` (whatever it is) is never replaced.
+    let first = std::fs::symlink_metadata(bak_path(path)).is_err();
+    let bak = (edited.removed && first).then(|| (temp_path(&dir, &bak_path(path)), bak_path(path)));
     let written = write_temp(&temp, &out, mode)
         .and_then(|()| match &bak {
             Some((bak_temp, _)) => write_temp(bak_temp, &text, mode),
@@ -140,7 +142,7 @@ pub(crate) fn write_temp(temp: &Path, text: &str, mode: Option<u32>) -> Result<(
 }
 
 #[cfg(unix)]
-fn file_mode(path: &Path) -> Option<u32> {
+pub(crate) fn file_mode(path: &Path) -> Option<u32> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::metadata(path)
         .ok()
@@ -148,7 +150,7 @@ fn file_mode(path: &Path) -> Option<u32> {
 }
 
 #[cfg(not(unix))]
-fn file_mode(_: &Path) -> Option<u32> {
+pub(crate) fn file_mode(_: &Path) -> Option<u32> {
     None
 }
 

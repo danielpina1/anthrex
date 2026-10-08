@@ -351,3 +351,23 @@ fn an_empty_config_has_an_empty_role_table() {
     assert!(config.orchestrator.roles.is_empty());
     assert!(config.orchestrator.roles_notes.is_empty());
 }
+
+/// Fix round 1 (M9): a repository save keeps the file's mode and a symlinked
+/// `models.toml` stays a link, as `config::settings::save` does.
+#[cfg(unix)]
+#[test]
+fn a_repository_save_keeps_the_mode_and_the_link() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let real = dir.path().join("real.toml");
+    std::fs::write(&real, "[models.planner]\nmodel = \"codex:default\"\n").unwrap();
+    std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let path = dir.path().join(REPO_FILE);
+    std::os::unix::fs::symlink(&real, &path).unwrap();
+    let t = table(&[(Role::Reviewer, choice("codex:default", None, None))]);
+    save_repo(&path, &t).unwrap();
+    assert!(std::fs::symlink_metadata(&path).unwrap().file_type().is_symlink());
+    assert_eq!(load_repo(&real).0, Some(t));
+    let mode = std::fs::metadata(&real).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+}

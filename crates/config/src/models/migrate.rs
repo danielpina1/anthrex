@@ -202,6 +202,29 @@ fn listed(list: &RouteList, roster: &[ModelEntry], effort: &Effort) -> Option<(O
     Some((first, found.next()))
 }
 
+/// Fix round 1, I1 (controller ruling): the `[orchestrator.routes.<name>]` lists in
+/// `raw` none of whose candidates is in the roster. Such a list migrated nothing (its
+/// row, if any, came from the fallback), so a save keeps it (`old_keys::kept`).
+pub fn unknown_lists(o: &Orchestrator, raw: &toml::Table) -> Vec<&'static str> {
+    let roster = &o.models[..];
+    let lists = crate::orchestrator::read_routes(raw, roster, &mut Vec::new());
+    let of = |name: &str| match name {
+        "s" => &lists.s,
+        "m" => &lists.m,
+        "hub" => &lists.hub,
+        "review" => &lists.review,
+        "scout" => &lists.scout,
+        "decider" => &lists.decider,
+        "planner" => &lists.planner,
+        "orchestrator" => &lists.orchestrator,
+        _ => &lists.brainstorm,
+    };
+    (ROUTES.iter().map(|(name, _)| *name))
+        .filter(|name| Present(raw).route(name))
+        .filter(|name| candidates(of(name), roster, &Effort::MEDIUM).is_empty())
+        .collect()
+}
+
 /// Which old keys are present in the raw `[orchestrator]` table.
 struct Present<'a>(&'a toml::Table);
 

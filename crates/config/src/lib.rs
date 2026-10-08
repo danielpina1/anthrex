@@ -227,8 +227,9 @@ pub fn parse(text: &str) -> (Config, Vec<Problem>) {
     // M9.8.12 (Task 3's review): a key that migrated to no row is kept by a save; its
     // note says so.
     if let Some(raw) = raw {
-        let kept = models::kept(raw, &migrated, &config.orchestrator.roles);
-        models::kept_notes(&mut notes, &kept);
+        let roles = &config.orchestrator.roles;
+        let kept = models::kept(&config.orchestrator, raw, &migrated, roles);
+        models::kept_notes(&mut notes, &kept, roles);
     }
     config.orchestrator.roles_notes = notes;
     read_testing(&table, &mut config, &mut problems);

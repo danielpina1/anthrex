@@ -11,8 +11,8 @@ mod old_keys;
 mod parse;
 mod repo;
 
-pub use migrate::migrate;
-pub use old_keys::{Feeds, Kept, OldKey, is_route_name, kept, kept_notes, old_keys};
+pub use migrate::{migrate, unknown_lists};
+pub use old_keys::{Feeds, Kept, OldKey, is_route_name, kept, kept_notes, old_keys, old_lines};
 pub(crate) use parse::read_table;
 pub use parse::{parse_text, render};
 pub use proto::models::{

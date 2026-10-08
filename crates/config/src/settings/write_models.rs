@@ -44,11 +44,13 @@ impl Slot {
         if first != "models" || rest.is_empty() {
             return None;
         }
-        let key = rest.join(".");
-        if key == "brainstorm" {
+        // Fix round 1 (M3): by segment, so a quoted `"implementer.small"` is no row.
+        if rest.len() == 1 && rest[0] == "brainstorm" {
             return Some(Slot::Brainstorm);
         }
-        Role::parse_key(&key).map(Slot::Row)
+        Role::all()
+            .find(|r| r.key().split('.').eq(rest.iter().map(String::as_str)))
+            .map(Slot::Row)
     }
 
     fn keys(self) -> [&'static str; 3] {
@@ -152,7 +154,13 @@ fn read_back(original: &str, edited: &Edited, wanted: &ModelTable) -> Result<(),
         && (wanted.brainstorm.is_none() || after.roles.brainstorm == wanted.brainstorm);
     let resolved = Role::all().all(|r| resolve(r, None, &after.roles) == resolve(r, None, wanted))
         && resolve_brainstorm(None, &after.roles) == resolve_brainstorm(None, wanted);
-    let quiet = !edited.kept.is_empty() || after.roles_notes.is_empty();
+    // Fix round 1 (M2): the only notes left are a kept key's and decision 16's.
+    let kept = edited.kept.unmigrated.iter().chain(&edited.kept.with);
+    let named: Vec<String> = kept.map(|k| format!("config: {}", k.named)).collect();
+    let quiet = after.roles_notes.iter().all(|n| {
+        named.iter().any(|k| n.starts_with(k.as_str()))
+            || (!edited.kept.is_empty() && n.starts_with("config: orchestrator.default_runtime = "))
+    });
     if !(rows_kept && resolved && quiet) {
         return Err(vec![
             "config.toml would not read back as saved (models); nothing changed".to_string(),
@@ -175,8 +183,9 @@ pub(super) fn edit(text: &str, wanted: &ModelTable) -> Result<Edited, Vec<String
     let raw = table.get("orchestrator").and_then(toml::Value::as_table);
     let kept = match raw {
         Some(raw) => {
-            let migrated = migrate(&crate::parse(text).0.orchestrator, Some(raw)).0;
-            kept_keys(raw, &migrated, wanted)
+            let o = crate::parse(text).0.orchestrator;
+            let migrated = migrate(&o, Some(raw)).0;
+            kept_keys(&o, raw, &migrated, wanted)
         }
         None => Kept::default(),
     };
@@ -333,9 +342,13 @@ fn refused_forms(scan: &Scan) -> Vec<String> {
             if full.first().is_none_or(|p| p != "models") {
                 continue;
             }
-            if slot.is_none() || key.len() != 1 || last != i {
+            // Fix round 1 (M4): a row written inline in its parent's table
+            // (`run_name = { … }` under `[models.helpers]`).
+            if slot.is_none() || key.len() != 1 || last != i || Slot::of(&full).is_some() {
                 let shown = match slot {
                     Some(_) => full.join("."),
+                    // A table that names no row (`[models."implementer.small"]`).
+                    None if s.path.len() >= 2 => s.path.join("."),
                     None => full[..(s.path.len() + 1).min(full.len())].join("."),
                 };
                 push(refusal(&shown, &home(&full)));

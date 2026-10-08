@@ -1,9 +1,9 @@
 //! Milestone 9.8 decisions 18 and 40 (M9.8.12): the old model keys a file holds, which
 //! a save removes, and the few it keeps. Pure.
 //!
-//! **Kept keys** (Task 3's review): an old key whose every row has no row in the
-//! migrated table nor in the table being saved could not be migrated (a `hub` list
-//! naming no model in the roster, with `default_runtime` offering none either).
+//! **Kept keys** (Task 3's review, fix round 1's I1): a list none of whose models is
+//! known, and a key whose every row has no row in the migrated table nor in the table
+//! being saved (decision 16's `default_runtime`), could not be migrated.
 //! Removing it would lose the user's setting silently, so a save keeps it, its note
 //! says why, and the keys it was read against (the roster and `default_runtime`) stay
 //! with it, so it reads the same afterwards. Choosing its row in C-b S and saving
@@ -11,8 +11,9 @@
 
 use proto::models::{ModelTable, Role};
 
-use super::builtin_choice;
 use super::migrate::{ROUTES, SCALARS};
+use super::{resolve, resolve_brainstorm};
+use crate::Orchestrator;
 
 /// What an old key fed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,6 +43,19 @@ const CLASSES: [Role; 3] = [
 
 fn feeds_row(row: &str) -> Feeds {
     Role::parse_key(row).map_or(Feeds::Brainstorm, |r| Feeds::Rows(vec![r]))
+}
+
+/// The keys of the table `table` (dotted, `orchestrator.agent`) that fed a row, from
+/// the migration's own list (fix round 1, M11: one list, so the writer and the
+/// migration cannot drift apart).
+pub fn old_lines(table: &str) -> &'static [&'static str] {
+    if table == "orchestrator" {
+        return &["default_runtime", "builtin_models"];
+    }
+    let sub = table.strip_prefix("orchestrator.").unwrap_or_default();
+    (SCALARS.iter())
+        .find(|(t, _, _)| *t == sub)
+        .map_or(&[], |(_, keys, _)| *keys)
 }
 
 /// Whether `[orchestrator.routes.<name>]` is one decision 18 replaces.
@@ -113,14 +127,34 @@ impl Kept {
     }
 }
 
-/// [`Kept`] for a file whose `[orchestrator]` table is `raw`, whose old keys migrated to
-/// `migrated`, saved (or read) with the table `wanted`.
-pub fn kept(raw: &toml::Table, migrated: &ModelTable, wanted: &ModelTable) -> Kept {
+/// [`Kept`] for a file whose `[orchestrator]` table is `raw` (read as `o`), whose old
+/// keys migrated to `migrated`, saved (or read) with the table `wanted`.
+///
+/// A list is unmigrated when none of its models is known (fix round 1, I1) and the
+/// table still holds what the migration made of its row: choosing another model for
+/// the row in C-b S lets the next save remove it. Any other key is unmigrated when
+/// none of its rows exists (decision 16's `default_runtime`).
+pub fn kept(
+    o: &Orchestrator,
+    raw: &toml::Table,
+    migrated: &ModelTable,
+    wanted: &ModelTable,
+) -> Kept {
+    let unknown = super::migrate::unknown_lists(o, raw);
     let has = |r: &Role| migrated.rows.contains_key(r) || wanted.rows.contains_key(r);
-    let unmigrated = |k: &OldKey| match &k.feeds {
-        Feeds::Rows(rows) => !rows.iter().any(has),
-        Feeds::Brainstorm => migrated.brainstorm.is_none() && wanted.brainstorm.is_none(),
+    let untouched = |k: &OldKey| match &k.feeds {
+        Feeds::Rows(rows) => rows
+            .iter()
+            .all(|r| migrated.rows.get(r) == wanted.rows.get(r)),
+        Feeds::Brainstorm => migrated.brainstorm == wanted.brainstorm,
         Feeds::Roster => false,
+    };
+    let unmigrated = |k: &OldKey| match k.path.strip_prefix("orchestrator.routes.") {
+        Some(name) => unknown.contains(&name) && untouched(k),
+        None => match &k.feeds {
+            Feeds::Rows(rows) => !rows.iter().any(has),
+            _ => false,
+        },
     };
     let (unmigrated, rest): (Vec<OldKey>, Vec<OldKey>) =
         old_keys(raw).into_iter().partition(unmigrated);
@@ -134,7 +168,7 @@ pub fn kept(raw: &toml::Table, migrated: &ModelTable, wanted: &ModelTable) -> Ke
 }
 
 /// Decision 18's notes with each kept key's note saying why it stays (Task 3's review).
-pub fn kept_notes(notes: &mut Vec<String>, kept: &Kept) {
+pub fn kept_notes(notes: &mut Vec<String>, kept: &Kept, wanted: &ModelTable) {
     let rows = |rows: &[Role]| {
         let named: Vec<String> = rows
             .iter()
@@ -155,23 +189,23 @@ pub fn kept_notes(notes: &mut Vec<String>, kept: &Kept) {
                 rows(r)
             ),
             Feeds::Rows(r) => {
-                let (what, verb) = if k.path.starts_with("orchestrator.routes.") {
-                    ("list", "lists")
-                } else {
-                    ("key", "names")
-                };
-                let keeps = r.first().map(|r| builtin_choice(*r).model.label());
+                let uses = r.first().map(|r| resolve(*r, None, wanted).model.label());
                 format!(
-                    "config: {} could not be migrated: no model it {verb} resolves, so {} keeps {}; a save keeps the {what} until you choose that row in C-b S",
+                    "config: {}: none of its models are known; {} uses {} until you choose one in C-b S",
                     k.named,
                     rows(r),
-                    keeps.unwrap_or_default()
+                    uses.unwrap_or_default()
                 )
             }
-            _ => format!(
-                "config: {} could not be migrated: no model it lists resolves, so [models.brainstorm] keeps its built-in; a save keeps the list until you choose that row in C-b S",
-                k.named
-            ),
+            _ => {
+                let b = resolve_brainstorm(None, wanted);
+                format!(
+                    "config: {}: none of its models are known; [models.brainstorm] uses {} and {} until you choose one in C-b S",
+                    k.named,
+                    b.first.label(),
+                    b.second.label()
+                )
+            }
         };
         why.push((k.named.clone(), note));
     }

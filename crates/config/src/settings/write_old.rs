@@ -21,17 +21,6 @@ const OLD_TABLES: [&str; 6] = [
     "orchestrator.routes",
 ];
 
-/// The keys of `table` that fed a row (decision 18).
-fn old_lines(table: &str) -> &'static [&'static str] {
-    match table {
-        "orchestrator" => &["default_runtime", "builtin_models"],
-        "orchestrator.agent" => &["runtime", "model", "effort"],
-        "orchestrator.planners" | "orchestrator.scouts" => &["runtime", "strength", "effort"],
-        "orchestrator.deciders" => &["strength", "effort"],
-        _ => &[],
-    }
-}
-
 fn dotted(path: &[String]) -> String {
     path.join(".")
 }
@@ -56,7 +45,7 @@ pub(super) fn remove(scan: &Scan, e: &mut Edits, kept: &Kept) -> bool {
         }
         for &i in &s.keys {
             let (key, _, _) = scan.key_of(i);
-            let old = key.len() == 1 && old_lines(&path).contains(&key[0].as_str());
+            let old = key.len() == 1 && crate::models::old_lines(&path).contains(&key[0].as_str());
             if old && !kept.holds(&format!("{path}.{}", key[0])) {
                 scan.delete_key(e, i);
             }
@@ -76,8 +65,8 @@ fn is_route(s: &Section) -> bool {
         && crate::models::is_route_name(&s.path[2])
 }
 
-/// An old table left with no key loses its header; `[orchestrator.routes]` does when no
-/// route table under it survives either.
+/// An old table left with no key goes, header and comment lines with it;
+/// `[orchestrator.routes]` loses its header when no route table under it survives.
 fn drop_emptied_headers(scan: &Scan, e: &mut Edits) {
     for s in &scan.sections {
         let (Some(header), false) = (s.header, s.array) else {
@@ -95,7 +84,10 @@ fn drop_emptied_headers(scan: &Scan, e: &mut Edits) {
                     && r.path.starts_with(&s.path)
                     && r.header.is_some_and(|h| !e.delete.contains(&h))
             });
-        if emptied || routes {
+        // Fix round 1 (M7): an emptied table goes whole, its comment lines with it.
+        if emptied {
+            scan.delete_section(e, s);
+        } else if routes {
             e.delete.insert(header);
         }
     }

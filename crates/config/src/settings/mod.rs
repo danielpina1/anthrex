@@ -25,7 +25,7 @@ mod write_old;
 
 pub use origin::{load_with_origin, origin_of};
 pub use save::{Saved, save};
-pub(crate) use save::{temp_path, write_temp};
+pub(crate) use save::{file_mode, temp_path, write_temp};
 pub use shipped::{SHIPPED_CLAUDE, SHIPPED_CODEX, ShippedModel};
 pub use validate::{cleaned, strip_hidden, validate};
 // Milestone 9.2 (M9.2.6 fix round 2's deferral, closed by M9.2.15): the writer takes a

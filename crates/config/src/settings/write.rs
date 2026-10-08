@@ -79,6 +79,8 @@ fn home(path: &[String]) -> String {
     match (seg(1), seg(2)) {
         (Some("budget"), Some(r @ ("s" | "m" | "l"))) => format!("orchestrator.budget.{r}"),
         (Some("budget"), _) => "orchestrator.budget.<s|m|l>".to_string(),
+        // Fix round 1 (M8): an old key's own table (`orchestrator.agent.model`).
+        _ if path.len() > 2 => path[..path.len() - 1].join("."),
         _ => "orchestrator".to_string(),
     }
 }
