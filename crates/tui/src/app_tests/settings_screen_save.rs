@@ -182,8 +182,10 @@ fn a_paste_reaches_only_the_custom_name() {
     app.on_paste("claude-y".into());
     assert_eq!(screen(&app).models.picker, None);
     assert_eq!(screen(&app).page, None);
-    // No catalog yet: the picker opens on `custom…`; the runtime, then the name.
+    // No catalog yet: the picker opens on the row's model (fix round 1), `custom…` is
+    // next; the runtime, then the name.
     tap(&mut app, KeyCode::Enter);
+    tap(&mut app, KeyCode::Char('j'));
     tap(&mut app, KeyCode::Enter);
     app.on_paste("claude-y".into());
     assert_eq!(

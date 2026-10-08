@@ -156,6 +156,7 @@ impl App {
         if let Some(s) = self.settings_screen_mut() {
             if let Some(repo) = &mut s.models.repo {
                 repo.put_id = Some(id);
+                repo.sent = Some(repo.table.clone());
             }
             s.outcome = None;
         }
@@ -186,21 +187,27 @@ impl App {
                             base: table.clone(),
                             path: path.clone(),
                             put_id: None,
+                            sent: None,
                         });
                     }
                 }
                 SettingsReply::RepoSaved { table, .. } if put => {
                     if let Some(repo) = s.models.repo.as_mut().filter(|r| r.put_id == Some(id)) {
                         repo.put_id = None;
+                        // The table as stored; edits made since the send stay on top.
+                        if repo.sent.take().as_ref() == Some(&repo.table) {
+                            repo.table = table.clone();
+                        }
                         repo.base = table.clone();
                         s.outcome = Some(SaveOutcome::Saved);
                     }
                 }
                 SettingsReply::Refused { problems } if put => {
-                    if let Some(repo) = s.models.repo.as_mut() {
+                    if let Some(repo) = s.models.repo.as_mut().filter(|r| r.put_id == Some(id)) {
                         repo.put_id = None;
+                        repo.sent = None;
+                        s.outcome = Some(SaveOutcome::Refused(problems.clone()));
                     }
-                    s.outcome = Some(SaveOutcome::Refused(problems.clone()));
                 }
                 SettingsReply::Refused { problems } => {
                     if s.models.repo.is_none() {
@@ -214,6 +221,26 @@ impl App {
         if let Some(text) = toast {
             self.toast_at(ToastLevel::Error, text);
         }
+    }
+
+    /// Fix round 1: the scope's `PutRepoModels` is no longer awaited (it expired, its
+    /// send failed, or the link went) and got no reply: `w` may send again, and the
+    /// screen shows `outcome`. `true` when it did.
+    pub(in crate::app) fn settings_repo_lost(&mut self, outcome: SaveOutcome) -> bool {
+        let gone = match &self.screen {
+            Some(Screen::Settings(s)) => (s.models.repo.as_ref())
+                .and_then(|r| r.put_id)
+                .is_some_and(|id| !self.replies.contains(id)),
+            _ => false,
+        };
+        if gone && let Some(s) = self.settings_screen_mut() {
+            if let Some(repo) = &mut s.models.repo {
+                repo.put_id = None;
+                repo.sent = None;
+            }
+            s.outcome = Some(outcome);
+        }
+        gone
     }
 
     pub(crate) fn settings_screen_mut(&mut self) -> Option<&mut SettingsScreen> {
@@ -288,7 +315,9 @@ impl App {
         // A save stores its doc cleaned (`config::settings::cleaned`), so a landed save
         // is known by its cleaned form (ruling M9.2.15, carried).
         let landed = s.loaded && config::settings::cleaned(&s.built()) == cache.doc;
-        if !s.loaded || landed || (!s.dirty() && !saving) {
+        // The cache is the global document: a pending repository edit does not hold
+        // it off (fix round 1).
+        if !s.loaded || landed || (!s.doc_dirty() && !saving) {
             s.load(&cache.doc, &cache.origin);
             s.path = cache.path.display().to_string();
             if s.outcome == Some(SaveOutcome::LinkLost) && landed {
@@ -375,6 +404,7 @@ impl App {
             s.sent = None;
             s.outcome = Some(SaveOutcome::LinkLost);
         }
+        self.settings_repo_lost(SaveOutcome::LinkLost);
         vec![]
     }
 }

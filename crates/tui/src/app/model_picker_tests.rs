@@ -267,9 +267,15 @@ fn r_asks_for_a_live_probe() {
             .expect("the picker stays open")
     };
     assert_eq!(selected_model(&picker(&app)), Some(mref("codex:gpt-6-sol")));
+    // Fix round 1 (minor 5): the selection is moved off the current model first.
+    super::super::models_table::tests::tap(&mut app, KeyCode::Char('j'));
+    assert_eq!(
+        selected_model(&picker(&app)),
+        Some(mref("codex:gpt-6.1-sol"))
+    );
 
     // A live reply adds a Codex model ahead of the selected one: the entries are
-    // rebuilt and the selection stays on gpt-6 sol.
+    // rebuilt and the selection stays on gpt-6.1 sol, the ● on gpt-6 sol.
     let mut codex = codex_catalog();
     codex
         .models
@@ -288,7 +294,8 @@ fn r_asks_for_a_live_probe() {
         "{:?}",
         p.entries
     );
-    assert_eq!(selected_model(&p), Some(mref("codex:gpt-6-sol")));
+    assert_eq!(selected_model(&p), Some(mref("codex:gpt-6.1-sol")));
+    assert_eq!(current_models(&p), [mref("codex:gpt-6-sol")]);
     assert!(app.catalogs.received(Runtime::Codex).is_some());
 }
 
@@ -300,14 +307,17 @@ fn custom_asks_the_runtime_then_the_name() {
     }
     assert_eq!(p.entries[p.selected], PickerEntry::Custom);
     assert_eq!(p.on_key(key(KeyCode::Enter)), None);
+    // Fix round 1 (minor 6): it starts on the current model's runtime.
     assert!(matches!(
         p.custom,
         Some(CustomModel {
-            runtime: Runtime::Claude,
+            runtime: Runtime::Codex,
             naming: false,
             ..
         })
     ));
+    assert_eq!(p.on_key(key(KeyCode::Right)), None);
+    assert_eq!(p.custom.as_ref().unwrap().runtime, Runtime::Claude);
     assert_eq!(p.on_key(key(KeyCode::Right)), None);
     assert_eq!(p.custom.as_ref().unwrap().runtime, Runtime::Codex);
     assert_eq!(p.on_key(key(KeyCode::Enter)), None);
@@ -409,4 +419,79 @@ fn the_first_entry_and_labels() {
         Catalogs::default().unreported(&mref("claude:claude-x")),
         None
     );
+}
+
+/// The models the entries mark current (`●`).
+fn current_models(p: &ModelPicker) -> Vec<ModelRef> {
+    (p.entries.iter())
+        .filter_map(|e| match e {
+            PickerEntry::Model {
+                model,
+                current: true,
+                ..
+            } => Some(model.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Fix round 1 (minor 3, controller ruling): a current model the catalog does not list
+/// is its own entry, `not reported`, selected; `⏎` keeps it. Minor 4: once a refresh
+/// lists it, the catalog's entry is the current one and the stand-in goes.
+#[test]
+fn an_unlisted_current_model_is_shown_and_kept() {
+    let mut p = ModelPicker::new(
+        PickerFor::Row(Role::Research),
+        &fixture_catalogs(),
+        Some(&mref("claude:claude-x")),
+        None,
+    );
+    assert_eq!(selected_model(&p), Some(mref("claude:claude-x")));
+    match &p.entries[p.selected] {
+        PickerEntry::Model {
+            label,
+            description,
+            efforts,
+            current,
+            ..
+        } => {
+            assert_eq!(
+                (label.as_str(), description.as_str(), efforts.as_str()),
+                ("claude-x", "not reported", "—")
+            );
+            assert!(current);
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(p.selected, 4, "under Claude's header, after its models");
+    assert_eq!(
+        p.entries[5],
+        header(Runtime::Codex, "CODEX  (codex 0.160.1)", false)
+    );
+    assert_eq!(current_models(&p), [mref("claude:claude-x")]);
+
+    let mut listed = fixture_catalogs();
+    listed.list[0]
+        .models
+        .push(model("claude-x", "X 1", "Experimental", &["low"]));
+    p.on_key(key(KeyCode::Char('k')));
+    p.refresh(&listed);
+    assert_eq!(current_models(&p), [mref("claude:claude-x")]);
+    assert!(p.entries.iter().all(
+        |e| !matches!(e, PickerEntry::Model { description, .. } if description == "not reported")
+    ));
+    assert_eq!(selected_model(&p), Some(mref("claude:claude-opus-5-5")));
+    p.on_key(key(KeyCode::Char('j')));
+    assert_eq!(
+        p.on_key(key(KeyCode::Enter)),
+        Some(Picked::Model(mref("claude:claude-x")))
+    );
+    // `default` is listed by no catalog: it is kept the same way.
+    let p = ModelPicker::new(
+        PickerFor::Row(Role::TestWriter),
+        &fixture_catalogs(),
+        Some(&mref("codex:default")),
+        None,
+    );
+    assert_eq!(selected_model(&p), Some(mref("codex:default")));
 }

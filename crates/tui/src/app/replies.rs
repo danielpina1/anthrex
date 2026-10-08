@@ -313,6 +313,10 @@ impl App {
         let mut owned = usize::from(screens && !self.settings_saving())
             + usize::from(stats.is_some() && self.stats_awaited().is_none());
         self.stats_tick();
+        // Fix round 1: the `this repo` save's expiry is the screen's to show.
+        owned += usize::from(self.settings_repo_lost(
+            super::settings_screen::SaveOutcome::Refused(vec![NO_REPLY.into()]),
+        ));
         for (id, what) in &gone {
             owned += usize::from(self.view_failed(*id, what, NO_REPLY));
         }
@@ -383,6 +387,16 @@ impl App {
             RunRequest::Settings(proto::SettingsRequest::Get) => false,
             RunRequest::Settings(proto::SettingsRequest::Put { .. }) if put_own => {
                 self.settings_put_not_sent();
+                false
+            }
+            // Fix round 1: the `this repo` save, on its screen.
+            RunRequest::Settings(proto::SettingsRequest::PutRepoModels { .. })
+                if self.settings_repo_lost(if self.connected() {
+                    super::settings_screen::SaveOutcome::NotSent
+                } else {
+                    super::settings_screen::SaveOutcome::LinkLost
+                }) =>
+            {
                 false
             }
             // Decision 38: its screen says so at once.

@@ -17,6 +17,9 @@ use std::time::{Duration, Instant};
 /// The runtimes the picker lists, in order.
 pub const RUNTIMES: [Runtime; 2] = [Runtime::Claude, Runtime::Codex];
 
+/// The description of a current model the catalog does not list.
+pub const NOT_REPORTED: &str = "not reported";
+
 /// What a model entry's efforts read when it has none.
 pub const NO_EFFORT: &str = "—";
 
@@ -229,6 +232,8 @@ pub struct ModelPicker {
     pub selected: usize,
     /// `custom…`'s two steps: the runtime, then the name.
     pub custom: Option<CustomModel>,
+    /// The row's model when the picker opened (`●`), kept across a refresh.
+    pub current: Option<ModelRef>,
 }
 
 /// `runtime`'s header: its version when live, else where the list came from; a CLI
@@ -287,8 +292,23 @@ fn entries(
     for runtime in RUNTIMES {
         let catalog = catalogs.of(runtime);
         out.push(header(runtime, catalog));
+        let from = out.len();
         for m in catalog.map(|c| c.models.as_slice()).unwrap_or_default() {
             out.extend(entry(runtime, m, current));
+        }
+        // Fix round 1 (controller ruling): a current model no catalog entry is, under its
+        // runtime, so `⏎` keeps it and never swaps in another.
+        let listed = out[from..]
+            .iter()
+            .any(|e| matches!(e, PickerEntry::Model { current: true, .. }));
+        if let Some(m) = current.filter(|m| m.runtime == runtime && !listed) {
+            out.push(PickerEntry::Model {
+                model: m.clone(),
+                label: m.id.as_deref().map_or_else(|| "default".into(), clean),
+                description: NOT_REPORTED.into(),
+                efforts: NO_EFFORT.into(),
+                current: true,
+            });
         }
     }
     out.push(PickerEntry::Custom);
@@ -307,24 +327,13 @@ impl ModelPicker {
             entries: entries(catalogs, current, first),
             selected: 0,
             custom: None,
+            current: current.cloned(),
         };
         let on_current = (0..p.entries.len()).find(|&i| {
             p.selectable(i) && matches!(p.entries[i], PickerEntry::Model { current: true, .. })
         });
         p.selected = on_current.or_else(|| p.next_from(0, 1)).unwrap_or(0);
         p
-    }
-
-    /// The current model, as the entries mark it.
-    fn current(&self) -> Option<ModelRef> {
-        self.entries.iter().find_map(|e| match e {
-            PickerEntry::Model {
-                model,
-                current: true,
-                ..
-            } => Some(model.clone()),
-            _ => None,
-        })
     }
 
     /// A new `Models` reply (decision 37): the entries rebuilt from `catalogs`, the
@@ -334,7 +343,7 @@ impl ModelPicker {
             .filter(|e| matches!(e, PickerEntry::NoFallback | PickerEntry::RoleTable(_)))
             .cloned();
         let on = self.entries.get(self.selected).cloned();
-        let current = self.current();
+        let current = self.current.clone();
         let mut fresh = ModelPicker::new(self.target, catalogs, current.as_ref(), first);
         let same = (0..fresh.entries.len()).find(|&i| {
             fresh.selectable(i)
@@ -406,8 +415,10 @@ impl ModelPicker {
                     PickerEntry::NoFallback => Some(Picked::NoFallback),
                     PickerEntry::RoleTable(_) => Some(Picked::RoleTable),
                     PickerEntry::Custom => {
+                        let runtime =
+                            (self.current.as_ref()).map_or(Runtime::Claude, |m| m.runtime);
                         self.custom = Some(CustomModel {
-                            runtime: Runtime::Claude,
+                            runtime,
                             name: TextArea::new(),
                             naming: false,
                             error: None,

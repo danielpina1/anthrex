@@ -62,6 +62,9 @@ pub struct RepoTable {
     pub path: PathBuf,
     /// The scope's own `PutRepoModels`, while its reply is awaited.
     pub put_id: Option<u64>,
+    /// The table that `PutRepoModels` carried: a `RepoSaved` replaces the table only
+    /// when nothing was edited since.
+    pub sent: Option<ModelTable>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -427,3 +430,7 @@ impl ModelsTable {
 #[cfg(test)]
 #[path = "models_table_tests.rs"]
 pub(crate) mod tests;
+
+#[cfg(test)]
+#[path = "models_table_tests_save.rs"]
+mod tests_save;

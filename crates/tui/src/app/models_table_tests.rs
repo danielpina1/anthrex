@@ -11,7 +11,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use proto::models::{BrainstormChoice, CatalogSource, HelperKind, ModelTable, Role, RoleChoice};
 use proto::{ClientMsg, DaemonMsg, RunReply, RunRequest, SettingsReply, SettingsRequest};
 
-fn row(model: &str, effort: Option<&str>, fallback: Option<&str>) -> RoleChoice {
+pub(crate) fn row(model: &str, effort: Option<&str>, fallback: Option<&str>) -> RoleChoice {
     RoleChoice {
         model: mref(model),
         effort: effort.map(str::to_string),
@@ -117,7 +117,7 @@ fn cells(r: &TableRow) -> (String, String, String, String) {
     )
 }
 
-fn spec() -> App {
+pub(crate) fn spec() -> App {
     opened_models(spec_roles(), fixture_catalogs())
 }
 
@@ -267,7 +267,7 @@ fn helpers_expand_to_six_kinds_same_as_helpers_until_set() {
     assert_eq!(rows(&app)[table(&app).selected].role, "helpers ▸");
 }
 
-fn repo_requests(effects: &[Effect]) -> Vec<(u64, SettingsRequest)> {
+pub(crate) fn repo_requests(effects: &[Effect]) -> Vec<(u64, SettingsRequest)> {
     effects
         .iter()
         .filter_map(|e| match e {
