@@ -180,7 +180,12 @@ impl App {
             .filter(|s| s.models.project.as_ref() == Some(&project))
         {
             match reply {
-                SettingsReply::RepoModels { table, path, .. } if !put => {
+                SettingsReply::RepoModels {
+                    table,
+                    path,
+                    problems,
+                    ..
+                } if !put => {
                     if s.models.repo.is_none() {
                         s.models.repo = Some(RepoTable {
                             table: table.clone(),
@@ -188,6 +193,7 @@ impl App {
                             path: path.clone(),
                             put_id: None,
                             sent: None,
+                            problems: problems.clone(),
                         });
                     }
                 }

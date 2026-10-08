@@ -65,6 +65,9 @@ pub struct RepoTable {
     /// The table that `PutRepoModels` carried: a `RepoSaved` replaces the table only
     /// when nothing was edited since.
     pub sent: Option<ModelTable>,
+    /// M9.8.12 fix round 1 (I2): the file's rows the daemon could not read, shown as
+    /// warnings in `this repo` (a save is refused while there are any).
+    pub problems: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

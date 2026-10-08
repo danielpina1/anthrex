@@ -76,6 +76,7 @@ fn this_repo_scope_draws_overrides_and_inherited_rows() {
             project: "/src/repo".into(),
             table: repo,
             path: "/data/repos/repo-1234/models.toml".into(),
+            problems: vec![],
         }),
         request_id: Some(sent[0].0),
     }));

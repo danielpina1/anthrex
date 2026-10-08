@@ -141,6 +141,14 @@ fn repository_requests_round_trip() {
         project: "/p".into(),
         table: table.clone(),
         path: "/d/repos/p-1234abcd/models.toml".into(),
+        problems: vec![],
+    });
+    // M9.8.12 fix round 1 (I2): the rows the daemon could not read travel with it.
+    both(&SettingsReply::RepoModels {
+        project: "/p".into(),
+        table: table.clone(),
+        path: "/d/repos/p-1234abcd/models.toml".into(),
+        problems: vec!["/d/models.toml: models.reviewer.model: expected a string".into()],
     });
     both(&SettingsReply::RepoSaved {
         project: "/p".into(),

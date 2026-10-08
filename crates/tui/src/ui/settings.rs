@@ -6,6 +6,7 @@
 //! model name, note, path and daemon problem passes `safe_text` here or in the kit.
 //! Pure: `&App` in.
 
+use crate::app::models_table::Scope;
 use crate::app::replies::NOT_SENT;
 use crate::app::settings_screen::{
     DISCARD_ASK, LINK_LOST, MODELS_SAVED, SAVED, SaveOutcome, SettingsPage, SettingsScreen,
@@ -233,14 +234,21 @@ fn marked(g: Glyph, text: &str, width: usize, r: Role, p: Palette) -> Vec<Line<'
         .collect()
 }
 
-/// What blocks `w`.
+/// What blocks `w`, and in `this repo` the file's unreadable rows.
 fn notes(s: &SettingsScreen, width: u16, p: Palette) -> Vec<Line<'static>> {
     let w = usize::from(width).max(1);
     let mut out = Vec::new();
     for problem in s.problems() {
         out.extend(marked(Glyph::Failed, &problem, w, Role::Failed, p));
     }
-    // M9.8.12: the roster's strength warnings went with the roster.
+    // M9.8.12: the roster's strength warnings went with the roster. Fix round 1 (I2):
+    // the repository file's rows the daemon could not read, in `this repo`.
+    let repo = (s.section == SettingsSection::Models && s.models.scope == Scope::Repo)
+        .then_some(s.models.repo.as_ref())
+        .flatten();
+    for problem in repo.iter().flat_map(|r| &r.problems) {
+        out.extend(marked(Glyph::Warning, problem, w, Role::Attention, p));
+    }
     out
 }
 

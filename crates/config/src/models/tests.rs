@@ -366,7 +366,12 @@ fn a_repository_save_keeps_the_mode_and_the_link() {
     std::os::unix::fs::symlink(&real, &path).unwrap();
     let t = table(&[(Role::Reviewer, choice("codex:default", None, None))]);
     save_repo(&path, &t).unwrap();
-    assert!(std::fs::symlink_metadata(&path).unwrap().file_type().is_symlink());
+    assert!(
+        std::fs::symlink_metadata(&path)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
     assert_eq!(load_repo(&real).0, Some(t));
     let mode = std::fs::metadata(&real).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o600);

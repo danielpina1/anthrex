@@ -121,6 +121,10 @@ pub enum SettingsReply {
         project: PathBuf,
         table: ModelTable,
         path: PathBuf,
+        /// M9.8.12 fix round 1 (I2): the rows of `path` the daemon could not read, each
+        /// starting with the path. A save refuses while there are any.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        problems: Vec<String>,
     },
     RepoSaved {
         project: PathBuf,

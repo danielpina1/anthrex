@@ -497,3 +497,61 @@ async fn a_repository_table_is_saved_beside_the_profile() {
     };
     assert!(problems[0].contains("not valid TOML"), "{problems:?}");
 }
+
+/// M9.8.12 fix round 1 (I2): rows the daemon cannot read come back as problems with the
+/// rows it can, and a save refuses while the file holds them: nothing is erased.
+#[tokio::test]
+async fn unreadable_repository_rows_are_reported_and_never_erased() {
+    use proto::models::{ModelRef, ModelTable, Role, RoleChoice};
+    let dir = tempfile::tempdir().unwrap();
+    let path = written(dir.path());
+    let s = service(&path, None);
+    let project = dir.path().join("repo");
+    let file = crate::profile::repo_dir(&s.ctx.data_dir, &project).join("models.toml");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    let text =
+        "# mine\n[models.reviewer]\nmodel = 5\n\n[models.planner]\nmodel = \"codex:default\"\n";
+    std::fs::write(&file, text).unwrap();
+    let read = SettingsRequest::RepoModels {
+        project: project.clone(),
+    };
+    let SettingsReply::RepoModels {
+        table, problems, ..
+    } = repo_request(&s, read).await
+    else {
+        panic!("no RepoModels reply")
+    };
+    assert_eq!(table.rows.keys().collect::<Vec<_>>(), [&Role::Planner]);
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(
+        problems[0].contains("models.reviewer.model"),
+        "{problems:?}"
+    );
+
+    let mut edited = table.clone();
+    edited.rows.insert(
+        Role::Research,
+        RoleChoice {
+            model: ModelRef::parse("claude:claude-sonnet-5").unwrap(),
+            effort: None,
+            fallback: None,
+        },
+    );
+    for table in [edited, ModelTable::default()] {
+        let put = SettingsRequest::PutRepoModels {
+            project: project.clone(),
+            table,
+        };
+        let SettingsReply::Refused { problems: refused } = repo_request(&s, put).await else {
+            panic!("a file with unreadable rows was overwritten")
+        };
+        assert_eq!(
+            refused,
+            [format!(
+                "models.toml has rows anthrex can't read: {}; fix or remove them first",
+                problems.join("; ")
+            )]
+        );
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), text);
+    }
+}

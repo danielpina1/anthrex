@@ -302,6 +302,7 @@ fn this_repo_scope_marks_overrides_and_dims_inherited() {
             project: project.clone(),
             table: repo,
             path: "/data/repos/tmp-1234/models.toml".into(),
+            problems: vec![],
         }),
         request_id: Some(sent[0].0),
     }));
@@ -504,6 +505,7 @@ fn w_saves_the_scope() {
             project: project.clone(),
             table: ModelTable::default(),
             path: "/data/repos/tmp-1234/models.toml".into(),
+            problems: vec![],
         }),
         request_id: Some(ask),
     }));

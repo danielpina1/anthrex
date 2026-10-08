@@ -20,6 +20,7 @@ fn edited_repo() -> App {
             project,
             table: ModelTable::default(),
             path: "/data/repos/tmp-1234/models.toml".into(),
+            problems: vec![],
         },
         ask,
     ));
@@ -162,4 +163,28 @@ fn a_new_global_cache_reaches_a_screen_with_only_repo_edits() {
         screen(&app).models.repo_dirty(),
         "the repository edit stays"
     );
+}
+
+/// M9.8.12 fix round 1 (I2): the rows the daemon could not read in the repository's
+/// `models.toml` show as warnings in `this repo`, and not in `everywhere`.
+#[test]
+fn unreadable_repository_rows_show_as_warnings() {
+    let mut app = spec();
+    let project = app.goal_project().unwrap();
+    let ask = repo_requests(&tap(&mut app, KeyCode::Right))[0].0;
+    let problem = "/data/repos/tmp-1234/models.toml: models.reviewer.model: expected a string";
+    app.on_daemon(repo_reply(
+        SettingsReply::RepoModels {
+            project,
+            table: ModelTable::default(),
+            path: "/data/repos/tmp-1234/models.toml".into(),
+            problems: vec![problem.into()],
+        },
+        ask,
+    ));
+    let text = crate::ui::settings::tests::screen_text(&app, 120, 40);
+    assert!(text.contains(&format!("⚠ {problem}")), "{text}");
+    tap(&mut app, KeyCode::Left);
+    let text = crate::ui::settings::tests::screen_text(&app, 120, 40);
+    assert!(!text.contains("expected a string"), "{text}");
 }

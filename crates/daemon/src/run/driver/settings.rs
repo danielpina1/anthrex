@@ -37,6 +37,17 @@ pub const WRITE_UNKNOWN_TEXT: &str = "config.toml was still being written after 
 pub const REPO_WRITE_TIMEOUT_TEXT: &str =
     "the repository's models.toml was not written within 5 s; it may still be written";
 
+/// Fix round 1 (M6): another settings save held the write lock for the whole timeout.
+pub const REPO_BUSY_TEXT: &str = "the repository's models.toml was not written: another settings save is still running; nothing changed";
+
+/// Fix round 1 (I2): a save over rows the daemon cannot read.
+fn unreadable_text(problems: &[String]) -> String {
+    format!(
+        "models.toml has rows anthrex can't read: {}; fix or remove them first",
+        problems.join("; ")
+    )
+}
+
 /// `<repo_dir>/models.toml` (MR §3.3).
 fn repo_file(data_dir: &Path, project: &Path) -> PathBuf {
     crate::profile::repo_dir(data_dir, project).join(config::models::REPO_FILE)
@@ -75,8 +86,8 @@ impl RunService {
 
     /// Milestone 9.8 decision 36: `<repo_dir>/models.toml` as a table, read on a blocking
     /// thread within `SettingsIo.timeout`. A missing file is the empty table; an
-    /// unreadable or broken one refuses with its problems (the screen must not edit over
-    /// a file it could not read).
+    /// unreadable or broken one refuses with its problems; rows it cannot read come back
+    /// as `problems` beside the rows it can (fix round 1, I2).
     async fn repo_models(&self, project: PathBuf) -> RunReply {
         let path = repo_file(&self.ctx.data_dir, &project);
         let file = path.clone();
@@ -87,6 +98,8 @@ impl RunService {
                     project,
                     table: table.unwrap_or_default(),
                     path,
+                    // Fix round 1 (I2): the rows it could not read, for the screen to show.
+                    problems,
                 })
             }
             Ok(Ok((_, problems))) => refused(problems),
@@ -100,7 +113,8 @@ impl RunService {
     }
 
     /// Decision 36: `table` written to the repository's `models.toml` (an empty table
-    /// removes it), validated first, on a blocking thread within `SettingsIo.timeout`
+    /// removes it), validated first, refused while the file holds rows the daemon cannot
+    /// read (fix round 1, I2), on a blocking thread within `SettingsIo.timeout`
     /// and under `settings_write`, so it never races a `Put`. Runs read the file when
     /// they start, so nothing live changes.
     async fn put_repo_models(&self, project: PathBuf, table: ModelTable) -> RunReply {
@@ -114,12 +128,19 @@ impl RunService {
         let timeout = self.ctx.settings_io.timeout;
         let write = self.settings_write.clone().lock_owned();
         let Ok(guard) = tokio::time::timeout(timeout, write).await else {
-            return refused(vec![REPO_WRITE_TIMEOUT_TEXT.into()]);
+            // Fix round 1 (M6): nothing started.
+            return refused(vec![REPO_BUSY_TEXT.into()]);
         };
         let path = repo_file(&self.ctx.data_dir, &project);
         let wanted = table.clone();
         let task = tokio::task::spawn_blocking(move || {
-            let saved = config::models::save_repo(&path, &wanted);
+            // Fix round 1 (I2): never erase what the screen could not show.
+            let (_, problems) = config::models::load_repo(&path);
+            let saved = if problems.is_empty() {
+                config::models::save_repo(&path, &wanted)
+            } else {
+                Err(unreadable_text(&problems))
+            };
             drop(guard);
             saved
         });
