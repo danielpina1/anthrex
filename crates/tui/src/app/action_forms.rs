@@ -322,6 +322,18 @@ impl ActionForm {
     }
 }
 
+impl PromoteForm {
+    /// Fix round 1 (M5): the options rebuilt from new catalogs, the selection kept on
+    /// the same entry (else `configured`).
+    pub(crate) fn refresh(&mut self, catalogs: &Catalogs) {
+        let selected = self.options.get(self.at).cloned();
+        self.options = promote_options(catalogs);
+        self.at = (self.options.iter())
+            .position(|o| Some(o) == selected.as_ref())
+            .unwrap_or(0);
+    }
+}
+
 /// The picker's entries: `configured`, then every model the CLIs report
 /// (`App.catalogs`, milestone 9.8: the roster left the settings in M9.8.12), a
 /// catalog's `default` entry as that runtime's default; with no catalog only
@@ -429,6 +441,14 @@ impl App {
                 // Decision 37: say why at once; `form_brief_reconnected` asks again.
                 f.brief = Brief::Failed(NOT_CONNECTED.into());
             }
+        }
+        // Fix round 1 (M5): no catalog yet, so ask for the lists, as the Settings
+        // screen does; `DaemonMsg::Models` refreshes the open picker.
+        if matches!(form, ActionForm::Promote(_)) && self.catalogs.list.is_empty() {
+            effects.push(Effect::Send(proto::ClientMsg::ListModels {
+                runtime: None,
+                refresh: false,
+            }));
         }
         flow.step = ActionStep::Form(Box::new(form));
         effects

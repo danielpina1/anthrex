@@ -529,3 +529,48 @@ fn promote_picks_from_the_catalogs() {
         }
     );
 }
+
+/// M9.8.12 fix round 1 (M5): with no catalog yet, opening Promote asks for the lists
+/// as the Settings screen does, and the open picker takes them when they come.
+#[test]
+fn promote_asks_for_the_catalogs_and_follows_them() {
+    let (mut snap, windows) = running_snapshot();
+    snap.runs[0]
+        .actions
+        .push(action(ActionKind::Promote, "promote", None));
+    let mut app = app_with_runs(windows, snap);
+    app.open_actions(
+        (crate::tree::run_fixtures::RUN_ID.into(), ActionTarget::Run),
+        Some(ActionKind::Promote),
+    );
+    let effects = tap(&mut app, KeyCode::Enter);
+    let asks: Vec<_> = effects
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                Effect::Send(ClientMsg::ListModels {
+                    runtime: None,
+                    refresh: false
+                })
+            )
+        })
+        .collect();
+    assert_eq!(asks.len(), 1, "{effects:?}");
+    let options = |app: &App| {
+        let Some(Modal::Action(flow)) = &app.modal else {
+            panic!()
+        };
+        let ActionStep::Form(f) = &flow.step else {
+            panic!()
+        };
+        let ActionForm::Promote(f) = &**f else {
+            panic!()
+        };
+        f.options.len()
+    };
+    assert_eq!(options(&app), 1, "only configured");
+    let catalogs = crate::app::model_picker::tests::fixture_catalogs().list;
+    app.on_daemon(proto::DaemonMsg::Models { catalogs });
+    assert_eq!(options(&app), 7);
+}

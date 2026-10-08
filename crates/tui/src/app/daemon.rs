@@ -26,6 +26,13 @@ impl App {
                 if let Some(picker) = picker {
                     picker.refresh(&self.catalogs);
                 }
+                // M9.8.12 fix round 1 (M5): an open Promote form's picker too.
+                if let Some(Modal::Action(flow)) = &mut self.modal
+                    && let super::actions::ActionStep::Form(form) = &mut flow.step
+                    && let super::actions::forms::ActionForm::Promote(f) = &mut **form
+                {
+                    f.refresh(&self.catalogs);
+                }
                 self.refresh_goal_models();
                 vec![]
             }
