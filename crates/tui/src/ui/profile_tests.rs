@@ -74,9 +74,15 @@ fn status(state: Option<ProposalState>) -> ProfileStatus {
             trusted_project: vec![],
             unconfined_checks: false,
             auto_confirm: false,
+            edit: None,
         }),
         scout: None,
         verify_confined: true,
+        queued: Vec::new(),
+        checking: None,
+        verified_at: None,
+        unreadable_text: None,
+        dropped_goals: Vec::new(),
     }
 }
 

@@ -119,6 +119,7 @@ impl ProfileService {
             trusted_project: trusted,
             unconfined_checks,
             auto_confirm: false,
+            edit: None,
         };
         self.save_if_current(generation, &record).await;
         let job = super::service_run::Job {
@@ -193,6 +194,7 @@ impl ProfileService {
             trusted_project: Vec::new(),
             unconfined_checks: false,
             auto_confirm: false,
+            edit: None,
         };
         let _writes = self.writes.lock().await;
         // Review m5: a detection that registered meanwhile keeps its proposal.

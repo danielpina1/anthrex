@@ -219,6 +219,7 @@ async fn a_proposal_change_publishes_on_the_next_tick() {
         trusted_project: Vec::new(),
         unconfined_checks: false,
         auto_confirm: false,
+        edit: None,
     };
     crate::profile::store::save_proposal(&repo_dir, &record).unwrap();
     let runs = RunService::for_manager(&manager, data.clone(), Arc::new(NoRoots));

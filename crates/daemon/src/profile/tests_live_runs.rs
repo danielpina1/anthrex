@@ -29,6 +29,8 @@ fn edit_of(project: &Path) -> ProfileRequest {
         value: Some("[\"src/*\"]".into()),
         yes: false,
         unconfined_checks: false,
+        anyway: false,
+        on_proposal: false,
     }
 }
 

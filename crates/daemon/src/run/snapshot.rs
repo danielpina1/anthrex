@@ -41,6 +41,7 @@ pub fn snapshot(state: &EngineState, now: u64) -> RunsSnapshot {
         now,
         proposals: Vec::new(),
         idle_orchestrators: super::chain::idle_list(&state.chains, &state.runs),
+        queued_goals: Vec::new(),
     }
 }
 

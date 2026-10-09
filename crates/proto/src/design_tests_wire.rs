@@ -283,8 +283,13 @@ fn appended_variants_keep_their_indices() {
     );
 
     let names = variant_names::<RunReply>();
-    assert_eq!(names[names.len() - 2..], ["Settings", "Doc"], "{names:?}");
-    let n = names.len() as u8;
+    // Milestone 9.10 appends `Queued` after `Doc` (`profile_tests.rs`).
+    assert_eq!(
+        names[names.len() - 3..],
+        ["Settings", "Doc", "Queued"],
+        "{names:?}"
+    );
+    let n = names.len() as u8 - 1;
     let doc = serde_json::to_value(a_doc_view()).unwrap();
     assert_eq!(
         variant_at::<RunReply>(n - 1, &json!({"doc": doc, "request_id": 4})),

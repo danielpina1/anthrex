@@ -187,6 +187,7 @@ fn every_new_or_changed_message_round_trips() {
         now: 1_700_000_800,
         proposals: Vec::new(),
         idle_orchestrators: Vec::new(),
+        queued_goals: Vec::new(),
     };
     reply_both_ways(RunReply::Snapshot(snapshot));
     both_ways(&DaemonMsg::WindowsChanged {

@@ -279,7 +279,10 @@ impl ProfileService {
                 value,
                 yes,
                 unconfined_checks,
+                // Milestone 9.10.6 reads `anyway` and `on_proposal`.
+                ..
             } => self.edit(dir, key, value, yes, unconfined_checks).await,
+            ProfileRequest::RevertEdit { .. } => Err("not implemented until M9.10.6".to_string()),
         };
         answered.unwrap_or_else(|message| ProfileReply::Refused { message })
     }
@@ -482,6 +485,7 @@ mod tests {
             trusted_project: Vec::new(),
             unconfined_checks: false,
             auto_confirm: false,
+            edit: None,
         }
     }
 

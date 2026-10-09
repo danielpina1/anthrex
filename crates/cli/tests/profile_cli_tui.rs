@@ -46,6 +46,8 @@ fn edit(h: &RunHarness, key: &str, typed: &str) -> ProfileRequest {
         value: Some(value_literal(key, typed).expect("a valid value")),
         yes: false,
         unconfined_checks: false,
+        anyway: false,
+        on_proposal: false,
     }
 }
 

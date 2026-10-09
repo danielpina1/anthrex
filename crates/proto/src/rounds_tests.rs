@@ -257,6 +257,7 @@ fn old_snapshot_still_decodes() {
         now: 1_700_000_000,
         proposals: Vec::new(),
         idle_orchestrators: Vec::new(),
+        queued_goals: Vec::new(),
     };
     let written = serde_json::to_value(&snapshot).unwrap();
     assert!(written.get("idle_orchestrators").is_none());

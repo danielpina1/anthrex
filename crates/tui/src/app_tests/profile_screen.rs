@@ -96,6 +96,7 @@ fn record(state: ProposalState) -> ProposalRecord {
         trusted_project: vec![],
         unconfined_checks: false,
         auto_confirm: false,
+        edit: None,
     }
 }
 
@@ -110,6 +111,11 @@ pub(super) fn status(state: Option<ProposalState>) -> ProfileReply {
         proposal: state.map(record),
         scout: None,
         verify_confined: true,
+        queued: Vec::new(),
+        checking: None,
+        verified_at: None,
+        unreadable_text: None,
+        dropped_goals: Vec::new(),
     })
 }
 

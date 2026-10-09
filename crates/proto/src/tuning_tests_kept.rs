@@ -36,6 +36,7 @@ fn racing_snapshot() -> RunsSnapshot {
         now: 1_700_000_000,
         proposals: Vec::new(),
         idle_orchestrators: Vec::new(),
+        queued_goals: Vec::new(),
     }
 }
 

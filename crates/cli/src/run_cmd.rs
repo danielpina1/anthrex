@@ -74,7 +74,8 @@ enum RunCommand {
     Start {
         #[arg(long)]
         plan: Option<PathBuf>,
-        /// A goal for the triage decider; one small task runs at once, with no plan gate
+        /// A goal for the triage decider; one small task runs at once, with no plan gate.
+        /// In a repository with no profile the goal waits for it: exit 3, nothing on stdout
         #[arg(long)]
         goal: Option<String>,
         /// Approve the plan at once
@@ -240,6 +241,11 @@ pub async fn main(args: RunArgs, socket: PathBuf, dir: Option<PathBuf>) -> anyho
     if let Err(error) = dispatch(args.command, &socket, dir).await {
         if let Some(design::Usage(usage)) = error.downcast_ref() {
             usage.exit();
+        }
+        // Decision 39: a queued goal prints nothing on stdout and exits with its own code.
+        if let Some(queued) = error.downcast_ref::<adapt::Queued>() {
+            eprintln!("{queued}");
+            std::process::exit(adapt::EXIT_QUEUED);
         }
         eprintln!("{}", status::printable(&error.to_string()));
         std::process::exit(1);

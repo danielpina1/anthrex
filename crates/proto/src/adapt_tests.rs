@@ -324,6 +324,8 @@ fn every_new_request_and_reply_round_trips() {
             value: Some("cargo test".into()),
             yes: true,
             unconfined_checks: false,
+            anyway: false,
+            on_proposal: false,
         }),
         RunRequest::Profile(ProfileRequest::Edit {
             dir: dir.clone(),
@@ -331,6 +333,8 @@ fn every_new_request_and_reply_round_trips() {
             value: None,
             yes: false,
             unconfined_checks: true,
+            anyway: false,
+            on_proposal: false,
         }),
     ];
     for request in requests {
@@ -351,6 +355,11 @@ fn every_new_request_and_reply_round_trips() {
         proposal: Some(a_proposal()),
         scout: Some(a_scout_info()),
         verify_confined: true,
+        queued: Vec::new(),
+        checking: None,
+        verified_at: None,
+        unreadable_text: None,
+        dropped_goals: Vec::new(),
     };
     let mut fingerprint = BTreeMap::new();
     fingerprint.insert("Cargo.toml".to_string(), "0123456789abcdef:42".to_string());
@@ -442,6 +451,7 @@ fn every_new_request_and_reply_round_trips() {
         now: 0,
         proposals: Vec::new(),
         idle_orchestrators: Vec::new(),
+        queued_goals: Vec::new(),
     }));
     let packed = rmp_serde::to_vec_named(&msg).unwrap();
     assert_eq!(rmp_serde::from_slice::<DaemonMsg>(&packed).unwrap(), msg);

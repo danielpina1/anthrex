@@ -61,6 +61,7 @@ fn fake_daemon(socket: &Path, answers: Answers) -> mpsc::UnboundedReceiver<RunRe
                             now: 0,
                             proposals: Vec::new(),
                             idle_orchestrators: Vec::new(),
+                            queued_goals: Vec::new(),
                         }),
                         (_, Some(refusal)) => RunReply::refused("run", refusal.clone()),
                         (RunRequest::ShowDoc { .. }, None) => RunReply::Doc {

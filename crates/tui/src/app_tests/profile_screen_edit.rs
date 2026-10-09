@@ -140,6 +140,8 @@ fn saving_an_edit_sends_profile_edit() {
             ),
             yes: false,
             unconfined_checks: false,
+            anyway: false,
+            on_proposal: false,
         }]
     );
     assert_eq!(screen(&app).page, None);
@@ -160,6 +162,8 @@ fn saving_an_edit_sends_profile_edit() {
             value: Some(literal),
             yes: true,
             unconfined_checks: false,
+            anyway: false,
+            on_proposal: false,
         }]
     );
     // An environment value goes as written; Tab moves to the value.
@@ -179,6 +183,8 @@ fn saving_an_edit_sends_profile_edit() {
             value: Some("info".into()),
             yes: true,
             unconfined_checks: false,
+            anyway: false,
+            on_proposal: false,
         }]
     );
     // A bad value stays in the editor with its reason, and sends nothing.
@@ -213,6 +219,8 @@ fn the_delivery_rows_send_the_bare_value() {
         value: Some(value.into()),
         yes: false,
         unconfined_checks: false,
+        anyway: false,
+        on_proposal: false,
     };
     assert_eq!(
         profile_requests(&effects),
@@ -293,6 +301,8 @@ fn u_unsets_after_its_page() {
             value: None,
             yes: false,
             unconfined_checks: false,
+            anyway: false,
+            on_proposal: false,
         }]
     );
 }

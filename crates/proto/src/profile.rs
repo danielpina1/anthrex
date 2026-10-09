@@ -236,6 +236,9 @@ pub struct ProposalRecord {
     pub unconfined_checks: bool,
     /// `profile edit --yes`.
     pub auto_confirm: bool,
+    /// Milestone 9.10 decision 15: the row edit being checked, or the one that failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edit: Option<RowEdit>,
 }
 
 /// Milestone 9.0.5 decision 10: a profile proposal ready to confirm, as the Alerts box
@@ -278,4 +281,85 @@ pub struct ProfileStatus {
     pub scout: Option<ScoutInfo>,
     /// Whether verification would run confined here (decision 9).
     pub verify_confined: bool,
+    /// Milestone 9.10: the goals waiting for this repository's profile.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub queued: Vec<QueuedGoalInfo>,
+    /// The commands checked so far, while a proposal is being verified.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checking: Option<CheckProgress>,
+    /// The stored meta's `verification.at`, else `confirmed_at` (decision 23).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verified_at: Option<u64>,
+    /// Decision 32: the unparseable file's text, at most 64 KiB.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unreadable_text: Option<String>,
+    /// Queued goals that could not start (decision 6).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dropped_goals: Vec<DroppedGoal>,
+}
+
+/// A goal waiting for its repository's profile (SP §4.1), as the snapshot and
+/// `profile status` list it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QueuedGoalInfo {
+    pub id: String,
+    pub project: PathBuf,
+    pub goal: String,
+    /// Unix seconds.
+    pub queued_at: u64,
+    pub yes: bool,
+    pub trust_project: bool,
+    pub unconfined_checks: bool,
+    pub setup: SetupState,
+}
+
+/// Where the repository's set-up stands, for its queued goals.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum SetupState {
+    Reading,
+    Checking {
+        #[serde(default)]
+        progress: Option<CheckProgress>,
+    },
+    NeedsReview,
+    Failed {
+        reason: String,
+    },
+}
+
+/// Commands checked so far out of those planned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckProgress {
+    pub done: u32,
+    pub total: u32,
+}
+
+/// One row edit (decision 15).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RowEdit {
+    pub key: String,
+    /// `None`: an unset.
+    pub value: Option<String>,
+    pub state: RowEditState,
+}
+
+/// Where a row edit's check stands.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum RowEditState {
+    Verifying,
+    Failed {
+        reason: String,
+        tail: String,
+        secs: u64,
+    },
+}
+
+/// A queued goal that could not start (decision 6).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DroppedGoal {
+    pub goal: String,
+    pub reason: String,
+    pub at: u64,
 }

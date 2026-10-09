@@ -137,6 +137,8 @@ impl Rig {
                 value: Some("[\"src/*\"]".into()),
                 yes: false,
                 unconfined_checks: false,
+                anyway: false,
+                on_proposal: false,
             })
             .await;
         assert!(matches!(reply, ProfileReply::Done { .. }), "{reply:?}");
@@ -174,6 +176,7 @@ fn record(project: &Path, state: ProposalState, updated_at: u64) -> ProposalReco
         trusted_project: Vec::new(),
         unconfined_checks: false,
         auto_confirm: false,
+        edit: None,
     }
 }
 

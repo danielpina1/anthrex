@@ -138,6 +138,8 @@ impl App {
                     value: None,
                     yes,
                     unconfined_checks: false,
+                    anyway: false,
+                    on_proposal: false,
                 },
             )),
             Some(ProfilePage::Unset { .. }) => None,
@@ -183,6 +185,8 @@ impl App {
                             value: Some(value),
                             yes,
                             unconfined_checks: false,
+                            anyway: false,
+                            on_proposal: false,
                         },
                     )),
                     Err(why) => {

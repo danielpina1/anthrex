@@ -532,4 +532,7 @@ pub struct RunsSnapshot {
     /// Milestone 9.3 (KG §3.1): each project's idle orchestrator; left out while empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub idle_orchestrators: Vec<crate::rounds::IdleOrchestrator>,
+    /// Milestone 9.10 decision 33: the goals waiting for their repository's profile.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub queued_goals: Vec<crate::profile::QueuedGoalInfo>,
 }

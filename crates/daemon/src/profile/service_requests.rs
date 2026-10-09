@@ -141,6 +141,11 @@ impl ProfileService {
             proposal,
             scout,
             verify_confined: self.verify_confined(),
+            queued: Vec::new(),
+            checking: None,
+            verified_at: None,
+            unreadable_text: None,
+            dropped_goals: Vec::new(),
         })
     }
 
@@ -323,6 +328,7 @@ impl ProfileService {
             trusted_project: Vec::new(),
             unconfined_checks,
             auto_confirm: yes,
+            edit: None,
         };
         if reverify {
             self.confinement_refusal(unconfined_checks)?;
