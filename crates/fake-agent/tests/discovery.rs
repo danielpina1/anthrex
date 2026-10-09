@@ -79,8 +79,23 @@ fn claude_answers_initialize_with_the_fixture_models_and_runs_no_turn() {
             .iter()
             .map(|m| m["value"].as_str().unwrap())
             .collect::<Vec<_>>(),
-        ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5-5"]
+        [
+            "default",
+            "opus[1m]",
+            "claude-fable-5-1[1m]",
+            "sonnet",
+            "haiku"
+        ]
     );
+    // Real-CLI manual check fix: the real reply's shape, aliases with their resolved
+    // models, `xhigh`, and Haiku without `supportsEffort`.
+    assert_eq!(models[1]["resolvedModel"], "claude-opus-5-5[1m]");
+    assert_eq!(models[4]["resolvedModel"], "claude-haiku-4-5-20251001");
+    assert_eq!(
+        models[3]["supportedEffortLevels"],
+        serde_json::json!(["low", "medium", "high", "xhigh", "max"])
+    );
+    assert!(models[4].get("supportsEffort").is_none());
 }
 
 #[test]
@@ -100,7 +115,11 @@ fn codex_app_server_pages_model_list() {
     assert_eq!(page(0)["result"]["userAgent"], "fake-agent");
     assert_eq!(page(1)["id"], 2);
     assert_eq!(page(1)["result"]["nextCursor"], "p2");
-    assert_eq!(page(2)["result"]["data"][0]["id"], "gpt-6.1-sol");
+    assert_eq!(page(1)["result"]["data"][0]["id"], "gpt-6.1-sol");
+    assert_eq!(page(1)["result"]["data"][0]["isDefault"], true);
+    let efforts = &page(1)["result"]["data"][0]["supportedReasoningEfforts"];
+    assert_eq!(efforts[5]["reasoningEffort"], "ultra");
+    assert_eq!(page(2)["result"]["data"][0]["id"], "gpt-5.6-sol");
     assert!(page(2)["result"]["nextCursor"].is_null());
 }
 

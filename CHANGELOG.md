@@ -7,11 +7,25 @@ release is a pre-release and any release may change behaviour or the protocol.
 
 ## [Unreleased]
 
-The protocol version is now 19: a client needs a daemon of the same release. Stop the
-old daemon (`anthrex daemon stop`) after upgrading.
+The protocol version is now 20 (19 for model roles, 20 for orchestrator-first alerts): a
+client needs a daemon of the same release. Stop the old daemon (`anthrex daemon stop`)
+after upgrading.
 
 ### Added
 
+- **Orchestrator-first alerts.** While a run's orchestrator is alive, a blocked task, a
+  halted run, a held or red stage and a delivery problem go to the orchestrator first,
+  not to you. It resolves them itself with five new `edit_plan` ops, each with a reason
+  you can read: `retry`, `override`, `resume_run`, `approve_hold` and `accept_red`.
+  When it needs you, it asks with the new `ask_user` tool, which raises one
+  `orchestrator asks: <question>` alert; answer with `1`-`9` in the Alerts view
+  (`C-b a`), by typing in its window, or see it in `anthrex run status`. You are still
+  alerted for approvals, acceptance, profile proposals, problems only you can fix (a
+  full disk, a missing git identity, a logged-out CLI or `gh`, billing), and an orchestrator
+  that has stalled or exited, which hands everything it held back to you. What the
+  orchestrator resolved stays visible, quietly: `orchestrator handled N` in the run
+  view's inspector (with each action and its reason), a footer line in the Alerts view,
+  `anthrex run status` and the run log.
 - **Model roles.** Every model anthrex launches comes from one table, `[models]`: a row
   per role (orchestrator, planner, the three implementer sizes, test writer, reviewer,
   research, the helpers, the brainstormers), each a model, an optional effort and an
@@ -24,9 +38,15 @@ old daemon (`anthrex daemon stop`) after upgrading.
 
 ### Changed
 
+- **Worker windows no longer ring.** Only an orchestrator window and the windows you
+  started yourself ring the bell or show a toast when they need you; a run's workers,
+  reviewers and scouts report to their orchestrator instead.
 - **The orchestrator no longer routes tasks.** It gives each task a size, and the size
   picks the row. A route from the orchestrator, a sub-planner or a plan file is ignored,
   and the run log says `route model ignored: models come from the role table`.
+- **Hub tasks' reviewers change model.** Every review runs the one `reviewer` row
+  (built-in: Codex's own default) instead of picking a model by review level, so a hub
+  task's reviewer is no longer Claude Opus.
 - **A route naming only a runtime no longer selects a model.** `anthrex run edit` refuses
   one (`choose a model; runtime alone no longer selects one`).
 - **Escalation raises effort first.** A task that struggles runs again at its model's

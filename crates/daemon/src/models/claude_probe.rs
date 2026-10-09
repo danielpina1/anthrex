@@ -69,7 +69,7 @@ pub fn probe(
     Ok((models, reader.into_lines()))
 }
 
-fn parse_models(models: &Value) -> Vec<CatalogModel> {
+pub(crate) fn parse_models(models: &Value) -> Vec<CatalogModel> {
     let text = |v: &Value| v.as_str().map(str::to_string);
     models
         .as_array()
@@ -90,7 +90,11 @@ fn parse_models(models: &Value) -> Vec<CatalogModel> {
             } else {
                 Vec::new()
             };
+            // Real-CLI manual check fix: Claude lists aliases (`opus[1m]`, `sonnet`)
+            // and names the model each runs as `resolvedModel`.
+            let resolved = text(&m["resolvedModel"]).filter(|r| catalog_id_ok(Runtime::Claude, r));
             Some(CatalogModel {
+                resolved,
                 label: text(&m["displayName"]).unwrap_or_else(|| id.clone()),
                 description: text(&m["description"]).unwrap_or_default(),
                 efforts,

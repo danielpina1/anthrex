@@ -15,7 +15,7 @@
 //! row continues the project's idle orchestrator (`continue_from`) or starts a new one.
 
 use crate::app::form_picker::cycle_effort;
-use crate::app::model_picker::ModelPicker;
+use crate::app::model_picker::{ModelPicker, is_row_model};
 use crate::text_area::EditorKey;
 use crate::text_area::TextArea;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -95,6 +95,9 @@ pub struct GoalForm {
     /// The orchestrator row's model and effort, set by the app (fix round 1: a pick of
     /// the row's model with no effort runs the row's effort, and the form says so).
     pub row: Option<(ModelRef, Option<String>)>,
+    /// Gate fix B2: the models the catalogs say run as the row's (`opus[1m]` for
+    /// `claude-opus-5-5`), set by the app with `row`.
+    pub row_aliases: Vec<ModelRef>,
     /// The model picker, while it is open over the form.
     pub picker: Option<ModelPicker>,
     /// Milestone 9.2 ruling R-13: `None` is the repo profile's `[delivery] mode`
@@ -177,6 +180,7 @@ impl GoalForm {
             efforts: Vec::new(),
             effort: None,
             row: None,
+            row_aliases: Vec::new(),
             picker: None,
             delivery: None,
             design: None,
@@ -214,7 +218,7 @@ impl GoalForm {
             (None, _) => ROLE_TABLE.to_string(),
             (Some(_), Some(effort)) => effort.clone(),
             (Some(m), None) => match &self.row {
-                Some((row, effort)) if row == m => {
+                Some((row, effort)) if is_row_model(row, &self.row_aliases, m) => {
                     format!("{} ({ROLE_TABLE})", effort.as_deref().unwrap_or("default"))
                 }
                 _ => "default".to_string(),

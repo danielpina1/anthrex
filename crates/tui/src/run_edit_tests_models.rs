@@ -70,7 +70,7 @@ fn the_task_edit_form_picks_a_model_and_its_efforts() {
     assert_eq!(picker.target, PickerFor::TaskEdit);
     assert_eq!(
         picker.entries[0],
-        PickerEntry::RoleTable("role table (Claude · Sonnet 5)".into())
+        PickerEntry::RoleTable("role table (Claude · Sonnet)".into())
     );
     assert_eq!(picker.selected, 0, "a policy model: on the role table");
     let luna = mref("codex:gpt-6-luna");
@@ -121,7 +121,7 @@ fn the_task_edit_form_picks_a_model_and_its_efforts() {
     app.on_key(key(KeyCode::Enter));
     assert_eq!(
         form(&app).value_parts(EditField::Model).0,
-        "‹ role table (Claude · Sonnet 5) ›"
+        "‹ role table (Claude · Sonnet) ›"
     );
     // On the model row `⏎` is the picker's; from the next row it saves.
     app.on_key(key(KeyCode::Tab));
@@ -246,7 +246,7 @@ fn the_form_draws_the_effective_choice() {
     let draw = |app: &App| crate::ui::audit::rows(&crate::ui::audit::draw(app, 120, 40)).join("\n");
     let rows = draw(&app);
     assert!(
-        rows.contains("▌ model      ‹ role table (Claude · Sonnet 5 · medium) ›"),
+        rows.contains("▌ model      ‹ role table (Claude · Sonnet · medium) ›"),
         "{rows}"
     );
     assert!(
@@ -255,10 +255,11 @@ fn the_form_draws_the_effective_choice() {
     );
     app.on_key(key(KeyCode::Enter));
     app.on_key(key(KeyCode::Char('j')));
+    app.on_key(key(KeyCode::Char('j')));
     app.on_key(key(KeyCode::Enter));
     let rows = draw(&app);
     assert!(
-        rows.contains("▌ model      ‹ Claude · Haiku 4.5 ›"),
+        rows.contains("▌ model      ‹ Claude · Opus (1M context) ›"),
         "{rows}"
     );
     assert!(rows.contains("  effort     ‹ default ›"), "{rows}");
@@ -310,6 +311,7 @@ fn the_effort_row_shows_the_rows_effort_for_the_rows_model() {
         effort: Effort::new("max"),
     });
     let mut app = edit_app();
+    crate::app::model_picker::tests::with_opus_full_id(&mut app.catalogs);
     app.modal = Some(Modal::EditTask(Box::new(TaskEditForm::new(RUN_ID, &task))));
     let pick = |app: &mut App, label: &str| {
         app.on_key(key(KeyCode::Enter));
@@ -330,8 +332,32 @@ fn the_effort_row_shows_the_rows_effort_for_the_rows_model() {
     };
     pick(&mut app, "Opus 5.5");
     assert_eq!(effort_shown(&app), "‹ max (role table) ›");
-    pick(&mut app, "Haiku 4.5");
+    pick(&mut app, "Haiku");
     assert_eq!(effort_shown(&app), "‹ default ›");
+}
+
+/// Gate fix B2: the real Claude catalog lists Opus only by alias (`opus[1m]`,
+/// resolving to `claude-opus-5-5[1m]`); picking it for a `claude-opus-5-5` row is the
+/// row's own model, so it runs and reads at the row's effort, as the daemon decides.
+#[test]
+fn picking_the_rows_alias_shows_the_rows_effort() {
+    let task = with_opus_row(edit_fixture_task());
+    let mut app = edit_app();
+    app.modal = Some(Modal::EditTask(Box::new(TaskEditForm::new(RUN_ID, &task))));
+    app.on_key(key(KeyCode::Enter));
+    for _ in 0..12 {
+        app.on_key(key(KeyCode::Char('k')));
+    }
+    for _ in 0..12 {
+        let picker = form(&app).picker.as_ref().unwrap();
+        if selected_model(picker) == Some(mref("claude:opus[1m]")) {
+            break;
+        }
+        app.on_key(key(KeyCode::Char('j')));
+    }
+    app.on_key(key(KeyCode::Enter));
+    assert_eq!(form(&app).current_model(), Some(mref("claude:opus[1m]")));
+    assert_eq!(effort_shown(&app), "‹ max (role table) ›");
 }
 
 /// The task's row, Opus 5.5 at `max` (`TaskInfo.row`), on `task`.

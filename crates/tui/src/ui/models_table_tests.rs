@@ -34,21 +34,31 @@ fn the_table_draws_as_the_spec_at_80x24_and_120x40() {
         );
         assert!(interior[0].ends_with("tab: limits"), "{w}x{h}");
         assert_eq!(interior[1], "", "{w}x{h}");
+        // Real-CLI manual check fix: the real Claude catalog lists Opus and Haiku by
+        // alias, so the built-in ids read as themselves; gate fix B3: a model wider
+        // than its 24 columns is cut with `…` so the later columns stay aligned (the
+        // fallback cut at 80); `claude-sonnet-5` is Sonnet's resolved model exactly.
+        let opus_fallback = if w == 80 {
+            "Claude · claude-opus-…"
+        } else {
+            "Claude · claude-opus-5-5"
+        };
         assert_eq!(
             interior[2..14],
             [
-                " ROLE                  MODEL                   EFFORT   IF IT STRUGGLES",
-                " orchestrator          Claude · Opus 5.5       high     —",
-                " planner               Claude · Opus 5.5       high     —",
-                " implementer · small   Codex  · gpt-6 luna     low      Codex · gpt-6 sol",
-                "▸implementer · medium  Codex  · gpt-6 sol      medium   Claude · Opus 5.5",
-                " implementer · hub     Claude · Opus 5.5       high     Codex · gpt-6.1 sol",
-                " test writer           Codex  · gpt-6 sol      medium   —",
-                " reviewer              Codex  · gpt-6.1 sol    high     Claude · Opus 5.5",
-                " research              Claude · Sonnet 5       medium   —",
-                " brainstorm            Claude · Opus 5.5  +  Codex · gpt-6.1 sol",
-                " helpers ▸             Claude · Haiku 4.5      —        —",
-                "",
+                " ROLE                  MODEL                   EFFORT   IF IT STRUGGLES".into(),
+                " orchestrator          Claude · claude-opus-5… high     —".into(),
+                " planner               Claude · claude-opus-5… high     —".into(),
+                " implementer · small   Codex  · gpt-6 luna     low      Codex · gpt-6 sol".into(),
+                format!("▸implementer · medium  Codex  · gpt-6 sol      medium   {opus_fallback}"),
+                " implementer · hub     Claude · claude-opus-5… high     Codex · gpt-6.1 sol"
+                    .into(),
+                " test writer           Codex  · gpt-6 sol      medium   —".into(),
+                format!(" reviewer              Codex  · gpt-6.1 sol    high     {opus_fallback}"),
+                " research              Claude · Sonnet         medium   —".into(),
+                " brainstorm            Claude · claude-opus-5-5  +  Codex · gpt-6.1 sol".into(),
+                " helpers ▸             Claude · claude-haiku-… —        —".into(),
+                String::new(),
             ],
             "{w}x{h}"
         );
@@ -56,6 +66,17 @@ fn the_table_draws_as_the_spec_at_80x24_and_120x40() {
             interior.last().unwrap(),
             " ⏎ choose model   e effort   f if-it-struggles   x reset   w save   esc back"
         );
+    }
+    // Gate fix B3: every role row's effort starts under the header's `EFFORT`.
+    let interior = rows(&app, 120, 40);
+    let effort_col = (interior[2].chars().collect::<String>().find("EFFORT")).unwrap();
+    for r in &interior[3..14] {
+        if r.is_empty() || r.contains("brainstorm") {
+            continue;
+        }
+        let chars: Vec<char> = r.chars().collect();
+        assert_eq!(chars[effort_col - 1], ' ', "{r:?}");
+        assert_ne!(chars[effort_col], ' ', "{r:?}");
     }
     // The longest row fits 80 columns' interior (78) whole.
     let longest = rows(&app, 80, 24).iter().map(|r| r.chars().count()).max();
@@ -91,7 +112,7 @@ fn this_repo_scope_draws_overrides_and_inherited_rows() {
         // `▸` (the selection, on orchestrator) wins over `●`; reviewer is overridden.
         assert_eq!(
             interior[9],
-            "●reviewer              Claude · Sonnet 5       high     —"
+            "●reviewer              Claude · Sonnet         high     —"
         );
         let buffer = draw(&app, w, h);
         for (i, line) in interior[3..13].iter().enumerate() {
@@ -177,7 +198,7 @@ fn helpers_open_inline_and_the_table_scrolls() {
     let interior = rows(&app, 120, 40);
     assert_eq!(
         interior[12],
-        " helpers ▾             Claude · Haiku 4.5      —        —"
+        " helpers ▾             Claude · claude-haiku-… —        —"
     );
     assert_eq!(interior[13], "▸  run name            same as helpers");
     for _ in 0..4 {
@@ -205,7 +226,8 @@ fn e_on_brainstorm_says_its_effort_on_the_status_line() {
     let bar = text.lines().last().unwrap();
     assert!(bar.contains("brainstorm effort: max"), "{bar}");
     assert!(
-        rows(&app, 80, 24)[11].starts_with("▸brainstorm            Claude · Opus 5.5  +  Codex"),
+        rows(&app, 80, 24)[11]
+            .starts_with("▸brainstorm            Claude · claude-opus-5-5  +  Codex"),
         "no effort column"
     );
     tap(&mut app, KeyCode::Char('e'));

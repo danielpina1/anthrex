@@ -161,12 +161,23 @@ fn e2e_detect_refuses_an_unconfinable_platform_without_the_flag() {
     assert!(!record.verification.unwrap().confined);
 }
 
+/// The stopping test's verification check: it marks the checkout once it runs, then
+/// waits until the test releases it. A reject cancels only a check still waiting for
+/// its slot (`verify_steps.rs`); one already running is waited for, so this gate holds
+/// the rejected work in its stopping state until the test opens it. The loop's own cap
+/// (60 s) is past `onboarding.verify_timeout_secs` (10 s), which kills the check first
+/// should the test panic before releasing it.
+const GATED_CHECK: &str = "touch started\n\
+    i=0\n\
+    while [ ! -e release ] && [ $i -lt 600 ]; do sleep 0.1; i=$((i + 1)); done\n\
+    echo checked\n";
+
 /// Review m6 (and reject during `Verifying`): while work runs, `confirm` is refused
 /// with decision 8's text; after `reject`, until the stopped work has cleaned up, a new
 /// detection is refused as stopping, and nothing is written back.
 #[test]
 fn e2e_running_and_stopping_work_refuse_with_their_texts() {
-    let h = harness("", &[], &[("slow.sh", "sleep 6; echo checked\n")]);
+    let h = harness("", &[], &[("slow.sh", GATED_CHECK)]);
     h.onboarding_report(1, json!({"check": "sh slow.sh"}));
     ok(h.profile(&["detect"]));
     let status = h.wait_profile(
@@ -179,6 +190,14 @@ fn e2e_running_and_stopping_work_refuse_with_their_texts() {
         PROFILE_WAIT,
     );
     let project = status.project.clone();
+    let verify = daemon::profile::verify::checkout_path(&h.data().join("worktrees"), &project);
+    // `Verifying` is recorded before the checkout is made and the check takes its slot;
+    // a reject before then stops the work at once, leaving no stopping state to see.
+    h.wait_profile(
+        "the verification check to start",
+        |_| verify.join("started").exists(),
+        PROFILE_WAIT,
+    );
     let confirm = h.profile_request(ProfileRequest::Confirm {
         dir: h.repo.clone(),
         shown: None,
@@ -207,7 +226,7 @@ fn e2e_running_and_stopping_work_refuse_with_their_texts() {
             )
         }
     );
-    let verify = daemon::profile::verify::checkout_path(&h.data().join("worktrees"), &project);
+    std::fs::write(verify.join("release"), "").unwrap();
     h.wait_profile(
         "the stopped verification to clean up",
         |_| std::fs::symlink_metadata(&verify).is_err(),

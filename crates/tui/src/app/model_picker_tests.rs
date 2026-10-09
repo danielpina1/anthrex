@@ -10,6 +10,7 @@ use proto::{ClientMsg, DaemonMsg, Runtime};
 fn model(id: &str, label: &str, description: &str, efforts: &[&str]) -> CatalogModel {
     CatalogModel {
         id: id.into(),
+        resolved: None,
         label: label.into(),
         description: description.into(),
         efforts: efforts.iter().map(|e| e.to_string()).collect(),
@@ -18,39 +19,65 @@ fn model(id: &str, label: &str, description: &str, efforts: &[&str]) -> CatalogM
     }
 }
 
-/// `fake-agent/fixtures/claude-initialize.json`, as the daemon's probe reads it.
+/// `fake-agent/fixtures/claude-initialize.json` (the real claude 2.1.280 reply), as the
+/// daemon's probe reads it: entries by alias, each with its resolved model; no default
+/// effort; Haiku offers none.
 pub(crate) fn claude_catalog() -> ModelCatalog {
-    let four = ["low", "medium", "high", "max"];
+    let five = ["low", "medium", "high", "xhigh", "max"];
+    let entry =
+        |id: &str, resolved: &str, label: &str, description: &str, efforts: &[&str]| CatalogModel {
+            resolved: Some(resolved.into()),
+            is_default: id == "default",
+            ..model(id, label, description, efforts)
+        };
     ModelCatalog {
         runtime: Runtime::Claude,
         cli_version: "2.1.290".into(),
         fetched_at: 1,
         source: CatalogSource::Live,
         models: vec![
-            model(
-                "claude-haiku-4-5",
-                "Haiku 4.5",
-                "Fastest for quick tasks",
-                &[],
+            entry(
+                "default",
+                "claude-opus-5-5[1m]",
+                "Default (recommended)",
+                "Opus 5.5 with 1M context · Best for everyday, complex tasks",
+                &five,
             ),
-            model(
+            entry(
+                "opus[1m]",
+                "claude-opus-5-5[1m]",
+                "Opus (1M context)",
+                "Opus 5.5 with 1M context · Best for everyday, complex tasks",
+                &five,
+            ),
+            entry(
+                "claude-fable-5-1[1m]",
+                "claude-fable-5-1",
+                "Fable",
+                "Fable 5.1 · Most capable for your hardest and longest-running tasks",
+                &five,
+            ),
+            entry(
+                "sonnet",
                 "claude-sonnet-5",
-                "Sonnet 5",
-                "Best for everyday tasks",
-                &four,
+                "Sonnet",
+                "Sonnet 5 · Efficient for routine tasks",
+                &five,
             ),
-            model(
-                "claude-opus-5-5",
-                "Opus 5.5",
-                "Most capable for complex work",
-                &four,
+            entry(
+                "haiku",
+                "claude-haiku-4-5-20251001",
+                "Haiku",
+                "Haiku 4.5 · Fastest for quick answers",
+                &[],
             ),
         ],
         problem: None,
     }
 }
 
-/// `fake-agent/fixtures/codex-model-list.json` (both pages), as the daemon reads it.
+/// A Codex catalog in the shape `fake-agent/fixtures/codex-model-list.json` has (the
+/// fixture itself holds the real codex 0.160.1 list), three models over two pages.
 pub(crate) fn codex_catalog() -> ModelCatalog {
     let with = |m: CatalogModel, default: &str, is_default: bool| CatalogModel {
         default_effort: Some(default.into()),
@@ -87,6 +114,19 @@ pub(crate) fn codex_catalog() -> ModelCatalog {
         ],
         problem: None,
     }
+}
+
+/// `catalogs` with Claude also listing `claude-opus-5-5` by its full id (`Opus 5.5`),
+/// as a Claude that names full ids would: a row's own model can then be picked from
+/// the list (the real 2.1.280 list names Opus only as `default` and `opus[1m]`).
+pub(crate) fn with_opus_full_id(catalogs: &mut Catalogs) {
+    let five = ["low", "medium", "high", "xhigh", "max"];
+    catalogs.list[0].models.push(model(
+        "claude-opus-5-5",
+        "Opus 5.5",
+        "Opus 5.5 by its full id",
+        &five,
+    ));
 }
 
 /// Both fixture catalogs, `Live`.
@@ -152,9 +192,11 @@ fn the_picker_lists_both_clis_then_custom() {
         shape,
         [
             "# CLAUDE  (claude 2.1.290)",
-            "Haiku 4.5",
-            "Sonnet 5",
-            "Opus 5.5",
+            "Default (recommended)",
+            "Opus (1M context)",
+            "Fable",
+            "Sonnet",
+            "Haiku",
             "# CODEX  (codex 0.160.1)",
             "gpt-6 luna",
             "gpt-6 sol",
@@ -183,19 +225,33 @@ fn the_picker_lists_both_clis_then_custom() {
     assert_eq!(
         efforts,
         [
+            "low … max",
+            "low … max",
+            "low … max",
+            "low … max",
             "—",
-            "low … max",
-            "low … max",
             "low … xhigh",
             "low … max",
             "low … max"
         ]
     );
-    assert!(models[4].0.ends_with("(Codex default)"), "{:?}", models[4]);
-    assert_eq!(models[4].0, "Balanced (Codex default)");
-    assert!(!models[3].0.contains("default"), "{:?}", models[3]);
+    // Real-CLI manual check fix, decision 3: an alias entry names its resolved model.
+    assert_eq!(
+        models[0].0,
+        "claude-opus-5-5[1m] · Opus 5.5 with 1M context · Best for everyday, complex tasks (Claude default)"
+    );
+    assert_eq!(
+        models[3].0,
+        "claude-sonnet-5 · Sonnet 5 · Efficient for routine tasks"
+    );
+    assert!(models[6].0.ends_with("(Codex default)"), "{:?}", models[6]);
+    assert_eq!(models[6].0, "Balanced (Codex default)");
+    assert!(!models[5].0.contains("default"), "{:?}", models[5]);
     let current: Vec<bool> = models.iter().map(|m| m.2).collect();
-    assert_eq!(current, [false, false, false, false, true, false]);
+    assert_eq!(
+        current,
+        [false, false, false, false, false, false, true, false]
+    );
     assert_eq!(selected_model(&p), Some(mref("codex:gpt-6-sol")));
 }
 
@@ -210,7 +266,7 @@ fn a_cached_or_builtin_catalog_says_so_and_a_missing_cli_is_greyed() {
         header(Runtime::Claude, "CLAUDE  (cached)", false)
     );
     assert_eq!(
-        p.entries[4],
+        p.entries[6],
         header(Runtime::Codex, "CODEX  (built-in list)", false)
     );
 
@@ -221,8 +277,21 @@ fn a_cached_or_builtin_catalog_says_so_and_a_missing_cli_is_greyed() {
         Some(&mref("claude:claude-opus-5-5")),
         None,
     );
+    // Real-CLI manual check fix: the built-in id is reported, as the alias it matches.
+    match &p.entries[6] {
+        PickerEntry::Model {
+            description,
+            efforts,
+            current,
+            ..
+        } => assert_eq!(
+            (description.as_str(), efforts.as_str(), *current),
+            ("as Opus (1M context)", "low … max", true)
+        ),
+        other => panic!("{other:?}"),
+    }
     assert_eq!(
-        p.entries[4],
+        p.entries[7],
         header(Runtime::Codex, "CODEX  codex not found", true)
     );
     assert_eq!(selected_model(&p), Some(mref("claude:claude-opus-5-5")));
@@ -236,7 +305,7 @@ fn a_cached_or_builtin_catalog_says_so_and_a_missing_cli_is_greyed() {
     assert_eq!(selected_model(&p), Some(mref("claude:claude-opus-5-5")));
     // A missing runtime's current model is not where the picker opens.
     let p = medium(&catalogs);
-    assert_eq!(selected_model(&p), Some(mref("claude:claude-haiku-4-5")));
+    assert_eq!(selected_model(&p), Some(mref("claude:default")));
 }
 
 #[test]
@@ -348,12 +417,14 @@ fn custom_asks_the_runtime_then_the_name() {
 #[test]
 fn a_hostile_catalog_is_kept_out_of_the_entries_text() {
     let mut catalogs = fixture_catalogs();
-    catalogs.list[0].models[0].label = "\u{1b}[31mOK\u{202e}".into();
-    catalogs.list[0].models[0].description = format!("\u{1b}[2J{}", "d".repeat(500));
-    catalogs.list[0].models[0].efforts = vec!["low".into(), "\u{1b}[31m".into(), "high".into()];
+    let hostile = &mut catalogs.list[0].models[1];
+    hostile.resolved = None;
+    hostile.label = "\u{1b}[31mOK\u{202e}".into();
+    hostile.description = format!("\u{1b}[2J{}", "d".repeat(500));
+    hostile.efforts = vec!["low".into(), "\u{1b}[31m".into(), "high".into()];
     let p = medium(&catalogs);
     // Control characters become spaces, format characters are dropped, then trimmed.
-    match &p.entries[1] {
+    match &p.entries[2] {
         PickerEntry::Model {
             label,
             description,
@@ -370,7 +441,7 @@ fn a_hostile_catalog_is_kept_out_of_the_entries_text() {
         other => panic!("{other:?}"),
     }
     assert_eq!(
-        catalogs.label(&mref("claude:claude-haiku-4-5"), false),
+        catalogs.label(&mref("claude:opus[1m]"), false),
         "Claude · [31mOK"
     );
 }
@@ -463,9 +534,9 @@ fn an_unlisted_current_model_is_shown_and_kept() {
         }
         other => panic!("{other:?}"),
     }
-    assert_eq!(p.selected, 4, "under Claude's header, after its models");
+    assert_eq!(p.selected, 6, "under Claude's header, after its models");
     assert_eq!(
-        p.entries[5],
+        p.entries[7],
         header(Runtime::Codex, "CODEX  (codex 0.160.1)", false)
     );
     assert_eq!(current_models(&p), [mref("claude:claude-x")]);
@@ -480,7 +551,7 @@ fn an_unlisted_current_model_is_shown_and_kept() {
     assert!(p.entries.iter().all(
         |e| !matches!(e, PickerEntry::Model { description, .. } if description == "not reported")
     ));
-    assert_eq!(selected_model(&p), Some(mref("claude:claude-opus-5-5")));
+    assert_eq!(selected_model(&p), Some(mref("claude:haiku")));
     p.on_key(key(KeyCode::Char('j')));
     assert_eq!(
         p.on_key(key(KeyCode::Enter)),

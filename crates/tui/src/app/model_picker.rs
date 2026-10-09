@@ -28,6 +28,14 @@ pub(crate) fn clean(text: &str) -> String {
     one_line(text).trim().to_string()
 }
 
+/// Gate fix B2: whether `m` is the row's model `row`: the same ref, one of `aliases`
+/// ([`Catalogs::aliases`] of `row`), or the same id past a context tag or a date. The
+/// daemon applies the same rule (`RunModels::same_model_ref`), so a pick of `opus[1m]`
+/// for a `claude-opus-5-5` row runs, and reads, at the row's effort.
+pub fn is_row_model(row: &ModelRef, aliases: &[ModelRef], m: &ModelRef) -> bool {
+    row == m || aliases.contains(m) || proto::models::same_model(&[], row, m)
+}
+
 /// `Claude`, `Codex`: the runtime as the table names it.
 pub fn runtime_name(runtime: Runtime) -> &'static str {
     match runtime {
@@ -108,15 +116,47 @@ impl Catalogs {
         } else {
             name.to_string()
         };
+        // Real-CLI manual check fix: the catalog's label names the entry's own model, so
+        // it stands for an id that is the entry's id or exactly its resolved model; an id
+        // matched past a context tag or a date (`claude-opus-5-5` for `opus[1m]`, a 1M
+        // context model) reads as itself.
         let label = match &model.id {
             None => "default".to_string(),
             Some(id) => self
                 .find(model)
+                .filter(|m| m.id == *id || m.resolved.as_deref() == Some(id))
                 .map(|m| clean(&m.label))
                 .filter(|l| !l.is_empty())
                 .unwrap_or_else(|| clean(id)),
         };
         format!("{name} · {label}")
+    }
+
+    /// Gate fix B2: every model the catalogs list that runs as `model` (its aliases, the
+    /// default entry as `<runtime>:default`), for a form to tell the row's own model
+    /// without holding the catalogs ([`is_row_model`]).
+    pub fn aliases(&self, model: &ModelRef) -> Vec<ModelRef> {
+        let Some(catalog) = self.of(model.runtime) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for entry in &catalog.models {
+            let ids = [Some(entry.id.clone())].into_iter();
+            let ids = ids.chain(entry.is_default.then_some(None));
+            for id in ids {
+                let alias = ModelRef {
+                    runtime: model.runtime,
+                    id,
+                };
+                if alias != *model
+                    && !out.contains(&alias)
+                    && proto::models::same_model(&self.list, &alias, model)
+                {
+                    out.push(alias);
+                }
+            }
+        }
+        out
     }
 
     /// The model's efforts as the catalog reports them (empty when unknown), each an
@@ -271,6 +311,15 @@ fn entry(runtime: Runtime, m: &CatalogModel, current: Option<&ModelRef>) -> Opti
         .filter(|l| !l.is_empty())
         .unwrap_or_else(|| clean(&m.id));
     let mut description = clean(&m.description);
+    // Real-CLI manual check fix, decision 3: the entry keeps the CLI's own id (Claude's
+    // alias, always launchable) and names the model it resolves to beside the label.
+    if let Some(resolved) = m.resolved.as_deref().map(clean).filter(|r| *r != m.id) {
+        description = if description.is_empty() {
+            resolved
+        } else {
+            format!("{resolved} · {description}")
+        };
+    }
     if m.is_default {
         let mark = format!("({} default)", runtime_name(runtime));
         description = if description.is_empty() {
@@ -307,11 +356,20 @@ fn entries(
             .iter()
             .any(|e| matches!(e, PickerEntry::Model { current: true, .. }));
         if let Some(m) = current.filter(|m| m.runtime == runtime && !listed) {
+            // Real-CLI manual check fix: a current id the catalog lists under an alias
+            // (`claude-opus-5-5` as `opus[1m]`) is reported: it reads as that entry.
+            let (description, efforts) = match catalog.and_then(|c| c.find(m)) {
+                Some(found) => (
+                    format!("as {}", clean(&found.label)),
+                    efforts_text(&efforts_of(found)),
+                ),
+                None => (NOT_REPORTED.into(), NO_EFFORT.into()),
+            };
             out.push(PickerEntry::Model {
                 model: m.clone(),
                 label: m.id.as_deref().map_or_else(|| "default".into(), clean),
-                description: NOT_REPORTED.into(),
-                efforts: NO_EFFORT.into(),
+                description,
+                efforts,
                 current: true,
             });
         }

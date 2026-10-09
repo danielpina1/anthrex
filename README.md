@@ -27,7 +27,7 @@ anthrex fixes both:
 | | |
 |---|---|
 | **Agents side by side** | Real `claude`, `codex` and shell sessions, each in its own PTY, owned by a daemon so they survive closing the UI. |
-| **Live status** | Working, waiting for you, done or idle, from each agent's hooks, with the tool it is running and a bell when one needs you. |
+| **Live status** | Working, waiting for you, done or idle, from each agent's hooks, with the tool it is running and a bell when one of your own agents or a run's orchestrator needs you (a run's workers report to their orchestrator, not to you). |
 | **Project tree** | Agents grouped by repository, each with its sub-agents and theirs, drawn with tree connectors to any depth. |
 | **Graph overview and inspector** | The same tree as a drawn graph, with a panel that spells out the selected node: model, status, branch, checkout, who spawned it. |
 | **Conversation view** | A readable timeline of an agent's turns, built from its hooks and transcript: prose, folded tool calls with diffs, links to sub-agents. |
@@ -130,7 +130,7 @@ Every command starts with the prefix, `C-b` by default (`prefix` in the config).
 | `C-b t` | tree mode: move, fold and filter the sidebar |
 | `C-b T` | overview: the tree as a graph, or an open run's run view |
 | `C-b g` | start a goal |
-| `C-b a` | alerts: gates and runs that need you |
+| `C-b a` | alerts: gates, the orchestrator's questions and problems only you can fix; `1`-`9` answers a question |
 | `C-b P` / `C-b S` | Profile screen / Settings screen |
 | `C-b s` | toggle the sidebar |
 | `C-b <` / `C-b >` | narrow / widen the sidebar |
@@ -174,7 +174,7 @@ flowchart LR
 4. **Merge and test.** A merge queue merges each approved task into the run's integration branch and runs the tests the change affects, cached by content. Flaky tests are retried and proposed for quarantine; a red full suite is bisected to the merge that broke it.
 5. **Deliver.** In `local` mode, `anthrex run accept` merges the finished run into your base branch. In `pr` mode, each stage of the plan becomes a stacked pull request; CI failures and review comments from people with write access become fix tasks. anthrex never merges, approves or enables auto-merge: you do.
 
-You watch it all in the **run view** (`C-b T`, then a run): the plan as a graph of tasks by stage, each task's rounds, and an inspector for the selected task. **Alerts** (`C-b a`) collect everything waiting for you, such as a gate, a held task or a failed check, and Enter takes you to it.
+You watch it all in the **run view** (`C-b T`, then a run): the plan as a graph of tasks by stage, each task's rounds, and an inspector for the selected task. **Alerts** (`C-b a`) collect everything waiting for you, and Enter takes you to it. While a run's orchestrator is alive it handles its run's blocked tasks, halts, held or red stages and delivery problems itself (it retries, overrides, resumes, approves holds and accepts red stages, each with a reason), so what reaches you is an approval or acceptance, a profile proposal, a problem only you can fix (such as a full disk or a logged-out CLI), a question the orchestrator asks with `ask_user` (answer it with `1`-`9`, or in its window), or an orchestrator that has stalled or exited, which hands you back everything it held. What it resolved stays visible quietly as `orchestrator handled N`, with each action and its reason in the run view's inspector.
 
 <img src="docs/images/task-inspector.svg" alt="The run view with a running task selected: its inspector shows the pipeline from done to merge, its acceptance test, brief, owned files, worker, dependencies, budget, retries and route">
 
@@ -207,7 +207,7 @@ default_runtime = "shell"   # claude | codex | shell, for `anthrex new` without 
 scrollback_lines = 5000
 
 [bell]
-attention = true            # ring when an agent needs you
+attention = true            # ring when your agent or an orchestrator needs you
 done = false                # ring when an agent finishes
 
 [ui]
@@ -272,7 +272,7 @@ second = "codex:default"
 - **`codex:default`** (or `claude:default`) runs the CLI's own configured model, with no `-m` or `--model`.
 - **Effort.** A task that struggles runs again at its model's next higher effort, up to the highest the CLI offers, then on the row's `fallback` (climbing its efforts too), then stays there. anthrex never switches to a model you did not name.
 - **Per repository.** `<data dir>/repos/<repo>-<hash>/models.toml` holds the same `[models.*]` rows for one repository. A row there replaces the global row whole; a row it leaves out comes from `config.toml`, then the built-in.
-- **Older configs.** The old keys (`[[orchestrator.models]]`, `[orchestrator.routes.*]`, `[orchestrator.agent]`, `default_runtime` and `builtin_models` under `[orchestrator]`, the `strength`, `runtime` and `effort` of `planners` and `scouts`, and the `strength` and `effort` of `deciders`) are read as the same rows, so every role keeps its model. The file is rewritten only when you save in Settings: the old keys are removed, and the first save that removes any keeps the previous file as `config.toml.bak` (an existing `.bak` is never replaced).
+- **Older configs.** The old keys (`[[orchestrator.models]]`, `[orchestrator.routes.*]`, `[orchestrator.agent]`, `default_runtime` and `builtin_models` under `[orchestrator]`, the `strength`, `runtime` and `effort` of `planners` and `scouts`, and the `strength` and `effort` of `deciders`) are read as the same rows, so every role keeps its model. The file is rewritten only when you save in Settings: the old keys are removed, and each save that removes any keeps the previous file as `config.toml.bak`, or as `config.toml.bak.1`, `.2` and so on when that name is taken (an existing backup is never replaced). A save is refused when `config.toml` changed after the daemon read it, so a hand edit is never reverted: restart the daemon or reopen `C-b S`, then save again.
 - **Kept keys.** A key that gave no row is kept on save, along with the roster and `default_runtime` it is read against: a list none of whose models anthrex knows, a review list none of whose models can review the other runtime's work, or a route it could not migrate. The daemon's log has a note naming the row and the model it uses meanwhile. Choose that row's model in Settings and save to remove it.
 
 In Settings (`C-b S`), the `models` section shows the table. `j`/`k` move between rows (Space opens or closes the `helpers` kinds). `⏎` picks the row's model from the list the installed `claude` and `codex` report (or `custom…` for any id; `r` in the list asks the CLIs again), `e` cycles its effort, `f` picks its fallback, `x` resets the row, `←`/`→` switch between `everywhere` (`config.toml`) and `this repo` (`models.toml`), and `w` saves. Runs in progress keep the models they started with.

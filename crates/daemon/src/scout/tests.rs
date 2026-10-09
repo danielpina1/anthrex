@@ -90,7 +90,8 @@ fn area_scout_spec_is_read_only() {
     let spec = headless_spec(&scout(ScoutKind::Area), &ctx(Runtime::Claude));
     assert_eq!(spec.runtime, Runtime::Claude);
     assert_eq!(spec.model, "claude-haiku-4-5");
-    assert_eq!(spec.effort, Effort::LOW);
+    // Gate fix B1: the built-in research row has no effort (Haiku reports none).
+    assert_eq!(spec.effort, Effort::DEFAULT);
     assert_eq!(spec.cwd, PathBuf::from("/wt/runs/r1/integration"));
     assert_eq!(spec.instructions, super::contract::SCOUT_CONTRACT);
     assert_eq!(

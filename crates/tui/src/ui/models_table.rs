@@ -110,7 +110,11 @@ fn row_line(r: &TableRow, selected: bool, keys: bool, width: usize, p: Palette) 
         // Preflight F17: brainstorm's two models, no effort or fallback column.
         RowKey::Brainstorm => text.push_str(&r.model),
         RowKey::Role(_) => {
-            text.push_str(&cell(&r.model, MODEL_W));
+            // Gate fix B3: a label wider than its column (`Claude · claude-opus-5-5`)
+            // is cut with `…`, so the effort and fallback columns stay aligned; the
+            // picker still shows the full name.
+            let model = cut(&r.model, MODEL_W - 1, ellipsis(p));
+            text.push_str(&cell(&model, MODEL_W));
             text.push_str(&cell(&r.effort, EFFORT_W));
             text.push_str(&r.fallback);
         }

@@ -36,13 +36,24 @@ impl Effort {
         self.0.is_empty()
     }
 
-    fn rank(&self) -> (u8, &str) {
+    /// The efforts escalation climbs, in order (real-CLI manual check fix, decision 4).
+    /// An effort outside it (Codex's `ultra`, "automatic task delegation") is chosen by
+    /// hand only.
+    pub const LADDER: [&'static str; 6] = ["minimal", "low", "medium", "high", "xhigh", "max"];
+
+    /// `name`'s place on [`Effort::LADDER`], `None` off it.
+    pub fn ladder_rank(name: &str) -> Option<usize> {
+        Effort::LADDER.iter().position(|e| *e == name)
+    }
+
+    /// `DEFAULT`, then the ladder, then any other name by name.
+    fn rank(&self) -> (usize, &str) {
         match self.as_str() {
             "" => (0, ""),
-            "low" => (1, ""),
-            "medium" => (2, ""),
-            "high" => (3, ""),
-            other => (4, other),
+            name => match Effort::ladder_rank(name) {
+                Some(at) => (at + 1, ""),
+                None => (Effort::LADDER.len() + 1, name),
+            },
         }
     }
 }

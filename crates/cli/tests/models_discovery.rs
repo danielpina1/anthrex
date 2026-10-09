@@ -25,18 +25,28 @@ fn list_models_reports_both_clis_from_their_handshakes_and_caches_them() {
             .iter()
             .map(|m| m.label.as_str())
             .collect::<Vec<_>>(),
-        ["Haiku 4.5", "Sonnet 5", "Opus 5.5"]
+        [
+            "Default (recommended)",
+            "Opus (1M context)",
+            "Fable",
+            "Sonnet",
+            "Haiku"
+        ]
     );
+    // Real-CLI manual check fix: the alias entries carry the model each resolves to.
+    let opus = claude.models.iter().find(|m| m.id == "opus[1m]").unwrap();
+    assert_eq!(opus.resolved.as_deref(), Some("claude-opus-5-5[1m]"));
+    assert_eq!(opus.efforts, ["low", "medium", "high", "xhigh", "max"]);
     let codex = catalogs
         .iter()
         .find(|c| c.runtime == Runtime::Codex)
         .unwrap();
-    assert_eq!(codex.models.len(), 3, "both pages");
+    assert_eq!(codex.models.len(), 7, "both pages");
     assert!(
         codex
             .models
             .iter()
-            .any(|m| m.id == "gpt-6-sol" && m.is_default)
+            .any(|m| m.id == "gpt-6.1-sol" && m.is_default && m.efforts.last().unwrap() == "ultra")
     );
     assert_eq!(
         h.io_lines("discovery-claude", "stdin").len(),

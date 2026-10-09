@@ -9,6 +9,8 @@
 
 mod support;
 
+#[path = "run_e2e_orch/alerts.rs"]
+mod alerts;
 #[path = "run_e2e_orch/common.rs"]
 mod common;
 #[path = "run_e2e_orch/gate.rs"]
