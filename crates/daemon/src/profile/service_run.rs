@@ -8,6 +8,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use proto::{ProfileMeta, ProposalOrigin, ProposalRecord, ProposalState, RepoProfile, ScoutKind};
 use tokio_util::sync::CancellationToken;
@@ -356,6 +357,14 @@ impl ProfileService {
         let repo_dir = self.repo_dir(&pre.project);
         let config = &self.ctx.orchestrator;
         let confine = verify::confine_spec(config, &repo_dir, &pre, &self.ctx.daemon_socket);
+        // Decision 10: the commands `run_commands` will run, before any of them does.
+        let counter = self.counter(&pre.project, job.generation);
+        if let Some(counter) = &counter {
+            counter.done.store(0, Ordering::Relaxed);
+            counter
+                .total
+                .store(verify::planned(&findings), Ordering::Relaxed);
+        }
         let verify_job = VerifyJob {
             git: self.ctx.git.clone(),
             pre: pre.clone(),
@@ -367,6 +376,7 @@ impl ProfileService {
             git_timeout: self.git_timeout(),
             sched: self.ctx.scheduler.clone(),
             token: job.token.clone(),
+            counter,
         };
         let verified = verify::verify(&self.ctx.git_queue, verify_job)
             .await

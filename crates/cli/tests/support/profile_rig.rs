@@ -96,6 +96,7 @@ impl Rig {
             git_timeout: GIT_TIMEOUT,
             sched: daemon::run::slots::TestScheduler::new(2),
             token: tokio_util::sync::CancellationToken::new(),
+            counter: None,
         };
         runtime().block_on(verify(&GitQueue::new(), job))
     }

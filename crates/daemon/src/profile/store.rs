@@ -55,6 +55,39 @@ pub enum Stored {
     Absent,
 }
 
+/// Milestone 9.10 decision 32: the most of an unreadable profile file's text the
+/// status sends.
+pub const UNREADABLE_TEXT_MAX: usize = 64 * 1024;
+/// What ends a text cut at [`UNREADABLE_TEXT_MAX`].
+const UNREADABLE_CUT: &str = "\n… (cut at 64 KiB)";
+
+/// Decision 32: the text of the file `path` (the one [`Stored::Unparseable`] names),
+/// at most [`UNREADABLE_TEXT_MAX`] bytes cut at a character boundary and then marked;
+/// `None` when it cannot be read. Blocking; called only for an unparseable profile.
+pub fn load_text(path: &Path) -> Option<String> {
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .and_then(|file| {
+            file.take(UNREADABLE_TEXT_MAX as u64 + 1)
+                .read_to_end(&mut bytes)
+        })
+        .ok()?;
+    let cut = bytes.len() > UNREADABLE_TEXT_MAX;
+    if cut {
+        bytes.truncate(UNREADABLE_TEXT_MAX);
+        if let Err(error) = std::str::from_utf8(&bytes)
+            && error.error_len().is_none()
+        {
+            bytes.truncate(error.valid_up_to());
+        }
+    }
+    let mut text = String::from_utf8_lossy(&bytes).into_owned();
+    if cut {
+        text.push_str(UNREADABLE_CUT);
+    }
+    Some(text)
+}
+
 /// Makes every temp name of this process distinct.
 static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 

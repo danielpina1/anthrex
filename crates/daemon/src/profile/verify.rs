@@ -25,12 +25,12 @@ use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use proto::{CommandCheck, ProfileSpec, ProfileVerification, RepoProfile};
+use proto::{CommandCheck, ModuleNames, ProfileSpec, ProfileVerification, RepoProfile};
 use regex::Regex;
 
 use super::VERIFY_CHECKOUT;
 use super::proposal::env_problem;
-pub use super::verify_steps::Steps;
+pub use super::verify_steps::{CheckCounter, Steps};
 use crate::run::confine::{self, ConfineSpec};
 use crate::run::env::profile_env;
 use crate::run::exec::ShellOutcome;
@@ -39,6 +39,7 @@ use crate::run::messages::summary;
 use crate::run::plan::{Preflight, for_repo, resolve_profile};
 use crate::run::proof::{proof_command, proof_pattern};
 use crate::run::slots::TestScheduler;
+use crate::run::tiers::{GraphSource, TierProfile};
 use crate::worktree::pinned;
 
 /// Where a dirty detection checkout's work is kept (decision 8): `<prefix><unix secs>`.
@@ -202,6 +203,35 @@ pub fn run_commands(
         &mut verification,
     );
     verification
+}
+
+/// Milestone 9.10 decision 10, pure: how many commands [`run_commands`] runs for `p`.
+/// A module test counts when its module names can be known (a graph, or `modules`);
+/// with no module directory found it is refused unrun, and `done` stays short.
+pub fn planned(p: &RepoProfile) -> u32 {
+    let tiers = TierProfile::from_repo(p);
+    let graph = p.module_graph.is_some() && tiers.module_graph != GraphSource::None;
+    let single = matches!((&p.single_test, &p.sample_test, &p.test_passed),
+        (Some(single), Some(sample), Some(passed)) if single.contains("{test}")
+            && passed.contains("{test}") && Regex::new(&proof_pattern(passed, sample)).is_ok());
+    let names = match tiers.module_names {
+        ModuleNames::Cargo => graph,
+        ModuleNames::Dir => !p.modules.is_empty(),
+    };
+    let (setup, check, build) = (
+        p.setup.is_some(),
+        p.check.is_some(),
+        p.build_check.is_some(),
+    );
+    let (one, each) = (
+        names && p.module_test.is_some(),
+        names && p.module_tests.is_some(),
+    );
+    let toolchain = p.toolchain_id.is_some();
+    [setup, check, single, build, graph, one, each, toolchain]
+        .map(u32::from)
+        .iter()
+        .sum()
 }
 
 /// Pins a checkout this daemon did not pin (one left by an earlier daemon) as the
@@ -391,6 +421,8 @@ pub struct VerifyJob {
     /// The proposal's token: `profile reject` cancels it, and no command then waits
     /// for a slot or runs (ruling C-28 (2)).
     pub token: tokio_util::sync::CancellationToken,
+    /// Decision 10: counts each command run, when set (`Steps::counted`).
+    pub counter: Option<std::sync::Arc<CheckCounter>>,
 }
 
 /// What a verification ran, and every salvage ref it wrote.
@@ -475,6 +507,7 @@ pub async fn verify(queue: &GitQueue, job: VerifyJob) -> Result<Verified, String
                 job.repo_dir.clone(),
                 job.token.clone(),
             );
+            let steps = job.counter.clone().into_iter().fold(steps, Steps::counted);
             tokio::task::spawn_blocking(move || {
                 run_commands(
                     &dir,

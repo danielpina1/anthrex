@@ -34,6 +34,7 @@ use proto::{
 use tokio_util::sync::CancellationToken;
 
 use super::store::{self, Stored};
+use super::verify::CheckCounter;
 use crate::headless::argv::CliCaps;
 use crate::manager::WindowManager;
 use crate::run::confine;
@@ -87,6 +88,8 @@ pub(super) struct Active {
     pub(super) token: CancellationToken,
     /// The scout this proposal started, or is about to start.
     pub(super) scout_id: Option<String>,
+    /// Milestone 9.10 decision 10: its verification's progress.
+    pub(super) counter: Arc<CheckCounter>,
 }
 
 #[derive(Default)]
@@ -116,6 +119,9 @@ pub struct ProfileService {
     live_runs: Mutex<Option<LiveRuns>>,
     /// Milestone 9.2 decision 15: the daemon's code host, for detection (`delivery.rs`).
     pub(super) host: std::sync::OnceLock<Arc<dyn crate::host::CodeHost>>,
+    /// Milestone 9.10 decision 10: one tick per verified command, shared by every
+    /// `CheckCounter`; it only grows.
+    pub(super) progress_ticks: Arc<AtomicU64>,
 }
 
 /// Decision 37: the ids of the runs live in a project (`RunService::live_runs_in`).
@@ -194,6 +200,7 @@ impl ProfileService {
             next_generation: AtomicU64::new(1),
             live_runs: Mutex::new(None),
             host: std::sync::OnceLock::new(),
+            progress_ticks: Arc::new(AtomicU64::new(0)),
         })
     }
 
@@ -317,9 +324,22 @@ impl ProfileService {
                 generation,
                 token: token.clone(),
                 scout_id: None,
+                counter: Arc::new(CheckCounter {
+                    ticks: self.progress_ticks.clone(),
+                    ..CheckCounter::default()
+                }),
             },
         );
         Some((generation, token))
+    }
+
+    /// Decision 10: `generation`'s counter for `project`, while it owns the work.
+    pub(super) fn counter(&self, project: &Path, generation: u64) -> Option<Arc<CheckCounter>> {
+        crate::lock(&self.table)
+            .active
+            .get(project)
+            .filter(|active| active.generation == generation)
+            .map(|active| active.counter.clone())
     }
 
     /// Ends `generation`'s registration for `project`, if it is still the current one.

@@ -110,6 +110,8 @@ mod tests_installed;
 #[cfg(test)]
 mod tests_live_runs;
 #[cfg(test)]
+mod tests_progress;
+#[cfg(test)]
 mod tests_ready;
 #[cfg(test)]
 mod tests_tiers;

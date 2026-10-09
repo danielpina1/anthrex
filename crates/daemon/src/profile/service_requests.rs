@@ -101,15 +101,24 @@ impl ProfileService {
         let (stored, mut proposal) = self.load(&project).await?;
         let (mut source, mut confirmed_at, mut stale, mut unparseable) =
             (ProfileSource::None, None, Vec::new(), None);
+        let (mut verified_at, mut unreadable_text) = (None, None);
         match stored {
             Stored::Found { meta, .. } => {
                 source = ProfileSource::Stored;
                 confirmed_at = Some(meta.confirmed_at);
+                // Decision 23: an edit-only profile has no verification record.
+                verified_at = Some(
+                    meta.verification
+                        .as_ref()
+                        .map_or(meta.confirmed_at, |v| v.at),
+                );
                 let p = project.clone();
                 stale = blocking(move || Ok(store::stale(&p, &meta))).await?;
             }
             Stored::Unparseable { path, error } => {
-                unparseable = Some(unparseable_text(&path, &error))
+                unparseable = Some(unparseable_text(&path, &error));
+                // Decision 32: the file's own text, for the screen's raw-text page.
+                unreadable_text = blocking(move || Ok(store::load_text(&path))).await?;
             }
             Stored::Absent => {}
         }
@@ -131,6 +140,14 @@ impl ProfileService {
             .as_ref()
             .and_then(|record| record.scout_id.as_deref())
             .and_then(|id| self.scouts.info(id));
+        // Decision 10: only while the proposal verifies, from its running counter.
+        let checking = match proposal.as_ref().map(|record| &record.state) {
+            Some(ProposalState::Verifying) => crate::lock(&self.table)
+                .active
+                .get(&project)
+                .and_then(|active| active.counter.progress()),
+            _ => None,
+        };
         Ok(ProfileStatus {
             repo_dir: self.repo_dir(&project),
             project,
@@ -142,9 +159,9 @@ impl ProfileService {
             scout,
             verify_confined: self.verify_confined(),
             queued: Vec::new(),
-            checking: None,
-            verified_at: None,
-            unreadable_text: None,
+            checking,
+            verified_at,
+            unreadable_text,
             dropped_goals: Vec::new(),
         })
     }
