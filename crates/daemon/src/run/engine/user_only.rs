@@ -30,10 +30,13 @@ pub(crate) fn marked(text: &str) -> bool {
 }
 
 /// Whether the run is halted on something only the user can resume: `rules::resume`
-/// refuses it without `--rebaseline` (a ref moved under the run), or its reason is marked.
+/// refuses it without `--rebaseline` (a ref moved under the run), its reason is marked,
+/// or a design phase passed its budget (final review I-1: the user's cost limit).
 pub(crate) fn halt(run: &Run) -> bool {
     run.state == RunState::Halted
-        && (rules::resume(run, false).is_some() || run.halted_reason.as_deref().is_some_and(marked))
+        && (rules::resume(run, false).is_some()
+            || run.halted_reason.as_deref().is_some_and(marked)
+            || super::design::budget_halted(run))
 }
 
 /// The orchestrator's refusal (decision 10) for `target` waiting on `text`.
