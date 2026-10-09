@@ -106,8 +106,8 @@ pub(super) fn orchestrator(run: &Run) -> Option<OrchestratorInfo> {
         notes: o.notes.clone(),
         wakes: o.wakes,
         wake_held: run.orch.wake_held,
-        // Milestone 9.9: `handled` from `RunOrch` (M9.9.2); the rest by M9.9.6 and M9.9.7.
-        stuck: None,
+        // Milestone 9.9: `handled` from `RunOrch` (M9.9.2), `stuck` (M9.9.6); `ask` by M9.9.7.
+        stuck: super::engine::orch_stall::stuck(run),
         ask: None,
         handled: run
             .orch

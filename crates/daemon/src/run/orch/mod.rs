@@ -135,6 +135,15 @@ pub struct RunOrch {
     pub handled: Vec<handled::HandledRecord>,
     #[serde(skip_serializing_if = "is_zero")]
     pub handled_total: u32,
+    /// Milestone 9.9 decision 19: the highest wake-note seq the orchestrator had seen
+    /// when it last called a tool or read the digest; since when a note beyond it has
+    /// waited; and when that wait passed `stall_after_secs`.
+    #[serde(skip_serializing_if = "is_zero_u64")]
+    pub acted_seq: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub waiting_since: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stalled_at: Option<u64>,
 }
 
 /// `Task.orch`: a task's milestone 9 state. Absent from an older run: empty.
@@ -546,5 +555,9 @@ impl OrchestratorRecord {
 }
 
 fn is_zero(n: &u32) -> bool {
+    *n == 0
+}
+
+fn is_zero_u64(n: &u64) -> bool {
     *n == 0
 }

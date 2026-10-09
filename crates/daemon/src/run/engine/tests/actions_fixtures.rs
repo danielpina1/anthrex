@@ -339,7 +339,7 @@ pub(super) fn complete() -> Fixture {
 
 /// Milestone 9.3: a planned run whose orchestrator's task merged, complete: the one
 /// fixture state a round can start from (decision 9).
-fn complete_orchestrated() -> Fixture {
+pub(super) fn complete_orchestrated() -> Fixture {
     super::goal_rounds_start::complete()
 }
 

@@ -275,6 +275,10 @@ pub(super) fn tool(
         let text = format!("this window is not the orchestrator of run {}", run.id);
         return refuse(fx, reply, text);
     }
+    // Milestone 9.9 decision 19: the orchestrator's own window called a tool: it acts.
+    if call.role == Orchestrator {
+        super::orch_stall::acted(run, now);
+    }
     let parsed = match parse_call(call.role, &call.tool, &call.args) {
         Ok(parsed) => parsed,
         Err(text) => return refuse(fx, reply, text),

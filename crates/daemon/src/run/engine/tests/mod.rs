@@ -168,6 +168,7 @@ mod orch_ops;
 mod orch_ops_resume;
 mod orch_restore;
 mod orch_routes;
+mod orch_stall;
 mod orch_window_events;
 mod pair;
 mod plan_stages;

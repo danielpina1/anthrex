@@ -84,6 +84,7 @@ mod op_result;
 mod ops;
 mod orch;
 mod orch_ops;
+pub(crate) mod orch_stall;
 mod orch_window;
 mod outbox;
 mod pair;
@@ -318,6 +319,7 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
                 concurrency::on_tick(run, now);
                 // Milestone 9.6 decision 8: a design phase's budget.
                 design::tick(run, now);
+                orch_stall::tick(run, now);
             });
         }
     }
@@ -345,6 +347,7 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
         // Milestone 9 decision 39: a note for each task this step blocked.
         let since = applied.as_ref().unwrap_or(&before);
         wake::blocked_notes(since.get(id), run);
+        orch_stall::pass(run, now);
     }
     // Milestone 9.3 decision 19: the chains follow their current runs.
     chains::pass(&mut state);
