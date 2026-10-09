@@ -495,7 +495,7 @@ fn the_orchestrators_ops_are_refused_in_a_users_edit() {
                 reason: reason(),
             },
             "retry",
-            "retry",
+            "anthrex run retry",
         ),
         (
             PlanEdit::Override {
@@ -503,7 +503,7 @@ fn the_orchestrators_ops_are_refused_in_a_users_edit() {
                 reason: reason(),
             },
             "override",
-            "override",
+            "anthrex run override",
         ),
         (
             PlanEdit::ResumeRun {
@@ -511,7 +511,7 @@ fn the_orchestrators_ops_are_refused_in_a_users_edit() {
                 stage: None,
             },
             "resume_run",
-            "resume",
+            "anthrex run resume",
         ),
         (
             PlanEdit::ApproveHold {
@@ -519,7 +519,7 @@ fn the_orchestrators_ops_are_refused_in_a_users_edit() {
                 reason: reason(),
             },
             "approve_hold",
-            "approve --hold",
+            "anthrex run approve --hold",
         ),
         (
             PlanEdit::AcceptRed {
@@ -527,15 +527,13 @@ fn the_orchestrators_ops_are_refused_in_a_users_edit() {
                 reason: reason(),
             },
             "accept_red",
-            "finish",
+            "the finish edit (anthrex run edit <run> --file ...)",
         ),
     ];
     for (edit, op, cmd) in ops {
         assert_eq!(
             rejected(&run, vec![edit.clone()]),
-            vec![format!(
-                "op {op} is the orchestrator's; you have anthrex run {cmd}"
-            )]
+            vec![format!("op {op} is the orchestrator's; you have {cmd}")]
         );
         // From the orchestrator one that reaches a batch is misplaced, not a user's.
         let errors = apply_edits(

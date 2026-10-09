@@ -151,7 +151,10 @@ pub const ONE_EDIT_RULE: &str =
 
 /// Milestone 9.9 decision 11: an orchestrator action op that shares its call with any
 /// other edit, `submit` or `summary`.
-pub const ACTION_ALONE: &str = "retry, override, resume_run, approve_hold and accept_red each come alone in their edit_plan call";
+pub const ACTION_ALONE: &str = concat!(
+    "retry, override, resume_run, approve_hold and accept_red each come alone in their ",
+    "edit_plan call"
+);
 
 /// Decision 39: a wake text's cap. Interfaces places it in `run/driver/wake.rs` (task
 /// M9.13), which reuses this one.

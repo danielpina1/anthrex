@@ -197,19 +197,24 @@ impl Batch {
             }
             // Milestone 9.9 decision 11: the orchestrator's action ops are intercepted
             // before a batch (M9.9.2); one that reaches it is misplaced.
-            PlanEdit::Retry { .. } => self.orch_op("retry", "retry"),
-            PlanEdit::Override { .. } => self.orch_op("override", "override"),
-            PlanEdit::ResumeRun { .. } => self.orch_op("resume_run", "resume"),
-            PlanEdit::ApproveHold { .. } => self.orch_op("approve_hold", "approve --hold"),
-            PlanEdit::AcceptRed { .. } => self.orch_op("accept_red", "finish"),
+            PlanEdit::Retry { .. } => self.orch_op("retry", "anthrex run retry"),
+            PlanEdit::Override { .. } => self.orch_op("override", "anthrex run override"),
+            PlanEdit::ResumeRun { .. } => self.orch_op("resume_run", "anthrex run resume"),
+            PlanEdit::ApproveHold { .. } => {
+                self.orch_op("approve_hold", "anthrex run approve --hold")
+            }
+            PlanEdit::AcceptRed { .. } => self.orch_op(
+                "accept_red",
+                "the finish edit (anthrex run edit <run> --file ...)",
+            ),
         }
     }
 
-    /// Refuses `op`, worded by who sent it: `cmd` is the command a user has instead.
+    /// Refuses `op`, worded by who sent it: `cmd` says what a user has instead.
     fn orch_op(&mut self, op: &str, cmd: &str) {
         let text = match self.source {
             EditSource::User => {
-                format!("op {op} is the orchestrator's; you have anthrex run {cmd}")
+                format!("op {op} is the orchestrator's; you have {cmd}")
             }
             EditSource::Orchestrator => ACTION_ALONE.to_string(),
             EditSource::Planner { .. } => format!("op {op} is not available to a sub-planner"),
