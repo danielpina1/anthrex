@@ -2034,3 +2034,9 @@ The gaps tasks M9.8.6 to M9.8.14 left on purpose, each detailed under its task i
 - **M7. Discovery snapshots.** `CliProbes.claude_auth` is read once, in `RunService::new` (`crates/daemon/src/run/driver.rs:203-208`). A Codex upgraded while the daemon runs keeps its old cached catalog until `r` or a restart. Already recorded above; re-read the version and auth per refresh.
 - **M8. `r` can return a non-forced result.** Pressed while a `refresh: false` refresh is in flight, `r` waits on the gate and returns that refresh's result (T6 deferred). Pressing `r` again works. Fix: the ticket check in the models service should skip the shortcut when `refresh` is true.
 - **The I1 settings-save refusal says "restart the daemon or reopen C-b S", but reopening does not clear it.** Settings `Get` does not reload `config.toml`, so only a daemon restart clears the refusal. Either reload the file when `C-b S` opens, or drop "reopen C-b S" from the refusal text and the README. Found by the 9.8 final fix wave's re-review.
+- **Migrated scout keys that land on Haiku at `low` still log "effort 'low' not offered by haiku" on every run.** The 9.8 gate fix made only the built-in research row effortless. Migration should drop an effort that the migrated model doesn't report.
+- **Three identity minors from the 9.8 alias fix's review** (`.superpowers/sdd/m98-discovery-fix-review.md`):
+  - `canonical_of` falls back to the literal id for refs the run never looked up, so `claude:opus` and `opus[1m]` compare as different models.
+  - Picking `default` freezes the account's model when the run starts. The brief doesn't say this.
+  - The picker's "as <label>" disagrees with `label()`'s rule for matches past the context tag.
+- **The TUI and the daemon briefly disagree on model identity until the catalogs load** (9.8 gate-fix review, minor).
