@@ -181,8 +181,12 @@ fn a_pending_question_survives_a_restart_and_an_old_run_has_none() {
 #[test]
 fn the_digest_shows_the_pending_question_until_it_is_answered() {
     let mut fx = approved();
-    ask(&mut fx, json!({"question": "tabs or spaces?", "options": ["tabs", "spaces"]}));
-    let status = |fx: &mut Fixture| crate::run::orch::digest::digest(fx.run(), fx.now)["ask"].clone();
+    ask(
+        &mut fx,
+        json!({"question": "tabs or spaces?", "options": ["tabs", "spaces"]}),
+    );
+    let status =
+        |fx: &mut Fixture| crate::run::orch::digest::digest(fx.run(), fx.now)["ask"].clone();
     assert_eq!(
         status(&mut fx),
         json!({"id": 1, "question": "tabs or spaces?"})

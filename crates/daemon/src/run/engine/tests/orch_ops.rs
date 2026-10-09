@@ -158,7 +158,11 @@ fn an_override_that_counts_commits_records_when_it_lands() {
     // Final review M-1: the plan-edit log entry is written when the count lands.
     let record = fx.run().plan_edits.last().unwrap();
     assert_eq!(
-        (record.text.as_str(), record.source.as_str(), record.accepted),
+        (
+            record.text.as_str(),
+            record.source.as_str(),
+            record.accepted
+        ),
         ("override t1", "orchestrator", true)
     );
 }
@@ -185,7 +189,11 @@ fn an_override_whose_count_fails_records_a_rejected_entry() {
     assert_eq!(fx.run().plan_edits.len(), edits + 1);
     let record = fx.run().plan_edits.last().unwrap();
     assert_eq!(
-        (record.source.as_str(), record.accepted, record.error.as_deref()),
+        (
+            record.source.as_str(),
+            record.accepted,
+            record.error.as_deref()
+        ),
         ("orchestrator", false, Some(refusal))
     );
 }
