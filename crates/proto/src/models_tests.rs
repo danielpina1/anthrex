@@ -356,7 +356,13 @@ fn xhigh_orders_between_high_and_max_and_ultra_is_off_the_ladder() {
 #[test]
 fn base_model_id_handles_multibyte_ids_and_strips_only_real_dates() {
     use crate::models::{base_model_id, valid_model_id};
-    for id in ["éx1234567", "modèle-éé", "ab-日本語の模型", "x-2025100é", "é-20251001"] {
+    for id in [
+        "éx1234567",
+        "modèle-éé",
+        "ab-日本語の模型",
+        "x-2025100é",
+        "é-20251001",
+    ] {
         assert!(valid_model_id(id), "{id}");
         let _ = base_model_id(id);
     }
