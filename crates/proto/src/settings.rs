@@ -7,8 +7,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::run::ModelEntry;
-use crate::types::Runtime;
+use crate::models::ModelTable;
 
 pub const MAX_WRITERS_RANGE: RangeInclusive<u8> = 1..=8;
 pub const MAX_READERS_RANGE: RangeInclusive<u8> = 1..=8;
@@ -19,9 +18,8 @@ pub const BUDGET_MIN: u32 = 1;
 
 /// The key paths `Origin` is reported for.
 pub mod key {
-    pub const MODELS: &str = "orchestrator.models";
-    pub const AGENT_RUNTIME: &str = "orchestrator.agent.runtime";
-    pub const AGENT_MODEL: &str = "orchestrator.agent.model";
+    /// Milestone 9.8: the role table (`[models]`, or the old model keys it replaces).
+    pub const ROLES: &str = "models";
     pub const BUDGET_S_CALLS: &str = "orchestrator.budget.s.tool_calls";
     pub const BUDGET_S_MINUTES: &str = "orchestrator.budget.s.minutes";
     pub const BUDGET_M_CALLS: &str = "orchestrator.budget.m.tool_calls";
@@ -34,11 +32,9 @@ pub mod key {
     pub const MAX_BOUNCES: &str = "orchestrator.max_bounces";
 }
 
-/// The thirteen keys, in the order of `key`.
-pub const SETTINGS_KEYS: [&str; 13] = [
-    key::MODELS,
-    key::AGENT_RUNTIME,
-    key::AGENT_MODEL,
+/// The eleven keys, in the order of `key`.
+pub const SETTINGS_KEYS: [&str; 11] = [
+    key::ROLES,
     key::BUDGET_S_CALLS,
     key::BUDGET_S_MINUTES,
     key::BUDGET_M_CALLS,
@@ -68,24 +64,19 @@ pub struct SettingsLimits {
     pub max_bounces: u8,
 }
 
-/// The orchestrator agent's runtime and model (`[orchestrator.agent]`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OrchestratorDefault {
-    pub runtime: Option<Runtime>,
-    pub model: String,
-}
-
 /// Everything the Settings screen owns.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SettingsDoc {
-    pub models: Vec<ModelEntry>,
-    pub orchestrator: OrchestratorDefault,
     pub limits: SettingsLimits,
     /// Ruling T18-2: `[orchestrator.design].default`, which the goal dialog's
     /// `configured` names. Read-only here: a save never writes it. `None` from a daemon
     /// that did not say; left out while `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub design_default: Option<crate::design::DesignMode>,
+    /// Milestone 9.8: the global role table (`Orchestrator.roles`), which a save writes
+    /// as `[models]` (decision 40). It replaced the roster and the orchestrator default.
+    #[serde(default, skip_serializing_if = "ModelTable::is_empty")]
+    pub roles: ModelTable,
 }
 
 /// Whether a key's value came from the file or is the built-in default.
@@ -99,7 +90,17 @@ pub enum Origin {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SettingsRequest {
     Get,
-    Put { settings: SettingsDoc },
+    Put {
+        settings: SettingsDoc,
+    },
+    /// Milestone 9.8 decision 36: the repository's own role table.
+    RepoModels {
+        project: PathBuf,
+    },
+    PutRepoModels {
+        project: PathBuf,
+        table: ModelTable,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -115,5 +116,18 @@ pub enum SettingsReply {
     },
     Refused {
         problems: Vec<String>,
+    },
+    RepoModels {
+        project: PathBuf,
+        table: ModelTable,
+        path: PathBuf,
+        /// M9.8.12 fix round 1 (I2): the rows of `path` the daemon could not read, each
+        /// starting with the path. A save refuses while there are any.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        problems: Vec<String>,
+    },
+    RepoSaved {
+        project: PathBuf,
+        table: ModelTable,
     },
 }

@@ -2,32 +2,27 @@
 //! inline problems and warnings, and its save. Every rule is `config::settings`'s own.
 
 use super::actions::tap;
-use super::goal_form::{app, doc, entry};
+use super::goal_form::{FixtureModel, app, doc, entry};
 use super::orch::tagged;
 use super::*;
 use crate::app::screens::Screen;
 use crate::app::settings_screen::{
-    SettingsPage, SettingsScreen, SettingsSection, hard_stop_calls, hard_stop_minutes,
+    SettingsScreen, SettingsSection, hard_stop_calls, hard_stop_minutes,
 };
 use proto::settings::key;
-use proto::{
-    ModelEntry, Origin, RunReply, RunRequest, SettingsDoc, SettingsReply, SettingsRequest, Strength,
-};
+use proto::{Origin, RunReply, RunRequest, SettingsDoc, SettingsReply, SettingsRequest};
 use std::collections::BTreeMap;
 
-fn model(runtime: Runtime, name: &str, strength: Strength) -> ModelEntry {
-    ModelEntry {
-        strength,
-        ..entry(runtime, name)
-    }
+fn model(runtime: Runtime, name: &str) -> FixtureModel {
+    entry(runtime, name)
 }
 
 /// `claude-opus-5-5` (shipped) and a custom `claude-x` fast, plus Codex's default.
 pub(super) fn sample() -> SettingsDoc {
     doc(vec![
-        model(Runtime::Claude, "claude-opus-5-5", Strength::Frontier),
-        model(Runtime::Claude, "claude-x", Strength::Fast),
-        model(Runtime::Codex, "", Strength::Standard),
+        model(Runtime::Claude, "claude-opus-5-5"),
+        model(Runtime::Claude, "claude-x"),
+        model(Runtime::Codex, ""),
     ])
 }
 
@@ -103,11 +98,17 @@ pub(super) fn opened() -> App {
     app
 }
 
-/// Opening the screen sends exactly one effect: milestone 9.5 decision 48's tagged
+/// Opening the screen sends exactly one request: milestone 9.5 decision 48's tagged
 /// read-only `Stats` for the app's project (`ui/settings_tuning_tests.rs` has the rest).
+/// Milestone 9.8's `ListModels`, sent while the app holds no catalog, is left aside
+/// (`app/models_table_tests.rs` checks it).
 pub(super) fn only_the_tuning_ask(app: &App, effects: &[Effect]) {
     let dir = app.goal_project().expect("the app has a project");
-    match effects {
+    let effects: Vec<Effect> = (effects.iter())
+        .filter(|e| !matches!(e, Effect::Send(ClientMsg::ListModels { .. })))
+        .cloned()
+        .collect();
+    match effects.as_slice() {
         [Effect::Send(ClientMsg::RunTagged { request, .. })] => assert_eq!(
             *request,
             RunRequest::Stats {
@@ -159,14 +160,6 @@ pub(super) fn set_limit(app: &mut App, k: &str, value: &str) {
     }
 }
 
-pub(super) fn names(app: &App, runtime: Runtime) -> Vec<(String, bool, bool)> {
-    screen(app)
-        .rows(runtime)
-        .iter()
-        .map(|r| (r.entry.model.clone(), r.enabled, r.custom))
-        .collect()
-}
-
 pub(super) fn w(app: &mut App) -> Vec<Effect> {
     tap(app, KeyCode::Char('w'))
 }
@@ -176,7 +169,9 @@ pub(super) fn puts(effects: &[Effect]) -> Vec<(u64, SettingsDoc)> {
         .into_iter()
         .filter_map(|(id, r)| match r {
             SettingsRequest::Put { settings } => Some((id, settings)),
-            SettingsRequest::Get => None,
+            SettingsRequest::Get
+            | SettingsRequest::RepoModels { .. }
+            | SettingsRequest::PutRepoModels { .. } => None,
         })
         .collect()
 }
@@ -211,111 +206,16 @@ fn c_b_s_opens_from_the_cache() {
     assert!(settings_sent(&open(&mut app)).is_empty());
 }
 
+/// M9.8.12 (carried from Task 11's review): the roster's strength warnings left with
+/// the roster; a limits edit saves with nothing but the limits and the table.
 #[test]
-fn rows_are_the_shipped_lists_then_custom_models() {
-    let app = opened();
-    let s = |n: &str, on: bool, custom: bool| (n.to_string(), on, custom);
-    assert_eq!(
-        names(&app, Runtime::Claude),
-        vec![
-            s("claude-haiku-4-5", false, false),
-            s("claude-sonnet-5", false, false),
-            s("claude-opus-5-5", true, false),
-            s("claude-x", true, true),
-        ]
-    );
-    assert_eq!(
-        screen(&app).rows(Runtime::Claude)[3].entry.strength,
-        Strength::Fast
-    );
-    // The shipped Codex list, `""` (Codex default) last and on; no custom rows.
-    let codex = names(&app, Runtime::Codex);
-    let shipped: Vec<&str> = config::settings::SHIPPED_CODEX
-        .iter()
-        .map(|m| m.model)
-        .collect();
-    assert_eq!(
-        codex.iter().map(|r| r.0.as_str()).collect::<Vec<_>>(),
-        shipped
-    );
-    assert_eq!(codex.iter().filter(|r| r.1).count(), 1);
-    assert!(codex[7].1);
-    // `custom…` is the row after the last model.
-    assert_eq!(screen(&app).last_row(), 4);
-}
-
-#[test]
-fn space_toggles_and_the_doc_follows() {
+fn no_strength_warning_and_a_limit_saves() {
     let mut app = opened();
-    select(&mut app, 0);
-    tap(&mut app, KeyCode::Char(' '));
-    let doc = screen(&app).doc().unwrap();
-    // The roster keeps its order; the new model follows with its shipped strength.
-    assert_eq!(doc.models[..3], sample().models[..]);
-    assert_eq!(
-        doc.models[3],
-        model(Runtime::Claude, "claude-haiku-4-5", Strength::Fast)
-    );
-    assert!(screen(&app).dirty());
-    tap(&mut app, KeyCode::Char(' '));
-    assert_eq!(screen(&app).doc(), Ok(sample()));
-    assert!(!screen(&app).dirty());
-    // Off, the custom row stays a row and leaves the doc.
-    select(&mut app, 3);
-    tap(&mut app, KeyCode::Char(' '));
-    assert_eq!(
-        names(&app, Runtime::Claude)[3],
-        ("claude-x".into(), false, true)
-    );
-    assert!(
-        !screen(&app)
-            .doc()
-            .unwrap()
-            .models
-            .iter()
-            .any(|m| m.model == "claude-x")
-    );
-    // `←`/`→` change a custom row's strength, not a shipped one's.
-    tap(&mut app, KeyCode::Right);
-    assert_eq!(
-        screen(&app).rows(Runtime::Claude)[3].entry.strength,
-        Strength::Standard
-    );
-    select(&mut app, 2);
-    tap(&mut app, KeyCode::Right);
-    assert_eq!(
-        screen(&app).rows(Runtime::Claude)[2].entry.strength,
-        Strength::Frontier
-    );
-}
-
-#[test]
-fn saving_with_no_model_is_refused_inline() {
-    let mut app = opened();
-    for at in [2, 3] {
-        select(&mut app, at);
-        tap(&mut app, KeyCode::Char(' '));
+    for section in [SettingsSection::Models, SettingsSection::Limits] {
+        to_section(&mut app, section);
+        let text = crate::ui::settings::tests::screen_text(&app, 120, 40);
+        assert!(!text.contains("cross-runtime reviewer"), "{text}");
     }
-    to_section(&mut app, SettingsSection::Codex);
-    select(&mut app, 7);
-    tap(&mut app, KeyCode::Char(' '));
-    assert_eq!(screen(&app).problems(), vec!["enable at least one model"]);
-    assert!(w(&mut app).is_empty(), "w sends nothing");
-    assert_eq!(app.toast_text(), None);
-}
-
-#[test]
-fn a_strength_on_one_runtime_warns_but_saves() {
-    let mut app = opened();
-    let warnings = screen(&app).warnings();
-    assert_eq!(
-        warnings,
-        vec![
-            "no codex model is fast: the cross-runtime reviewer cannot be chosen for fast tasks",
-            "no claude model is standard: the cross-runtime reviewer cannot be chosen for standard tasks",
-            "no codex model is frontier: the cross-runtime reviewer cannot be chosen for frontier tasks",
-        ]
-    );
     assert!(screen(&app).problems().is_empty());
     set_limit(&mut app, key::MAX_READERS, "4");
     let sent = puts(&w(&mut app));
@@ -390,7 +290,7 @@ fn budgets_show_their_hard_stop() {
 
 #[test]
 fn defaults_are_marked() {
-    let defaults = [key::MODELS, key::AGENT_MODEL, key::MAX_BOUNCES];
+    let defaults = [key::ROLES, key::MAX_BOUNCES];
     let mut app = cached(sample(), origin(&defaults));
     open(&mut app);
     let s = screen(&app);
@@ -398,15 +298,6 @@ fn defaults_are_marked() {
         assert_eq!(s.is_default(k), defaults.contains(&k), "{k}");
     }
     let text = |app: &App| crate::ui::settings::tests::screen_text(app, 80, 24);
-    assert!(
-        text(&app).contains("enabled models  (default)"),
-        "{}",
-        text(&app)
-    );
-    to_section(&mut app, SettingsSection::Orchestrator);
-    let t = text(&app);
-    assert!(t.contains("model    ‹ default ›  (default)"), "{t}");
-    assert!(!t.contains("‹ configured ›  (default)"), "{t}");
     to_section(&mut app, SettingsSection::Limits);
     let t = text(&app);
     assert!(t.contains("max bounces       2  (default)"), "{t}");
@@ -415,87 +306,4 @@ fn defaults_are_marked() {
     set_limit(&mut app, key::MAX_BOUNCES, "3");
     assert!(!screen(&app).is_default(key::MAX_BOUNCES));
     assert!(!text(&app).contains("(default)"));
-}
-
-#[test]
-fn the_orchestrator_picker_offers_only_enabled_models() {
-    let mut app = opened();
-    to_section(&mut app, SettingsSection::Orchestrator);
-    assert_eq!(screen(&app).model_options(), vec![String::new()]);
-    // runtime ‹ configured › → ‹ claude ›; the model resets to default.
-    tap(&mut app, KeyCode::Right);
-    assert_eq!(screen(&app).runtime, Some(Runtime::Claude));
-    assert_eq!(
-        screen(&app).model_options(),
-        vec!["".to_string(), "claude-opus-5-5".into(), "claude-x".into()]
-    );
-    select(&mut app, 1);
-    let mut seen = vec![];
-    for _ in 0..3 {
-        tap(&mut app, KeyCode::Right);
-        seen.push(screen(&app).model.clone());
-    }
-    assert_eq!(seen, vec!["claude-opus-5-5", "claude-x", ""]);
-    tap(&mut app, KeyCode::Left);
-    assert_eq!(screen(&app).model, "claude-x");
-    assert_eq!(screen(&app).doc().unwrap().orchestrator.model, "claude-x");
-    // Disabled, a model leaves the picker, and the stale choice is the daemon's problem.
-    to_section(&mut app, SettingsSection::Claude);
-    select(&mut app, 3);
-    tap(&mut app, KeyCode::Char(' '));
-    assert_eq!(
-        screen(&app).model_options(),
-        vec!["".to_string(), "claude-opus-5-5".into()]
-    );
-    assert_eq!(
-        screen(&app).problems(),
-        vec!["orchestrator.agent.model: claude-x is not an enabled claude model"]
-    );
-    // Codex's `""` is its default, not a name to pick.
-    to_section(&mut app, SettingsSection::Orchestrator);
-    select(&mut app, 0);
-    tap(&mut app, KeyCode::Right);
-    assert_eq!(screen(&app).runtime, Some(Runtime::Codex));
-    assert_eq!(screen(&app).model, "");
-    assert_eq!(screen(&app).model_options(), vec![String::new()]);
-}
-
-#[test]
-fn custom_adds_a_model_with_its_strength() {
-    let mut app = opened();
-    to_section(&mut app, SettingsSection::Codex);
-    select(&mut app, 8);
-    tap(&mut app, KeyCode::Enter);
-    assert!(matches!(screen(&app).page, Some(SettingsPage::Custom(_))));
-    // An empty name is refused in the dialog.
-    tap(&mut app, KeyCode::Enter);
-    let Some(SettingsPage::Custom(c)) = &screen(&app).page else {
-        panic!("the dialog closed");
-    };
-    assert_eq!(c.error.as_deref(), Some("type a model name first"));
-    for ch in "gpt-x".chars() {
-        tap(&mut app, KeyCode::Char(ch));
-    }
-    tap(&mut app, KeyCode::Tab);
-    tap(&mut app, KeyCode::Right);
-    tap(&mut app, KeyCode::Enter);
-    assert_eq!(screen(&app).page, None);
-    assert_eq!(names(&app, Runtime::Codex)[8], ("gpt-x".into(), true, true));
-    assert_eq!(screen(&app).selected, 8);
-    let doc = screen(&app).doc().unwrap();
-    assert_eq!(
-        doc.models.last(),
-        Some(&model(Runtime::Codex, "gpt-x", Strength::Frontier))
-    );
-    // A shipped name enables its row instead of adding a second.
-    select(&mut app, 9);
-    tap(&mut app, KeyCode::Enter);
-    app.on_paste("gpt-6-luna\n".into());
-    tap(&mut app, KeyCode::Enter);
-    assert_eq!(names(&app, Runtime::Codex).len(), 9);
-    assert_eq!(
-        names(&app, Runtime::Codex)[3],
-        ("gpt-6-luna".into(), true, false)
-    );
-    assert_eq!(screen(&app).selected, 3);
 }

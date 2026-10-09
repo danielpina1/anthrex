@@ -4,14 +4,13 @@
 
 use std::path::Path;
 
-use config::{ConfiguredBudgets, RouteLists, Tuning};
+use config::{ConfiguredBudgets, Tuning};
 use proto::{
     Budget, ClassBudget, ClassTuning, HistoryLine, PathWeights, RefitState, SizeThresholds,
     TuningFile, TuningReport,
 };
 
-use super::super::model::ClassRoutes;
-use super::propose::{current_route, effort_label, list_of, list_text, route_text, thresholds_of};
+use super::propose::thresholds_of;
 use super::{
     SizeClass, as_budget, budget_samples, budget_text, configured, default_budget, proposals,
     qualifies, shown_refit, weights_text,
@@ -33,8 +32,6 @@ pub struct Tuned {
     pub configured: ConfiguredBudgets,
     pub weights: Option<PathWeights>,
     pub thresholds: SizeThresholds,
-    pub routes: ClassRoutes,
-    pub lists: RouteLists,
     /// Decision 12's start lines.
     pub log: Vec<String>,
     /// Ruling T13-5 (m5): the design classes' lines, a design run's only.
@@ -127,21 +124,6 @@ pub fn tuned_with(lines: &[HistoryLine], file: &TuningFile, cfg: &config::Orches
             th.s_lines, th.m_lines
         ));
     }
-    let defaults = ClassRoutes::default();
-    let routes = ClassRoutes {
-        s: current_route(file, SizeClass::S).unwrap_or(defaults.s),
-        m: current_route(file, SizeClass::M).unwrap_or(defaults.m),
-        ..defaults
-    };
-    for class in [SizeClass::S, SizeClass::M] {
-        if let Some(r) = file.routes.get(class.key()) {
-            log.push(format!(
-                "tuning: route {} {} (applied)",
-                class.label(),
-                route_text(*r)
-            ));
-        }
-    }
     // Decision 12 and ruling T8-8: with nothing learned, say so, after any `configured`
     // lines.
     if log.len() == bare {
@@ -156,8 +138,6 @@ pub fn tuned_with(lines: &[HistoryLine], file: &TuningFile, cfg: &config::Orches
         configured: conf,
         weights,
         thresholds: thresholds_of(file),
-        routes,
-        lists: cfg.tuning.routes.clone(),
         log,
         design_lines,
     }
@@ -240,8 +220,6 @@ pub fn report(
             });
             let weight_derived =
                 weights.is_some_and(|w| w.derived.iter().any(|d| d == class.label()));
-            let list = list_of(&cfg.tuning.routes, class);
-            let route = current_route(file, class);
             ClassTuning {
                 class: class.label().to_string(),
                 samples: samples as u32,
@@ -255,25 +233,9 @@ pub fn report(
                 },
                 weight_secs,
                 weight_derived,
-                // A task class always has both (`ALL`); a design class neither, so its
-                // route reads `-` (task M9.6.16).
-                route: match (list, route) {
-                    (Some(l), Some(r)) if !l.candidates.is_empty() => list_text(l, r.effort),
-                    (_, Some(r)) => route_text(r),
-                    (_, None) => "-".to_string(),
-                },
             }
         })
         .collect();
-    let orchestrator_list = (cfg.tuning.routes.orchestrator.candidates.first()).map(|c| {
-        let effort = c.effort.map(|e| format!(" {}", effort_label(e)));
-        format!(
-            "{}/{}{}",
-            c.runtime.label(),
-            c.model,
-            effort.unwrap_or_default()
-        )
-    });
     TuningReport {
         path: path.to_path_buf(),
         min_samples: t.min_samples,
@@ -285,6 +247,5 @@ pub fn report(
         project: None,
         applied: Vec::new(),
         dismissed: Vec::new(),
-        orchestrator_list,
     }
 }

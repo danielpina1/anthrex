@@ -193,12 +193,12 @@ async fn a_held_submit_carries_its_runtime_refusals() {
                 let record = run.orch.orchestrator.as_mut().unwrap();
                 record.route.runtime = proto::Runtime::Codex;
                 record.route.model = String::new();
-                run.limits.orch.planners.runtime = None;
-                // Codex has no frontier model; at standard its planners stay on Codex.
-                run.limits.orch.planners.strength = proto::Strength::Standard;
-                // Whole-branch review, item 1: its scouts count too; on Codex.
-                let scouts = run.limits.orch.scouts.as_mut().unwrap();
-                scouts.runtime = Some(proto::Runtime::Codex);
+                // Milestone 9.8: its planner and research rows on Codex (whole-branch
+                // review, item 1: its scouts count too).
+                use crate::run::test_support::set_row;
+                use proto::models::Role;
+                set_row(run, Role::Planner, "codex:default", None, None);
+                set_row(run, Role::Research, "codex:default", None, None);
                 planner_launching(run);
                 let reached = crate::run::reach::reachable_runtimes(run);
                 assert_eq!(reached, [proto::Runtime::Codex]);

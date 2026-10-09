@@ -103,7 +103,7 @@ impl RunService {
             let given = std::mem::take(&mut sandbox.deny_read);
             sandbox.deny_read = with_canonical(given).await;
         }
-        let (kind, session) = (spec.kind.clone(), spec.session);
+        let (kind, session, runtime) = (spec.kind.clone(), spec.session, spec.headless.runtime);
         match scouts.start_design_agent(spec).await {
             Ok(handle) => {
                 let window_id = handle.window_id;
@@ -132,7 +132,14 @@ impl RunService {
                     pack: pack_file,
                 }
             }
-            Err(error) => failed(error.to_string()),
+            // Milestone 9.8 (MR §7): a missing program names the role.
+            Err(e) => {
+                let role = match kind.role() {
+                    proto::AgentRole::Brainstormer => "brainstorm",
+                    _ => "reviewer",
+                };
+                failed(super::start_error::named_as(role, runtime, &e))
+            }
         }
     }
 

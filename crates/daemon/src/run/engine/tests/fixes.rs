@@ -7,7 +7,7 @@ use super::fixture::*;
 use super::merge::{doc_task, start_on};
 use crate::run::engine::fixes::{FixSpec, add_fix, next_fix_id};
 use crate::run::model::FixOf;
-use crate::run::roster::peer;
+use crate::run::model_roles::peer;
 
 pub(super) fn spec(origin: TaskOrigin, owns: &str, route: RouteSpec) -> FixSpec {
     let fixes = match origin {
@@ -89,12 +89,15 @@ fn a_fix_task_the_plan_rules_refuse_changes_nothing() {
     assert!(!t1.state.is_finished());
     // Rule 9: a peer runtime overlapping a running task's `owns`.
     let other = peer(t1.route.runtime);
-    let Some(entry) = fx.run().roster.iter().find(|m| m.runtime == other).cloned() else {
-        panic!("the fixture's roster has no {other} entry");
+    // The old built-in roster's first model on that runtime (Codex's: its default).
+    let model = if other == proto::Runtime::Claude {
+        "claude-haiku-4-5"
+    } else {
+        ""
     };
     let route = RouteSpec {
         runtime: Some(other),
-        model: Some(entry.model.clone()),
+        model: Some(model.into()),
         ..RouteSpec::default()
     };
     let before = fx.run().clone();

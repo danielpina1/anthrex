@@ -32,7 +32,7 @@ fn role() -> RoleLaunch {
             agent_label: None,
         },
         instructions: "THE CONTRACT".into(),
-        effort: Effort::High,
+        effort: Effort::HIGH,
         claude_allowed_tools: ORCHESTRATOR_ALLOWED_TOOLS
             .iter()
             .map(|t| t.to_string())

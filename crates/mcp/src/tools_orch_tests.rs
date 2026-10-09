@@ -35,8 +35,8 @@ fn pairs(list: &[(&str, &str)]) -> Vec<(String, String)> {
         .collect()
 }
 
-const GET_CONTEXT: &str = "Read the run's context: the repository profile, the models you can \
-    route to, the limits, scout reports, epics and the plan so far.";
+const GET_CONTEXT: &str = "Read the run's context: the repository profile, the role table \
+    (which model each size runs on), the limits, scout reports, epics and the plan so far.";
 
 /// Milestone 9.3 task M9.3.7: `edit_plan` names its `iterate`, which comes alone (the
 /// schema cannot say so). `edits` may be left out in every call (fix round 1).
@@ -493,5 +493,27 @@ fn edit_plan_schema_accepts_race_and_pair() {
             let required = edit["task"]["required"].as_array().unwrap();
             assert!(!required.contains(&json!(key)), "{tool}.{key}");
         }
+    }
+}
+
+/// Milestone 9.8 decision 32: `route` stays on `plan_task` and `plan_edit`, so an older
+/// orchestrator's call is not rejected, as an object of at most the four old keys whose
+/// values are not checked, described as ignored.
+#[test]
+fn a_route_is_described_as_ignored() {
+    let route = Value::Object(super::route());
+    assert_eq!(
+        route["description"],
+        "Ignored: models come from the role table."
+    );
+    assert_eq!(route["additionalProperties"], false);
+    let mut keys: Vec<&String> = route["properties"].as_object().unwrap().keys().collect();
+    keys.sort();
+    assert_eq!(keys, ["effort", "model", "runtime", "strength"]);
+    for (key, value) in route["properties"].as_object().unwrap() {
+        assert!(value.get("enum").is_none(), "{key}: {value}");
+    }
+    for edit in [super::plan_edit(), super::plan_task()] {
+        assert_eq!(edit["properties"]["route"], route);
     }
 }

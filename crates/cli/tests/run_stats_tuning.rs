@@ -165,7 +165,6 @@ fn stats_prints_the_tuning_block_for_recorded_history() {
   * derived from another class's median
 tuning proposals:
   thresholds.s  S line threshold 20 → 35 (p90 of 34 merged S tasks)
-  route.s       S route standard/low → standard/medium (14 of 34 S tasks, 41%, reached rung 2 or higher)
 apply with anthrex run stats --apply <id>; dismiss with anthrex run stats --dismiss <id>"
     );
     let file = tuning(&h);
@@ -205,28 +204,35 @@ fn apply_asks_and_applies_only_on_yes() {
     let next = stats(&h, &[], "");
     ok(&next);
     assert!(!lists(&stdout(&next), "thresholds.s"), "{}", stdout(&next));
-    assert!(lists(&stdout(&next), "route.s"), "{}", stdout(&next));
+    // Milestone 9.8 decision 30: no route is proposed either.
+    assert!(
+        stdout(&next).contains("\ntuning proposals: none\n"),
+        "{}",
+        stdout(&next)
+    );
 }
 
 #[test]
 fn apply_yes_skips_the_question() {
     let h = RunHarness::new("");
     seed(&h, &[]);
-    let out = stats(&h, &["--apply", "route.s", "--yes"], "");
+    let out = stats(&h, &["--apply", "thresholds.s", "--yes"], "");
     ok(&out);
     assert!(!stderr(&out).contains("[y/N]"), "{}", stderr(&out));
     assert!(
         stdout(&out).starts_with(&format!(
-            "applied route.s: new runs in {} use it\n",
+            "applied thresholds.s: new runs in {} use it\n",
             project(&h).display()
         )),
         "{}",
         stdout(&out)
     );
-    let route = tuning(&h).routes["s"];
     assert_eq!(
-        (route.strength, route.effort),
-        (proto::Strength::Standard, proto::Effort::Medium)
+        tuning(&h).thresholds,
+        Some(SizeThresholds {
+            s_lines: 35,
+            m_lines: 100
+        })
     );
 }
 
@@ -234,21 +240,20 @@ fn apply_yes_skips_the_question() {
 fn dismiss_hides_a_proposal() {
     let h = RunHarness::new("");
     seed(&h, &[]);
-    let out = stats(&h, &["--dismiss", "route.s"], "");
+    let out = stats(&h, &["--dismiss", "thresholds.s"], "");
     ok(&out);
     assert!(!stderr(&out).contains("[y/N]"), "never asks");
     let text = stdout(&out);
     assert!(
         text.starts_with(
-            "dismissed route.s: it is not proposed again while it would propose standard/medium\n"
+            "dismissed thresholds.s: it is not proposed again while it would propose 35\n"
         ),
         "{text}"
     );
-    assert!(!lists(&text, "route.s"), "{text}");
-    assert!(lists(&text, "thresholds.s"), "{text}");
-    assert_eq!(tuning(&h).dismissed["route.s"], "standard/medium");
+    assert!(!lists(&text, "thresholds.s"), "{text}");
+    assert_eq!(tuning(&h).dismissed["thresholds.s"], "35");
     let next = stats(&h, &[], "");
-    assert!(!lists(&stdout(&next), "route.s"), "{}", stdout(&next));
+    assert!(!lists(&stdout(&next), "thresholds.s"), "{}", stdout(&next));
 }
 
 #[test]
@@ -302,7 +307,7 @@ fn stats_json_carries_tuning() {
     assert!(matches!(s.refit, RefitState::Written { .. }), "{s:?}");
     assert_eq!(s.refit_budget, Some(budget(55, 18)));
     let ids: Vec<&str> = tuning.proposals.iter().map(|p| p.id.as_str()).collect();
-    assert_eq!(ids, ["thresholds.s", "route.s"]);
+    assert_eq!(ids, ["thresholds.s"]);
 }
 
 /// Decision 48: what the Settings screen sends on opening records no revert and writes
@@ -386,33 +391,6 @@ fn stats_plain(h: &RunHarness) -> Output {
     stats(h, &[], "")
 }
 
-#[test]
-fn a_read_only_stats_reports_the_orchestrator_list() {
-    let h = RunHarness::with_config(
-        "",
-        "[orchestrator.routes.orchestrator]\ncandidates = [{ runtime = \"claude\", model = \"claude-opus-5-5\", effort = \"high\" }]\n",
-        &[],
-    );
-    let reply = h.request(RunRequest::Stats {
-        dir: h.repo.clone(),
-        apply: Vec::new(),
-        dismiss: Vec::new(),
-        read_only: true,
-    });
-    let RunReply::Stats { stats, .. } = reply else {
-        panic!("not stats: {reply:?}");
-    };
-    let tuning = stats.tuning.expect("a report with no history too");
-    assert_eq!(
-        tuning.orchestrator_list.as_deref(),
-        Some("claude/claude-opus-5-5 high")
-    );
-    assert!(
-        !repo_dir(&h).join(TUNING_FILE).exists(),
-        "read-only writes no file"
-    );
-}
-
 /// Decision 10 and ruling T8-2: a `tuning.toml` that does not parse is moved aside by a
 /// plain stats, whose block says why first; a read-only one leaves it where it is.
 #[test]
@@ -472,7 +450,7 @@ fn apply_without_a_tuning_block_refuses_and_sends_nothing() {
     for args in [
         &["--apply", "thresholds.s"][..],
         &["--apply", "thresholds.s", "--yes"],
-        &["--dismiss", "route.s"],
+        &["--dismiss", "thresholds.s"],
     ] {
         let out = stats(&h, args, "y\n");
         assert_eq!(out.status.code(), Some(1), "{args:?}: {}", stderr(&out));

@@ -3,7 +3,7 @@
 
 use std::time::{Duration, Instant};
 
-use proto::{Effort, Route, Runtime, Strength};
+use proto::{Effort, Route, Runtime};
 
 use super::*;
 use crate::run::model::Run;
@@ -152,8 +152,7 @@ fn route(runtime: Runtime) -> Route {
     Route {
         runtime,
         model: "m".into(),
-        strength: Strength::Standard,
-        effort: Effort::Medium,
+        effort: Effort::MEDIUM,
     }
 }
 

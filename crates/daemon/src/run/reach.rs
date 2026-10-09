@@ -7,21 +7,28 @@
 //! escalates the route it finds, so any number of steps can be taken); and for each of
 //! those routes, its reviewer at every review level the task can have: its own, and the
 //! level rung 3 re-resolves for each larger size (decision 38 raises the size one step
-//! at a time, and an unreviewed `S` task is reviewed once raised). The roster's
-//! fallbacks (the peer runtime, else the same runtime) are those of `escalate` and
-//! `pick_reviewer` themselves. The task's current reviewer route is counted as well, and
-//! (milestone 9.5) a racing task's second racer and a paired task's test writer, whose
-//! peer route escalation reaches too, so naming them changes no reach today.
+//! at a time, and an unreviewed `S` task is reviewed once raised). The task's current
+//! reviewer route is counted as well, and (milestone 9.5) a racing task's second racer
+//! and a paired task's test writer.
 //! A run's sessions change routes only by those steps, so the set does not grow
 //! while the run goes on; it grows only by a plan edit.
+//!
+//! Milestone 9.8 (task M9.8.7a): a reviewer, a second racer and a test writer come from
+//! the run's role table (decisions 27, 28), so each reviewed route counts the reviewer
+//! row's model and its fallback, a racing task its row's fallback, and a paired task the
+//! `test_writer` row. Task M9.8.8: escalation is `role_step::escalate` along a row
+//! (decision 29), so a route reaches every step of the rows it can escalate along: the
+//! task's row at each size from its own up, and the test writer's row for the writer.
+//! A larger size's row route is counted too for a task that names no model (the
+//! decider's raise re-resolves it, decision 10).
 
 use proto::{Route, Runtime, Size};
 
 use super::model::{ReviewLevel, Run, Task};
-use super::roster::escalate;
-use super::route_pick::{installed_roster, review_route, task_list};
+use super::model_roles::{RunModels, missing};
+use super::role_step;
 use super::validate::resolve_task_lenient;
-use super::validate_patterns::peer_route;
+use proto::models::Role;
 
 /// Whether `edits` can widen [`reachable_runtimes`] (T22-P2, F4): only a task added,
 /// split or amended can; a pause, resume, finish, cancel, answer or dependency cannot,
@@ -40,45 +47,55 @@ pub fn edits_may_widen(edits: &[proto::PlanEdit]) -> bool {
 /// Every runtime `run` can launch a session on, in `[Claude, Codex]` order.
 pub fn reachable_runtimes(run: &Run) -> Vec<Runtime> {
     let mut found = Vec::new();
+    let models = run.limits.models();
+    // Milestone 9.8 decision 27: a reviewer is the reviewer row's model, or its
+    // fallback (against the author's model, or past a route that failed, RL-1).
+    let reviewer = models.choice(Role::Reviewer);
+    let reviewers: Vec<Runtime> = (std::iter::once(&reviewer.model).chain(&reviewer.fallback))
+        .map(|m| m.runtime)
+        .collect();
     for t in &run.tasks {
-        let levels = review_levels(run, t);
+        let reviewed = !review_levels(run, t).is_empty();
         found.extend(t.review_route.as_ref().map(|r| r.runtime));
-        // Milestone 9.5 decision 9a: rung 2 can take any candidate of its list.
-        let (lists, installed) = (&run.limits.route_lists, &run.orch.installed);
-        let listed = (task_list(lists, t).candidates.iter()).map(|c| c.route(t.route.effort));
-        // Milestone 9.5 ruling RR-6: lane b's route, and the test writer's.
-        let peer = (t.spec.race || t.spec.pair)
-            .then(|| peer_route(&run.roster, &t.route, installed))
+        // Milestone 9.8 decision 28: lane b's route (the row's fallback), and the test
+        // writer's (its row); each may be the task's own route instead.
+        let racer = (t.spec.race).then(|| models.racer_route(RunModels::task_role(t), &t.route));
+        let roles = task_roles(t);
+        // A raise re-resolves a task that names no model to the larger size's row.
+        let raised = (t.spec.route.model.is_none())
+            .then(|| roles.iter().skip(1).map(|role| models.route(*role)))
+            .into_iter()
             .flatten();
-        let starts: Vec<Route> =
-            (std::iter::once(t.route.clone()).chain(listed).chain(peer)).collect();
-        for route in starts.iter().flat_map(|r| escalations(run, r)) {
+        let starts: Vec<Route> = (std::iter::once(t.route.clone()))
+            .chain(racer)
+            .chain(raised)
+            .collect();
+        let writer = (t.spec.pair).then(|| models.route(Role::TestWriter));
+        let worker = starts.iter().flat_map(|r| escalations(run, &roles, r));
+        let writer = writer
+            .iter()
+            .flat_map(|r| escalations(run, &[Role::TestWriter], r));
+        for route in worker.chain(writer).collect::<Vec<_>>() {
             found.push(route.runtime);
-            for &level in &levels {
-                let reviewer = review_route(lists, &run.roster, &route, level, installed);
-                found.push(reviewer.runtime);
+            if reviewed {
+                found.extend(reviewers.iter().copied());
             }
         }
     }
     // Milestone 9 decision 26: the orchestrator's runtime and its sub-planners'; and
-    // (whole-branch review, item 1) its run scouts', on the keys the run froze.
+    // (whole-branch review, item 1) its run scouts'. Milestone 9.8: their rows.
     if let Some(o) = &run.orch.orchestrator {
         found.push(o.route.runtime);
         found.extend(super::orch::launch::planner_route(run).map(|r| r.runtime));
-        found.push(super::orch::launch::frozen_scout_route(run).runtime);
-        // Milestone 9.5 decision 9a: a role list's every candidate can be taken.
-        let lists = &run.limits.route_lists;
-        found.extend((lists.scout.candidates.iter()).map(|c| c.runtime));
-        found.extend((lists.planner.candidates.iter()).map(|c| c.runtime));
-        // Milestone 9.6 decision 10: a design run's brainstormers (every `brainstorm`
-        // candidate, else the strongest of each installed runtime) and its document
-        // reviewer (the orchestrator's peer, else its own runtime).
+        found.push(super::orch::launch::scout_route(run).runtime);
+        // Milestone 9.6 decision 10: a design run's brainstormers and its document
+        // reviewer (milestone 9.8: the `brainstorm` row and the `reviewer` row's pick).
         if run.design_mode == proto::DesignMode::Full {
-            found.extend((lists.brainstorm.candidates.iter()).map(|c| c.runtime));
             let picks = super::orch::roles::lists::brainstorm_picks(run);
             found.extend(picks.iter().map(|p| p.route.runtime));
-            let peer = peer_route(&run.roster, &o.route, &run.orch.installed);
-            found.extend(peer.map(|r| r.runtime));
+            let caps = crate::decider::caps();
+            let doc = super::orch::roles::lists::review_pick(run, &caps);
+            found.extend(doc.map(|p| p.route.runtime));
         }
     }
     [Runtime::Claude, Runtime::Codex]
@@ -87,20 +104,31 @@ pub fn reachable_runtimes(run: &Run) -> Vec<Runtime> {
         .collect()
 }
 
-/// `route` and every route repeated escalation reaches from it, to the fixpoint. The
-/// routes are drawn from a finite set (the roster's entries and the starting route's
-/// model, each at three efforts), so the walk ends at a route already seen. Milestone
-/// 9.7 decision 16: over the installed roster only, as rung 2 and a fix task escalate.
-fn escalations(run: &Run, route: &Route) -> Vec<Route> {
-    let roster = installed_roster(&run.roster, &run.orch.installed);
-    let mut chain = vec![route.clone()];
-    loop {
-        let next = escalate(&roster, chain.last().expect("never empty"));
-        if chain.contains(&next) {
-            return chain;
+/// `route` and every route escalation along `roles`' rows reaches from it
+/// (`role_step::steps`, decision 29), past a runtime the run's start found missing, as
+/// rung 2 and a fix task step over it (milestone 9.7 decision 16).
+fn escalations(run: &Run, roles: &[Role], route: &Route) -> Vec<Route> {
+    let models = run.limits.models();
+    let steps = (roles.iter()).flat_map(|role| role_step::steps(models, *role, route));
+    (std::iter::once(route.clone()).chain(steps))
+        .filter(|r| r.runtime == route.runtime || !missing(&run.orch.installed, r.runtime))
+        .collect()
+}
+
+/// The rows task `t` can take, its own first: its own size's, and each larger size's a
+/// raise moves it to (decision 10).
+fn task_roles(t: &Task) -> Vec<Role> {
+    let mut roles = Vec::new();
+    for size in [Size::S, Size::M, Size::L]
+        .into_iter()
+        .filter(|s| *s >= t.size)
+    {
+        let role = RunModels::role_of(t.spec.kind, t.hub, size);
+        if !roles.contains(&role) {
+            roles.push(role);
         }
-        chain.push(next);
     }
+    roles
 }
 
 /// The review levels task `t` can be reviewed at: its own, and the one rung 3's
@@ -113,13 +141,7 @@ fn review_levels(run: &Run, t: &Task) -> Vec<ReviewLevel> {
         }
         let mut spec = t.spec.clone();
         spec.size = spec.size.max(size);
-        let (resolved, _) = resolve_task_lenient(
-            spec,
-            &run.profile,
-            &run.limits,
-            &run.roster,
-            run.limits.default_runtime,
-        );
+        let (resolved, _) = resolve_task_lenient(spec, &run.profile, &run.limits);
         if let Some(level) = resolved.review_level
             && !levels.contains(&level)
         {

@@ -154,9 +154,10 @@ fn ids(run: &Run) -> Vec<&str> {
 fn add_task_is_validated_like_a_plan_task() {
     let base = [one("t1", ""), one("t2", "deps = [\"t1\"]")];
 
-    // Invalid in four rule families at once: spans two modules with interface_change
-    // (7.2.2 raise, then 7.2.4), check without a reason (8), an unknown model (route),
-    // and a blank acceptance item (fields).
+    // Invalid in three rule families at once: spans two modules with interface_change
+    // (7.2.2 raise, then 7.2.4), check without a reason (8), and a blank acceptance item
+    // (fields). Milestone 9.8 decision 31: a plan file's route is ignored; since M9.8.13
+    // the user's model is taken as named (no roster), so both refuse the same.
     let bad = task_toml(
         "t9",
         "S",
@@ -171,7 +172,7 @@ fn add_task_is_validated_like_a_plan_task() {
         .map(ToString::to_string)
         .collect();
     assert!(
-        from_plan.len() >= 4,
+        from_plan.len() >= 3,
         "the fixture must break several rules: {from_plan:?}"
     );
 
@@ -205,7 +206,7 @@ fn amend_route_on_a_working_task_is_refused() {
     let mut run = flat();
     set_state(&mut run, "t1", TaskState::Working, None);
     let high = RouteSpec {
-        effort: Some(Effort::High),
+        effort: Some(Effort::HIGH),
         ..RouteSpec::default()
     };
     let with_route = |id: &str| {
@@ -249,11 +250,11 @@ fn amend_route_on_a_working_task_is_refused() {
 
     // The same route on a queued task applies and re-resolves the route.
     set_state(&mut run, "t3", TaskState::Queued, None);
-    assert_eq!(task(&run, "t3").route.effort, Effort::Low);
+    assert_eq!(task(&run, "t3").route.effort, Effort::LOW);
     let (edited, consequences) = applied(&run, vec![with_route("t3")]);
     assert_eq!(consequences, vec![]);
-    assert_eq!(task(&edited, "t3").route.effort, Effort::High);
-    assert_eq!(task(&edited, "t1").route.effort, Effort::Low);
+    assert_eq!(task(&edited, "t3").route.effort, Effort::HIGH);
+    assert_eq!(task(&edited, "t1").route.effort, Effort::LOW);
 }
 
 #[test]

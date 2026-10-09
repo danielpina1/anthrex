@@ -3,7 +3,7 @@
   "orchestrator": [
     {
       "name": "get_context",
-      "description": "Read the run's context: the repository profile, the models you can route to, the limits, scout reports, epics and the plan so far.",
+      "description": "Read the run's context: the repository profile, the role table (which model each size runs on), the limits, scout reports, epics and the plan so far.",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,
@@ -253,35 +253,20 @@
                       "additionalProperties": false,
                       "properties": {
                         "runtime": {
-                          "type": "string",
-                          "enum": [
-                            "claude",
-                            "codex"
-                          ]
+                          "type": "string"
                         },
                         "model": {
-                          "type": "string",
-                          "minLength": 0,
-                          "maxLength": 100
+                          "type": "string"
                         },
                         "strength": {
-                          "type": "string",
-                          "enum": [
-                            "fast",
-                            "standard",
-                            "frontier"
-                          ]
+                          "type": "string"
                         },
                         "effort": {
-                          "type": "string",
-                          "enum": [
-                            "low",
-                            "medium",
-                            "high"
-                          ]
+                          "type": "string"
                         }
                       },
-                      "required": []
+                      "required": [],
+                      "description": "Ignored: models come from the role table."
                     },
                     "review_target": {
                       "type": "string",
@@ -450,35 +435,20 @@
                         "additionalProperties": false,
                         "properties": {
                           "runtime": {
-                            "type": "string",
-                            "enum": [
-                              "claude",
-                              "codex"
-                            ]
+                            "type": "string"
                           },
                           "model": {
-                            "type": "string",
-                            "minLength": 0,
-                            "maxLength": 100
+                            "type": "string"
                           },
                           "strength": {
-                            "type": "string",
-                            "enum": [
-                              "fast",
-                              "standard",
-                              "frontier"
-                            ]
+                            "type": "string"
                           },
                           "effort": {
-                            "type": "string",
-                            "enum": [
-                              "low",
-                              "medium",
-                              "high"
-                            ]
+                            "type": "string"
                           }
                         },
-                        "required": []
+                        "required": [],
+                        "description": "Ignored: models come from the role table."
                       },
                       "review_target": {
                         "type": "string",
@@ -553,35 +523,20 @@
                   "additionalProperties": false,
                   "properties": {
                     "runtime": {
-                      "type": "string",
-                      "enum": [
-                        "claude",
-                        "codex"
-                      ]
+                      "type": "string"
                     },
                     "model": {
-                      "type": "string",
-                      "minLength": 0,
-                      "maxLength": 100
+                      "type": "string"
                     },
                     "strength": {
-                      "type": "string",
-                      "enum": [
-                        "fast",
-                        "standard",
-                        "frontier"
-                      ]
+                      "type": "string"
                     },
                     "effort": {
-                      "type": "string",
-                      "enum": [
-                        "low",
-                        "medium",
-                        "high"
-                      ]
+                      "type": "string"
                     }
                   },
-                  "required": []
+                  "required": [],
+                  "description": "Ignored: models come from the role table."
                 },
                 "test_mode": {
                   "type": "string",
@@ -886,7 +841,7 @@
   "planner": [
     {
       "name": "get_context",
-      "description": "Read the run's context: the repository profile, the models you can route to, the limits, scout reports, epics and the plan so far.",
+      "description": "Read the run's context: the repository profile, the role table (which model each size runs on), the limits, scout reports, epics and the plan so far.",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,
@@ -1042,35 +997,20 @@
                       "additionalProperties": false,
                       "properties": {
                         "runtime": {
-                          "type": "string",
-                          "enum": [
-                            "claude",
-                            "codex"
-                          ]
+                          "type": "string"
                         },
                         "model": {
-                          "type": "string",
-                          "minLength": 0,
-                          "maxLength": 100
+                          "type": "string"
                         },
                         "strength": {
-                          "type": "string",
-                          "enum": [
-                            "fast",
-                            "standard",
-                            "frontier"
-                          ]
+                          "type": "string"
                         },
                         "effort": {
-                          "type": "string",
-                          "enum": [
-                            "low",
-                            "medium",
-                            "high"
-                          ]
+                          "type": "string"
                         }
                       },
-                      "required": []
+                      "required": [],
+                      "description": "Ignored: models come from the role table."
                     },
                     "review_target": {
                       "type": "string",
@@ -1239,35 +1179,20 @@
                         "additionalProperties": false,
                         "properties": {
                           "runtime": {
-                            "type": "string",
-                            "enum": [
-                              "claude",
-                              "codex"
-                            ]
+                            "type": "string"
                           },
                           "model": {
-                            "type": "string",
-                            "minLength": 0,
-                            "maxLength": 100
+                            "type": "string"
                           },
                           "strength": {
-                            "type": "string",
-                            "enum": [
-                              "fast",
-                              "standard",
-                              "frontier"
-                            ]
+                            "type": "string"
                           },
                           "effort": {
-                            "type": "string",
-                            "enum": [
-                              "low",
-                              "medium",
-                              "high"
-                            ]
+                            "type": "string"
                           }
                         },
-                        "required": []
+                        "required": [],
+                        "description": "Ignored: models come from the role table."
                       },
                       "review_target": {
                         "type": "string",
@@ -1342,35 +1267,20 @@
                   "additionalProperties": false,
                   "properties": {
                     "runtime": {
-                      "type": "string",
-                      "enum": [
-                        "claude",
-                        "codex"
-                      ]
+                      "type": "string"
                     },
                     "model": {
-                      "type": "string",
-                      "minLength": 0,
-                      "maxLength": 100
+                      "type": "string"
                     },
                     "strength": {
-                      "type": "string",
-                      "enum": [
-                        "fast",
-                        "standard",
-                        "frontier"
-                      ]
+                      "type": "string"
                     },
                     "effort": {
-                      "type": "string",
-                      "enum": [
-                        "low",
-                        "medium",
-                        "high"
-                      ]
+                      "type": "string"
                     }
                   },
-                  "required": []
+                  "required": [],
+                  "description": "Ignored: models come from the role table."
                 },
                 "test_mode": {
                   "type": "string",

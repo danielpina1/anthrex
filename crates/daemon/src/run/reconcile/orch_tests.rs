@@ -89,7 +89,7 @@ fn create(run_id: &str) -> OpKind {
             },
             run_ref: r,
             instructions: String::new(),
-            effort: proto::Effort::High,
+            effort: proto::Effort::HIGH,
             claude_allowed_tools: Vec::new(),
             claude_disallowed_tools: Vec::new(),
             env: Vec::new(),

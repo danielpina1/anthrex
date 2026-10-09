@@ -11,12 +11,11 @@ use super::service::{ProfileService, already_running, blocking};
 use super::store;
 use crate::headless::argv::CodexProjectConfig;
 use crate::run::confine;
-use crate::run::driver::build::installed::installed_now;
+use crate::run::driver::build::installed::installed_with;
 use crate::run::driver::unix_now;
 use crate::run::git;
 use crate::run::plan::Preflight;
-use crate::scout::spec::{ScoutRouting, run_scout_route};
-use std::sync::atomic::Ordering;
+use config::models::{REPO_FILE, load_repo};
 
 /// Decision 12's refusal of project settings a scout would run without asking.
 pub fn settings_refusal(paths: &[String]) -> String {
@@ -43,13 +42,18 @@ impl ProfileService {
         String,
     > {
         let ctx = self.scouts.context();
-        // Milestone 9.5 rulings RL-2, I6: over what is installed now, never under a lock.
+        // Milestone 9.5 rulings RL-2, I6: over what is installed now, never under a lock;
+        // milestone 9.8: with the repository's `models.toml`, read on the same step.
         let config = self.manager.config();
         let (claude, codex) = (config.claude_bin.clone(), config.codex_bin.clone());
-        let installed = installed_now(claude, codex).await;
-        let list = &self.ctx.orchestrator.tuning.routes.scout;
-        let rotation = self.onboarding_rotation.fetch_add(1, Ordering::Relaxed);
-        let route = onboarding_route(ctx, list, rotation, &installed);
+        let file = super::repo_dir(&self.ctx.data_dir, &pre.project).join(REPO_FILE);
+        let read = move || load_repo(&file);
+        let (installed, read) = installed_with(claude, codex, read).await;
+        let (repo, problems) = read.unwrap_or_default();
+        for problem in problems {
+            tracing::warn!("{}", proto::safe_text::one_line(&problem));
+        }
+        let route = onboarding_route(ctx, repo.as_ref(), &installed);
         let runtime = route.runtime;
         let caps = self.ctx.cli_caps;
         let timeout = self.git_timeout();
@@ -205,22 +209,16 @@ impl ProfileService {
     }
 }
 
-/// Milestone 9.5 (decision 9a, rulings RL-2, I6): the onboarding scout's route over
-/// what its start found `installed` (empty: everything counts as installed): the
-/// `scout` list's pick for session `rotation`, else [`run_scout_route`]'s rule on the
-/// service's scout keys, which is [`crate::scout::spec::scout_route`] when everything
-/// is installed. The list is the daemon's (`[orchestrator.routes]` is not a settings
-/// key, so a save never changes it); each start freezes it against the live roster,
-/// the roster its fallback reads too (review 10b, minor 6).
+/// Milestone 9.8 (MR §3.1): the onboarding scout's route, the `research` row of
+/// `repo` (the repository's `models.toml`) over the live table, over what its start
+/// found `installed` (empty: everything counts as installed): on the row's fallback
+/// only when the row's runtime is missing and the fallback's is not (D2).
 pub(super) fn onboarding_route(
     ctx: &crate::scout::spec::ScoutContext,
-    list: &config::RouteList,
-    rotation: u32,
-    installed: &crate::run::route_pick::Installed,
+    repo: Option<&proto::models::ModelTable>,
+    installed: &crate::run::model_roles::Installed,
 ) -> Route {
-    let roster = ctx.roster.current();
-    let list = crate::run::model::FrozenList::freeze(list, &roster);
-    let pick = crate::run::route_pick::role(&list, rotation, ctx.scouts.effort, installed);
-    let today = || run_scout_route(&roster, &ScoutRouting::of(ctx), installed);
-    pick.and_then(|p| p.route).unwrap_or_else(today)
+    let research = proto::models::Role::Research;
+    let choice = config::models::resolve(research, repo, &ctx.roster.roles());
+    crate::run::model_roles::row_route_over(&choice, installed).0
 }

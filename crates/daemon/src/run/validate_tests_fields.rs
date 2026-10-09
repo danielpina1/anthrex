@@ -3,16 +3,17 @@
 use std::collections::BTreeSet;
 
 use proto::TaskState;
+use proto::models::Role;
 
 use super::super::*;
+use crate::run::model_roles::RunModels;
 use crate::run::test_support::*;
 
 fn one(id: &str, extra: &str) -> String {
     task_toml(id, "S", &format!("[\"crates/{id}/src/lib.rs\"]"), extra)
 }
 
-/// The cross-task rules with the default roster, every runtime installed: no task here
-/// races or pairs, so milestone 9.5's `peers` changes nothing in them.
+/// The cross-task rules, every implementer row on `runtime`.
 fn validate_tasks(
     tasks: &[Task],
     touched: &BTreeSet<String>,
@@ -20,9 +21,24 @@ fn validate_tasks(
     limits: (u32, u32),
     runtime: proto::Runtime,
 ) -> Vec<PlanError> {
-    let roster = config::default_roster();
-    let peers = (&roster[..], &Default::default());
-    super::super::validate_tasks(tasks, touched, scope, limits, runtime, peers)
+    // Milestone 9.8 decision 33: rule 9 reads each task's row; `runtime` is every
+    // implementer row's.
+    let mut table = proto::models::ModelTable::default();
+    for role in [
+        Role::ImplementerSmall,
+        Role::ImplementerMedium,
+        Role::ImplementerHub,
+    ] {
+        let model = proto::models::ModelRef::default_of(runtime);
+        let row = proto::models::RoleChoice {
+            model,
+            effort: None,
+            fallback: None,
+        };
+        table.rows.insert(role, row);
+    }
+    let models = RunModels::resolve(&table, None);
+    super::super::validate_tasks(tasks, touched, scope, limits, &models)
 }
 
 #[test]

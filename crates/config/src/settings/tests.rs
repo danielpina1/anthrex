@@ -1,93 +1,15 @@
 use super::*;
+use proto::Runtime;
 use proto::settings::key;
-use proto::{ModelEntry, Runtime, Strength};
-
-fn entry(runtime: Runtime, model: &str, strength: Strength) -> ModelEntry {
-    ModelEntry {
-        runtime,
-        model: model.into(),
-        strength,
-        note: String::new(),
-    }
-}
 
 fn default_doc() -> SettingsDoc {
     doc_of(&crate::Orchestrator::default())
 }
 
 #[test]
-fn every_builtin_model_is_shipped() {
-    for m in crate::default_roster() {
-        let shipped = SHIPPED_CLAUDE
-            .iter()
-            .chain(SHIPPED_CODEX.iter())
-            .find(|s| s.runtime == m.runtime && s.model == m.model);
-        let shipped = shipped.unwrap_or_else(|| panic!("{m:?} is not shipped"));
-        assert_eq!(shipped.strength, m.strength, "{m:?}");
-    }
-}
-
-#[test]
-fn shipped_lists_are_the_spec_s() {
-    let claude: Vec<_> = SHIPPED_CLAUDE
-        .iter()
-        .map(|s| (s.runtime, s.model, s.strength, s.label))
-        .collect();
-    assert_eq!(
-        claude,
-        [
-            (
-                Runtime::Claude,
-                "claude-haiku-4-5",
-                Strength::Fast,
-                "claude-haiku-4-5"
-            ),
-            (
-                Runtime::Claude,
-                "claude-sonnet-5",
-                Strength::Standard,
-                "claude-sonnet-5"
-            ),
-            (
-                Runtime::Claude,
-                "claude-opus-5-5",
-                Strength::Frontier,
-                "claude-opus-5-5"
-            ),
-        ]
-    );
-    let codex: Vec<_> = SHIPPED_CODEX
-        .iter()
-        .map(|s| (s.runtime, s.model, s.strength))
-        .collect();
-    assert_eq!(
-        codex,
-        [
-            (Runtime::Codex, "gpt-6.1-sol", Strength::Frontier),
-            (Runtime::Codex, "gpt-6-sol", Strength::Standard),
-            (Runtime::Codex, "gpt-6-astra", Strength::Standard),
-            (Runtime::Codex, "gpt-6-luna", Strength::Fast),
-            (Runtime::Codex, "gpt-5.6-sol", Strength::Standard),
-            (Runtime::Codex, "gpt-5.6-terra", Strength::Standard),
-            (Runtime::Codex, "gpt-5.6-luna", Strength::Fast),
-            (Runtime::Codex, "", Strength::Standard),
-        ]
-    );
-    assert_eq!(SHIPPED_CODEX[7].label, "Codex default");
-    assert!(SHIPPED_CODEX[..7].iter().all(|s| s.label == s.model));
-}
-
-#[test]
-fn doc_of_a_default_config_is_the_builtin_roster_and_defaults() {
+fn doc_of_a_default_config_is_the_empty_table_and_defaults() {
     let doc = default_doc();
-    assert_eq!(doc.models, crate::default_roster());
-    assert_eq!(
-        doc.orchestrator,
-        proto::OrchestratorDefault {
-            runtime: None,
-            model: String::new()
-        }
-    );
+    assert!(doc.roles.is_empty(), "a default config migrates to no row");
     let budget = |tool_calls, minutes| proto::BudgetLimit {
         tool_calls,
         minutes,
@@ -111,22 +33,35 @@ fn doc_of_a_default_config_is_the_builtin_roster_and_defaults() {
 fn origin_marks_only_what_the_file_sets() {
     let text = "[orchestrator]\nmax_writers = 2\n\n[[orchestrator.models]]\nruntime = \"codex\"\nmodel = \"gpt-6-sol\"\nstrength = \"standard\"\n";
     let origin = origin_of(&text.parse().unwrap());
-    assert_eq!(origin.len(), 13);
+    assert_eq!(origin.len(), 11);
     for k in proto::SETTINGS_KEYS {
-        let want = if k == key::MAX_WRITERS || k == key::MODELS {
+        let want = if k == key::MAX_WRITERS || k == key::ROLES {
             proto::Origin::File
         } else {
             proto::Origin::Default
         };
         assert_eq!(origin[k], want, "{k}");
     }
-    let builtin = origin_of(&"[orchestrator]\nbuiltin_models = true\n".parse().unwrap());
-    assert_eq!(builtin[key::MODELS], proto::Origin::File);
-    let nested =
-        "[orchestrator.agent]\nruntime = \"codex\"\n[orchestrator.budget.m]\nminutes = 9\n";
+    // Milestone 9.8 (M9.8.12): `models` is the `[models]` table or any old key it replaced.
+    for text in [
+        "[orchestrator]\nbuiltin_models = true\n",
+        "[orchestrator]\ndefault_runtime = \"codex\"\n",
+        "[orchestrator.agent]\nmodel = \"claude-opus-5-5\"\n",
+        "[orchestrator.routes.s]\ncandidates = []\n",
+        "[models.planner]\nmodel = \"codex:default\"\n",
+    ] {
+        let origin = origin_of(&text.parse().unwrap());
+        assert_eq!(origin[key::ROLES], proto::Origin::File, "{text}");
+    }
+    for text in [
+        "[orchestrator.deciders]\nmode = \"off\"\n",
+        "[orchestrator.agent]\nmax_tool_calls = 3\n",
+    ] {
+        let origin = origin_of(&text.parse().unwrap());
+        assert_eq!(origin[key::ROLES], proto::Origin::Default, "{text}");
+    }
+    let nested = "[orchestrator.budget.m]\nminutes = 9\n";
     let nested = origin_of(&nested.parse().unwrap());
-    assert_eq!(nested[key::AGENT_RUNTIME], proto::Origin::File);
-    assert_eq!(nested[key::AGENT_MODEL], proto::Origin::Default);
     assert_eq!(nested[key::BUDGET_M_MINUTES], proto::Origin::File);
     assert_eq!(nested[key::BUDGET_M_CALLS], proto::Origin::Default);
 }
@@ -134,50 +69,6 @@ fn origin_marks_only_what_the_file_sets() {
 #[test]
 fn validate_accepts_the_default_doc() {
     assert_eq!(validate(&default_doc()), Vec::<String>::new());
-}
-
-#[test]
-fn validate_refuses_no_enabled_model() {
-    let mut doc = default_doc();
-    doc.models.clear();
-    assert_eq!(validate(&doc), ["enable at least one model"]);
-}
-
-#[test]
-fn validate_refuses_a_claude_model_without_a_name() {
-    let mut doc = default_doc();
-    doc.models.push(entry(Runtime::Claude, "", Strength::Fast));
-    assert_eq!(validate(&doc), ["claude models need a name"]);
-}
-
-#[test]
-fn validate_refuses_a_model_listed_twice() {
-    let mut doc = default_doc();
-    doc.models.push(entry(
-        Runtime::Claude,
-        "claude-sonnet-5",
-        Strength::Frontier,
-    ));
-    doc.models.push(entry(Runtime::Codex, "", Strength::Fast));
-    assert_eq!(
-        validate(&doc),
-        [
-            "claude claude-sonnet-5 is listed twice",
-            "codex (default) is listed twice"
-        ]
-    );
-}
-
-#[test]
-fn validate_refuses_a_long_note() {
-    let mut doc = default_doc();
-    doc.models[0].note = "n".repeat(81);
-    assert_eq!(
-        validate(&doc),
-        ["note of claude-haiku-4-5: at most 80 characters"]
-    );
-    doc.models[0].note = "é".repeat(80);
-    assert!(validate(&doc).is_empty());
 }
 
 #[test]
@@ -199,35 +90,6 @@ fn validate_refuses_each_limit_out_of_range() {
             "orchestrator.max_readers: must be between 1 and 8",
             "orchestrator.max_bounces: must be between 1 and 5",
         ]
-    );
-}
-
-#[test]
-fn validate_refuses_an_orchestrator_model_without_a_runtime() {
-    let mut doc = default_doc();
-    doc.orchestrator.model = "claude-opus-5-5".into();
-    assert_eq!(
-        validate(&doc),
-        ["orchestrator.agent.model: choose a runtime first"]
-    );
-}
-
-#[test]
-fn validate_refuses_an_orchestrator_model_that_is_not_enabled() {
-    let mut doc = default_doc();
-    doc.orchestrator.runtime = Some(Runtime::Codex);
-    doc.orchestrator.model = "claude-opus-5-5".into();
-    assert_eq!(
-        validate(&doc),
-        ["orchestrator.agent.model: claude-opus-5-5 is not an enabled codex model"]
-    );
-    doc.orchestrator.runtime = Some(Runtime::Claude);
-    assert!(validate(&doc).is_empty());
-    doc.orchestrator.model = String::new();
-    doc.orchestrator.runtime = Some(Runtime::Codex);
-    assert!(
-        validate(&doc).is_empty(),
-        "an empty model is the runtime's default"
     );
 }
 
@@ -297,30 +159,6 @@ fn the_screen_and_the_parser_agree_on_ranges() {
 }
 
 #[test]
-fn warnings_name_a_strength_on_one_runtime() {
-    assert_eq!(
-        warnings(&default_doc()),
-        [
-            "no codex model is fast: the cross-runtime reviewer cannot be chosen for fast tasks",
-            "no codex model is frontier: the cross-runtime reviewer cannot be chosen for frontier tasks",
-        ]
-    );
-    let mut doc = default_doc();
-    doc.models = vec![
-        entry(Runtime::Codex, "gpt-6-luna", Strength::Fast),
-        entry(Runtime::Claude, "claude-haiku-4-5", Strength::Fast),
-        entry(Runtime::Codex, "gpt-6-sol", Strength::Standard),
-    ];
-    assert_eq!(
-        warnings(&doc),
-        [
-            "no claude model is standard: the cross-runtime reviewer cannot be chosen for standard tasks"
-        ]
-    );
-    assert!(validate(&doc).is_empty(), "a warning never refuses");
-}
-
-#[test]
 fn apply_owned_copies_only_owned_fields() {
     let (from, _) = crate::parse(
         "[orchestrator]\nmax_writers = 5\nmax_readers = 6\nmax_bounces = 4\nstall_after_secs = 90\ngit_timeout_secs = 9\nbuiltin_models = false\n[orchestrator.agent]\nruntime = \"codex\"\nmodel = \"\"\neffort = \"low\"\n[orchestrator.budget.s]\ntool_calls = 7\nminutes = 8\ntokens = 99\n[[orchestrator.models]]\nruntime = \"codex\"\nmodel = \"gpt-6-sol\"\nstrength = \"standard\"\n",
@@ -330,8 +168,10 @@ fn apply_owned_copies_only_owned_fields() {
     apply_owned(&mut live, &from);
     assert_eq!(doc_of(&live), doc_of(&from));
     assert!(!live.builtin_models);
+    assert_eq!(live.roles, from.roles, "the role table is owned");
+    assert!(!live.roles.is_empty());
     assert_eq!(live.git_timeout_secs, 60, "not owned");
-    assert_eq!(live.agent.agent.effort, proto::Effort::High, "not owned");
+    assert_eq!(live.agent.agent.effort, proto::Effort::HIGH, "not owned");
     assert_eq!(live.budget_s.tokens, None, "budget tokens are not owned");
 }
 
@@ -343,92 +183,73 @@ fn load_with_origin_of_a_missing_or_broken_file_is_all_default() {
     assert_eq!(config, crate::Config::default());
     assert!(problems.is_empty());
     assert!(origin.values().all(|o| *o == proto::Origin::Default));
-    assert_eq!(origin.len(), 13);
+    assert_eq!(origin.len(), 11);
     std::fs::write(&missing, "[orchestrator\nmax_writers = 2\n").unwrap();
     let (_, problems, origin) = load_with_origin(&missing);
     assert_eq!(problems.len(), 1);
     assert!(origin.values().all(|o| *o == proto::Origin::Default));
 }
 
-/// Controller ruling (fix round 1): a control character in a model name or note refuses,
-/// naming the row; a newline would otherwise break the file the screen writes.
+/// Milestone 9.8 (M9.8.12): a row's model and fallback must parse back to themselves,
+/// and its effort be an effort name; each problem names the row's key.
 #[test]
-fn validate_refuses_control_characters_in_names_and_notes() {
-    for bad in [
-        "a\nb",
-        "a\tb",
-        "a\x1b[31mb",
-        "a\u{2028}b",
-        "a\u{2029}b",
-        "a\x7fb",
-        "a\u{85}b",
-    ] {
-        let mut doc = default_doc();
-        doc.models[1].model = bad.into();
-        assert_eq!(
-            validate(&doc),
-            ["model 2 (claude): its name holds a control character"],
-            "{bad:?}"
-        );
-        let mut doc = default_doc();
-        doc.models[3].note = bad.into();
-        assert_eq!(
-            validate(&doc),
-            ["model 4 (codex): its note holds a control character"],
-            "{bad:?}"
-        );
-    }
-}
-
-/// Task M9.2.15's fix round (review finding m3): `cleaned` is `clean_entry` on every
-/// model and `strip_hidden` on the orchestrator default's model, the helpers the
-/// Settings screen strips its own rows with, so the two cannot drift apart.
-#[test]
-fn cleaned_is_the_shared_helpers() {
+fn validate_refuses_a_bad_row() {
+    use crate::models::{BrainstormChoice, ModelRef, Role, RoleChoice};
     let mut doc = default_doc();
-    for m in &mut doc.models {
-        m.model = format!("a\u{200D}{}\u{202E}", m.model);
-        m.note = "n\u{FE0F}o\u{E0041}te".into();
-    }
-    doc.orchestrator.model = "m\u{00AD}x".into();
-    let mut want = doc.clone();
-    want.models.iter_mut().for_each(clean_entry);
-    want.orchestrator.model = strip_hidden(&doc.orchestrator.model);
-    assert_eq!(cleaned(&doc), want);
-    assert_eq!(want.orchestrator.model, "mx");
-    assert_eq!(want.models[0].note, "note");
-    assert_ne!(want, doc);
-}
-
-/// M9.2.6 fix round 2: a hidden format character (a variation selector, a soft hyphen,
-/// a bidi override) never refuses a save; the save drops it (`cleaned`), and the length
-/// rule counts what is written.
-#[test]
-fn validate_never_refuses_hidden_format_characters_and_cleaned_drops_them() {
-    for hidden in ["\u{FE0F}", "\u{00AD}", "\u{202E}", "\u{200D}", "\u{E0041}"] {
-        let mut doc = default_doc();
-        doc.models[1].model = format!("my{hidden}model");
-        doc.models[3].note = format!("⚠{hidden} careful");
-        assert_eq!(validate(&doc), Vec::<String>::new(), "{hidden:?}");
-        let clean = cleaned(&doc);
-        assert_eq!(clean.models[1].model, "mymodel", "{hidden:?}");
-        assert_eq!(clean.models[3].note, "⚠ careful", "{hidden:?}");
-        assert_eq!(clean.models[0], doc.models[0]);
-    }
-    // The orchestrator default names a model the way the roster does once cleaned.
-    let mut doc = default_doc();
-    doc.models[1].model = "my\u{00AD}model".into();
-    doc.orchestrator.runtime = Some(doc.models[1].runtime);
-    doc.orchestrator.model = "my\u{00AD}model".into();
-    assert_eq!(validate(&doc), Vec::<String>::new());
-    assert_eq!(cleaned(&doc).orchestrator.model, "mymodel");
-    // A note at the limit plus a variation selector fits: what is written fits.
-    let mut doc = default_doc();
-    doc.models[0].note = format!(
-        "{}\u{FE0F}",
-        "n".repeat(crate::orchestrator::MODEL_NOTE_MAX)
+    let good = ModelRef::parse("claude:claude-opus-5-5").unwrap();
+    doc.roles.rows.insert(
+        Role::ImplementerSmall,
+        RoleChoice {
+            model: good.clone(),
+            effort: Some("High".into()),
+            fallback: Some(ModelRef {
+                runtime: Runtime::Shell,
+                id: None,
+            }),
+        },
     );
-    assert_eq!(validate(&doc), Vec::<String>::new());
+    doc.roles.rows.insert(
+        Role::Helper(crate::models::HelperKind::Triage),
+        RoleChoice {
+            model: ModelRef {
+                runtime: Runtime::Codex,
+                id: Some("a b".into()),
+            },
+            effort: None,
+            fallback: None,
+        },
+    );
+    doc.roles.brainstorm = Some(BrainstormChoice {
+        first: good.clone(),
+        second: good.clone(),
+        effort: Some(String::new()),
+    });
+    let problems = validate(&doc);
+    let keys: Vec<&str> = problems
+        .iter()
+        .map(|p| p.split(':').next().unwrap())
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            "models.implementer.small.effort",
+            "models.implementer.small.fallback",
+            "models.helpers.triage.model",
+            "models.brainstorm.effort",
+        ],
+        "{problems:?}"
+    );
+    doc.roles.rows.clear();
+    doc.roles.brainstorm = None;
+    doc.roles.rows.insert(
+        Role::Reviewer,
+        RoleChoice {
+            model: good,
+            effort: Some("xhigh".into()),
+            fallback: Some(ModelRef::parse("codex:default").unwrap()),
+        },
+    );
+    assert!(validate(&doc).is_empty(), "{:?}", validate(&doc));
 }
 
 /// Ruling T18-2: the settings name `[orchestrator.design].default`, which the goal

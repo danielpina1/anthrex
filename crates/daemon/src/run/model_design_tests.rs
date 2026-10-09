@@ -1,13 +1,14 @@
 //! Task M9.6.3: the design flow's per-run fields persist through `run.json`
 //! (`journal::save_run`, the driver's serializer, and `journal::load_all`): the frozen
-//! mode (`Run.design_mode`), the frozen design limits (`OrchLimits.design`) and the
-//! frozen `brainstorm` model list (carry M-4). A protocol-16 (9.5) `run.json` loads with
-//! the mode `Off` and writes none of them back.
+//! mode (`Run.design_mode`) and the frozen design limits (`OrchLimits.design`); the
+//! frozen `brainstorm` model list (carry M-4) went with the lists in milestone 9.8 (task
+//! M9.8.13). A protocol-16 (9.5) `run.json` loads with the mode `Off` and writes none of
+//! them back.
 
-use proto::{DesignMode, Effort, Runtime, Strength};
+use proto::{DesignMode, Effort, Runtime};
 
+use super::Run;
 use super::tuning::tests::{count, keys, save_and_load, tmp};
-use super::{FrozenList, ListCandidate, ListPolicy, RouteListsFrozen, Run};
 use crate::run::orch::DesignLimits;
 
 /// A planned goal's `run.json` as milestone 9.5's code wrote it at the start (state
@@ -15,20 +16,12 @@ use crate::run::orch::DesignLimits;
 /// M9.6.3 (commit 00ec0f18) before any of its changes.
 const M95_RUN: &str = include_str!("../../tests/fixtures/run/m95-run.json");
 
-/// Every key task M9.6.3 adds to the persisted run.
-const NEW_KEYS: [&str; 3] = ["design_mode", "design", "brainstorm"];
+/// Every key task M9.6.3 adds to the persisted run (less the `brainstorm` list's,
+/// removed in M9.8.13).
+const NEW_KEYS: [&str; 2] = ["design_mode", "design"];
 
 fn old_run() -> Run {
     serde_json::from_str(M95_RUN).expect("m95-run.json parses")
-}
-
-fn candidate(model: &str, strength: Strength, effort: Option<Effort>) -> ListCandidate {
-    ListCandidate {
-        runtime: Runtime::Claude,
-        model: model.into(),
-        strength,
-        effort,
-    }
 }
 
 #[test]
@@ -38,8 +31,6 @@ fn an_old_run_json_loads_with_design_off() {
     assert!(run.orch.orchestrator.is_some(), "a planned goal's run");
     assert_eq!(run.design_mode, DesignMode::Off);
     assert_eq!(run.limits.orch.design, DesignLimits::default());
-    assert!(run.limits.route_lists.brainstorm.is_empty());
-    assert!(!run.limits.route_lists.review.is_empty());
 
     // Written again, it is the JSON 9.5 wrote, so it has none of the new keys.
     let dir = tmp();
@@ -53,6 +44,10 @@ fn an_old_run_json_loads_with_design_off() {
     }
     // `save_and_load` moved the run's data directory under the temp dir.
     again["data_dir"] = captured["data_dir"].clone();
+    // Milestone 9.8 (task M9.8.13): the roster, the scouts' routing keys and the model
+    // lists are no longer part of the run; the rest is written back as 9.5 wrote it.
+    let mut captured = captured;
+    crate::run::test_support::without_pre_9_8_keys(&mut captured);
     assert_eq!(again, captured);
 }
 
@@ -76,13 +71,6 @@ fn a_design_run_round_trips() {
             tokens: None,
         },
     };
-    run.limits.route_lists.brainstorm = FrozenList {
-        candidates: vec![
-            candidate("claude-opus-5-5", Strength::Frontier, Some(Effort::High)),
-            candidate("claude-sonnet-5", Strength::Standard, None),
-        ],
-        pick: ListPolicy::First,
-    };
 
     let dir = tmp();
     let (loaded, text) = save_and_load(&mut run, dir.path());
@@ -92,45 +80,6 @@ fn a_design_run_round_trips() {
         assert!(count(&written, key) > 0, "run.json lacks {key}");
     }
     assert!(text.contains("\"design_mode\":\"full\""), "{text}");
-}
-
-/// Carry M-4: the `brainstorm` list is the ninth frozen list, frozen from config with
-/// each candidate's roster strength, named last, and kept by a save and load.
-#[test]
-fn a_frozen_brainstorm_list_survives_save_and_load() {
-    let (config, problems) = config::parse(
-        r#"
-[orchestrator.routes.brainstorm]
-candidates = [
-  { runtime = "claude", model = "claude-opus-5-5", effort = "high" },
-  { runtime = "claude", model = "claude-sonnet-5" },
-]
-"#,
-    );
-    assert!(problems.is_empty(), "{problems:?}");
-    let o = &config.orchestrator;
-    let frozen = RouteListsFrozen::freeze(&o.tuning.routes, &o.models);
-    assert_eq!(
-        frozen.brainstorm,
-        FrozenList {
-            candidates: vec![
-                candidate("claude-opus-5-5", Strength::Frontier, Some(Effort::High)),
-                candidate("claude-sonnet-5", Strength::Standard, None),
-            ],
-            pick: ListPolicy::First,
-        }
-    );
-    let named = frozen.named();
-    assert_eq!(named.len(), 9);
-    assert_eq!(named[8], ("brainstorm", &frozen.brainstorm));
-    assert!(!frozen.is_empty(), "a brainstorm list alone is a list");
-
-    let mut run = old_run();
-    run.limits.route_lists = frozen.clone();
-    let dir = tmp();
-    let (loaded, text) = save_and_load(&mut run, dir.path());
-    assert_eq!(loaded.limits.route_lists, frozen);
-    assert!(text.contains("\"brainstorm\""), "{text}");
 }
 
 /// Task M9.6.5: a design run's state (`RunOrch.design`) survives a save and load: the
@@ -177,8 +126,7 @@ fn the_state_survives_save_and_load() {
     let route = Route {
         runtime: Runtime::Codex,
         model: "gpt-6".into(),
-        strength: Strength::Frontier,
-        effort: Effort::High,
+        effort: Effort::HIGH,
     };
     let design = DesignState {
         phase_started: Some(3_100),
@@ -312,8 +260,7 @@ fn the_state_survives_save_and_load() {
                 route: Route {
                     runtime: Runtime::Codex,
                     model: "gpt-6".into(),
-                    strength: Strength::Frontier,
-                    effort: Effort::High,
+                    effort: Effort::HIGH,
                 },
                 sessions: 2,
                 calls: 11,

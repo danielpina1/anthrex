@@ -128,9 +128,10 @@ fn the_search_starts_at_the_last_green_tier3() {
 }
 
 /// Milestone 9.7 decision 16 (BR-15): the fix task escalates as its culprit's worker
-/// would at rung 2, so rule 9's overlap skip holds it off the peer runtime up front:
-/// it goes one strength up on the culprit's runtime instead of being refused there and
-/// falling back to the culprit's own route (this test's form before 9.7).
+/// would at rung 2, so rule 9's overlap skip holds it off the peer runtime up front.
+/// Milestone 9.8 decision 29: at its model's top effort the culprit's row has only its
+/// fallback on the peer runtime left, so the fix task takes the culprit's own route
+/// instead of being refused there.
 #[test]
 fn an_overlapping_open_task_keeps_the_fix_task_on_the_culprits_runtime() {
     // t3 overlaps t2's `owns` and stays open on t2's runtime, so a fix task on the peer
@@ -146,13 +147,19 @@ fn an_overlapping_open_task_keeps_the_fix_task_on_the_culprits_runtime() {
         ),
     ];
     let (mut fx, mut windows) = start_on(&profile(), &tasks);
+    let role = crate::run::model_roles::RunModels::task_role(fx.task("t2"));
+    let model = crate::run::model_roles::RunModels::model_of(&fx.task("t2").route);
+    assert_eq!(model.runtime, proto::Runtime::Claude);
+    let model = model.to_string();
+    crate::run::test_support::set_row(fx.run_mut(), role, &model, None, Some("codex:default"));
+    fx.with_efforts();
     let mut route = fx.task("t2").route.clone();
-    route.effort = proto::Effort::High;
+    route.effort = proto::Effort::HIGH;
     fx.task_mut("t2").route = route.clone();
-    let up = escalate(&fx.run().roster, &route);
+    let up = fx.escalated("t2", &route);
     assert_ne!(
         up.runtime, route.runtime,
-        "the escalation is the peer runtime"
+        "the escalation is the fallback on the peer runtime"
     );
     merge_next(&mut fx, &mut windows, "t1", &commit(1));
     merge_next(&mut fx, &mut windows, "t2", &commit(2));
@@ -161,13 +168,19 @@ fn an_overlapping_open_task_keeps_the_fix_task_on_the_culprits_runtime() {
     fx.send(since + 120, EventKind::Tick);
     let (op, _) = full_job(&fx);
     fx.done(op, tier(outcome(3, &[TEST])));
+    // Review minor 3: the overlap skip holds the fallback off up front (BR-15), not a
+    // rule-9 refusal and a fallback afterwards.
+    let i = (fx.run().tasks.iter())
+        .position(|t| t.id() == "t2")
+        .unwrap();
+    let mover = crate::run::model_roles::Mover::Worker;
+    let up = crate::run::role_step::escalate_for(fx.run(), i, &route, mover);
+    assert_eq!(up, route, "the premise: the overlap skip leaves no step");
     answer(&mut fx, 2);
+    let refused = (fx.run().log.iter()).any(|e| e.text.starts_with("bisect fix for "));
+    assert!(!refused, "{:#?}", fx.run().log);
     let fix = fx.task("fix1");
-    let mut on_own = fx.run().roster.clone();
-    on_own.retain(|e| e.runtime == route.runtime);
-    let up = escalate(&on_own, &route);
-    assert_ne!(up, route, "the culprit's runtime has a stronger entry");
-    assert_eq!(fix.route, up, "one strength up on the culprit's runtime");
+    assert_eq!(fix.route, route, "the culprit's own route on its runtime");
     assert!(matches!(&fix.fixes, Some(FixOf::Bisect { culprit, .. }) if culprit == "t2"));
 }
 

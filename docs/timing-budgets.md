@@ -613,6 +613,32 @@ The final fix wave's new bounds (its FW-103). W1 added none: FW-1's driver tests
 | The `git` stand-ins' warm-up (FW-18): `create_repo_gives_up_on_a_git_that_does_not_answer` and the contains `Recorder` | `crates/cli/src/run_cmd/delivery_tests.rs`, `crates/daemon/src/host/tests_git_contains.rs` (`install_stand_in`) | 10 s, a deadline loop every 10 ms, for the guarded run's exit | One `/bin/sh` spawn that exits at its first line, plus macOS's first exec of a fresh file (about 0.44 s, serialised with other first execs: "Measured primitive costs"). The spawn is no longer retried on `ETXTBSY`: the script comes from `testexec::write_executable`, so no concurrent fork can hold its write descriptor. The pattern and bound of `driver/delivery_tests_start.rs::decider_stand_in`. A hang guard. | **Recorded.** |
 | Every other new test of the wave | engine (`delivery_land_late.rs`, `delivery_ci_range.rs`, …), host (`tests_git_contains_pr.rs`), orch | none | Engine and digest tests are pure steps; the host tests run real git with no wall-clock assertion. | **Recorded.** No bound. |
 
+### Recorded, from M9.8.6 (2026-10-07)
+
+Model discovery (`crates/daemon/src/models/`). Every probe's deadline is one runtime's `DISCOVERY_TIMEOUT` (10 s) for its version and model probes together; the read loop stops `REAP_RESERVE` (100 ms) before it, so `ProbeChild::drop` kills and reaps inside the deadline; a probe that has its answer closes the CLI's stdin and waits at most `EXIT_GRACE` (500 ms, inside the read deadline) for it to exit before `ProbeChild` kills it. Measured under `GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1`: the timeout test returns in 407 to 412 ms (ten runs); the fourteen unit tests together 1.2 to 1.8 s (ten runs); the end-to-end test 1.7 to 2.4 s (six runs).
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| `a_probe_past_its_deadline_is_killed_reaped_and_reported`: the probe returns | `daemon/src/models/tests.rs` | 500 ms + `REAP_RESERVE` + `WALL_CLOCK_SLACK` (2 s): 2.6 s | The read deadline (deadline − `REAP_RESERVE`, 400 ms) plus one 5 ms poll, then `ProbeChild::drop`'s kill and its reap loop, which stops at the deadline (500 ms). The stand-in is run once with `warm` first, so macOS's first exec of a fresh file ("Measured primitive costs") is paid before the 500 ms starts and the probe's run always writes its pid. | **Recorded.** |
+| The same test: the stand-in's pid is gone | the same | none (asked once, `kill(pid, 0)`) | The stand-in `exec`s `sleep`, so its pid is the probe's direct child, which `ProbeChild::drop` has SIGKILLed and reaped before `probe` returns (100 ms of reserve for a process that dies at once). | **Recorded.** |
+| The other probe tests (`claude_probe_…`, `codex_probe_…`, `a_model_id_…`, `an_endless_reply_line_…`, `a_missing_cli_is_missing`) | `daemon/src/models/tests.rs` | `DISCOVERY_TIMEOUT` (10 s), the probe's own deadline | Stand-ins that answer at once (or, for the endless line, fill `LINE_MAX_BYTES` in milliseconds). A hang guard, not an assertion on time. | **Recorded.** |
+| `two_concurrent_lists_probe_once`: both runtimes' probes have started | `daemon/src/models/tests_service.rs` | 10 s, a deadline loop every 5 ms | In-process: two `tokio::spawn`ed tasks reach `spawn_blocking` on an idle pool. A hang guard. | **Recorded.** |
+| `list_models` (`MODELS_WAIT`) | `cli/tests/support/models.rs`, used by `models_discovery.rs` | `DISCOVERY_TIMEOUT` + 10 s (20 s), derived from `daemon::models::DISCOVERY_TIMEOUT` | One `ListModels`: each runtime's refresh is one `spawn_blocking` closure bounded by `DISCOVERY_TIMEOUT` (version, then cache or probe, `EXIT_GRACE` inside), the two at once; the test's three calls are sequential, so no call waits behind another's gate. The 10 s covers the connection and the blocking pool's queue on a loaded machine (the pool is otherwise idle in this test's daemon). | **Recorded.** |
+
+### Recorded, from M9.8.5, M9.8.7a and M9.8.15 (checked 2026-10-08)
+
+M9.8.15 checked the M9.8.6 rows above against the code (`DISCOVERY_TIMEOUT` 10 s,
+`REAP_RESERVE` 100 ms, `EXIT_GRACE` 500 ms, `WALL_CLOCK_SLACK` 2 s, `MODELS_WAIT` 20 s,
+the 10 s / 5 ms loop of `two_concurrent_lists_probe_once`): unchanged. The rest of the
+milestone's bounds:
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| `fake-agent`'s discovery replies (`DEADLINE`) | `crates/fake-agent/tests/discovery.rs` | 5 s per line (`recv_timeout`) | One `fake-agent` spawn answering from its fixtures at once, plus macOS's first exec of a fresh build ("Measured primitive costs"). A hang guard. | **Recorded.** |
+| `hang_answers_nothing_until_killed`: no reply | the same | 500 ms with nothing read | A negative check: the `hang` mode never writes, so no bound can be too short for it to pass; a longer window would only slow the test. | **Recorded.** |
+| The start's repository `models.toml` read (`MODELS_READ_BOUND`) | `crates/daemon/src/run/driver/build_models.rs` (production) | 5 s, then the global table and a log line | One small file read on `spawn_blocking`. No test waits on the bound. | **Recorded.** No test bound. |
+| `run_e2e_model_roles.rs` | `crates/cli/tests/` | the harness's `RUN_WAIT` and `ORCH_WAIT` (and `RUN_WAIT * 3` for the run with a sub-planner, a race, a pair and a research task, as `run_e2e_large`'s epic runs) | The harness's own rows above. Measured: the three tests together 15 to 16 s. | **Recorded.** |
+
 ### Fixed, from M9.5.8's flake fix (ruling F-1, 2026-10-03)
 
 | Test | File | Bound | Derivation | Status |

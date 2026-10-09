@@ -187,7 +187,7 @@ fn spec(runtime: Runtime, mcp: Option<&Mcp>) -> HeadlessSpec {
     HeadlessSpec {
         runtime,
         model: "sonnet".into(),
-        effort: Effort::Low,
+        effort: Effort::LOW,
         cwd: PathBuf::from("/tmp/unused"),
         instructions: "be brief -- and -p \"quoted\"\nsecond line".into(),
         mcp: mcp.map(Mcp::target),

@@ -150,16 +150,13 @@ fn a_paste_goes_to_the_focused_text_field() {
         form(&app).brief.text(),
         "Line one\nLine two three\nfour\nfive"
     );
+    // Milestone 9.8 decision 39: the model is the picker's; a paste on its row changes
+    // nothing (a one-line field's bound is `run_edit_tests.rs`'s, on the reason).
     focus(&mut app, EditField::Model);
+    let before = form(&app).clone();
     assert!(app.on_paste("gpt-\n5\r\n".into()).is_empty());
-    assert_eq!(form(&app).model.text(), "gpt-5");
-    // A megabyte is bounded in a one-line field (`run_edit::TEXT_MAX_CHARS`); the
-    // brief takes up to `run_edit::BRIEF_MAX_CHARS` (decision 35).
-    app.on_paste("y".repeat(1_000_000));
-    assert_eq!(
-        form(&app).model.text().chars().count(),
-        crate::run_edit::TEXT_MAX_CHARS
-    );
+    assert_eq!(*form(&app), before);
+    // The brief takes up to `run_edit::BRIEF_MAX_CHARS` (decision 35).
     // Final fix wave: the cap is one million characters; a paste up to it goes in
     // whole, and the next stops there.
     focus(&mut app, EditField::Brief);

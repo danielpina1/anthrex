@@ -45,6 +45,8 @@ fn yes_records_the_approval() {
             wt_dir: PathBuf::from("/tmp/wt"),
             data_dir: PathBuf::from(format!("/tmp/data/runs/{RUN_ID}")),
             config: &config,
+            models: crate::run::model_roles::RunModels::resolve(&config.roles, None),
+            models_log: Vec::new(),
             testing: &config::Testing::default(),
             now: 1_000,
             yes: true,
@@ -97,25 +99,17 @@ fn globs_that_do_not_compile_are_rejected() {
 #[test]
 fn dot_components_in_owns_are_rejected() {
     // Without the rejection, `./crates/…` would dodge rule 9 against `crates/…`.
+    // Milestone 9.8 decision 31: the two runtimes come from the role table (size M on
+    // Codex), not from the plan's routes.
     let text = plan_with(
         PROFILE,
         &[
-            task_toml(
-                "t1",
-                "S",
-                r#"["./crates/a/src/x.rs"]"#,
-                "[task.route]\nruntime = \"claude\"",
-            ),
-            task_toml(
-                "t2",
-                "S",
-                r#"["crates//b/src/y.rs"]"#,
-                "[task.route]\nruntime = \"codex\"",
-            ),
+            task_toml("t1", "S", r#"["./crates/a/src/x.rs"]"#, ""),
+            task_toml("t2", "M", r#"["crates//b/src/y.rs"]"#, ""),
         ],
     );
     assert_eq!(
-        errors_of(&text),
+        build_with(&text, &codex_medium()).unwrap_err(),
         vec![
             err(
                 Some("t1"),
@@ -196,6 +190,8 @@ fn run_limits_freeze_the_testing_limits() {
             wt_dir: PathBuf::from("/tmp/wt"),
             data_dir: crate::run::journal::runs_dir(data.path()).join(RUN_ID),
             config: &config,
+            models: crate::run::model_roles::RunModels::resolve(&config.roles, None),
+            models_log: Vec::new(),
             testing: &testing,
             now: 1_000,
             yes: false,
@@ -277,6 +273,8 @@ fn limits_are_frozen_at_run_start() {
             wt_dir: PathBuf::from("/tmp/wt"),
             data_dir: crate::run::journal::runs_dir(data.path()).join(RUN_ID),
             config: &config,
+            models: crate::run::model_roles::RunModels::resolve(&config.roles, None),
+            models_log: Vec::new(),
             testing: &testing,
             delivery: &delivery,
             now: 1_000,

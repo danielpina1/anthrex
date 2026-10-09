@@ -258,7 +258,7 @@ def design_stage(pty_proc, bin_path, run_cmd, fail, base_env):
         proc.wait_for(f" start a goal in {project} ", label="the goal dialog on the repository")
         proc.send(GOAL.encode())
         proc.wait_for(GOAL, label="the typed goal")
-        # Tab from the text: runtime, model, orchestrator, delivery, design.
+        # Tab from the text: model, effort, orchestrator, delivery, design.
         proc.send(b"\t" * 5)
         proc.send(b"\x1b[C")
 

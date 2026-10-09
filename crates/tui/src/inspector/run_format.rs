@@ -7,8 +7,8 @@ use crate::app::App;
 use crate::graph::paint::style::node_glyph;
 use crate::tree::{NodeKey, Row, RowKind};
 use proto::{
-    BlockReason, Effort, Finding, Severity, Size, Strength, TaskInfo, TaskState, TestMode,
-    TokenUsage, WindowKind,
+    BlockReason, Effort, Finding, Severity, Size, TaskInfo, TaskState, TestMode, TokenUsage,
+    WindowKind,
 };
 use ratatui::text::Span;
 use std::path::Path;
@@ -250,20 +250,19 @@ pub(crate) fn test_mode_text(mode: TestMode) -> &'static str {
     }
 }
 
-pub(crate) fn strength_text(strength: Strength) -> &'static str {
-    match strength {
-        Strength::Fast => "fast",
-        Strength::Standard => "standard",
-        Strength::Frontier => "frontier",
-    }
+/// Milestone 9.8 (task M9.8.14): a route as `<runtime> · <model> · <effort>`; a blank
+/// model (the runtime's default) is left out.
+pub(crate) fn route_label(route: &proto::Route) -> String {
+    let effort = effort_text(route.effort.clone());
+    [route.runtime.label(), route.model.as_str(), effort.as_str()]
+        .into_iter()
+        .filter(|part| !part.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
-pub(crate) fn effort_text(effort: Effort) -> &'static str {
-    match effort {
-        Effort::Low => "low",
-        Effort::Medium => "medium",
-        Effort::High => "high",
-    }
+pub(crate) fn effort_text(effort: Effort) -> String {
+    effort.to_string()
 }
 
 pub(super) fn severity_text(severity: Severity) -> &'static str {

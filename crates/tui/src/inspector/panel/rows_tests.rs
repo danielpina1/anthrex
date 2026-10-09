@@ -137,7 +137,7 @@ const TASK: [&str; 12] = [
     "╭────────────────────────────────────────────────────────────────────────────────────╮",
     "│ ◐ t2  map Gemini hook events to status                              in review · r2 │",
     "│ pipeline  done ✓ › proof ✓ › check ✓ › review › merge ◌                            │",
-    "│ route     codex · standard · high effort  →  reviewer claude · frontier            │",
+    "│ route     codex · high  →  reviewer claude · claude-opus-5 · high                  │",
     "│ deps      after t0 ✓, t6 ✓ · unblocks t3, t7 · on critical path                    │",
     "│ budget    ███████░░░ 104/150 tool calls · 38/60 min · 410k tokens                  │",
     "│ tries     review 1/2 bounces · check 0/2 · escalation step 1                       │",
@@ -152,7 +152,7 @@ const TASK_NARROW: [&str; 12] = [
     "╭──────────────────────────────────────────────────╮",
     "│ ◐ t2  map Gemini hook events to status           │",
     "│ pipeline  done ✓ › proof ✓ › check ✓ › review ›… │",
-    "│ route     codex · standard · high effort  →  re… │",
+    "│ route     codex · high  →  reviewer claude · cl… │",
     "│ deps      after t0 ✓, t6 ✓ · unblocks t3, t7 · … │",
     "│ budget    ███████░░░ 104/150 tool calls · 38/60… │",
     "│ tries     review 1/2 bounces · check 0/2 · esca… │",
@@ -165,7 +165,7 @@ const TASK_NARROW: [&str; 12] = [
 
 const WORKER: [&str; 12] = [
     "╭────────────────────────────────────────────────────────────────────────────────────╮",
-    "│ ⠋ worker #1 r2  codex · standard · high                          working · 6m · t2 │",
+    "│ ⠋ worker #1 r2  codex · high                                     working · 6m · t2 │",
     "│ doing     last tool: apply_patch                                                   │",
     "│ activity  turns 14 · tool calls 41 · tokens 180k                                   │",
     "│ fixing    status.rs:118 critical — SubagentStop not paired                         │",
@@ -180,9 +180,9 @@ const WORKER: [&str; 12] = [
 
 const REVIEWER: [&str; 12] = [
     "╭────────────────────────────────────────────────────────────────────────────────────╮",
-    "│ ✗ review #1  claude · frontier · high                           finished · 9m · t2 │",
-    "│ judging   worker #1 · codex · standard                                             │",
-    "│ strength  frontier vs author standard                                              │",
+    "│ ✗ review #1  claude · claude-opus-5 · high                      finished · 9m · t2 │",
+    "│ judging   worker #1 · codex · high                                                 │",
+    "│ route     claude · claude-opus-5 · high vs author codex · high                     │",
     "│ verdict   changes (blocking)                                                       │",
     "│ findings  1 critical, 2 minor · status.rs:118 critical — SubagentStop not paired   │",
     "│ session   #9 · window closed                                                       │",

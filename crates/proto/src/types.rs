@@ -4,8 +4,9 @@ use std::str::FromStr;
 
 use crate::run::RunRef;
 
-/// Which program a window runs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// Which program a window runs. `Ord` (declaration order) since milestone 9.8, so a
+/// runtime can key a `BTreeMap` and order a `ModelRef`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Runtime {
     Claude,

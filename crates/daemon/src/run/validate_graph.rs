@@ -8,12 +8,13 @@
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
+use proto::models::Role;
 use proto::{Runtime, Size, TaskState};
 
 use super::globs::{any_intersect, inside_area, intersects, literal_prefix};
 use super::model::Task;
+use super::model_roles::RunModels;
 use super::plan::PlanError;
-use super::validate_patterns::Peers;
 use super::validate_stages::stage_rules;
 
 /// Where an edit batch may reach: the whole run, or (for M9's sub-planners) only an
@@ -39,41 +40,42 @@ pub(crate) fn is_valid_area_glob(glob: &str) -> bool {
 /// apply only to `touched` tasks (the cancelled-dependency rule can be narrowed further
 /// with [`validate_tasks_with`]) (decision 13's L exemption: a task raised to L by
 /// rung 3 must not block unrelated edits). `max_tasks` counts every task of
-/// `round`, the run's current one, that is not cancelled (milestone 9.3 decision 14). Rule 9 compares the runtimes the plan gives (`default_runtime` fills a
-/// spec that names none) and applies to a pair only when the batch touches one of the
+/// `round`, the run's current one, that is not cancelled (milestone 9.3 decision 14). Rule 9 compares the tasks' resolved runtimes (milestone 9.8 decision 33: their
+/// rows') and applies to a pair only when the batch touches one of the
 /// two: a runtime the engine escalated to (rung 2, `run retry`) is not the plan's, and
 /// must not block every later edit (final review A-I1, the same reason as the L
-/// exemption); the profile-dependent rules run per task, in `resolve_task`. `peers` is
-/// what milestone 9.5's race and pair rules take a second runtime from.
+/// exemption); the profile-dependent rules run per task, in `resolve_task`.
 pub fn validate_tasks(
     tasks: &[Task],
     touched: &BTreeSet<String>,
     scope: &EditScope,
     (max_tasks, round): (u32, u32),
-    default_runtime: Runtime,
-    peers: Peers<'_>,
+    models: &RunModels,
 ) -> Vec<PlanError> {
-    validate_tasks_with(
-        tasks,
-        touched,
-        None,
-        scope,
-        (max_tasks, round),
-        default_runtime,
-        peers,
-    )
+    validate_tasks_with(tasks, touched, None, scope, (max_tasks, round), models)
 }
 
-/// The runtime the plan gives `task`: its spec's, or `default_runtime` when the spec
-/// names none or names one a task cannot run on (which `resolve_task` reports).
-fn planned_runtime(task: &Task, default_runtime: Runtime) -> Runtime {
-    // Milestone 9.5 decision 9a: a model list's pick is the plan's route.
-    if let Some(route) = task.list_pick.as_ref().and_then(|p| p.chosen_route()) {
-        return route.runtime;
+/// Milestone 9.8 decision 33: the runtime the plan gives `task`, its resolved route's:
+/// its row's, unless its route names a model (`validate::resolve_route`). Not its
+/// current route's: a runtime the engine escalated to is not the plan's (final review
+/// A-I1).
+fn planned_runtime(task: &Task, models: &RunModels) -> Runtime {
+    let row = models.route(RunModels::task_role(task)).runtime;
+    let given = &task.spec.route;
+    match (&given.model, given.runtime) {
+        (Some(_), Some(runtime)) if runtime != Runtime::Shell => runtime,
+        _ => row,
     }
-    match task.spec.route.runtime {
-        Some(runtime) if runtime != Runtime::Shell => runtime,
-        _ => default_runtime,
+}
+
+/// Decision 33: the size class rule 9's refusal names for `task`, by its row: `S`, `M`,
+/// `hub`, else the row's key.
+fn size_class(task: &Task) -> String {
+    match RunModels::task_role(task) {
+        Role::ImplementerSmall => "S".to_string(),
+        Role::ImplementerMedium => "M".to_string(),
+        Role::ImplementerHub => "hub".to_string(),
+        role => role.key(),
     }
 }
 
@@ -87,8 +89,7 @@ pub fn validate_tasks_with(
     added_deps: Option<&BTreeSet<(String, String)>>,
     scope: &EditScope,
     (max_tasks, round): (u32, u32),
-    default_runtime: Runtime,
-    (roster, installed): Peers<'_>,
+    models: &RunModels,
 ) -> Vec<PlanError> {
     let mut errors = Vec::new();
     // Milestone 9.3 decision 14: `max_tasks` counts the tasks of `round`, the run's
@@ -160,9 +161,9 @@ pub fn validate_tasks_with(
                 "L tasks are never executed; split the task (rule 7.2.4)".to_string(),
             ));
         }
-        let runtime = planned_runtime(task, default_runtime);
+        let runtime = planned_runtime(task, models);
         for earlier in tasks[..i].iter().filter(|t| is_active(t)) {
-            let earlier_runtime = planned_runtime(earlier, default_runtime);
+            let earlier_runtime = planned_runtime(earlier, models);
             if earlier_runtime == runtime || !(is_touched || touched.contains(earlier.id())) {
                 continue;
             }
@@ -176,10 +177,10 @@ pub fn validate_tasks_with(
                     "owns",
                     "9",
                     format!(
-                        "overlaps task {}'s owns ({glob}) and the two tasks run on different runtimes ({}, {}) (rule 9)",
+                        "overlaps task {}'s owns ({glob}) and the two tasks run on different runtimes ({earlier_runtime}, {runtime}): the role table runs size {} on {earlier_runtime} and size {} on {runtime}; give them the same size or separate owns (rule 9)",
                         earlier.id(),
-                        earlier_runtime,
-                        runtime
+                        size_class(earlier),
+                        size_class(task),
                     ),
                 ));
             }
@@ -198,9 +199,7 @@ pub fn validate_tasks_with(
     }
     errors.extend(stage_rules(tasks, &by_id));
     // Milestone 9.5 decisions 17 and 24: `race` and `pair`, on the touched tasks.
-    errors.extend(super::validate_patterns::validate(
-        tasks, touched, roster, installed,
-    ));
+    errors.extend(super::validate_patterns::validate(tasks, touched));
     errors.extend(cycles(tasks));
     errors
 }

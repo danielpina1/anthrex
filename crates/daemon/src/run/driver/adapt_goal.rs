@@ -21,7 +21,7 @@ use super::super::{RunService, unix_now};
 use super::{Adaptation, read_evidence, unparseable};
 use crate::decider::call::decide;
 use crate::decider::fallback::{OFF_REASON, fallback_decision};
-use crate::decider::{DeciderRequest, Decision, TriageInput};
+use crate::decider::{DeciderKind::Triage, DeciderRequest, Decision, TriageInput};
 use crate::profile::service::{Effective, state_label};
 use crate::run::confine;
 use crate::run::design::{GoalOrigin, mode_for};
@@ -175,6 +175,15 @@ impl RunService {
             Option<DesignMode>,
         ),
     ) -> RunReply {
+        // M9.8.13 fix round 1: a bad model name (the CLI's flag or the TUI's goal form)
+        // never reaches the orchestrator's `--model`.
+        if let Some(problem) = orchestrator.as_ref().and_then(|c| c.model_problem().err()) {
+            return refused(format!("orchestrator.model: {problem}"));
+        }
+        // Final review M3: nor a bad effort name reach its `--effort`.
+        if let Some(problem) = orchestrator.as_ref().and_then(|c| c.effort_problem().err()) {
+            return refused(format!("orchestrator.effort: {problem}"));
+        }
         let flags = (trust_project, unconfined_checks);
         let ready = match self.goal_ready(&goal, &dir, flags, delivery).await {
             Ok(ready) => ready,
@@ -317,10 +326,12 @@ impl RunService {
                 }
                 input.files = files;
                 input.files_total = total;
-                // Milestone 9.5 rulings RL-2, I6: routed over what is installed now.
-                let routed = crate::decider::call::routed(&adaptation.deciders).await;
+                // Milestone 9.5 rulings RL-2, I6: routed over what is installed now;
+                // milestone 9.8: on the triage row, the repository's first.
+                let (deciders, project) = (&adaptation.deciders, Some(pre.project.as_path()));
+                let routed = crate::decider::call::routed(deciders, Triage, project).await;
                 let decision = decide(&routed.ctx, &DeciderRequest::Triage(input)).await;
-                self.record_triage(adaptation, pre, (goal, profile), (&routed, &decision))
+                self.record_triage(pre, (goal, profile), (&routed, &decision))
                     .await;
                 decision
             }
@@ -346,7 +357,6 @@ impl RunService {
     /// `spawn_blocking`, never under a lock; a failure is only logged.
     async fn record_triage(
         &self,
-        adaptation: &Adaptation,
         pre: &Preflight,
         (goal, profile): (&str, &RepoProfile),
         (routed, decision): (&crate::decider::call::Routed, &Decision),
@@ -361,16 +371,9 @@ impl RunService {
             ..RoleRoutingInput::default()
         };
         let session = format!("{nanos}/{n}");
-        let route = &routed.ctx.route;
-        let roster = &adaptation.scouts.context().roster.current();
-        let chosen = (
-            route,
-            roles::decider_candidates(roster, route, routed.strength()),
-        );
         let session = (session.as_str(), "triage");
-        let pick = (routed.pick.as_ref(), routed.moved.as_ref());
         let at = (input, unix_now());
-        let mut record = roles::decider_listed(None, session, &[], chosen, pick, at);
+        let mut record = roles::decider_routed(None, session, &[], routed, at);
         // Ruling T10b-1: a triage has no run log yet; the daemon's log says it.
         if let Some(line) = routed.moved_line() {
             tracing::info!("{line}");

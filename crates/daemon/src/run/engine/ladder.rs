@@ -10,7 +10,7 @@ use super::dispatch::{block, history, launch_fresh};
 use super::schedule::op_in_flight;
 use super::{Effect, OpKind, OpResult, done, emit_op, next_op, outbox};
 use crate::run::model::{AgentRound, FreshSession, Run, Task, writes};
-use crate::run::route_pick::{every_route_failed, review_route, rung2_route};
+use crate::run::role_step::{every_route_failed, rung2_route};
 use crate::run::validate::resolve_task_lenient;
 
 pub(super) use super::ladder_budget::{breached, ceiling, check_budget, reached};
@@ -259,10 +259,10 @@ pub(super) fn breach(run: &mut Run, i: usize, what: String, now: u64, fx: &mut V
     }
 }
 
-/// Rung 2: the session killed; a fresh one on `roster::escalate(route)` starts in the
-/// same worktree once the old one has exited ([`start_fresh_sessions`]). Milestone 9.5
-/// decision 9a: a task with a model list takes its next candidate instead, and ruling
-/// RL-1 skips a route that failed in this task (`route_pick::rung2_route`).
+/// Rung 2: the session killed; a fresh one on the next route of the task's row
+/// (milestone 9.8 decision 29, `role_step::rung2_route` over `role_step::escalate`)
+/// starts in the same worktree once the old one has exited ([`start_fresh_sessions`]).
+/// Ruling RL-1 skips a route that failed in this task.
 pub(super) fn rung2(run: &mut Run, i: usize, reason: String, now: u64, fx: &mut Vec<Effect>) {
     // Milestone 9.5 decision 20: past rung 1, a lane leaves its race.
     if run.tasks[i].lane_view.is_some() {
@@ -278,12 +278,11 @@ pub(super) fn rung2(run: &mut Run, i: usize, reason: String, now: u64, fx: &mut 
     drop_queued(run, i);
     // Milestone 9.5 decision 25: a fresh test writer, while the test is being written.
     if !super::pair::escalate_writer(run, i, now) {
-        let (route, step) = rung2_route(run, i);
+        let route = rung2_route(run, i);
         if let Some(text) = every_route_failed(run, i, &route) {
             super::requests::log(run, now, text);
         }
         let task = &mut run.tasks[i];
-        task.list_escalation = step;
         // M8b decision 33a: the next worker launch records this escalation, its pool
         // stepping from the route the selector stepped from (a second escalation
         // before the launch overwrites the first: the intermediate route never ran).
@@ -329,18 +328,12 @@ pub(super) fn rung3(run: &mut Run, i: usize, text: String, now: u64, fx: &mut Ve
 pub(crate) fn reresolve(run: &mut Run, i: usize) -> proto::Route {
     let mut spec = run.tasks[i].spec.clone();
     spec.size = spec.size.max(run.tasks[i].size);
-    let (resolved, _) = resolve_task_lenient(
-        spec,
-        &run.profile,
-        &run.limits,
-        &run.roster,
-        run.limits.default_runtime,
-    );
+    let (resolved, _) = resolve_task_lenient(spec, &run.profile, &run.limits);
     let task = &mut run.tasks[i];
     task.review_level = resolved.review_level;
-    let (lists, installed) = (&run.limits.route_lists, &run.orch.installed);
-    task.review_route = (resolved.review_level)
-        .map(|level| review_route(lists, &run.roster, &task.route, level, installed));
+    // Milestone 9.8 decision 27: the reviewer row against the task's route.
+    let models = run.limits.models();
+    task.review_route = (resolved.review_level).map(|_| models.reviewer_route(&task.route).0);
     task.budget = resolved.budget;
     resolved.route
 }

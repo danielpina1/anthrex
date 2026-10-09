@@ -1,7 +1,9 @@
 //! Milestone 9.0.6 decision 29: the daemon's live `[orchestrator]` settings. A Settings
 //! save swaps the settings-owned fields of the value new runs, goals and the onboarding
 //! scout read; every other key stays as the daemon loaded it at start, and a
-//! running run keeps the roster and limits it froze at build.
+//! running run keeps the role table and limits it froze at build. Milestone 9.8: the
+//! owned fields include the role table (`config::settings::apply_owned` copies
+//! `roles`), which the helpers read live (decision 42).
 //!
 //! **Lock.** `inner` is a `std::sync::Mutex<Arc<Live>>`, taken with `crate::lock` only to
 //! clone or replace the `Arc` (Global Constraint 4): a reader takes [`LiveSettings::current`]
@@ -42,7 +44,7 @@ impl LiveSettings {
         })
     }
 
-    /// `orchestrator` with every one of the thirteen keys `Default` (preflight F20: what a
+    /// `orchestrator` with every one of the eleven keys `Default` (preflight F20: what a
     /// context built without a config file holds).
     pub fn defaults_of(orchestrator: config::Orchestrator) -> Arc<Self> {
         let origin = proto::settings::SETTINGS_KEYS

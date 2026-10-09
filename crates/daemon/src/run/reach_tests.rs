@@ -2,30 +2,54 @@
 //! decision 39's escalation, rung 3's re-resolved reviewer, the roster's fallbacks and
 //! each route's reviewer. Probes A and B are the re-review's.
 
-use proto::{ModelEntry, Runtime, Strength};
+use proto::Runtime;
 
 use super::*;
-use crate::run::roster::escalate;
-use crate::run::test_support::{PROFILE, build_with, plan_with, task_toml};
+use crate::run::test_support::{PROFILE, build_with, escalated, plan_with, task_toml};
 
-fn entry(runtime: Runtime, model: &str, strength: Strength) -> ModelEntry {
-    ModelEntry {
-        runtime,
-        model: model.to_string(),
-        strength,
-        note: String::new(),
-    }
-}
-
-fn config(models: Vec<ModelEntry>, review_small: bool) -> config::Orchestrator {
+/// Milestone 9.8 (task M9.8.14): the roster these tests once set chose nothing since
+/// the role table (M9.8.7–13), so only `review_small` is set; the rows do the rest.
+fn config(review_small: bool) -> config::Orchestrator {
     config::Orchestrator {
-        models,
         review_small,
         ..config::Orchestrator::default()
     }
 }
 
-/// One `size` task owning `owns`, routed to `model` at `effort` on `runtime`.
+/// `config` whose reviewer row is `model` (milestone 9.8 decision 27: the reviewer is
+/// the row's, not the roster's), with no fallback.
+fn reviewed_by(mut config: config::Orchestrator, model: &str) -> config::Orchestrator {
+    let row = proto::models::RoleChoice {
+        model: proto::models::ModelRef::parse(model).unwrap(),
+        effort: None,
+        fallback: None,
+    };
+    (config.roles.rows).insert(proto::models::Role::Reviewer, row);
+    config
+}
+
+/// `config` whose implementer rows (small, medium, hub) are Sonnet falling back to
+/// Codex's default (milestone 9.8 decision 29: escalation's only way to Codex).
+fn falling_back_to_codex(mut config: config::Orchestrator) -> config::Orchestrator {
+    use proto::models::{ModelRef, Role, RoleChoice};
+    for role in [
+        Role::ImplementerSmall,
+        Role::ImplementerMedium,
+        Role::ImplementerHub,
+    ] {
+        let row = RoleChoice {
+            model: ModelRef::parse("claude:claude-sonnet-5").unwrap(),
+            effort: None,
+            fallback: Some(ModelRef::parse("codex:default").unwrap()),
+        };
+        config.roles.rows.insert(role, row);
+    }
+    config
+}
+
+/// One `size` task owning `owns`, on `model` at `effort` on `runtime`: milestone 9.8
+/// decision 31 ignores a plan's route, so its size's row is set to that model (its
+/// fallback kept) and routes it.
 fn run_of(
     config: &config::Orchestrator,
     size: &str,
@@ -34,11 +58,23 @@ fn run_of(
     model: &str,
     effort: &str,
 ) -> Run {
-    let route = format!(
-        "[task.route]\nruntime = \"{runtime}\"\nmodel = \"{model}\"\neffort = \"{effort}\""
-    );
-    let text = plan_with(PROFILE, &[task_toml("t1", size, owns, &route)]);
-    build_with(&text, config).unwrap_or_else(|e| panic!("fixture plan must build: {e:?}"))
+    use proto::models::{ModelRef, Role, RoleChoice};
+    let mut config = config.clone();
+    let role = match size {
+        _ if owns == HUB => Role::ImplementerHub,
+        "S" => Role::ImplementerSmall,
+        _ => Role::ImplementerMedium,
+    };
+    let id = if model.is_empty() { "default" } else { model };
+    let fallback = (config.roles.rows.get(&role)).and_then(|r| r.fallback.clone());
+    let row = RoleChoice {
+        model: ModelRef::parse(&format!("{runtime}:{id}")).unwrap(),
+        effort: Some(effort.to_string()),
+        fallback,
+    };
+    config.roles.rows.insert(role, row);
+    let text = plan_with(PROFILE, &[task_toml("t1", size, owns, "")]);
+    build_with(&text, &config).unwrap_or_else(|e| panic!("fixture plan must build: {e:?}"))
 }
 
 const DOCS: &str = "[\"docs/a.md\"]";
@@ -49,7 +85,7 @@ const HUB: &str = "[\"crates/proto/**\"]";
 #[test]
 fn probe_a_an_unreviewed_claude_task_reaches_codex() {
     let run = run_of(
-        &config(config::default_roster(), false),
+        &falling_back_to_codex(config(false)),
         "S",
         DOCS,
         "claude",
@@ -58,7 +94,7 @@ fn probe_a_an_unreviewed_claude_task_reaches_codex() {
     );
     let t1 = &run.tasks[0];
     assert_eq!(t1.review_level, None, "the probe's task is not reviewed");
-    let twice = escalate(&run.roster, &escalate(&run.roster, &t1.route));
+    let twice = escalated(&run, "t1", &escalated(&run, "t1", &t1.route));
     assert_eq!(twice.runtime, Runtime::Codex);
     assert_eq!(
         reachable_runtimes(&run),
@@ -71,18 +107,7 @@ fn probe_a_an_unreviewed_claude_task_reaches_codex() {
 /// medium, high, then the peer at the same strength) reaches Codex.
 #[test]
 fn every_rung_and_retry_of_escalation_is_reached() {
-    let roster = vec![
-        entry(Runtime::Claude, "claude-sonnet-5", Strength::Standard),
-        entry(Runtime::Codex, "gpt-5-codex", Strength::Standard),
-    ];
-    let run = run_of(
-        &config(roster, true),
-        "M",
-        HUB,
-        "claude",
-        "claude-sonnet-5",
-        "low",
-    );
+    let run = run_of(&config(true), "M", HUB, "claude", "claude-sonnet-5", "low");
     assert_eq!(
         reachable_runtimes(&run),
         vec![Runtime::Claude, Runtime::Codex]
@@ -93,12 +118,9 @@ fn every_rung_and_retry_of_escalation_is_reached() {
 /// at `high`, and its only way to Codex is the next rung's peer route.
 #[test]
 fn the_escalated_route_is_reached() {
-    let roster = vec![
-        entry(Runtime::Claude, "claude-sonnet-5", Strength::Standard),
-        entry(Runtime::Codex, "gpt-5-codex", Strength::Standard),
-    ];
+    let reviewed = reviewed_by(config(true), "claude:claude-sonnet-5");
     let run = run_of(
-        &config(roster, true),
+        &falling_back_to_codex(reviewed),
         "M",
         HUB,
         "claude",
@@ -122,12 +144,8 @@ fn the_escalated_route_is_reached() {
 /// reviewed, and its reviewer is the Codex entry.
 #[test]
 fn rung_3s_reviewer_is_reached_when_the_task_is_unreviewed() {
-    let roster = vec![
-        entry(Runtime::Claude, "claude-sonnet-5", Strength::Standard),
-        entry(Runtime::Codex, "gpt-5-codex", Strength::Frontier),
-    ];
     let run = run_of(
-        &config(roster, false),
+        &config(false),
         "S",
         DOCS,
         "claude",
@@ -143,14 +161,11 @@ fn rung_3s_reviewer_is_reached_when_the_task_is_unreviewed() {
 
 /// A one-runtime roster: every escalation and every reviewer falls back to that
 /// runtime, so the set holds it alone (the brief's Claude-only and Codex-only cases).
+/// Milestone 9.8: with a reviewer row on that runtime.
 #[test]
 fn a_one_runtime_roster_reaches_that_runtime_alone() {
-    let claude = vec![
-        entry(Runtime::Claude, "claude-sonnet-5", Strength::Standard),
-        entry(Runtime::Claude, "claude-opus-5", Strength::Frontier),
-    ];
     let run = run_of(
-        &config(claude, true),
+        &reviewed_by(config(true), "claude:claude-opus-5"),
         "M",
         DOCS,
         "claude",
@@ -159,9 +174,8 @@ fn a_one_runtime_roster_reaches_that_runtime_alone() {
     );
     assert_eq!(reachable_runtimes(&run), vec![Runtime::Claude]);
 
-    let codex = vec![entry(Runtime::Codex, "gpt-5-codex", Strength::Standard)];
     let run = run_of(
-        &config(codex, true),
+        &reviewed_by(config(true), "codex:gpt-5-codex"),
         "M",
         DOCS,
         "codex",
@@ -176,13 +190,8 @@ fn a_one_runtime_roster_reaches_that_runtime_alone() {
 /// roster).
 #[test]
 fn a_peer_entry_no_rung_can_reach_is_not_counted() {
-    let roster = vec![
-        entry(Runtime::Claude, "claude-sonnet-5", Strength::Standard),
-        entry(Runtime::Claude, "claude-opus-5", Strength::Frontier),
-        entry(Runtime::Codex, "gpt-5-codex-mini", Strength::Fast),
-    ];
     let run = run_of(
-        &config(roster, false),
+        &reviewed_by(config(false), "claude:claude-opus-5"),
         "S",
         DOCS,
         "claude",
@@ -242,9 +251,10 @@ fn only_task_edits_may_widen_the_reach() {
 /// every later batch's refusals keep covering them.
 #[test]
 fn reachable_runtimes_include_the_orchestrator_and_planners() {
-    let claude_only = vec![entry(Runtime::Claude, "claude-opus-5", Strength::Frontier)];
+    use crate::run::test_support::set_row;
+    use proto::models::Role;
     let mut run = run_of(
-        &config(claude_only.clone(), true),
+        &config(true),
         "S",
         r#"["crates/a/**"]"#,
         "claude",
@@ -261,43 +271,43 @@ fn reachable_runtimes_include_the_orchestrator_and_planners() {
             proto::Route {
                 runtime,
                 model: String::new(),
-                strength: Strength::Frontier,
-                effort: proto::Effort::High,
+                effort: proto::Effort::HIGH,
             },
             0,
         )
     };
+    // Milestone 9.8: the planners and scouts run on their rows (the built-ins on
+    // Claude), whatever the orchestrator's runtime.
     run.orch.orchestrator = Some(orchestrator(Runtime::Codex));
-    // The planners run on the orchestrator's runtime by default; the roster has no
-    // Codex entry, so their route falls back to Claude's.
     assert_eq!(
         reachable_runtimes(&run),
         vec![Runtime::Claude, Runtime::Codex]
     );
     run.orch.orchestrator = Some(orchestrator(Runtime::Claude));
     assert_eq!(reachable_runtimes(&run), vec![Runtime::Claude]);
-    // `[orchestrator.planners] runtime = "codex"` with a Codex entry.
-    run.roster
-        .push(entry(Runtime::Codex, "gpt-6", Strength::Frontier));
-    run.limits.orch.planners.runtime = Some(Runtime::Codex);
+    set_row(&mut run, Role::Planner, "codex:gpt-6", None, None);
+    assert_eq!(
+        reachable_runtimes(&run),
+        vec![Runtime::Claude, Runtime::Codex]
+    );
+    set_row(&mut run, Role::Planner, "claude:claude-opus-5", None, None);
+    set_row(&mut run, Role::Research, "codex:default", None, None);
     assert_eq!(
         reachable_runtimes(&run),
         vec![Runtime::Claude, Runtime::Codex]
     );
 }
 
-/// Milestone 9.6 task M9.6.8 (task 3's concern 3): a design run's brainstormers and
-/// document reviewer reach their runtimes, so the start's checks cover them: by default
-/// the strongest model of each installed runtime and the orchestrator's peer; and every
-/// candidate of a `brainstorm` list.
+/// Milestone 9.6 task M9.6.8 (task 3's concern 3), milestone 9.8: a design run's
+/// brainstormers and document reviewer reach their runtimes, so the start's checks
+/// cover them: the `brainstorm` row's two models and the `reviewer` row's pick against
+/// the orchestrator, each over what the start found installed.
 #[test]
 fn a_design_runs_brainstormers_and_reviewer_reach_their_runtimes() {
-    let both = vec![
-        entry(Runtime::Claude, "claude-opus-5", Strength::Frontier),
-        entry(Runtime::Codex, "gpt-6", Strength::Frontier),
-    ];
+    use crate::run::test_support::set_row;
+    use proto::models::Role;
     let mut run = run_of(
-        &config(both, true),
+        &config(true),
         "S",
         r#"["crates/a/**"]"#,
         "claude",
@@ -309,8 +319,7 @@ fn a_design_runs_brainstormers_and_reviewer_reach_their_runtimes() {
         proto::Route {
             runtime: Runtime::Claude,
             model: "claude-opus-5".into(),
-            strength: Strength::Frontier,
-            effort: proto::Effort::High,
+            effort: proto::Effort::HIGH,
         },
         0,
     ));
@@ -323,25 +332,21 @@ fn a_design_runs_brainstormers_and_reviewer_reach_their_runtimes() {
     // Codex missing at the start: nothing of the flow reaches it.
     run.orch.installed = [("codex".to_string(), false)].into();
     assert_eq!(reachable_runtimes(&run), vec![Runtime::Claude]);
-    // A `brainstorm` list's every candidate can be taken.
+    // A brainstorm row and a reviewer row on Claude alone reach Claude alone; a
+    // reviewer row on Codex reaches Codex.
     run.orch.installed.clear();
-    run.roster.retain(|e| e.runtime == Runtime::Claude);
+    let mut models = run.limits.models().clone();
+    models.brainstorm.second = proto::models::ModelRef::parse("claude:claude-sonnet-5").unwrap();
+    run.limits.models = Some(models);
+    set_row(
+        &mut run,
+        Role::Reviewer,
+        "claude:claude-sonnet-5",
+        None,
+        None,
+    );
     assert_eq!(reachable_runtimes(&run), vec![Runtime::Claude]);
-    run.roster
-        .push(entry(Runtime::Codex, "gpt-6", Strength::Frontier));
-    let lists = config::RouteLists {
-        brainstorm: config::RouteList {
-            candidates: vec![config::Candidate {
-                runtime: Runtime::Codex,
-                model: "gpt-6".into(),
-                effort: None,
-            }],
-            pick: config::Pick::First,
-        },
-        ..Default::default()
-    };
-    run.limits.route_lists = crate::run::model::RouteListsFrozen::freeze(&lists, &run.roster);
-    run.roster.retain(|e| e.runtime == Runtime::Claude);
+    set_row(&mut run, Role::Reviewer, "codex:gpt-6", None, None);
     assert_eq!(
         reachable_runtimes(&run),
         vec![Runtime::Claude, Runtime::Codex]
@@ -353,12 +358,8 @@ fn a_design_runs_brainstormers_and_reviewer_reach_their_runtimes() {
 /// [`the_escalated_route_is_reached`]); recorded uninstalled, it is left out.
 #[test]
 fn reach_drops_an_uninstalled_runtime() {
-    let roster = vec![
-        entry(Runtime::Claude, "claude-sonnet-5", Strength::Standard),
-        entry(Runtime::Codex, "gpt-5-codex", Strength::Standard),
-    ];
     let mut run = run_of(
-        &config(roster, true),
+        &falling_back_to_codex(reviewed_by(config(true), "claude:claude-sonnet-5")),
         "M",
         HUB,
         "claude",
@@ -370,7 +371,7 @@ fn reach_drops_an_uninstalled_runtime() {
         t1.review_route.as_ref().map(|r| r.runtime),
         Some(Runtime::Claude)
     );
-    assert_eq!(escalate(&run.roster, &t1.route).runtime, Runtime::Codex);
+    assert_eq!(escalated(&run, "t1", &t1.route).runtime, Runtime::Codex);
     run.orch.installed = [("codex".to_string(), false)].into();
     assert_eq!(reachable_runtimes(&run), vec![Runtime::Claude]);
 }

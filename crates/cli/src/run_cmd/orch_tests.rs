@@ -23,6 +23,7 @@ fn choice(runtime: Runtime, model: Option<&str>) -> OrchestratorChoice {
     OrchestratorChoice {
         runtime,
         model: model.map(str::to_string),
+        effort: None,
     }
 }
 

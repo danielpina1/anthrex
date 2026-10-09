@@ -3,7 +3,7 @@
 //! of the stored versions. The reviewer's session is stubbed by its op's result and its
 //! ended event.
 
-use proto::{AgentRole, DocGateAction, DocGateKind, DocKind, RunState, Runtime};
+use proto::{AgentRole, DocGateAction, DocGateKind, DocKind, RunState};
 use proto::{TokenUsage, ToolCall};
 use serde_json::{Value, json};
 
@@ -18,16 +18,9 @@ use crate::run::engine::{Effect, EventKind, OrchEvent, ScoutEnd};
 /// The document reviewer's window in these tests.
 pub(super) const REVIEWER: u32 = 901;
 
-/// A design run in specifying: its brainstorm report approved, and a Codex model at
-/// its Claude orchestrator's strength in its roster, its peer.
+/// A design run in specifying: its brainstorm report approved.
 pub(super) fn specifying() -> Fixture {
     let mut fx = at_brainstorm_gate(false);
-    fx.run_mut().roster.push(proto::ModelEntry {
-        runtime: Runtime::Codex,
-        model: "gpt-6".into(),
-        strength: proto::Strength::Frontier,
-        note: String::new(),
-    });
     act(&mut fx, DocGateKind::Brainstorm, DocGateAction::APPROVE).unwrap();
     assert_eq!(fx.run().state, RunState::Specifying);
     fx

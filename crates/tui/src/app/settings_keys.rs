@@ -1,20 +1,17 @@
 //! The Settings screen's keys (decision 36), split from `settings_screen.rs` by
-//! responsibility (`AGENTS.md` hard rule 8). A page's keys come first, then the screen's
-//! (`esc`, `tab`, `w`), then the section's: a model table's `space`, `←`/`→` and `⏎`, the
-//! orchestrator's choices, the limits' digits. Pure: a save leaves as an `Effect`.
+//! responsibility (`AGENTS.md` hard rule 8). A page's keys come first, then the
+//! `models` section's picker (milestone 9.8: it has every key while open), then the
+//! screen's (`esc`, `tab`), then the section's: `models_keys.rs` for the role table, the
+//! limits' digits and `w` here. Pure: every request leaves as an `Effect`.
 
-use super::{CustomModel, SettingsPage, SettingsScreen, SettingsSection, next_strength};
+use super::{SettingsPage, SettingsScreen, SettingsSection};
+use crate::app::models_keys::{ModelsIntent, models_key};
 use crate::app::{App, Effect, ToastLevel};
-use crate::safe_text::one_line;
-use crate::text_area::TextArea;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use proto::{Runtime, Strength};
+use crossterm::event::{KeyCode, KeyEvent};
+use proto::ClientMsg;
 
 /// The most digits a limit takes.
 const DIGITS_MAX: usize = 9;
-
-/// The custom dialog's refusal of an empty name.
-pub const NAME_FIRST: &str = "type a model name first";
 
 /// What a key asks of the app beyond the screen.
 enum Intent {
@@ -22,22 +19,37 @@ enum Intent {
     Save,
     Close,
     Warn(&'static str),
+    Models(ModelsIntent),
 }
 
 impl App {
     /// A bare key while the Settings screen is open.
     pub(crate) fn on_settings_key(&mut self, key: KeyEvent) -> Vec<Effect> {
+        let catalogs = self.catalogs.clone();
         let Some(s) = self.settings_screen_mut() else {
             return vec![];
         };
         let intent = if s.page.is_some() {
             page_key(s, key)
         } else {
-            screen_key(s, key)
+            screen_key(s, &catalogs, key)
         };
         match intent {
-            Intent::Stay => vec![],
-            Intent::Save => self.settings_save(),
+            Intent::Stay | Intent::Models(ModelsIntent::Stay) => vec![],
+            Intent::Save | Intent::Models(ModelsIntent::Save) => self.settings_save(),
+            Intent::Models(ModelsIntent::SaveRepo) => self.settings_save_repo(),
+            Intent::Models(ModelsIntent::AskRepo) => self.settings_repo_ask(),
+            Intent::Models(ModelsIntent::Refresh) => vec![Effect::Send(ClientMsg::ListModels {
+                runtime: None,
+                refresh: true,
+            })],
+            Intent::Models(ModelsIntent::BrainstormEffort) => {
+                let effort = (self.settings_screen_mut())
+                    .and_then(|s| s.models.brainstorm().effort)
+                    .unwrap_or_else(|| "default".to_string());
+                self.toast(format!("brainstorm effort: {effort}"));
+                vec![]
+            }
             Intent::Close => {
                 self.set_screen(None);
                 vec![]
@@ -49,24 +61,30 @@ impl App {
         }
     }
 
-    /// A paste goes to the custom dialog's model name, as one line, or nowhere.
+    /// A paste goes to the picker's custom model name, as one line, or nowhere.
     pub(crate) fn on_settings_paste(&mut self, text: &str) {
         if let Some(s) = self.settings_screen_mut()
-            && let Some(SettingsPage::Custom(c)) = &mut s.page
-            && !c.on_strength
+            && let Some(picker) = &mut s.models.picker
         {
-            c.model.on_paste(&text.replace(['\r', '\n'], " "));
-            c.error = None;
+            picker.on_paste(text);
         }
     }
 }
 
-fn screen_key(s: &mut SettingsScreen, key: KeyEvent) -> Intent {
+fn screen_key(
+    s: &mut SettingsScreen,
+    catalogs: &crate::app::model_picker::Catalogs,
+    key: KeyEvent,
+) -> Intent {
     if !s.loaded {
         return match key.code {
             KeyCode::Esc => Intent::Close,
             _ => Intent::Stay,
         };
+    }
+    let models = s.section == SettingsSection::Models;
+    if models && s.models.picker.is_some() {
+        return Intent::Models(models_key(s, catalogs, key));
     }
     match key.code {
         KeyCode::Esc if s.dirty() => s.page = Some(SettingsPage::Discard),
@@ -82,77 +100,13 @@ fn screen_key(s: &mut SettingsScreen, key: KeyEvent) -> Intent {
             s.section = all[(at + step) % all.len()];
             s.selected = 0;
         }
+        _ if models => return Intent::Models(models_key(s, catalogs, key)),
         KeyCode::Char('w') => return Intent::Save,
         KeyCode::Char('j') | KeyCode::Down => s.selected = (s.selected + 1).min(s.last_row()),
         KeyCode::Char('k') | KeyCode::Up => s.selected = s.selected.saturating_sub(1),
-        _ => match s.section.runtime() {
-            Some(runtime) => model_key(s, runtime, key),
-            None if s.section == SettingsSection::Orchestrator => orchestrator_key(s, key),
-            None => limit_key(s, key),
-        },
+        _ => limit_key(s, key),
     }
     Intent::Stay
-}
-
-/// A model table: `space` toggles a row, `←`/`→` change a custom row's strength, `⏎` on
-/// `custom…` opens the dialog.
-fn model_key(s: &mut SettingsScreen, runtime: Runtime, key: KeyEvent) {
-    let at = s.selected;
-    let on_custom = at == s.rows(runtime).len();
-    match key.code {
-        KeyCode::Char(' ') if !on_custom => {
-            let row = &mut s.rows_mut(runtime)[at];
-            row.enabled = !row.enabled;
-            s.touched();
-        }
-        KeyCode::Left | KeyCode::Right if !on_custom && s.rows(runtime)[at].custom => {
-            let row = &mut s.rows_mut(runtime)[at];
-            row.entry.strength = next_strength(row.entry.strength, key.code == KeyCode::Right);
-            s.touched();
-        }
-        KeyCode::Enter if on_custom => {
-            s.page = Some(SettingsPage::Custom(CustomModel {
-                runtime,
-                model: TextArea::new(),
-                strength: Strength::Standard,
-                on_strength: false,
-                error: None,
-            }));
-        }
-        _ => {}
-    }
-}
-
-/// `runtime ‹ configured ›` and `model ‹ default ›`: `←`, `→` or `space` change the
-/// selected one; a new runtime resets the model to `default`.
-fn orchestrator_key(s: &mut SettingsScreen, key: KeyEvent) {
-    let forward = match key.code {
-        KeyCode::Right | KeyCode::Char(' ') => true,
-        KeyCode::Left => false,
-        _ => return,
-    };
-    if s.selected == 0 {
-        const RUNTIMES: [Option<Runtime>; 3] = [None, Some(Runtime::Claude), Some(Runtime::Codex)];
-        s.runtime = step(&RUNTIMES, &s.runtime, forward);
-        s.model = String::new();
-    } else {
-        let options = s.model_options();
-        s.model = step(&options, &s.model, forward);
-    }
-    s.touched();
-}
-
-/// The option after (or before) `now` in `options`, wrapping; a value not among them
-/// goes to the first (or the last).
-fn step<T: Clone + PartialEq>(options: &[T], now: &T, forward: bool) -> T {
-    let n = options.len();
-    let next = match (options.iter().position(|o| o == now), forward) {
-        (Some(i), true) => (i + 1) % n,
-        (Some(i), false) => (i + n - 1) % n,
-        (None, true) => 0,
-        (None, false) => n - 1,
-    };
-    options[next].clone()
 }
 
 /// A limit: digits append, `Backspace` removes the last.
@@ -179,65 +133,7 @@ fn page_key(s: &mut SettingsScreen, key: KeyEvent) -> Intent {
             KeyCode::Esc => s.page = None,
             _ => {}
         },
-        Some(SettingsPage::Custom(c)) => match key.code {
-            KeyCode::Esc => s.page = None,
-            KeyCode::Tab | KeyCode::BackTab => c.on_strength = !c.on_strength,
-            KeyCode::Enter => add_custom(s),
-            KeyCode::Left | KeyCode::Right | KeyCode::Char(' ') if c.on_strength => {
-                c.strength = next_strength(c.strength, key.code != KeyCode::Left);
-            }
-            _ if c.on_strength => {}
-            // One line: Ctrl-J is the text area's newline, not this field's.
-            KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {}
-            _ => {
-                if c.model.on_key(key) {
-                    c.error = None;
-                }
-            }
-        },
         None => {}
     }
     Intent::Stay
-}
-
-/// The dialog's `⏎`: the named model enabled in its table with its strength, as a new
-/// custom row unless the table already has a row of that name.
-fn add_custom(s: &mut SettingsScreen) {
-    let Some(SettingsPage::Custom(c)) = &mut s.page else {
-        return;
-    };
-    let name = one_line(c.model.text()).trim().to_string();
-    if name.is_empty() {
-        c.error = Some(NAME_FIRST.into());
-        return;
-    }
-    let (runtime, strength) = (c.runtime, c.strength);
-    let rows = s.rows_mut(runtime);
-    let at = match rows.iter().position(|r| r.entry.model == name) {
-        Some(at) => {
-            let row = &mut rows[at];
-            row.enabled = true;
-            if row.custom {
-                row.entry.strength = strength;
-            }
-            at
-        }
-        None => {
-            rows.push(super::ModelRow {
-                entry: proto::ModelEntry {
-                    runtime,
-                    model: name.clone(),
-                    strength,
-                    note: String::new(),
-                },
-                label: name,
-                enabled: true,
-                custom: true,
-            });
-            rows.len() - 1
-        }
-    };
-    s.page = None;
-    s.selected = at;
-    s.touched();
 }

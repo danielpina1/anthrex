@@ -5,9 +5,7 @@
 
 use std::path::PathBuf;
 
-use proto::{
-    AgentRole, DeciderSource, HistoryLine, RoleOutcome, RoleRoutingDecision, RunState, Strength,
-};
+use proto::{AgentRole, DeciderSource, HistoryLine, RoleOutcome, RoleRoutingDecision, RunState};
 use serde_json::json;
 
 use super::fixture::*;
@@ -93,8 +91,7 @@ fn decider_dispatched(fx: &mut Fixture, op: u64) -> String {
     let route = proto::Route {
         runtime: proto::Runtime::Claude,
         model: "claude-haiku-4-5".into(),
-        strength: Strength::Fast,
-        effort: proto::Effort::Low,
+        effort: proto::Effort::LOW,
     };
     let input = roles::input_of(run);
     let d = roles::decider_record(
@@ -190,8 +187,9 @@ fn each_role_keeps_its_dispatch_snapshot_after_a_config_change() {
         assert!(d.input.goal.is_some() && d.run_id.as_deref() == Some(RUN_ID));
     }
     let orchestrator = &dispatched[0];
-    assert_eq!(orchestrator.source, "roster_default");
-    assert!(orchestrator.candidates.len() > 1, "{orchestrator:#?}");
+    // Milestone 9.8: the orchestrator's row, its chosen route the one candidate.
+    assert_eq!(orchestrator.source, "role_table");
+    assert_eq!(orchestrator.candidates.len(), 1, "{orchestrator:#?}");
     assert_eq!(dispatched[1].input.epic.as_deref(), Some("mail"));
     assert_eq!(dispatched[1].input.area, vec!["crates/mail/**".to_string()]);
     assert_eq!(dispatched[2].input.area, vec!["crates/auth/**".to_string()]);
@@ -199,11 +197,13 @@ fn each_role_keeps_its_dispatch_snapshot_after_a_config_change() {
         dispatched[3].input.question_kind.as_deref(),
         Some("check_summary")
     );
-    // The configuration changes: the roster and every role's settings.
+    // The configuration changes: every role's settings.
     let run = fx.run_mut();
-    run.roster.retain(|e| e.strength == Strength::Frontier);
-    run.limits.orch.planners.strength = Strength::Fast;
-    run.limits.orch.agent.effort = proto::Effort::Low;
+    run.limits.orch.agent.effort = proto::Effort::LOW;
+    // Milestone 9.8: and the rows (a record never reads them again).
+    let (planner, research) = (proto::models::Role::Planner, proto::models::Role::Research);
+    crate::run::test_support::set_row(run, planner, "codex:gpt-6-luna", None, None);
+    crate::run::test_support::set_row(run, research, "codex:default", None, None);
     if let Some(o) = run.orch.orchestrator.as_mut() {
         o.routing.candidates.clear();
     }

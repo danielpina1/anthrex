@@ -240,6 +240,8 @@ fn run_appending(data: &Path, history: &Path) -> (Run, OpKind) {
         wt_dir: PathBuf::from("/tmp/nowhere-wt"),
         data_dir: data.join("runs").join("history-5a1e"),
         config: &config,
+        models: daemon::run::model_roles::RunModels::resolve(&config.roles, None),
+        models_log: Vec::new(),
         testing: &config::Testing::default(),
         now: 1_000,
         yes: true,
@@ -306,8 +308,7 @@ fn a_reapproved_phase_pending_at_a_restart_is_appended_and_counted_once() {
         route: proto::Route {
             runtime: proto::Runtime::Codex,
             model: "gpt-6".into(),
-            strength: proto::Strength::Frontier,
-            effort: proto::Effort::High,
+            effort: proto::Effort::HIGH,
         },
         calls,
         tokens: 0,
@@ -430,8 +431,7 @@ fn role_line(n: u64, outcome: proto::RoleOutcome) -> HistoryLine {
     let route = proto::Route {
         runtime: proto::Runtime::Claude,
         model: "m".into(),
-        strength: proto::Strength::Fast,
-        effort: proto::Effort::Low,
+        effort: proto::Effort::LOW,
     };
     let input = proto::RoleRoutingInput::default();
     let session = format!("{n}/1");
@@ -531,8 +531,7 @@ fn version_1_history_and_an_old_run_json_still_load() {
         proto::Route {
             runtime: proto::Runtime::Claude,
             model: String::new(),
-            strength: proto::Strength::Frontier,
-            effort: proto::Effort::High,
+            effort: proto::Effort::HIGH,
         },
         1,
     );

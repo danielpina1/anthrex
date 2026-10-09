@@ -6,8 +6,8 @@ use proto::{PlanEdit, PlanTask, Size};
 use super::{Batch, EditConsequence};
 use crate::run::contract::amend_message;
 use crate::run::edits_state::{has_live_worker, has_started, is_paused, not_started};
+use crate::run::orch::EditSource;
 use crate::run::plan::PlanError;
-use crate::run::route_pick::{repicks, review_route};
 use crate::run::validate::resolve_task_lenient;
 use crate::run::validate_patterns;
 
@@ -42,6 +42,16 @@ impl Batch {
             return;
         };
         let Some(i) = self.find(task_id) else { return };
+        // Milestone 9.8 decision 31: the orchestrator's and a sub-planner's route is
+        // ignored, so it neither changes the task nor is refused on a started one.
+        let ignored = route.is_some() && self.source != EditSource::User;
+        let route = match route {
+            Some(sent) if ignored => {
+                self.route_ignored(sent);
+                &None
+            }
+            route => route,
+        };
         let nothing = brief.is_none()
             && acceptance.is_none()
             && route.is_none()
@@ -53,6 +63,10 @@ impl Batch {
             && stage.is_none()
             && race.is_none()
             && pair.is_none();
+        // An amend that named only the ignored route is a no-op, not an error.
+        if nothing && ignored {
+            return;
+        }
         if nothing {
             self.errors.push(PlanError::new(
                 Some(task_id),
@@ -98,6 +112,38 @@ impl Batch {
         if race_or_pair_refused {
             return;
         }
+        // Controller ruling (fix round 1 of M9.8.7a): a user's route that names a
+        // runtime or a strength but no model would be ignored (decision 10: the row
+        // fills it), so it is refused.
+        if let Some(r) = route.as_ref().filter(|r| r.model.is_none())
+            && matches!(self.source, EditSource::User)
+            && (r.runtime.is_some() || r.strength.is_some())
+        {
+            let what = if r.runtime.is_some() {
+                "runtime"
+            } else {
+                "strength"
+            };
+            let text = format!("choose a model; {what} alone no longer selects one");
+            self.errors
+                .push(PlanError::new(Some(task_id), "route.model", "route", text));
+            return;
+        }
+        // Preflight ruling F24: a route's effort reaches `--effort` as given (decision 10
+        // keeps a user's route), so it must be an effort name (decision 5), or the
+        // model's default.
+        if let Some(effort) = route.as_ref().and_then(|r| r.effort.as_ref())
+            && !(effort.is_default() || proto::models::valid_effort(effort.as_str()))
+        {
+            let text = format!(
+                "{:?} is not an effort name (1 to {} characters of a-z, 0-9, _ and -)",
+                effort.as_str(),
+                proto::models::EFFORT_MAX_CHARS
+            );
+            let error = PlanError::new(Some(task_id), "route.effort", "route", text);
+            self.errors.push(error);
+            return;
+        }
 
         let mut spec = self.run.tasks[i].spec.clone();
         let mut changed = Vec::new();
@@ -110,7 +156,12 @@ impl Batch {
             changed.push("acceptance");
         }
         if let Some(v) = route {
-            spec.route = v.clone();
+            // M9.8.14 fix round 1: an old `strength` is never kept, so the spec in
+            // memory is the one `run.json` reloads.
+            spec.route = proto::RouteSpec {
+                strength: None,
+                ..v.clone()
+            };
             changed.push("route");
         }
         if let Some(v) = test_mode {
@@ -180,13 +231,7 @@ impl Batch {
     fn reresolve(&mut self, i: usize, spec: PlanTask, route_named: bool) {
         let run = &self.run;
         let old = &run.tasks[i];
-        let (planned, _) = resolve_task_lenient(
-            old.spec.clone(),
-            &run.profile,
-            &run.limits,
-            &run.roster,
-            run.limits.default_runtime,
-        );
+        let (planned, _) = resolve_task_lenient(old.spec.clone(), &run.profile, &run.limits);
         // The recorded rung-3 raise, never a guess from the spec (fix round 2, N1).
         let floor = old.raised_size.unwrap_or(Size::S);
         let escalated = (old.route != planned.route).then(|| old.route.clone());
@@ -200,21 +245,14 @@ impl Batch {
         let mut sized = spec.clone();
         sized.size = sized.size.max(floor);
         let resolved = self.resolve(sized);
-        // Milestone 9.5 decision 9a: a route named again, or a list's route whose class
-        // changed (review m2), is picked again from the run's lists.
-        let old = &self.run.tasks[i];
-        let repick = route_named || repicks(old, &resolved);
+        // A route named again replaces an escalated one.
         let route = match escalated {
-            Some(route) if !repick => route,
+            Some(route) if !route_named => route,
             _ => resolved.route,
         };
-        if repick {
-            self.picks.insert(spec.id.clone());
-        }
-        let (lists, roster) = (&self.run.limits.route_lists, &self.run.roster);
-        let installed = &self.run.orch.installed;
-        let review_route = (resolved.review_level)
-            .map(|level| review_route(lists, roster, &route, level, installed));
+        // Milestone 9.8 decision 27: the reviewer row against the task's route.
+        let models = self.run.limits.models();
+        let review_route = (resolved.review_level).map(|_| models.reviewer_route(&route).0);
         let task = &mut self.run.tasks[i];
         task.review_route = review_route;
         task.spec = spec;

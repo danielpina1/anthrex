@@ -8,6 +8,34 @@ use proto::DaemonMsg;
 impl App {
     pub fn on_daemon(&mut self, msg: DaemonMsg) -> Vec<Effect> {
         match msg {
+            // Milestone 9.8 decision 37 (preflight F10: stamped as received); an open
+            // picker's entries follow, its selection kept on the same model.
+            DaemonMsg::Models { catalogs } => {
+                self.catalogs.absorb(catalogs, std::time::Instant::now());
+                if let Some(super::screens::Screen::Settings(s)) = &mut self.screen
+                    && let Some(picker) = &mut s.models.picker
+                {
+                    picker.refresh(&self.catalogs);
+                }
+                // Milestone 9.8 decision 39: the forms' pickers follow too.
+                let picker = match &mut self.modal {
+                    Some(Modal::StartGoal(form)) => form.picker.as_mut(),
+                    Some(Modal::EditTask(form)) => form.picker.as_mut(),
+                    _ => None,
+                };
+                if let Some(picker) = picker {
+                    picker.refresh(&self.catalogs);
+                }
+                // M9.8.12 fix round 1 (M5): an open Promote form's picker too.
+                if let Some(Modal::Action(flow)) = &mut self.modal
+                    && let super::actions::ActionStep::Form(form) = &mut flow.step
+                    && let super::actions::forms::ActionForm::Promote(f) = &mut **form
+                {
+                    f.refresh(&self.catalogs);
+                }
+                self.refresh_goal_models();
+                vec![]
+            }
             DaemonMsg::Welcome { windows, .. } | DaemonMsg::WindowsChanged { windows } => {
                 self.replace_windows(windows)
             }

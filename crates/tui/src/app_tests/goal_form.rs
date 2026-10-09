@@ -10,35 +10,59 @@ use crate::app::Modal;
 use crate::app::actions::ActionStep;
 use crate::app::actions::forms::ActionForm;
 use crate::app::replies::PendingWhat;
-use crate::run_goal::{GoalField, GoalForm, GoalModel};
+use crate::run_goal::{GoalField, GoalForm};
 use crate::tree::NodeKey;
+use proto::models::{HelperKind, ModelRef, ModelTable, Role, RoleChoice};
 use proto::{
-    ActionKind, BudgetLimit, ModelEntry, OrchestratorChoice, OrchestratorDefault, Origin, RunReply,
-    RunRequest, SettingsDoc, SettingsLimits, SettingsReply, SettingsRequest, Strength,
+    ActionKind, BudgetLimit, OrchestratorChoice, Origin, RunReply, RunRequest, SettingsDoc,
+    SettingsLimits, SettingsReply, SettingsRequest,
 };
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-pub(super) fn entry(runtime: Runtime, model: &str) -> ModelEntry {
-    ModelEntry {
+/// A fixture's model: a runtime and a model id (`proto::ModelEntry`, the roster's
+/// entry, went with strength in M9.8.14).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct FixtureModel {
+    pub(super) runtime: Runtime,
+    pub(super) model: String,
+}
+
+pub(super) fn entry(runtime: Runtime, model: &str) -> FixtureModel {
+    FixtureModel {
         runtime,
         model: model.into(),
-        strength: Strength::Standard,
-        note: String::new(),
     }
 }
 
-pub(super) fn doc(models: Vec<ModelEntry>) -> SettingsDoc {
+/// M9.8.12: the roster left the settings document. A fixture's entries become helper
+/// kind rows (one per kind, in order), which tell documents apart without changing
+/// what the orchestrator row or the goal form's `role table` entry reads.
+pub(super) fn table(models: Vec<FixtureModel>) -> ModelTable {
+    let mut out = ModelTable::default();
+    for (m, kind) in models.into_iter().zip(HelperKind::ALL) {
+        let id = if m.model.is_empty() {
+            "default"
+        } else {
+            &m.model
+        };
+        let model = ModelRef::parse(&format!("{}:{id}", m.runtime.label())).unwrap();
+        let row = RoleChoice {
+            model,
+            effort: None,
+            fallback: None,
+        };
+        out.rows.insert(Role::Helper(kind), row);
+    }
+    out
+}
+
+pub(super) fn doc(models: Vec<FixtureModel>) -> SettingsDoc {
     let budget = BudgetLimit {
         tool_calls: 10,
         minutes: 5,
     };
     SettingsDoc {
-        models,
-        orchestrator: OrchestratorDefault {
-            runtime: None,
-            model: String::new(),
-        },
         limits: SettingsLimits {
             budget_s: budget,
             budget_m: budget,
@@ -49,10 +73,11 @@ pub(super) fn doc(models: Vec<ModelEntry>) -> SettingsDoc {
             max_bounces: 2,
         },
         design_default: None,
+        roles: table(models),
     }
 }
 
-pub(super) fn roster() -> Vec<ModelEntry> {
+pub(super) fn roster() -> Vec<FixtureModel> {
     vec![
         entry(Runtime::Claude, "claude-haiku-4-5"),
         entry(Runtime::Codex, "gpt-6-sol"),
@@ -68,18 +93,18 @@ pub(super) fn reply(reply: SettingsReply, id: u64) -> DaemonMsg {
     })
 }
 
-fn current(models: Vec<ModelEntry>) -> SettingsReply {
+fn current(models: Vec<FixtureModel>) -> SettingsReply {
     SettingsReply::Current {
         doc: doc(models),
-        origin: BTreeMap::from([("orchestrator.models".to_string(), Origin::File)]),
+        origin: BTreeMap::from([("models".to_string(), Origin::File)]),
         path: "/cfg/config.toml".into(),
     }
 }
 
-fn saved(models: Vec<ModelEntry>) -> SettingsReply {
+fn saved(models: Vec<FixtureModel>) -> SettingsReply {
     SettingsReply::Saved {
         doc: doc(models),
-        origin: BTreeMap::from([("orchestrator.models".to_string(), Origin::File)]),
+        origin: BTreeMap::from([("models".to_string(), Origin::File)]),
     }
 }
 
@@ -102,7 +127,7 @@ pub(super) fn app() -> App {
 }
 
 /// An app whose settings fetch was answered with `models`.
-pub(super) fn app_with_cache(models: Vec<ModelEntry>) -> App {
+pub(super) fn app_with_cache(models: Vec<FixtureModel>) -> App {
     let mut app = app();
     let id = gets(&[app.settings_fetch()])[0];
     assert!(app.on_daemon(reply(current(models), id)).is_empty());
@@ -169,12 +194,15 @@ fn a_new_connection_fetches_the_settings_once() {
     // The `Current` reply to the fetch fills the cache.
     assert!(app.on_daemon(reply(current(roster()), ids[0])).is_empty());
     let cache = app.settings_cache.as_ref().expect("cache");
-    assert_eq!(cache.doc.models, roster());
+    assert_eq!(cache.doc.roles, table(roster()));
     assert_eq!(cache.path, std::path::PathBuf::from("/cfg/config.toml"));
-    assert_eq!(cache.origin["orchestrator.models"], Origin::File);
+    assert_eq!(cache.origin["models"], Origin::File);
     // The entry is spent: a repeat of the same id changes nothing.
     app.on_daemon(reply(current(vec![]), ids[0]));
-    assert_eq!(app.settings_cache.as_ref().unwrap().doc.models, roster());
+    assert_eq!(
+        app.settings_cache.as_ref().unwrap().doc.roles,
+        table(roster())
+    );
 
     // Every new connection: exactly one more, under a new id.
     assert!(app.on_link_lost("x").is_empty());
@@ -210,7 +238,7 @@ fn a_saved_reply_replaces_the_cache_and_keeps_its_path() {
     ));
     assert!(effects.is_empty(), "{effects:?}");
     let cache = app.settings_cache.as_ref().unwrap();
-    assert_eq!(cache.doc.models.len(), 1);
+    assert_eq!(cache.doc.roles.rows.len(), 1);
     assert_eq!(cache.path, std::path::PathBuf::from("/cfg/config.toml"));
 }
 
@@ -231,11 +259,14 @@ fn a_put_that_was_not_saved_asks_for_the_settings_again() {
     assert_eq!(gets(&effects).len(), 1, "{effects:?}");
     assert_eq!(app.toast_level(), Some(ToastLevel::Error));
     assert!(app.toast_text().unwrap().contains("still being written"));
-    assert_eq!(app.settings_cache.as_ref().unwrap().doc.models, roster());
+    assert_eq!(
+        app.settings_cache.as_ref().unwrap().doc.roles,
+        table(roster())
+    );
     // The new Get's `Current` brings the file's truth in.
     let id = gets(&effects)[0];
     app.on_daemon(reply(current(vec![entry(Runtime::Codex, "gpt-6-sol")]), id));
-    assert_eq!(app.settings_cache.as_ref().unwrap().doc.models.len(), 1);
+    assert_eq!(app.settings_cache.as_ref().unwrap().doc.roles.rows.len(), 1);
 
     // A refused `Get` does not loop: it toasts and sends nothing.
     let id = gets(&[app.settings_fetch()])[0];
@@ -254,9 +285,15 @@ fn an_older_reply_never_replaces_a_newer_cache() {
     let (put, _) = tagged(&[app.settings_put(doc(vec![]))]);
     let one = vec![entry(Runtime::Claude, "claude-opus-5-5")];
     app.on_daemon(reply(saved(one.clone()), put));
-    assert_eq!(app.settings_cache.as_ref().unwrap().doc.models, one);
+    assert_eq!(
+        app.settings_cache.as_ref().unwrap().doc.roles,
+        table(one.clone())
+    );
     assert!(app.on_daemon(reply(current(roster()), older)).is_empty());
-    assert_eq!(app.settings_cache.as_ref().unwrap().doc.models, one);
+    assert_eq!(
+        app.settings_cache.as_ref().unwrap().doc.roles,
+        table(one.clone())
+    );
     assert!(
         !app.replies.contains(older),
         "the stale reply was still spent"
@@ -364,103 +401,71 @@ fn the_toggles_reach_the_request() {
     );
 }
 
-/// The picker's drawn entries and the one chosen.
-fn picker(app: &App) -> (Vec<String>, String) {
-    let f = form(app);
-    let options = f.model_options();
-    let at = options[f.model_at()].clone();
-    (options, at)
+/// Milestone 9.8 decision 39 (replacing 9.0.6's roster picker tests,
+/// `the_model_picker_lists_the_runtimes_enabled_models_then_custom`,
+/// `custom_reveals_the_text_line_…`, `custom_with_no_text_is_the_default_model`,
+/// `with_runtime_configured_the_model_is_default_only`,
+/// `without_a_cache_the_picker_offers_default_and_custom` and
+/// `a_cache_that_arrives_while_the_form_is_open_fills_the_picker`): the picker's first
+/// entry names the role table's orchestrator row, and follows a cache that arrives
+/// while the form is open.
+#[test]
+fn the_role_table_entry_names_the_orchestrator_row_and_follows_the_cache() {
+    let mut app = app();
+    let id = gets(&[app.settings_fetch()])[0];
+    open_form(&mut app);
+    // No catalog yet: the row's model by its id.
+    assert_eq!(
+        form(&app).role_table,
+        "role table (Claude · claude-opus-5-5)"
+    );
+    let mut roles = proto::models::ModelTable::default();
+    roles.rows.insert(
+        proto::models::Role::Orchestrator,
+        proto::models::RoleChoice {
+            model: proto::models::ModelRef::parse("codex:gpt-6-sol").unwrap(),
+            effort: None,
+            fallback: None,
+        },
+    );
+    let mut with_roles = doc(roster());
+    with_roles.roles = roles;
+    app.on_daemon(reply(
+        SettingsReply::Current {
+            doc: with_roles,
+            origin: BTreeMap::new(),
+            path: "/cfg/config.toml".into(),
+        },
+        id,
+    ));
+    assert_eq!(form(&app).role_table, "role table (Codex · gpt-6-sol)");
+    focus(&mut app, GoalField::Model);
+    tap(&mut app, KeyCode::Enter);
+    let picker = form(&app).picker.as_ref().expect("the picker");
+    assert_eq!(
+        picker.entries[0],
+        crate::app::model_picker::PickerEntry::RoleTable("role table (Codex · gpt-6-sol)".into())
+    );
 }
 
+/// `custom…` in the goal form's picker: the runtime, then any name `ModelRef` accepts;
+/// a paste reaches the name.
 #[test]
-fn the_model_picker_lists_the_runtimes_enabled_models_then_custom() {
-    let mut app = app_with_cache(roster());
+fn custom_in_the_picker_names_any_model() {
+    let mut app = app();
     open_form(&mut app);
-    focus(&mut app, GoalField::Runtime);
-    tap(&mut app, KeyCode::Right);
-    assert_eq!(form(&app).runtime, Some(Runtime::Claude));
     focus(&mut app, GoalField::Model);
-    // Claude's models in roster order, the empty-model entry of Codex never.
-    let (options, at) = picker(&app);
-    assert_eq!(
-        options,
-        ["default", "claude-haiku-4-5", "claude-opus-5-5", "custom…"]
-    );
-    assert_eq!(at, "default");
-
+    tap(&mut app, KeyCode::Enter);
+    // No catalogs: the role table, two headers, then `custom…`.
+    tap(&mut app, KeyCode::Char('j'));
+    tap(&mut app, KeyCode::Enter);
     tap(&mut app, KeyCode::Right);
-    assert_eq!(form(&app).model, GoalModel::Pick(0));
-    tap(&mut app, KeyCode::Char(' '));
-    assert_eq!(form(&app).model, GoalModel::Pick(1));
-    assert_eq!(
-        request(&mut app, "add a"),
-        RunRequest::StartGoal {
-            goal: "add a".into(),
-            dir: "/p/a".into(),
-            yes: false,
-            trust_project: false,
-            unconfined_checks: false,
-            orchestrator: Some(OrchestratorChoice {
-                runtime: Runtime::Claude,
-                model: Some("claude-opus-5-5".into()),
-            }),
-            delivery: None,
-            continue_from: None,
-            design: None,
-        }
-    );
-}
-
-#[test]
-fn custom_reveals_the_text_line_and_its_text_is_the_model_sent() {
-    let mut app = app_with_cache(roster());
-    open_form(&mut app);
-    focus(&mut app, GoalField::Runtime);
-    tap(&mut app, KeyCode::Char(' '));
-    focus(&mut app, GoalField::Model);
-    // `custom…` is last: one step back from `default` wraps to it.
-    tap(&mut app, KeyCode::Left);
-    assert!(matches!(form(&app).model, GoalModel::Custom));
-    // Space and every character are text now; the arrows still move the picker.
-    typed(&mut app, "my model");
+    tap(&mut app, KeyCode::Enter);
+    typed(&mut app, "my-model");
     app.on_paste("-2\n".into());
-    assert_eq!(form(&app).custom.text(), "my model-2");
-    // The picker moving away and back keeps what was typed.
-    tap(&mut app, KeyCode::Left);
-    assert_eq!(form(&app).model, GoalModel::Pick(1));
-    tap(&mut app, KeyCode::Right);
-    assert_eq!(form(&app).model, GoalModel::Custom);
-    assert_eq!(form(&app).custom.text(), "my model-2");
-    assert_eq!(
-        request(&mut app, "add a"),
-        RunRequest::StartGoal {
-            goal: "add a".into(),
-            dir: "/p/a".into(),
-            yes: false,
-            trust_project: false,
-            unconfined_checks: false,
-            orchestrator: Some(OrchestratorChoice {
-                runtime: Runtime::Claude,
-                model: Some("my model-2".into()),
-            }),
-            delivery: None,
-            continue_from: None,
-            design: None,
-        }
-    );
-}
-
-#[test]
-fn custom_with_no_text_is_the_default_model() {
-    let mut app = app_with_cache(roster());
-    open_form(&mut app);
-    focus(&mut app, GoalField::Runtime);
-    tap(&mut app, KeyCode::Right);
-    tap(&mut app, KeyCode::Right); // codex
-    focus(&mut app, GoalField::Model);
-    assert_eq!(picker(&app).0, ["default", "gpt-6-sol", "custom…"]);
-    tap(&mut app, KeyCode::Left);
-    assert!(matches!(form(&app).model, GoalModel::Custom));
+    tap(&mut app, KeyCode::Enter);
+    assert!(form(&app).picker.is_none());
+    assert_eq!(form(&app).model_label, "Codex · my-model-2");
     let RunRequest::StartGoal { orchestrator, .. } = request(&mut app, "add a") else {
         panic!()
     };
@@ -468,78 +473,15 @@ fn custom_with_no_text_is_the_default_model() {
         orchestrator,
         Some(OrchestratorChoice {
             runtime: Runtime::Codex,
-            model: None
+            model: Some("my-model-2".into()),
+            effort: None
         })
     );
 }
 
 #[test]
-fn with_runtime_configured_the_model_is_default_only() {
-    let mut app = app_with_cache(roster());
-    open_form(&mut app);
-    assert_eq!(form(&app).runtime, None);
-    focus(&mut app, GoalField::Model);
-    assert_eq!(picker(&app).0, ["default"]);
-    // Nothing to step to: the arrows and Space leave it on default.
-    for code in [KeyCode::Right, KeyCode::Left, KeyCode::Char(' ')] {
-        tap(&mut app, code);
-        assert_eq!(form(&app).model, GoalModel::Default);
-    }
-    // Choosing a runtime resets the model, which named another runtime's.
-    focus(&mut app, GoalField::Runtime);
-    tap(&mut app, KeyCode::Right);
-    focus(&mut app, GoalField::Model);
-    tap(&mut app, KeyCode::Right);
-    assert_eq!(form(&app).model, GoalModel::Pick(0));
-    focus(&mut app, GoalField::Runtime);
-    tap(&mut app, KeyCode::Right);
-    assert_eq!(form(&app).model, GoalModel::Default);
-}
-
-#[test]
-fn without_a_cache_the_picker_offers_default_and_custom() {
-    let mut app = app();
-    assert_eq!(app.settings_cache, None);
-    open_form(&mut app);
-    focus(&mut app, GoalField::Runtime);
-    tap(&mut app, KeyCode::Right);
-    focus(&mut app, GoalField::Model);
-    assert_eq!(picker(&app).0, ["default", "custom…"]);
-}
-
-#[test]
-fn a_cache_that_arrives_while_the_form_is_open_fills_the_picker() {
-    let mut app = app();
-    let id = gets(&[app.settings_fetch()])[0];
-    open_form(&mut app);
-    focus(&mut app, GoalField::Runtime);
-    tap(&mut app, KeyCode::Right);
-    focus(&mut app, GoalField::Model);
-    assert_eq!(picker(&app).0.len(), 2);
-    app.on_daemon(reply(current(roster()), id));
-    assert_eq!(picker(&app).0.len(), 4);
-    tap(&mut app, KeyCode::Right);
-    tap(&mut app, KeyCode::Right);
-    assert_eq!(form(&app).model, GoalModel::Pick(1));
-
-    // A save that drops the picked model leaves the choice on default; one that keeps
-    // it picked, keeps it by name.
-    let (id, _) = tagged(&[app.settings_put(doc(vec![]))]);
-    app.on_daemon(reply(
-        saved(vec![
-            entry(Runtime::Claude, "claude-opus-5-5"),
-            entry(Runtime::Claude, "claude-haiku-4-5"),
-        ]),
-        id,
-    ));
-    assert_eq!(form(&app).model, GoalModel::Pick(0));
-    let (id, _) = tagged(&[app.settings_put(doc(vec![]))]);
-    app.on_daemon(reply(saved(vec![]), id));
-    assert_eq!(form(&app).model, GoalModel::Default);
-}
-
-#[test]
-fn promote_picks_from_the_roster_cache() {
+fn promote_picks_from_the_catalogs() {
+    // M9.8.12: the roster left the settings; the picker offers what the CLIs report.
     let (mut snap, windows) = running_snapshot();
     snap.runs[0]
         .actions
@@ -547,6 +489,7 @@ fn promote_picks_from_the_roster_cache() {
     let mut app = app_with_runs(windows, snap);
     let id = gets(&[app.settings_fetch()])[0];
     app.on_daemon(reply(current(roster()), id));
+    app.catalogs = crate::app::model_picker::tests::fixture_catalogs();
     app.open_actions(
         (crate::tree::run_fixtures::RUN_ID.into(), ActionTarget::Run),
         Some(ActionKind::Promote),
@@ -566,10 +509,14 @@ fn promote_picks_from_the_roster_cache() {
         labels,
         [
             "configured",
-            "cl claude-haiku-4-5",
+            "cl default",
+            "cl opus[1m]",
+            "cl claude-fable-5-1[1m]",
+            "cl sonnet",
+            "cl haiku",
+            "cx gpt-6-luna",
             "cx gpt-6-sol",
-            "cl claude-opus-5-5",
-            "cx default"
+            "cx gpt-6.1-sol"
         ]
     );
     // Picking the third entry sends its runtime and model.
@@ -584,8 +531,54 @@ fn promote_picks_from_the_roster_cache() {
             run_id: crate::tree::run_fixtures::RUN_ID.into(),
             orchestrator: Some(OrchestratorChoice {
                 runtime: Runtime::Claude,
-                model: Some("claude-opus-5-5".into()),
+                model: Some("claude-fable-5-1[1m]".into()),
+                effort: None,
             }),
         }
     );
+}
+
+/// M9.8.12 fix round 1 (M5): with no catalog yet, opening Promote asks for the lists
+/// as the Settings screen does, and the open picker takes them when they come.
+#[test]
+fn promote_asks_for_the_catalogs_and_follows_them() {
+    let (mut snap, windows) = running_snapshot();
+    snap.runs[0]
+        .actions
+        .push(action(ActionKind::Promote, "promote", None));
+    let mut app = app_with_runs(windows, snap);
+    app.open_actions(
+        (crate::tree::run_fixtures::RUN_ID.into(), ActionTarget::Run),
+        Some(ActionKind::Promote),
+    );
+    let effects = tap(&mut app, KeyCode::Enter);
+    let asks: Vec<_> = effects
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                Effect::Send(ClientMsg::ListModels {
+                    runtime: None,
+                    refresh: false
+                })
+            )
+        })
+        .collect();
+    assert_eq!(asks.len(), 1, "{effects:?}");
+    let options = |app: &App| {
+        let Some(Modal::Action(flow)) = &app.modal else {
+            panic!()
+        };
+        let ActionStep::Form(f) = &flow.step else {
+            panic!()
+        };
+        let ActionForm::Promote(f) = &**f else {
+            panic!()
+        };
+        f.options.len()
+    };
+    assert_eq!(options(&app), 1, "only configured");
+    let catalogs = crate::app::model_picker::tests::fixture_catalogs().list;
+    app.on_daemon(proto::DaemonMsg::Models { catalogs });
+    assert_eq!(options(&app), 9);
 }

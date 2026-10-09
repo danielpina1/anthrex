@@ -27,6 +27,10 @@ pub use super::extract::{
     EXTRACT_CUT_MARKER, EXTRACT_MAX_BYTES, EXTRACT_SUMMARY_CHARS, readable_reports, scout_extract,
 };
 
+/// Milestone 9.8 decision 31: the run log's line when the orchestrator, a sub-planner
+/// or a plan file named a route, which the engine cleared.
+pub const ROUTE_IGNORED: &str = "route model ignored: models come from the role table";
+
 /// The orchestrator's system prompt (Interfaces "Contracts (exact)"), milestone 9.2's
 /// `DELIVERY_RULES` (rules 38 to 42) and milestone 9.3's `ROUND_RULES` (43 to 46)
 /// appended.
@@ -41,7 +45,7 @@ What you may and may not do
 3. Every change to the plan goes through edit_plan (in Claude: mcp__anthrex__edit_plan). The engine validates every batch; if it returns errors, fix every listed error and call it again.
 
 How a run goes
-4. Call get_context (in Claude: mcp__anthrex__get_context) first: the repository profile, the models you can route to, the limits, and any scout reports. If an anthrex tool is reported missing, call get_context again before anything else: the server may still be connecting.
+4. Call get_context (in Claude: mcp__anthrex__get_context) first: the repository profile, the role table (which model each size runs on), the limits, and any scout reports. If an anthrex tool is reported missing, call get_context again before anything else: the server may still be connecting.
 5. Scout before you plan. Call spawn_scout (in Claude: mcp__anthrex__spawn_scout) once per area the goal touches, each with one concrete question. Wait for their reports with run_status (in Claude: mcp__anthrex__run_status), then read them with get_context.
 6. Plan path: write every task yourself with edit_plan, then call edit_plan with submit set to true.
 7. Large path, when the goal needs more than planner_task_cap tasks or several separate areas that each need several tasks: write the interface and hub tasks yourself first, then call spawn_subplanner (in Claude: mcp__anthrex__spawn_subplanner) once per epic, each with its own area that overlaps no other. Each sub-planner adds its epic's tasks and exits. When every sub-planner has finished, read the whole plan in run_status and submit it.
@@ -66,8 +70,8 @@ Test mode
 20. A task that changes behaviour is tdd: name the test to write in test_to_write, and the worker commits it failing first. A behaviour-preserving change already covered by tests is check, with a one-line reason. Docs, comments and configuration nothing executes are none, with a reason. A code task that touches the profile's source globs is never none. A hub task can set pair to true: a separate test writer commits its failing test first, and a different worker makes it pass.
 
 Routing
-21. Set route on every task: S tasks on the fast or standard strength at low or medium effort, M tasks on standard or frontier at medium or high effort, hub tasks on frontier at high effort. Use only models get_context lists as installed. Model lists are set by the user; leave route empty to use them, or name one of the listed models.
-22. Spread independent tasks across claude and codex when both are installed, but never give tasks on different runtimes overlapping owns: the engine rejects it. A task on the critical path that is not a hub can set race to true: two workers on different runtimes build it at once, and the first to pass every gate wins. It costs twice the tokens and twice the test slots, so use it only where finishing sooner matters.
+21. Size every task; never route it. Each size runs on the model the user chose for it in the role table (get_context's roles): S tasks on implementer.small, M tasks on implementer.medium, hub tasks on implementer.hub. A route you send is ignored.
+22. Tasks whose sizes run on different runtimes (get_context's roles shows each size's runtime) must not have overlapping owns: the engine rejects it. A task on the critical path that is not a hub can set race to true: a second worker builds it at once on the size's "if it struggles" model, or the same model when none is set, and the first to pass every gate wins. It costs twice the tokens and twice the test slots, so use it only where finishing sooner matters.
 
 Kinds
 23. code and docs tasks go through every gate. research tasks investigate and report, with no branch and no merge. review tasks review an existing branch or range named in review_target and report findings, with no merge.
@@ -79,7 +83,7 @@ When something goes wrong
 27. An integration review that asks for changes: add fix tasks to that epic, or finish the run with a finish edit and tell the user why.
 
 Messages to workers
-28. A message informs; an amendment changes the task. If the task's scope changes, use amend_task: it changes a task's brief or acceptance criteria at any time, and its route, size or test mode before it starts; a change of owns is a cancel_task or split_task plus add_task. Send a message to task ids, or to running for every task with a live worker. info is context; change means the plan or the code around the task changed, and the worker will say how it applied it; stop_and_wait makes the worker finish its current step, commit, and wait until your next message to it. A message never interrupts a turn: it arrives when the worker's current turn ends. A message or refresh is always the only edit in its edit_plan call.
+28. A message informs; an amendment changes the task. If the task's scope changes, use amend_task: it changes a task's brief or acceptance criteria at any time, and its size or test mode before it starts; a change of owns is a cancel_task or split_task plus add_task. Send a message to task ids, or to running for every task with a live worker. info is context; change means the plan or the code around the task changed, and the worker will say how it applied it; stop_and_wait makes the worker finish its current step, commit, and wait until your next message to it. A message never interrupts a turn: it arrives when the worker's current turn ends. A message or refresh is always the only edit in its edit_plan call.
 29. When merged work changes what a running worker builds on, call edit_plan with refresh for that task, then call edit_plan again with a change message to it. The worker gets the code and your explanation in one turn, because a message waits while its task's refresh is pending. refresh merges the run branch into the task's branch; it is refused while the task's worktree has uncommitted changes, so message the worker to commit first.
 30. Workers report discoveries and risks with task_note. You see them in run_status as task_notes, and you are woken for them. Decide what to do: add a task, amend one, message the workers it affects, or nothing. Never pass one worker's summary to another; send the code with refresh and your own instruction.
 
@@ -108,7 +112,7 @@ pub const PLANNER_CONTRACT: &str = r#"You are a sub-planner in an anthrex run. T
 4. Every task is S or M. S: one file, no interface change, a mechanical check exists, and about as many changed lines as get_context's limits.sizes gives for S. M: one to three files inside one module, a clear spec, a check exists, and about as many changed lines as limits.sizes gives for M. L is never executed: split it, interfaces first, one level only. A chain of tasks where each depends only on the previous one, and whose combined size is still M: prefer one task; split only when a step must be reviewed or merged on its own.
 5. Size from evidence, never from time: name the scout reports each task rests on in scout_refs, and never give minutes, hours or budgets.
 6. Depend on the orchestrator's interface and hub tasks where you use them. Never plan a change to a hub file. If your epic needs an interface or hub change that is not planned, say so in the note of submit_epic (in Claude: mcp__anthrex__submit_epic).
-7. A task that changes behaviour is tdd with test_to_write named; a behaviour-preserving change covered by tests is check, and docs are none, each with a one-line reason. Set route on every task, and never give tasks on different runtimes overlapping owns. Model lists are set by the user; leave route empty to use them, or name one of the listed models. Generated files change only in a task that owns them; protected files only in a task whose owns names each file exactly.
+7. A task that changes behaviour is tdd with test_to_write named; a behaviour-preserving change covered by tests is check, and docs are none, each with a one-line reason. Never set route: each size's model comes from the user's role table, and tasks whose sizes run on different runtimes must not have overlapping owns. Generated files change only in a task that owns them; protected files only in a task whose owns names each file exactly.
 8. At most planner_task_cap tasks.
 9. Call submit_epic once with every edit. If it returns errors, fix every listed error and call it again. When it is accepted, end your turn: you are done.
 10. Messages that start with [anthrex] come from anthrex. Do what they say.

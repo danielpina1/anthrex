@@ -7,7 +7,7 @@ use serde_json::json;
 
 use super::fixture::*;
 use super::holds::delivers;
-use super::turns::{exited, queue, working_on};
+use super::turns::{exited, queue, working_on, working_on_codex};
 use super::turns_fixes::assert_alive;
 use crate::run::contract::{DONE_NUDGE, NO_COMMIT_NUDGE, RESUME_AFTER_EXIT, stall_nudge};
 use crate::run::engine::{AgentSignal, Effect, EventKind, OpId, OpKind, OpResult};
@@ -15,7 +15,6 @@ use crate::run::messages::DELIVERY_RETRY_SECS;
 use crate::run::model::FallbackState;
 
 const ROOMY: &str = "[task.budget]\ntool_calls = 1000\nminutes = 1000";
-const CODEX_ROOMY: &str = "[task.route]\nruntime = \"codex\"\nmodel = \"\"\n[task.budget]\ntool_calls = 1000\nminutes = 1000";
 
 fn args() -> serde_json::Value {
     json!({"summary": "did it", "test": "a::works", "red": "abcdef1"})
@@ -274,7 +273,7 @@ fn an_interrupted_turn_with_activity_gets_the_nudge_not_the_fallback() {
 /// does not turn that exit into a death resumed with `RESUME_AFTER_EXIT`.
 #[test]
 fn a_codex_interrupt_exit_after_activity_is_the_turns_end() {
-    let (mut fx, w) = working_on(CODEX_ROOMY);
+    let (mut fx, w) = working_on_codex(ROOMY);
     fx.signal(
         w,
         AgentSignal::Init {

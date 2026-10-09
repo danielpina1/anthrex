@@ -2,8 +2,9 @@
 //! Interfaces "`config`").
 
 use super::*;
+use crate::orchestrator::LegacyStrength;
 use crate::orchestrator::agent::{AgentConfig, AgentSettings, PlannerConfig};
-use proto::{Effort, Runtime, Strength};
+use proto::{Effort, Runtime};
 
 fn printed(problems: &[Problem]) -> Vec<String> {
     let mut printed: Vec<String> = problems.iter().map(|p| p.to_string()).collect();
@@ -23,12 +24,12 @@ fn defaults_when_absent() {
         agent: AgentConfig {
             runtime: None,
             model: String::new(),
-            effort: Effort::High,
+            effort: Effort::HIGH,
         },
         planners: PlannerConfig {
             runtime: None,
-            strength: Strength::Frontier,
-            effort: Effort::High,
+            strength: LegacyStrength::Frontier,
+            effort: Effort::HIGH,
             max_tool_calls: 200,
             timeout_secs: 2400,
             max_rejections: 5,
@@ -156,9 +157,9 @@ fn each_range_is_enforced_with_the_exact_message() {
 #[test]
 fn effort_and_strength_and_runtime_parse() {
     for (word, effort) in [
-        ("low", Effort::Low),
-        ("medium", Effort::Medium),
-        ("high", Effort::High),
+        ("low", Effort::LOW),
+        ("medium", Effort::MEDIUM),
+        ("high", Effort::HIGH),
     ] {
         let (config, problems) = parse(&format!(
             "[orchestrator.agent]\neffort = \"{word}\"\n[orchestrator.planners]\neffort = \"{word}\"\n"
@@ -168,9 +169,9 @@ fn effort_and_strength_and_runtime_parse() {
         assert_eq!(config.orchestrator.agent.planners.effort, effort);
     }
     for (word, strength) in [
-        ("fast", Strength::Fast),
-        ("standard", Strength::Standard),
-        ("frontier", Strength::Frontier),
+        ("fast", LegacyStrength::Fast),
+        ("standard", LegacyStrength::Standard),
+        ("frontier", LegacyStrength::Frontier),
     ] {
         let (config, problems) =
             parse(&format!("[orchestrator.planners]\nstrength = \"{word}\"\n"));

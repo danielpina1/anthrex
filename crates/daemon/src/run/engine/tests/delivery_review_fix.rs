@@ -337,8 +337,10 @@ fn route_spec_of(route: &proto::Route) -> RouteSpec {
     RouteSpec {
         runtime: Some(route.runtime),
         model: Some(route.model.clone()),
-        strength: Some(route.strength),
-        effort: Some(route.effort),
+        // Milestone 9.8 (task M9.8.8): a fix task's spec leaves the strength to the
+        // roster (`delivery::fix::route_spec`).
+        strength: None,
+        effort: Some(route.effort.clone()),
     }
 }
 

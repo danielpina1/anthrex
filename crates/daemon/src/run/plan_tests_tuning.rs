@@ -2,10 +2,10 @@
 //! built run: budgets by decision 6's precedence, the hub budget, the class routes, and
 //! `Tuned::default()` changing nothing.
 
-use proto::{Budget, ClassBudget, ClassRoute, Effort, SizeThresholds, Strength, TuningFile};
+use proto::{Budget, ClassBudget, Effort, SizeThresholds, TuningFile};
 
 use super::*;
-use crate::run::model::{ClassRoutes, Run};
+use crate::run::model::Run;
 use crate::run::refit::{Tuned, tuned};
 
 fn budget(tool_calls: u32, minutes: u32) -> Budget {
@@ -109,20 +109,22 @@ fn hub_uses_its_own_budget_else_m() {
     assert_eq!(task(&run, "m").budget, configured.budget_m);
 }
 
+/// Milestone 9.8 (task M9.8.7a): a tuned class route no longer fills a route: each
+/// task takes its row. Task M9.8.13 (decision 30): an applied class route is neither
+/// frozen nor logged; the tuning file's `[routes.<class>]` loads and is ignored.
 #[test]
-fn class_routes_fill_the_policy() {
+fn an_applied_class_route_is_ignored_and_the_rows_fill_the_routes() {
     let config = config::Orchestrator::default();
-    let route = |strength, effort| ClassRoute { strength, effort };
-    let mut file = TuningFile::default();
-    file.routes
-        .insert("s".into(), route(Strength::Standard, Effort::Medium));
-    file.routes
-        .insert("m".into(), route(Strength::Frontier, Effort::Medium));
+    let file: TuningFile = toml::from_str(
+        "v = 1\n\n[routes.s]\nstrength = \"standard\"\neffort = \"medium\"\n\n\
+         [routes.m]\nstrength = \"frontier\"\neffort = \"medium\"\n",
+    )
+    .expect("an old tuning file loads");
     let text = plan(&[
         task_toml("s1", "S", "[\"crates/a/src/x.rs\"]", ""),
         task_toml("m1", "M", "[\"crates/b/src/y.rs\"]", ""),
         task_toml("h1", "M", "[\"crates/proto/src/wire.rs\"]", ""),
-        // An explicit route keeps its own effort.
+        // Milestone 9.8 decision 31: a plan's route is ignored, its effort too.
         task_toml(
             "e1",
             "S",
@@ -131,32 +133,17 @@ fn class_routes_fill_the_policy() {
         ),
     ]);
     let run = built(&text, &config, tuned(&file, &config));
-    let of = |id: &str| {
-        let r = &task(&run, id).route;
-        (r.strength, r.effort)
-    };
-    assert_eq!(of("s1"), (Strength::Standard, Effort::Medium));
-    assert_eq!(of("m1"), (Strength::Frontier, Effort::Medium));
-    assert_eq!(
-        of("h1"),
-        (Strength::Frontier, Effort::High),
-        "hub is never tuned"
-    );
-    assert_eq!(of("e1").1, Effort::High);
-    assert_eq!(
-        run.limits.class_routes,
-        ClassRoutes {
-            s: route(Strength::Standard, Effort::Medium),
-            m: route(Strength::Frontier, Effort::Medium),
-            ..ClassRoutes::default()
-        }
-    );
+    let of = |id: &str| task(&run, id).route.effort.clone();
+    assert_eq!(of("s1"), Effort::LOW);
+    assert_eq!(of("m1"), Effort::MEDIUM);
+    assert_eq!(of("h1"), Effort::HIGH);
+    assert_eq!(of("e1"), Effort::LOW);
     let log: Vec<&str> = run.log.iter().map(|e| e.text.as_str()).collect();
     assert_eq!(
         log,
         [
-            "tuning: route S standard/medium (applied)",
-            "tuning: route M frontier/medium (applied)"
+            "tuning: none (history has fewer than 30 samples per class)",
+            crate::run::orch::contract::ROUTE_IGNORED,
         ]
     );
 }
@@ -168,7 +155,10 @@ fn default_tuning_reproduces_today() {
     // `build_with` builds with `Tuned::default()` too, so the pin is the limits below,
     // `none == today` and `the_brief_example_builds_a_run`, not a comparison of the two.
     let run = built(EXAMPLE_PLAN, &config, Tuned::default());
-    assert!(run.log.is_empty());
+    // Milestone 9.8 decision 31: the example plan's route is ignored, which its one
+    // log line says.
+    let texts: Vec<&str> = run.log.iter().map(|e| e.text.as_str()).collect();
+    assert_eq!(texts, [crate::run::orch::contract::ROUTE_IGNORED]);
     // What a start with nothing learned freezes is the same run, but for its log line
     // and the same line kept for the report (ruling T21-1).
     let mut none = built(
@@ -176,7 +166,7 @@ fn default_tuning_reproduces_today() {
         &config,
         tuned(&TuningFile::default(), &config),
     );
-    let log: Vec<String> = none.log.drain(..).map(|e| e.text).collect();
+    let log = vec![none.log.remove(0).text];
     assert_eq!(
         log,
         ["tuning: none (history has fewer than 30 samples per class)"]
@@ -190,12 +180,11 @@ fn default_tuning_reproduces_today() {
         (config.budget_s, config.budget_m, config.budget_l)
     );
     assert_eq!(limits.budget_hub, None);
-    assert_eq!(limits.class_routes, ClassRoutes::default());
     assert_eq!(limits.path_weights, None);
     assert_eq!(limits.thresholds, SizeThresholds::default());
     // A run with nothing tuned writes none of the new limit keys.
     let json = serde_json::to_value(limits).unwrap();
-    for key in ["budget_hub", "class_routes", "path_weights", "thresholds"] {
+    for key in ["budget_hub", "path_weights", "thresholds"] {
         assert!(json.get(key).is_none(), "{key}: {json}");
     }
 }

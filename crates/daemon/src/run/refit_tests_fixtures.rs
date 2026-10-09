@@ -7,13 +7,7 @@ use std::path::{Path, PathBuf};
 use proto::{
     AgentRole, DiffStats, Effort, GateCounts, GateTally, HISTORY_VERSION, HistoryLine, PhaseSecs,
     Route, RoutingCandidate, RoutingDecision, RoutingInput, RunPath, Runtime, SeverityTally, Size,
-    Strength, TaskKind, TaskOrigin, TaskOutcome, TaskRecord, TestMode, TokenUsage,
-};
-
-/// The S class default the fixture records ran on.
-pub(crate) const S_AT: proto::ClassRoute = proto::ClassRoute {
-    strength: Strength::Standard,
-    effort: Effort::Low,
+    TaskKind, TaskOrigin, TaskOutcome, TaskRecord, TestMode, TokenUsage,
 };
 
 /// `refit_budget`'s `now`, and the CLI block's (review ruling I5): 2026-09-27 09:06:40
@@ -34,8 +28,7 @@ pub(crate) fn record(
     let route = Route {
         runtime: Runtime::Claude,
         model: "claude-sonnet-5".into(),
-        strength: Strength::Standard,
-        effort: Effort::Low,
+        effort: Effort::LOW,
     };
     TaskRecord {
         v: HISTORY_VERSION,
@@ -136,12 +129,12 @@ pub(crate) fn sized_m(mut r: TaskRecord, hub: bool) -> TaskRecord {
     r.planned_size = Size::M;
     r.final_size = Size::M;
     r.hub = hub;
-    r.route.effort = Effort::Medium;
+    r.route.effort = Effort::MEDIUM;
     for d in &mut r.routing_decisions {
         d.input.size = Size::M;
         d.input.hub = hub;
-        d.chosen.effort = Effort::Medium;
-        d.candidates[0].route.effort = Effort::Medium;
+        d.chosen.effort = Effort::MEDIUM;
+        d.candidates[0].route.effort = Effort::MEDIUM;
     }
     r
 }

@@ -21,7 +21,7 @@ use crate::run::engine::{Effect, EventKind, OpKind, OpResult, OrchEvent};
 use crate::run::model::Run;
 use crate::run::orch::contract::orchestrator_first_prompt;
 use crate::run::orch::contract_rounds::handoff_prompt;
-use crate::run::orch::launch::resolve_orchestrator;
+use crate::run::orch::launch::orchestrator_route;
 use crate::run::orch::make_planned;
 use crate::run::orch::roles::lists::CHAIN_SOURCE;
 use crate::run::snapshot::snapshot;
@@ -51,6 +51,8 @@ pub(super) fn continued(fx: &Fixture, id: &str, prompt: Option<&str>) -> Run {
             wt_dir: WT.into(),
             data_dir: format!("/tmp/data/runs/{id}").into(),
             config: &fx.config,
+            models: crate::run::model_roles::RunModels::resolve(&fx.config.roles, None),
+            models_log: Vec::new(),
             testing: &config::Testing::default(),
             now: fx.now,
             yes: false,
@@ -58,9 +60,7 @@ pub(super) fn continued(fx: &Fixture, id: &str, prompt: Option<&str>) -> Run {
         },
     )
     .unwrap();
-    let agent = config::AgentConfig::default();
-    let resolved =
-        resolve_orchestrator(None, &agent, run.limits.default_runtime, &run.roster).unwrap();
+    let resolved = orchestrator_route(None, run.limits.models());
     make_planned(&mut run, None, resolved, false, BTreeMap::new());
     run.chain = Some(CHAIN.into());
     let first = prompt.map_or_else(|| orchestrator_first_prompt(&run), String::from);

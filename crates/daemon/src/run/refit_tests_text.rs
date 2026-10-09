@@ -90,13 +90,11 @@ tuning: /tmp/ax-repo/tuning.toml  (refit after 30 samples per class)
   * derived from another class's median
 tuning proposals:
   thresholds.s  S line threshold 20 → 35 (p90 of 34 merged S tasks)
-  route.s       S route standard/low → standard/medium (14 of 34 S tasks, 41%, reached rung 2 or higher)
 apply with anthrex run stats --apply <id>; dismiss with anthrex run stats --dismiss <id>
 ";
     assert_eq!(render(&r), expected);
     assert_eq!(r.min_samples, 30);
     assert!(r.refit_budgets);
-    assert_eq!(r.orchestrator_list, None);
 }
 
 #[test]

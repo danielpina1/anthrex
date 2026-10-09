@@ -16,8 +16,8 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use proto::{
-    Effort, HoldKind, HoldState, IntegrationState, MessageKind, Route, Runtime, Strength,
-    TaskNoteKind, TokenUsage,
+    Effort, HoldKind, HoldState, IntegrationState, MessageKind, Route, Runtime, TaskNoteKind,
+    TokenUsage,
 };
 use serde::{Deserialize, Serialize};
 
@@ -394,8 +394,7 @@ impl EpicRecord {
             route: Route {
                 runtime: Runtime::Claude,
                 model: String::new(),
-                strength: Strength::Frontier,
-                effort: Effort::High,
+                effort: Effort::HIGH,
             },
             phase: PlannerPhase::Queued,
             request: brief.into(),
@@ -456,8 +455,7 @@ impl EpicRecord {
             route: Route {
                 runtime: Runtime::Claude,
                 model: "claude-opus-5".into(),
-                strength: Strength::Frontier,
-                effort: Effort::High,
+                effort: Effort::HIGH,
             },
             phase,
             request: String::new(),

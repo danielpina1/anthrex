@@ -29,6 +29,7 @@ fn e2e_goal_form_request_matches_the_cli() {
         orchestrator: Some(OrchestratorChoice {
             runtime: Runtime::Claude,
             model: None,
+            effort: None,
         }),
         delivery: None,
         continue_from: None,

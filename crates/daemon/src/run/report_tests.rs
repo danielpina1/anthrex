@@ -1,6 +1,4 @@
-use proto::{
-    AgentRole, DoneSignal, Finding, Route, Runtime, Severity, Strength, TokenUsage, Verdict,
-};
+use proto::{AgentRole, DoneSignal, Finding, Route, Runtime, Severity, TokenUsage, Verdict};
 
 use super::*;
 use crate::run::model::{
@@ -10,7 +8,11 @@ use crate::run::model::{
 use crate::run::test_support::{EXAMPLE_PLAN, run_ok, task};
 
 fn base_run() -> Run {
-    run_ok(EXAMPLE_PLAN)
+    let mut run = run_ok(EXAMPLE_PLAN);
+    // Milestone 9.8 decision 31: the example plan's route is ignored with a log line;
+    // these fixtures start, as before, from an empty log.
+    run.log.clear();
+    run
 }
 
 /// A worker round with every field filled, its counters set from the caller.
@@ -23,8 +25,7 @@ fn round(role: AgentRole, session: u32, turns: u32, tool_calls: u32, denials: u3
         route: Route {
             runtime: Runtime::Claude,
             model: "claude-sonnet-5".to_string(),
-            strength: Strength::Standard,
-            effort: proto::Effort::High,
+            effort: proto::Effort::HIGH,
         },
         launch_op: 1,
         session_id: Some("sess-1".to_string()),

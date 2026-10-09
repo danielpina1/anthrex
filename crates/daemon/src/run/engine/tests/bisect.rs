@@ -16,7 +16,6 @@ use crate::run::engine::stages::set_stage_head;
 use crate::run::engine::{Effect, OpKind, OpResult};
 use crate::run::model::{FixOf, OpId, StageMerge};
 use crate::run::proof::proof_command;
-use crate::run::roster::escalate;
 use crate::run::tiers::TestAtSpec;
 
 pub(super) const TEST: &str = "a::works";
@@ -170,6 +169,7 @@ fn bisect_finds_the_first_red_merge() {
 #[test]
 fn bisect_fix_task_takes_the_culprits_owns_and_the_route_one_rung_up() {
     let mut fx = bisected();
+    fx.with_efforts();
     answer(&mut fx, 4);
     let culprit = fx.task("t4").clone();
     assert_eq!(culprit.state, TaskState::Merged, "the culprit stays merged");
@@ -177,7 +177,7 @@ fn bisect_fix_task_takes_the_culprits_owns_and_the_route_one_rung_up() {
     assert_eq!(fix.origin, TaskOrigin::Bisect);
     assert_eq!(fix.spec.owns, culprit.spec.owns);
     assert_eq!(fix.spec.owns, ["docs/t4/**"]);
-    let up = escalate(&fx.run().roster, &culprit.route);
+    let up = fx.escalated("t4", &culprit.route);
     assert_ne!(up, culprit.route, "a rung up");
     assert_eq!(fix.route, up);
     assert_eq!(fix.test_mode, TestMode::Check);

@@ -141,12 +141,18 @@ fn goal_form_sends_start_goal_and_opens_the_run() {
     assert!(press(&mut app, KeyCode::Char('j'), KeyModifiers::CONTROL).is_empty());
     typed(&mut app, "b");
     assert!(tap(&mut app, KeyCode::Tab).is_empty());
-    assert_eq!(goal_form(&app).focus, GoalField::Runtime);
-    assert!(tap(&mut app, KeyCode::Right).is_empty());
-    assert!(tap(&mut app, KeyCode::Tab).is_empty());
-    // No settings cache here: the picker is `default`, `custom…` (9.0.6 decision 39).
-    assert!(tap(&mut app, KeyCode::Right).is_empty());
+    assert_eq!(goal_form(&app).focus, GoalField::Model);
+    // Milestone 9.8 decision 39 (changed expectation): `⏎` opens the model picker; no
+    // catalogs here, so `custom…` after the role table, the runtime, then the name.
+    assert!(tap(&mut app, KeyCode::Enter).is_empty());
+    assert!(tap(&mut app, KeyCode::Char('j')).is_empty());
+    assert!(tap(&mut app, KeyCode::Enter).is_empty());
+    assert!(tap(&mut app, KeyCode::Enter).is_empty());
     typed(&mut app, "claude-opus-5");
+    assert!(tap(&mut app, KeyCode::Enter).is_empty());
+    assert!(goal_form(&app).picker.is_none());
+    assert!(tap(&mut app, KeyCode::Tab).is_empty());
+    assert_eq!(goal_form(&app).focus, GoalField::Effort);
     assert!(tap(&mut app, KeyCode::Tab).is_empty());
     // Milestone 9.3 decision 25: the orchestrator row, `new` with no idle one.
     assert_eq!(goal_form(&app).focus, GoalField::Orchestrator);
@@ -173,6 +179,7 @@ fn goal_form_sends_start_goal_and_opens_the_run() {
             orchestrator: Some(OrchestratorChoice {
                 runtime: proto::Runtime::Claude,
                 model: Some("claude-opus-5".into()),
+                effort: None,
             }),
             delivery: Some(proto::DeliveryMode::Pr),
             continue_from: None,

@@ -183,15 +183,15 @@ fn a_conflict_being_delivered_is_not_undone_when_the_task_is_held_again() {
 /// counted, whose hand-over prompt ends with the answer.
 #[test]
 fn a_held_codex_task_that_lost_its_session_before_an_id_gets_a_fresh_one() {
-    let codex = "[task.route]\nruntime = \"codex\"\nmodel = \"\"";
+    // Milestone 9.8 decision 31: both on Codex through the small row, not a route.
     let plan = plan_with(
         PROFILE,
         &[
-            task_toml("t1", "S", "[\"crates/a/**\"]", codex),
-            task_toml("t2", "S", "[\"crates/a/src/**\"]", codex),
+            task_toml("t1", "S", "[\"crates/a/**\"]", ""),
+            task_toml("t2", "S", "[\"crates/a/src/**\"]", ""),
         ],
     );
-    let mut fx = Fixture::new(&plan);
+    let mut fx = Fixture::with_config(&plan, codex_small());
     fx.ready(true);
     let window = fx.launch_all()[0].1;
     assert_eq!(fx.task("t1").rounds[0].session_id, None);

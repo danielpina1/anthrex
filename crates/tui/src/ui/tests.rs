@@ -272,7 +272,7 @@ fn modals_render_on_top() {
     let (out, _) = render(&app, 100, 24);
     assert!(out.contains("C-b t        tree "), "{out}");
     assert!(out.contains("sidebar width"));
-    assert!(out.contains("↓ 92 more"), "send a literal: a scroll away");
+    assert!(out.contains("↓ 96 more"), "send a literal: a scroll away");
 }
 
 /// Task M6.9 decision 38: every piece of help or hint text takes the prefix from

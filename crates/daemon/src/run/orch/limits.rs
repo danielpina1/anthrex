@@ -2,7 +2,7 @@
 //! `[orchestrator]` keys a run is frozen with, moved out of `orch/mod.rs` (milestone
 //! 9.3, task 3) and re-exported there. Pure.
 
-use proto::{Budget, Effort, Runtime, Strength};
+use proto::{Budget, Effort, Runtime};
 use serde::{Deserialize, Serialize};
 
 /// `[orchestrator]`'s milestone 9 keys, as the run was built with them. Absent from a
@@ -22,10 +22,6 @@ pub struct OrchLimits {
     /// `[orchestrator.agent]`, frozen too (task M9.7): `run promote` and a promotion
     /// recorded before milestone 9 resolve the orchestrator's route from the run alone.
     pub agent: AgentLimits,
-    /// The run scouts' route keys, frozen (whole-branch review, item 1). `None` on a
-    /// run recorded before them: the scout service's live keys and roster.
-    #[serde(default)]
-    pub scouts: Option<crate::scout::spec::ScoutRouting>,
     /// Milestone 9.6: `[orchestrator.design]`, frozen with the run's mode
     /// (`Run.design_mode`). Not written while it is the default, so a run recorded
     /// before 9.6 is written back as it was read.
@@ -87,7 +83,7 @@ impl AgentLimits {
         config::AgentConfig {
             runtime: self.runtime,
             model: self.model.clone(),
-            effort: self.effort,
+            effort: self.effort.clone(),
         }
     }
 }
@@ -97,7 +93,6 @@ impl AgentLimits {
 #[serde(default)]
 pub struct PlannerLimits {
     pub runtime: Option<Runtime>,
-    pub strength: Strength,
     pub effort: Effort,
     pub max_tool_calls: u32,
     pub timeout_secs: u64,
@@ -118,8 +113,7 @@ impl OrchLimits {
             note_max_per_task: a.note_max_per_task,
             planners: PlannerLimits {
                 runtime: p.runtime,
-                strength: p.strength,
-                effort: p.effort,
+                effort: p.effort.clone(),
                 max_tool_calls: p.max_tool_calls,
                 timeout_secs: p.timeout_secs,
                 max_rejections: p.max_rejections,
@@ -127,9 +121,8 @@ impl OrchLimits {
             agent: AgentLimits {
                 runtime: a.agent.runtime,
                 model: a.agent.model.clone(),
-                effort: a.agent.effort,
+                effort: a.agent.effort.clone(),
             },
-            scouts: Some(crate::scout::spec::ScoutRouting::from_config(config)),
             design: DesignLimits::from_config(&config.design),
         }
     }

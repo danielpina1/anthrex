@@ -63,7 +63,7 @@ pub fn orch_argv_with(
             agent_label: None,
         },
         instructions: "THE CONTRACT".into(),
-        effort: Effort::High,
+        effort: Effort::HIGH,
         claude_allowed_tools: strings(ORCHESTRATOR_ALLOWED_TOOLS),
         claude_disallowed_tools: strings(ORCHESTRATOR_DISALLOWED_TOOLS),
         env: Vec::new(),

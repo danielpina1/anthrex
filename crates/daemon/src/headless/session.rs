@@ -148,9 +148,7 @@ impl HeadlessHandle {
             .stderr(Stdio::piped())
             .process_group(0);
         session_env(&mut command, &super::session_vars(runtime, env), remove);
-        let mut child = command
-            .spawn()
-            .with_context(|| format!("could not start {}", program.to_string_lossy()))?;
+        let mut child = command.spawn().map_err(|e| spawn_error(program, cwd, e))?;
         let pid = child.id();
         let (stdin, stdout, stderr) = (
             child.stdin.take().expect("piped"),
@@ -363,8 +361,9 @@ impl HeadlessHandle {
     }
 }
 
-/// Decision 26's environment on `command`, less `remove`, then `env` on top.
-fn session_env(command: &mut Command, env: &[(String, String)], remove: &[&str]) {
+/// Decision 26's environment on `command`, less `remove`, then `env` on top. Model
+/// discovery's probes use it too (M9.8.6, MR §4.1: the same scrubbed environment).
+pub(crate) fn session_env(command: &mut Command, env: &[(String, String)], remove: &[&str]) {
     scrub_git_location_env(command);
     for (key, _) in std::env::vars_os() {
         let bytes = key.as_bytes();
@@ -404,3 +403,45 @@ fn signal_locked(pid: u32, signal: i32, group: bool) {
         }
     }
 }
+
+/// Milestone 9.8 (MR §7): the spawn found no program: `ENOENT` while the session's
+/// directory exists. `run::driver::start_error` names the role for it alone; a vanished
+/// directory (also `ENOENT`) stays the bare error. Displays as the spawn error always
+/// did, `could not start <program>`.
+#[derive(Debug)]
+pub struct ProgramNotFound {
+    program: String,
+    source: std::io::Error,
+}
+
+impl ProgramNotFound {
+    pub fn new(program: String, source: std::io::Error) -> Self {
+        Self { program, source }
+    }
+}
+
+impl std::fmt::Display for ProgramNotFound {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "could not start {}", self.program)
+    }
+}
+
+impl std::error::Error for ProgramNotFound {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+/// A failed spawn's error: [`ProgramNotFound`] when `ENOENT` came with `cwd` present (a
+/// `stat` on the spawning thread, already blocking), else `could not start <program>`.
+fn spawn_error(program: &OsStr, cwd: &Path, error: std::io::Error) -> anyhow::Error {
+    let program = program.to_string_lossy().into_owned();
+    if error.kind() == std::io::ErrorKind::NotFound && cwd.is_dir() {
+        return anyhow::Error::new(ProgramNotFound::new(program, error));
+    }
+    anyhow::Error::new(error).context(format!("could not start {program}"))
+}
+
+#[cfg(test)]
+#[path = "session_tests.rs"]
+mod tests;

@@ -20,6 +20,34 @@ pub struct OrchestratorChoice {
     pub runtime: Runtime,
     #[serde(default)]
     pub model: Option<String>,
+    /// Milestone 9.8: the goal form's effort; `None` is the row's (same model) or the
+    /// model's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+}
+
+impl OrchestratorChoice {
+    /// M9.8.13 fix round 1: the chosen model's problem under the model-name rule
+    /// ([`crate::models::model_id_problem`]); no model, or `""`, is the runtime's
+    /// default.
+    pub fn model_problem(&self) -> Result<(), String> {
+        match self.model.as_deref() {
+            Some(model) if !model.is_empty() => crate::models::model_id_problem(model),
+            _ => Ok(()),
+        }
+    }
+
+    /// Final review M3: the chosen effort's problem under the effort-name rule
+    /// ([`crate::models::valid_effort`], decision 5); no effort is fine.
+    pub fn effort_problem(&self) -> Result<(), String> {
+        match self.effort.as_deref() {
+            Some(effort) if !crate::models::valid_effort(effort) => Err(format!(
+                "{effort:?} is not an effort name (lowercase letters, digits, - and _, at most {} characters)",
+                crate::models::EFFORT_MAX_CHARS
+            )),
+            _ => Ok(()),
+        }
+    }
 }
 
 /// Decision 28: what an approval hold waits on.
@@ -196,5 +224,25 @@ impl<'de> Visitor<'de> for TargetVisitor {
             return Err(de::Error::invalid_length(0, &self));
         }
         Ok(MessageTarget::Tasks(ids))
+    }
+}
+
+#[cfg(test)]
+mod effort_problem_tests {
+    use super::*;
+
+    /// Final review M3: the goal form's effort is held to the effort-name rule.
+    #[test]
+    fn a_bad_effort_name_is_a_problem() {
+        let with = |effort: Option<&str>| OrchestratorChoice {
+            runtime: Runtime::Codex,
+            model: None,
+            effort: effort.map(Into::into),
+        };
+        assert!(with(None).effort_problem().is_ok());
+        assert!(with(Some("xhigh")).effort_problem().is_ok());
+        for bad in ["", "High", "-x y", "a b", "x\ny", "waytoolongeffortname1"] {
+            assert!(with(Some(bad)).effort_problem().is_err(), "{bad:?}");
+        }
     }
 }

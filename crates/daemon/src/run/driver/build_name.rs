@@ -18,7 +18,6 @@ use std::time::Duration;
 
 use proto::{HistoryLine, RoleRoutingInput, TokenUsage};
 
-use super::adapt::Adaptation;
 use super::{RunService, unix_now};
 use crate::decider::call::{Routed, decide_within};
 use crate::decider::{DeciderAnswer, DeciderRequest, Decision, RunNameInput};
@@ -82,8 +81,8 @@ impl RunService {
         let request = DeciderRequest::RunName(RunNameInput {
             goal: goal.to_string(),
         });
-        let (routed, decision) =
-            decide_within(&adaptation.deciders, &request, RUN_NAME_BOUND).await;
+        let asked = (&request, Some(project));
+        let (routed, decision) = decide_within(&adaptation.deciders, asked, RUN_NAME_BOUND).await;
         if let Some(line) = routed.as_ref().and_then(Routed::moved_line) {
             tracing::info!("{line}");
         }
@@ -91,7 +90,7 @@ impl RunService {
             tracing::info!(%reason, "the run_name decider fell back; the run is named by its goal");
         }
         if let Some(routed) = &routed {
-            self.record_run_name(adaptation, project, (goal, languages), (routed, &decision));
+            self.record_run_name(project, (goal, languages), (routed, &decision));
         }
         RunName::from_decision(&decision)
     }
@@ -102,7 +101,6 @@ impl RunService {
     /// file system. A failure is only logged.
     fn record_run_name(
         &self,
-        adaptation: &Adaptation,
         project: &Path,
         (goal, languages): (&str, &[String]),
         (routed, decision): (&Routed, &Decision),
@@ -117,17 +115,9 @@ impl RunService {
             ..RoleRoutingInput::default()
         };
         let session = format!("{nanos}/{n}");
-        let route = &routed.ctx.route;
-        let roster = &adaptation.scouts.context().roster.current();
-        let chosen = (
-            route,
-            roles::decider_candidates(roster, route, routed.strength()),
-        );
         let label = crate::decider::DeciderKind::RunName.label();
-        let pick = (routed.pick.as_ref(), routed.moved.as_ref());
         let at = (input, unix_now());
-        let mut record =
-            roles::decider_listed(None, (session.as_str(), label), &[], chosen, pick, at);
+        let mut record = roles::decider_routed(None, (session.as_str(), label), &[], routed, at);
         let (outcome, result) = roles::decider_outcome(decision);
         roles::finish(&mut record, outcome, result);
         let repo_dir = crate::profile::repo_dir(&self.ctx.data_dir, project);

@@ -374,7 +374,8 @@ fn a_roster_option_becomes_the_orchestrator_choice() {
         Ok(crate::actions_request::ActionInput::Promote(Some(
             OrchestratorChoice {
                 runtime: Runtime::Codex,
-                model: Some("gpt-6-sol".into())
+                model: Some("gpt-6-sol".into()),
+                effort: None
             }
         )))
     );

@@ -37,7 +37,9 @@ fn old_run_json_loads_with_local_delivery() {
             assert_eq!(round, Some(serde_json::json!(1)), "{key}");
         }
     }
-    let stored: serde_json::Value = serde_json::from_str(text).unwrap();
+    let mut stored: serde_json::Value = serde_json::from_str(text).unwrap();
+    // Milestone 9.8 (task M9.8.13): the roster and the scouts' keys are not written back.
+    crate::run::test_support::without_pre_9_8_keys(&mut stored);
     assert_eq!(back, stored);
     // A BisectRecord without `ci` (9.1's) is not a CI bisect.
     let record = serde_json::json!({

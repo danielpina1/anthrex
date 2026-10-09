@@ -254,6 +254,10 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     for problem in &config_problems {
         tracing::warn!(problem = %problem, "config problem");
     }
+    // Milestone 9.8 decision 18: each old model key the role table migrated, once.
+    for note in &loaded_config.orchestrator.roles_notes {
+        tracing::warn!(note = %note, "config migration");
+    }
 
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
     let mut config =
@@ -297,6 +301,10 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     // Decision 44: the runs of the last daemon are loaded, reconciled and restored
     // before the socket is bound, so the first client sees them.
     let runs = RunService::new(manager.clone(), run_context);
+    // Milestone 9.8 decision 20: the catalogs on disk, read on a blocking thread; no
+    // CLI is probed at start. Before the restore, so a run it fills with the role table
+    // (decision 9) is validated against them.
+    runs.models().load_disk().await;
     runs.restore().await;
     // M8b decisions 8, 11 and 12: the scout and profile services, handed to the engine
     // once; interrupted detections are failed and cleaned before the socket binds.

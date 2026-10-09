@@ -245,6 +245,7 @@ async fn handle_client(
     // task, so this loop never waits on one.
     let conversations =
         conversation::ConversationTask::spawn(manager.clone(), out_tx.clone(), shutdown.clone());
+    let models = runs.models();
     let mut run_api = run_api::RunApi::new(runs, out_tx.clone());
 
     let mut subscription: Option<Subscription> = None;
@@ -277,6 +278,10 @@ async fn handle_client(
         }
         let reply = match msg {
             ClientMsg::Hello { .. } => Some(error("hello", "already greeted")),
+            ClientMsg::ListModels { runtime, refresh } => {
+                requests::list_models(models.clone(), out_tx.clone(), runtime, refresh);
+                None
+            }
             ClientMsg::ListWindows => Some(DaemonMsg::WindowsChanged {
                 windows: manager.list(),
             }),

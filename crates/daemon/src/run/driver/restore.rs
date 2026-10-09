@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::guard::{guarded_step, prepare_guarded};
-use super::{OpCtx, RunService, cleanup, effects, unix_now};
+use super::{OpCtx, RunService, build_models, cleanup, effects, unix_now};
 use crate::run::engine::{Event, EventKind, OpKind, OpResult};
 use crate::run::git;
 use crate::run::journal;
@@ -86,6 +86,9 @@ impl RunService {
         }
         let windows = self.manager.list();
         let now = unix_now();
+        // Milestone 9.8 decision 9: the role table a run recorded before it gets.
+        let global = self.ctx.settings.current().orchestrator.roles.clone();
+        let catalogs = self.models().current();
         let mut runs = Vec::new();
         let mut replay = Vec::new();
         let mut held = Vec::new();
@@ -106,20 +109,31 @@ impl RunService {
             let (git, windows) = (self.ctx.git.clone(), windows.clone());
             let timeout = Duration::from_secs(run.limits.git_timeout_secs);
             let snapshot = run.clone();
+            let (table, known) = (global.clone(), catalogs.clone());
+            let data_dir = self.ctx.data_dir.clone();
             let checked = tokio::task::spawn_blocking(move || {
                 // Fix round 1 of final fix batch F1 (N2): every run worktree is pinned to
                 // its git directory before any git call in it, reconcile's included.
                 git::pin_worktrees(&snapshot.git_common_dir, &run_worktree_paths(&snapshot));
-                reconcile::reconcile(&git, &snapshot, &lines, &windows, timeout)
+                let models = (snapshot.limits.models.is_none())
+                    .then(|| build_models::freeze(&table, &snapshot.project, &data_dir, &known));
+                let reconciled = reconcile::reconcile(&git, &snapshot, &lines, &windows, timeout);
+                (reconciled, models)
             })
             .await;
-            let Ok(reconciled) = checked else {
+            let Ok((reconciled, models)) = checked else {
                 // Ruling T22-minors, m7: said in the run's own log, and held.
                 tracing::error!(run = %run.id, "reconcile panicked; the run is held");
+                let frozen =
+                    build_models::global_only(&global, &catalogs, build_models::READ_FAILED);
+                build_models::fill(&mut run, frozen, now);
                 hold_unreconciled(&mut run, now);
                 runs.push(run);
                 continue;
             };
+            if let Some(frozen) = models {
+                build_models::fill(&mut run, frozen, now);
+            }
             let mut answers = reconciled.replay(&run.id);
             for note in reconciled.notes {
                 run.log.push(LogEntry {

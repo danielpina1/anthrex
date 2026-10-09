@@ -1,53 +1,11 @@
-//! Milestone 9.5 decisions 8, 9 and 11: line-threshold and class-route proposals,
-//! `--apply` and `--dismiss`. Part of `run::refit` (split for the 600-line rule), which
-//! re-exports its public items. Pure.
+//! Milestone 9.5 decisions 8 and 11: line-threshold proposals, `--apply` and
+//! `--dismiss` (milestone 9.8 decision 30: the class-route proposals are gone). Part
+//! of `run::refit` (split for the 600-line rule), which re-exports its public items.
+//! Pure.
 
-use config::{RouteList, RouteLists};
-use proto::{
-    ClassRoute, Effort, HistoryLine, SizeThresholds, TuningChange, TuningFile, TuningProposal,
-};
+use proto::{HistoryLine, SizeThresholds, TuningChange, TuningFile, TuningProposal};
 
-use super::super::model::ClassRoutes;
-use super::super::validate::strength_label;
-use super::{
-    M_ROUTE_LADDER, Quality, S_ROUTE_LADDER, SizeClass, moved, percentile, qualifies,
-    route_samples, threshold_samples,
-};
-
-pub(super) fn effort_label(e: Effort) -> &'static str {
-    match e {
-        Effort::Low => "low",
-        Effort::Medium => "medium",
-        Effort::High => "high",
-    }
-}
-
-pub(super) fn route_text(r: ClassRoute) -> String {
-    format!("{}/{}", strength_label(r.strength), effort_label(r.effort))
-}
-
-/// A task class's model list; `None` for a design class (ruling T13-5, m6), whose
-/// agents' routes are decision 10's, never a class's.
-pub(super) fn list_of(lists: &RouteLists, class: SizeClass) -> Option<&RouteList> {
-    match class {
-        SizeClass::S => Some(&lists.s),
-        SizeClass::M => Some(&lists.m),
-        SizeClass::Hub => Some(&lists.hub),
-        SizeClass::Brainstorm | SizeClass::DocReview => None,
-    }
-}
-
-/// `list (config): <runtime>/<model> <effort>, …`, a candidate without `effort` taking
-/// the class's.
-pub(super) fn list_text(list: &RouteList, default: Effort) -> String {
-    let candidates: Vec<String> = (list.candidates.iter())
-        .map(|c| {
-            let effort = effort_label(c.effort.unwrap_or(default));
-            format!("{}/{} {effort}", c.runtime.label(), c.model)
-        })
-        .collect();
-    format!("list (config): {}", candidates.join(", "))
-}
+use super::{SizeClass, moved, percentile, qualifies, threshold_samples};
 
 pub(super) fn thresholds_of(file: &TuningFile) -> SizeThresholds {
     file.thresholds.unwrap_or_default()
@@ -98,72 +56,8 @@ fn threshold_proposal(
     })
 }
 
-/// A task class's route without a list: an applied `route.<class>`, else M8a's
-/// default. `None` for a design class (ruling T13-5, m6): it has no class route.
-pub(super) fn current_route(file: &TuningFile, class: SizeClass) -> Option<ClassRoute> {
-    let defaults = ClassRoutes::default();
-    match class {
-        SizeClass::S => Some(file.routes.get("s").copied().unwrap_or(defaults.s)),
-        SizeClass::M => Some(file.routes.get("m").copied().unwrap_or(defaults.m)),
-        SizeClass::Hub => Some(defaults.hub),
-        SizeClass::Brainstorm | SizeClass::DocReview => None,
-    }
-}
-
-/// Decision 9, for S or M with no model list.
-fn route_proposal(
-    lines: &[HistoryLine],
-    file: &TuningFile,
-    cfg: &config::Orchestrator,
-    class: SizeClass,
-    quality: &Quality,
-) -> Option<TuningProposal> {
-    let t = &cfg.tuning.table;
-    let ladder = match class {
-        SizeClass::S => &S_ROUTE_LADDER,
-        SizeClass::M => &M_ROUTE_LADDER,
-        SizeClass::Hub | SizeClass::Brainstorm | SizeClass::DocReview => return None,
-    };
-    if list_of(&cfg.tuning.routes, class).is_none_or(|l| !l.candidates.is_empty()) {
-        return None;
-    }
-    let cur = current_route(file, class)?;
-    let samples = route_samples(lines, class, t, cur);
-    if !qualifies(&samples, t) {
-        return None;
-    }
-    let at = ladder.iter().position(|r| *r == cur)?;
-    let n = samples.len() as u64;
-    let escalated = samples.iter().filter(|r| r.max_rung >= 2).count() as u64;
-    let c = class.label();
-    let (to, why) = if escalated * 100 > n * u64::from(t.escalate_above_percent) {
-        let pct = escalated * 100 / n;
-        let why = format!("{escalated} of {n} {c} tasks, {pct}%, reached rung 2 or higher");
-        (ladder.get(at + 1)?, why)
-    } else if escalated == 0 && !samples.iter().any(|r| quality.fails(r)) {
-        let why = format!("none of {n} {c} tasks reached rung 2 or higher or failed on quality");
-        (ladder.get(at.checked_sub(1)?)?, why)
-    } else {
-        return None;
-    };
-    Some(TuningProposal {
-        id: format!("route.{}", class.key()),
-        text: format!(
-            "{c} route {} → {} ({why})",
-            route_text(cur),
-            route_text(*to)
-        ),
-        current: route_text(cur),
-        proposed: route_text(*to),
-        change: TuningChange::Route {
-            class: class.key().to_string(),
-            route: *to,
-        },
-    })
-}
-
-/// The current proposals, in order `thresholds.s`, `thresholds.m`, `route.s`,
-/// `route.m`; one dismissed at its proposed value is left out.
+/// The current proposals, in order `thresholds.s`, `thresholds.m`; one dismissed at
+/// its proposed value is left out.
 pub fn proposals(
     lines: &[HistoryLine],
     file: &TuningFile,
@@ -171,9 +65,7 @@ pub fn proposals(
 ) -> Vec<TuningProposal> {
     let classes = [SizeClass::S, SizeClass::M];
     let thresholds = classes.map(|c| threshold_proposal(lines, file, cfg, c));
-    let quality = Quality::of(lines);
-    let routes = classes.map(|c| route_proposal(lines, file, cfg, c, &quality));
-    (thresholds.into_iter().chain(routes))
+    (thresholds.into_iter())
         .flatten()
         .filter(|p| file.dismissed.get(&p.id) != Some(&p.proposed))
         .collect()
@@ -193,8 +85,8 @@ fn named<'a>(
         .collect()
 }
 
-/// `--apply`: each named current proposal's change, written into `[thresholds]` or
-/// `[routes.<class>]`. An unknown id refuses the whole request.
+/// `--apply`: each named current proposal's change, written into `[thresholds]`. An
+/// unknown id refuses the whole request.
 pub fn apply(
     file: &TuningFile,
     current: &[TuningProposal],
@@ -210,9 +102,6 @@ pub fn apply(
                     _ => t.m_lines = *lines,
                 }
                 out.thresholds = Some(t);
-            }
-            TuningChange::Route { class, route } => {
-                out.routes.insert(class.clone(), *route);
             }
         }
     }

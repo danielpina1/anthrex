@@ -20,6 +20,9 @@ pub use toast::ToastLevel;
 
 pub const TOAST_TTL: Duration = Duration::from_secs(4);
 pub const RESIZE_DEBOUNCE: Duration = Duration::from_millis(30);
+// Protocol 19 grew `ClientMsg`/`RunRequest` (the role table, `OrchestratorChoice.effort`); these
+// values are built once per key press, so boxing would only add noise.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Effect {
     Send(ClientMsg),
@@ -61,7 +64,7 @@ pub enum Modal {
     /// Milestone 8c decision 33: the plan gate's task edit form (`crate::run_edit`).
     EditTask(Box<crate::run_edit::TaskEditForm>),
     /// Milestone 9 decision 44: the goal form (`crate::run_goal`).
-    StartGoal(crate::run_goal::GoalForm),
+    StartGoal(Box<crate::run_goal::GoalForm>),
     Action(Box<actions::ActionFlow>), // Milestone 9.0.6 decision 12: the action menu.
     Iterate(crate::run_iterate::IterateForm), // Milestone 9.3 decision 32 (`app/iterate.rs`).
     IdleMenu(idle_menu::IdleMenu),    // Milestone 9.3 decision 32: the idle orchestrator's menu.
@@ -183,6 +186,11 @@ pub struct App {
     pub replies: replies::PendingReplies, // Milestone 9.0.6 decision 16, by request id.
     /// Decision 24: the daemon's settings, fetched once per connection (`app/screens.rs`).
     pub settings_cache: Option<screens::SettingsCache>,
+    /// Milestone 9.8 decision 37: the discovered model catalogs (`DaemonMsg::Models`).
+    pub catalogs: model_picker::Catalogs,
+    /// Milestone 9.8 (preflight F10): the last tick's clock, which the picker's
+    /// `updated <age> ago` is measured against; the renderer never reads the clock.
+    pub ticked_at: Instant,
     pub screen: Option<screens::Screen>, // Decision 33: the open full-body screen.
     /// Milestone 9.3 decision 8: each project's goal draft, and the goal request a
     /// closed dialog still waits on (its success clears that project's draft).
@@ -247,6 +255,8 @@ impl App {
             brief_expanded: None,
             replies: Default::default(),
             settings_cache: None,
+            catalogs: Default::default(),
+            ticked_at: Instant::now(),
             screen: None,
             goal_drafts: Default::default(),
             goal_sent: None,
@@ -501,8 +511,9 @@ impl App {
     /// Called every 100 ms: advances the spinner, expires toasts, retries a dropped
     /// `Subscribe`, flushes a debounced resize.
     pub fn on_tick(&mut self) -> Vec<Effect> {
+        self.ticked_at = Instant::now();
         let mut effects = self.expire_replies();
-        effects.extend(self.screens_tick(Instant::now()));
+        effects.extend(self.screens_tick(self.ticked_at));
         effects.extend(self.tick());
         effects
     }
@@ -553,6 +564,7 @@ mod daemon;
 pub(crate) mod doc_gate;
 mod doc_gate_note;
 mod doc_gate_replies;
+pub(crate) mod form_picker;
 mod goal;
 pub(crate) mod headless;
 pub(crate) mod help;
@@ -561,6 +573,9 @@ mod iterate;
 mod lifecycle;
 mod link;
 mod modal_keys;
+pub(crate) mod model_picker;
+mod models_keys;
+pub(crate) mod models_table;
 mod paste;
 pub(crate) mod plan_review;
 pub(crate) mod plan_summary;

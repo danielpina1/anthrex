@@ -71,7 +71,8 @@ fn repo_with_project_settings(root: &Path) {
     git(root, &["commit", "-q", "-m", "base"]);
 }
 
-/// The fast path's one-task plan, owning a hub file, routed to Claude.
+/// The fast path's one-task plan, owning a hub file, on Claude by its row (milestone
+/// 9.8 decision 31: a plan's route is ignored; the built-in rows are Claude's).
 const HUB_PLAN: &str = r#"
 goal = "Rename a wire field"
 
@@ -93,11 +94,6 @@ test_mode_reason = "a rename"
 owns = ["crates/proto/src/wire.rs"]
 brief = "Rename it."
 acceptance = ["renamed"]
-[task.route]
-runtime = "claude"
-model = "claude-sonnet-5"
-strength = "standard"
-effort = "medium"
 "#;
 
 #[tokio::test]
@@ -205,7 +201,7 @@ fn shipped_service(data: &Path) -> Arc<RunService> {
 /// launches it.
 const INSTALLED_STAND_IN: &str = "/usr/bin/false";
 
-/// A one-task plan in `crates/a`, routed to Claude.
+/// A one-task plan in `crates/a`, on Claude by its row.
 fn one_task_plan() -> String {
     HUB_PLAN
         .replace("hub = [\"crates/proto/**\"]\n", "")
@@ -228,6 +224,7 @@ fn planned(runtime: proto::Runtime) -> Shape {
         choice: Some(proto::OrchestratorChoice {
             runtime,
             model: None,
+            effort: None,
         }),
         design: None,
     }))
@@ -309,20 +306,14 @@ async fn promote_repeats_the_project_settings_check() {
         Ok(run) => run,
         Err(error) => panic!("{}", error.text()),
     };
-    // A fast-path run whose roster's one Codex model is `fast`, below every route and
-    // review its task can take, and whose start trusted nothing: it reaches Claude only.
-    // Promoted with a Codex orchestrator, it would reach Codex.
+    // A fast-path run whose start trusted nothing and whose rows are all Claude's: it
+    // reaches Claude only. Promoted with a Codex orchestrator, it would reach Codex.
     run.path = Some(proto::RunPath::Fast);
     run.state = proto::RunState::Running;
-    run.roster.retain(|e| e.runtime == proto::Runtime::Claude);
-    run.roster.push(proto::ModelEntry {
-        runtime: proto::Runtime::Codex,
-        model: "codex-mini".into(),
-        strength: proto::Strength::Fast,
-        ..run.roster[0].clone()
-    });
     run.trusted_project.clear();
     run.trust_project = false;
+    // Milestone 9.8: Claude rows keep it on Claude.
+    crate::run::test_support::claude_rows(&mut run);
     assert_eq!(
         crate::run::reach::reachable_runtimes(&run),
         vec![proto::Runtime::Claude]
@@ -336,6 +327,7 @@ async fn promote_repeats_the_project_settings_check() {
     let choice = proto::OrchestratorChoice {
         runtime: proto::Runtime::Codex,
         model: None,
+        effort: None,
     };
     let (codex, claude) = (Some(&choice), None);
     let refusal = service.promote_refusal(&id, codex).await.unwrap_err();

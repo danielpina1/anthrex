@@ -27,7 +27,9 @@ mod design;
 mod profile;
 mod roster;
 mod tuning;
-pub use tuning::{Candidate, ConfiguredBudgets, Pick, RouteList, RouteLists, Tuning, TuningConfig};
+pub(crate) use tuning::read_routes;
+pub use tuning::{ConfiguredBudgets, Tuning, TuningConfig};
+pub(crate) use tuning::{RouteList, RouteLists};
 
 pub use adapt::{Deciders, Metering, Onboarding, Scouts};
 pub use agent::AgentConfig;
@@ -36,7 +38,7 @@ pub use design::{DesignBudget, DesignConfig};
 use budget::read_budgets;
 use profile::{read_profile, report_unknown_profile};
 use roster::read_models;
-pub use roster::{MODEL_NOTE_MAX, default_roster};
+pub(crate) use roster::{LegacyModel, LegacyStrength, default_roster};
 mod unknown;
 pub(crate) use unknown::report_unknown;
 
@@ -95,7 +97,9 @@ pub struct Orchestrator {
     pub confined_localhost_ports: std::collections::BTreeMap<String, Vec<u16>>,
     pub claude: ClaudeHeadless,
     pub builtin_models: bool,
-    pub models: Vec<proto::ModelEntry>,
+    /// The old `[[orchestrator.models]]` roster, read only to migrate the old keys
+    /// (task M9.8.14): its entries' fields are this crate's.
+    pub models: Vec<LegacyModel>,
     pub profile: proto::ProfileSpec,
     /// M8b decision 3: `[orchestrator] fast_path` and the adaptation tables.
     pub fast_path: bool,
@@ -109,6 +113,9 @@ pub struct Orchestrator {
     pub tuning: TuningConfig,
     /// Milestone 9.6: `[orchestrator.design]`, the design flow (DF §1, §2.2).
     pub design: DesignConfig,
+    /// Milestone 9.8: the global role table (decision 19) and the migration's notes.
+    pub roles: crate::ModelTable,
+    pub roles_notes: Vec<String>,
 }
 
 /// `[orchestrator.claude] auth`, decision 50: whether a headless Claude session reads
@@ -180,6 +187,8 @@ impl Default for Orchestrator {
             agent: agent::AgentSettings::default(),
             tuning: TuningConfig::default(),
             design: DesignConfig::default(),
+            roles: crate::ModelTable::default(),
+            roles_notes: Vec::new(),
         }
     }
 }

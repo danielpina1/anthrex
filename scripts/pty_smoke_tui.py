@@ -49,9 +49,9 @@ SETTINGS_SAVE_WAIT = 45.0
 # The client's exit after `C-b d`: local, as in every other stage.
 DETACH_WAIT = 5.0
 
-# The start of the Settings screen's confirmation of a save (`SAVED`,
-# `crates/tui/src/app/settings_screen.rs`).
-SAVED = "saved · new runs use these settings"
+# The start of the Settings screen's confirmation of a save of its `models` section
+# (`MODELS_SAVED`, `crates/tui/src/app/settings_screen.rs`).
+MODELS_SAVED = "saved · new runs use these models"
 
 PLAN = """goal = "Menu t"
 
@@ -135,25 +135,32 @@ def tui_stage(pty_proc, bin_path, run_cmd, fail, config_path):
 
         proc.send(b"\x02S")
         proc.wait_for(" SETTINGS ", timeout=SCREEN_WAIT, label="the Settings screen's badge")
-        proc.wait_for("claude-opus-5-5", timeout=SETTINGS_LOAD_WAIT, label="the Claude models")
-        # Tab to the Codex table; `gpt-6-sol` is its second row
-        # (`config::settings::SHIPPED_CODEX`), off in the built-in roster.
-        proc.send(b"\t")
-        proc.wait_for("[ ] gpt-6-sol", timeout=SCREEN_WAIT, label="the Codex table")
-        proc.send(b"j")
-        proc.send(b" ")
-        proc.wait_for("[x] gpt-6-sol", timeout=SCREEN_WAIT, label="gpt-6-sol enabled")
+        # Milestone 9.8 (MR §5.1): Settings opens on the role table, the orchestrator
+        # row selected; the built-in row is `claude:claude-opus-5-5` at `high`, its
+        # label cut to the model column (gate fix B3). The per-runtime model lists
+        # (the old Codex table) are gone.
+        proc.wait_for("▸orchestrator", timeout=SETTINGS_LOAD_WAIT, label="the role table")
+        proc.wait_for("claude-opus-5", timeout=SETTINGS_LOAD_WAIT, label="the orchestrator row's model")
+        # The catalogs have arrived (the screen asks `ListModels` on opening, answered by
+        # `fake-agent`'s discovery fixture) once the small row's `claude-sonnet-5` reads
+        # as the catalog's `Sonnet`; until then `e` has no efforts to cycle.
+        proc.wait_for("Claude · Sonnet ", timeout=SETTINGS_LOAD_WAIT, label="the Claude catalog")
+        # `e` cycles the orchestrator row's effort over Opus's catalog efforts: high,
+        # then xhigh.
+        proc.send(b"e")
+        proc.wait_for(" xhigh ", timeout=SCREEN_WAIT, label="the orchestrator row at xhigh")
         proc.send(b"w")
-        proc.wait_for(SAVED, timeout=SETTINGS_SAVE_WAIT, label="the saved line")
+        proc.wait_for(MODELS_SAVED, timeout=SETTINGS_SAVE_WAIT, label="the saved line")
         # The daemon answers `Saved` only after its rename, so the file is there now.
         try:
             with open(config_path, encoding="utf-8") as f:
                 written = f.read()
         except FileNotFoundError:
-            fail(f"the Settings save showed {SAVED!r} but {config_path} does not exist")
-        if "builtin_models = false" not in written or '"gpt-6-sol"' not in written:
-            fail(f"the saved {config_path} lacks the roster:\n{written}")
-        print(f"ok: Settings saved gpt-6-sol through the daemon into {config_path}")
+            fail(f"the Settings save showed {MODELS_SAVED!r} but {config_path} does not exist")
+        orchestrator = written.split("[models.orchestrator]", 1)
+        if len(orchestrator) != 2 or 'effort = "xhigh"' not in orchestrator[1].split("\n[", 1)[0]:
+            fail(f"the saved {config_path} lacks the orchestrator row at xhigh:\n{written}")
+        print(f"ok: Settings saved the orchestrator row at xhigh through the daemon into {config_path}")
         proc.send(b"\x1b")
         _wait_gone(proc, " SETTINGS ", "the Settings screen after its Esc", fail)
 

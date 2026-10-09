@@ -137,6 +137,17 @@ pub(super) fn brainstorming() -> Fixture {
     fx
 }
 
+/// Milestone 9.8 (task M9.8.13, the roster gone): the `brainstorm` row's model on
+/// `runtime`, as a route names it.
+fn row_model(fx: &Fixture, runtime: Runtime) -> String {
+    let row = &fx.run().limits.models().brainstorm;
+    let model = [&row.first, &row.second]
+        .into_iter()
+        .find(|m| m.runtime == runtime)
+        .expect("the brainstorm row names the runtime");
+    crate::run::model_roles::RunModels::route_of(model, None).model
+}
+
 /// Decision 10 and DF §3.1: with Claude and Codex installed, `start_brainstorm`
 /// launches two brainstormers at once, the strongest model of each runtime, with the
 /// same contract and the same first turn; each is named by its label.
@@ -150,13 +161,7 @@ fn two_brainstormers_launch_on_two_runtimes_with_the_same_prompt() {
     let routes: Vec<(String, Runtime, String)> = (specs.iter())
         .map(|s| (s.kind.label(), s.route.runtime, s.route.model.clone()))
         .collect();
-    let roster = &fx.run().roster;
-    let strongest = |runtime| {
-        crate::run::roster::strongest_of(roster, runtime)
-            .unwrap()
-            .model
-            .clone()
-    };
+    let strongest = |runtime| row_model(&fx, runtime);
     assert_eq!(
         routes,
         [
@@ -199,7 +204,7 @@ fn with_one_runtime_the_strongest_model_runs_twice_with_lenses_a_and_b() {
     fx.run_mut().orch.installed = [("codex".to_string(), false)].into();
     start_brainstorm(&mut fx);
     let specs: Vec<DesignAgentSpec> = launches(&fx).into_iter().map(|(_, s)| s).collect();
-    let claude = crate::run::roster::strongest_of(&fx.run().roster, Runtime::Claude).unwrap();
+    let claude = row_model(&fx, Runtime::Claude);
     for (spec, (label, lens)) in specs.iter().zip([("A", LENS_A), ("B", LENS_B)]) {
         assert_eq!(
             spec.kind,
@@ -209,7 +214,7 @@ fn with_one_runtime_the_strongest_model_runs_twice_with_lenses_a_and_b() {
         );
         assert_eq!(
             (spec.route.runtime, spec.route.model.as_str()),
-            (Runtime::Claude, claude.model.as_str())
+            (Runtime::Claude, claude.as_str())
         );
         assert!(spec.first_turn.contains(lens), "{}", spec.first_turn);
     }

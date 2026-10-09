@@ -268,7 +268,7 @@ pub(crate) fn shows(name: &str) -> Shows {
         "force remove over the pane" => row("worktree holds work", None, &["f  force", "k  keep"]),
         "rename over the pane" => row("rename", Some("esc cancel"), &["⏎ rename"]),
         "config notice over the pane" => row("config", Some("esc close"), &["esc close"]),
-        "edit form over the run view" => row("edit t1", Some("esc cancel"), &["⏎ save"]),
+        "edit form over the run view" => row("edit t1", Some("esc cancel"), &["⏎ choose model"]),
         // Milestone 9.3 decision 7: the large editor at both audit sizes, its footer's
         // `Esc cancel` and `^S start`; decision 25's continue row; decision 8's page.
         "goal form over the pane" | "goal form continuing" => {

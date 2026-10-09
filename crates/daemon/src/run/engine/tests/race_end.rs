@@ -487,7 +487,7 @@ fn the_last_lane_out_on_a_spill_is_adopted_at_rung_3() {
 
 /// A racing `t1` whose two lane checkouts could not be prepared.
 pub(super) fn never_prepared() -> Fixture {
-    let mut fx = Fixture::new(&plan_with(PROFILE, &[task("t1", "M", "a", RACING)]));
+    let mut fx = super::race::racers(&plan_with(PROFILE, &[task("t1", "M", "a", RACING)]));
     fx.ready(true);
     for (op, _) in fx.ops("PrepareWorktree") {
         let failed = OpResult::Failed {

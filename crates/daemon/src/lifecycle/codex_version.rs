@@ -3,10 +3,11 @@
 
 use crate::launch::LaunchGate;
 use crate::launch::codex::{MIN_CODEX_VERSION, parse_version};
+use crate::probe_child::ProbeChild;
 use std::io::{self, Read};
 use std::os::fd::AsRawFd;
 use std::os::unix::process::CommandExt;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -121,30 +122,6 @@ fn report(result: anyhow::Result<(u64, u64, u64)>) {
 /// it rather than retyping the string (`docs/timing-budgets.md` standing rule 1's
 /// principle, applied to a marker rather than a duration).
 pub const PROBE_FINISHED: &str = "codex version probe finished";
-
-struct ProbeChild {
-    child: Child,
-    deadline: Instant,
-    completed: bool,
-    reaped: bool,
-}
-
-impl Drop for ProbeChild {
-    fn drop(&mut self) {
-        if self.completed {
-            return;
-        }
-        // process_group(0) gives this probe its own group, including descendants.
-        let _ = crate::process::signal_group(self.child.id(), libc::SIGKILL);
-        while !self.reaped && Instant::now() < self.deadline {
-            match self.child.try_wait() {
-                Ok(Some(_)) => self.reaped = true,
-                Ok(None) => std::thread::sleep(Duration::from_millis(5)),
-                Err(_) => break,
-            }
-        }
-    }
-}
 
 fn probe(
     program: &str,

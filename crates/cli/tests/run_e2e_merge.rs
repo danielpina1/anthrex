@@ -43,9 +43,17 @@ fn wait_for_merge_of(task: &str) -> Value {
 
 const STALL_AFTER_SECS: u64 = 5;
 
+/// Milestone 9.8 decision 29: the small row (Sonnet) falls back to Codex's default, so
+/// rung 2 past Sonnet's top effort moves to Codex. The row starts the task at `high`,
+/// the built-in list's top (decision 31: a plan's route is ignored, so the effort is
+/// the row's), so on the default table (no fallback) it would stay on Sonnet: the peer
+/// runtime needs the fallback row (D2).
+const SMALL_FALLS_BACK_TO_CODEX: &str = "[models.implementer.small]\nmodel = \"claude:claude-sonnet-5\"\neffort = \"high\"\nfallback = \"codex:default\"";
+
 #[test]
 fn e2e_stall_escalates_to_a_fresh_session_on_the_peer_runtime() {
-    let h = RunHarness::new(&format!("stall_after_secs = {STALL_AFTER_SECS}"));
+    let stall = format!("stall_after_secs = {STALL_AFTER_SECS}");
+    let h = RunHarness::with_config(&stall, SMALL_FALLS_BACK_TO_CODEX, &[]);
     h.script(
         "worker-t1-1",
         &[
@@ -66,12 +74,7 @@ fn e2e_stall_escalates_to_a_fresh_session_on_the_peer_runtime() {
         ],
     );
     h.script("reviewer-t1-1", &[approve()]);
-    let tdd = task(
-        "t1",
-        &["tests/**", "feature.txt"],
-        "route = { runtime = \"claude\", strength = \"standard\", effort = \"high\" }",
-    )
-    .replace(
+    let tdd = task("t1", &["tests/**", "feature.txt"], "").replace(
         "test_mode = \"check\"\ntest_mode_reason = \"smoke\"\n",
         "test_mode = \"tdd\"\n",
     );
@@ -232,8 +235,9 @@ fn conflict_plan(tasks: &[String]) -> String {
     )
 }
 
+/// On Claude by its row (milestone 9.8 decision 31: a plan's route is ignored).
 fn claude_task(id: &str, owns: &str) -> String {
-    task(id, &[owns], "route = { runtime = \"claude\" }")
+    task(id, &[owns], "")
 }
 
 /// A harness for the conflict tests: `b/shared.txt` reads `base`; no small reviews.

@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 
 use proto::{
     AgentRole, DesignMode, DocAuthor, DocGateAction, DocGateKind, DocKind, Effort, Route, RunPath,
-    RunState, Runtime, Strength,
+    RunState, Runtime,
 };
 use serde_json::{Value, json};
 
@@ -15,7 +15,7 @@ use super::fixture::*;
 use super::orch::{ORCH, error, first_turn_woken, mcp_ready, orch_tool, triage};
 use crate::run::design::state::{DesignAgent, DesignAgentState, DesignState, NewDoc};
 use crate::run::engine::{Effect, EventKind, OpResult, design};
-use crate::run::orch::launch::resolve_orchestrator;
+use crate::run::orch::launch::orchestrator_route;
 use crate::run::orch::make_planned;
 
 pub(super) const REPORT: &str = "\
@@ -88,6 +88,8 @@ pub(super) fn design_planned(yes: bool) -> Fixture {
             wt_dir: WT.into(),
             data_dir: format!("/tmp/data/runs/{RUN_ID}").into(),
             config: &fx.config,
+            models: crate::run::model_roles::RunModels::resolve(&fx.config.roles, None),
+            models_log: Vec::new(),
             testing: &config::Testing::default(),
             now: 1_000,
             yes: false,
@@ -97,9 +99,7 @@ pub(super) fn design_planned(yes: bool) -> Fixture {
     .unwrap_or_else(|e| panic!("an empty plan builds: {e:?}"));
     // The driver froze the mode before (`driver/build.rs::make_planned`).
     run.design_mode = DesignMode::Full;
-    let agent = config::AgentConfig::default();
-    let default = run.limits.default_runtime;
-    let resolved = resolve_orchestrator(None, &agent, default, &run.roster).unwrap();
+    let resolved = orchestrator_route(None, run.limits.models());
     let triage = Some(triage(RunPath::Plan));
     make_planned(&mut run, triage, resolved, yes, BTreeMap::new());
     let reply = fx.reply();
@@ -134,8 +134,7 @@ pub(super) fn brainstormer(label: &str, runtime: Runtime) -> DesignAgent {
         route: Route {
             runtime,
             model: "m".into(),
-            strength: Strength::Frontier,
-            effort: Effort::High,
+            effort: Effort::HIGH,
         },
         session: 1,
         window_id: None,

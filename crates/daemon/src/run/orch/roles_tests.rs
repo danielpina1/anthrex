@@ -2,43 +2,33 @@
 
 use proto::{
     AgentRole, Effort, OrchestratorChoice, RoleOutcome, RoleRoutingInput, Route, RoutingCandidate,
-    RunPath, Runtime, Strength,
+    RunPath, Runtime,
 };
 
 use super::*;
-use crate::run::orch::launch::resolve_orchestrator;
+use crate::run::orch::launch::orchestrator_route;
 use crate::run::orch::test_support::run_of;
 
-fn route(model: &str, strength: Strength) -> Route {
+fn route(model: &str) -> Route {
     Route {
         runtime: Runtime::Claude,
         model: model.into(),
-        strength,
-        effort: Effort::High,
+        effort: Effort::HIGH,
     }
 }
 
-fn candidate(model: &str, strength: Strength) -> RoutingCandidate {
+fn candidate(model: &str) -> RoutingCandidate {
     RoutingCandidate {
-        route: route(model, strength),
+        route: route(model),
         skipped_reason: None,
     }
 }
 
-fn agent() -> config::AgentConfig {
-    config::AgentConfig {
-        runtime: None,
-        model: String::new(),
-        effort: Effort::High,
-    }
-}
-
-/// The orchestrator's record from decision 6's resolution for `choice`.
+/// The orchestrator's record from its resolution for `choice` (milestone 9.8: the row).
 fn orchestrator_of(choice: Option<&OrchestratorChoice>) -> RoleRoutingDecision {
     let mut run = run_of(1);
     run.path = Some(RunPath::Plan);
-    let resolved =
-        resolve_orchestrator(choice, &agent(), Runtime::Claude, &config::default_roster()).unwrap();
+    let resolved = orchestrator_route(choice, run.limits.models());
     let mut o = crate::run::orch::OrchestratorRecord::new(resolved.route, 1_000);
     o.routing = RoleSnapshot {
         source: resolved.source,
@@ -51,11 +41,8 @@ fn orchestrator_of(choice: Option<&OrchestratorChoice>) -> RoleRoutingDecision {
 #[test]
 fn record_appends_the_chosen_route_when_absent() {
     let run = run_of(1);
-    let listed = vec![
-        candidate("claude-haiku-4-5", Strength::Fast),
-        candidate("claude-sonnet-5", Strength::Standard),
-    ];
-    let chosen = route("claude-opus-5", Strength::Frontier);
+    let listed = vec![candidate("claude-haiku-4-5"), candidate("claude-sonnet-5")];
+    let chosen = route("claude-opus-5");
     let d = record(
         Some(&run),
         AgentRole::Planner,
@@ -96,17 +83,18 @@ fn record_appends_the_chosen_route_when_absent() {
 #[test]
 fn explicit_choice_is_identifiable_as_explicit() {
     let default = orchestrator_of(None);
-    assert_eq!(default.source, "roster_default");
+    assert_eq!(default.source, "role_table");
     // The user's choice names the same route the default would have taken; the record
     // still says it was the user's.
     let same = OrchestratorChoice {
         runtime: Runtime::Claude,
         model: Some(default.chosen.model.clone()),
+        effort: None,
     };
     let explicit = orchestrator_of(Some(&same));
     assert_eq!(explicit.chosen, default.chosen);
     assert_eq!(explicit.source, "explicit_choice");
-    assert_eq!(explicit.policy_version, ORCHESTRATOR_POLICY);
+    assert_eq!(explicit.policy_version, crate::run::routing::ROLES_POLICY);
     assert_eq!(explicit.role, AgentRole::Orchestrator);
 }
 
@@ -115,14 +103,15 @@ fn unchosen_candidates_have_no_failure_label() {
     let allowed = [NOT_INSTALLED, NOT_CONFIGURED, EARLIER_TAKEN];
     let failure = ["fail", "error", "reject", "bad", "lost"];
     let run = run_of(1);
-    let roster = config::default_roster();
     let mut records = vec![orchestrator_of(None)];
     let named = OrchestratorChoice {
         runtime: Runtime::Claude,
         model: Some("claude-sonnet-5".into()),
+        effort: None,
     };
     records.push(orchestrator_of(Some(&named)));
-    let ladder = ladder_candidates(&roster, Runtime::Claude, Strength::Fast, Effort::Low);
+    let reviewer = run.limits.models().choice(proto::models::Role::Reviewer);
+    let ladder = row_candidates(reviewer);
     let chosen = ladder[1].route.clone();
     records.push(record(
         Some(&run),
@@ -145,15 +134,13 @@ fn unchosen_candidates_have_no_failure_label() {
         "planner_config",
         PLANNER_POLICY,
         input_of(&run),
-        vec![
-            candidate("a", Strength::Fast),
-            candidate("b", Strength::Standard),
-        ],
-        &route("b", Strength::Standard),
+        vec![candidate("a"), candidate("b")],
+        &route("b"),
         2_000,
     ));
+    // Milestone 9.8: an orchestrator's snapshot is its chosen route alone.
     for d in &records {
-        assert!(d.candidates.len() > 1, "{d:#?}");
+        assert!(!d.candidates.is_empty(), "{d:#?}");
         for (i, c) in d.candidates.iter().enumerate() {
             if i == d.selected_index as usize {
                 assert_eq!(c.skipped_reason, None);
@@ -182,7 +169,7 @@ fn record_ids_are_stable() {
             PLANNER_POLICY,
             input_of(&run),
             Vec::new(),
-            &route("m", Strength::Standard),
+            &route("m"),
             2_000,
         )
     };
@@ -201,7 +188,7 @@ fn record_ids_are_stable() {
         None,
         ("17/3", "triage"),
         &[],
-        (&route("m", Strength::Fast), Vec::new()),
+        (&route("m"), Vec::new()),
         RoleRoutingInput::default(),
         2_000,
     );
@@ -218,42 +205,13 @@ fn record_ids_are_stable() {
     assert_eq!(done.result.as_deref(), Some("timed out"));
 }
 
-/// Review I-2: a decider's snapshot is `[orchestrator.deciders]`'s ladder on the mode's
-/// runtime (the route's), at or above its strength, lowest first; never the peer's.
-#[test]
-fn decider_candidates_are_the_modes_runtime_ladder_only() {
-    let roster = config::default_roster();
-    for runtime in [Runtime::Claude, Runtime::Codex] {
-        let chosen = Route {
-            runtime,
-            model: String::new(),
-            strength: Strength::Standard,
-            effort: Effort::Low,
-        };
-        let got = decider_candidates(&roster, &chosen, Strength::Standard);
-        let mut want: Vec<&proto::ModelEntry> = roster
-            .iter()
-            .filter(|e| e.runtime == runtime && e.strength >= Strength::Standard)
-            .collect();
-        want.sort_by_key(|e| e.strength);
-        let got_models: Vec<(Runtime, &str)> = got
-            .iter()
-            .map(|c| (c.route.runtime, c.route.model.as_str()))
-            .collect();
-        let want_models: Vec<(Runtime, &str)> =
-            want.iter().map(|e| (e.runtime, e.model.as_str())).collect();
-        assert_eq!(got_models, want_models);
-        assert!(got.iter().all(|c| c.route.effort == Effort::Low));
-    }
-}
-
 /// Review M-4: a decider call about one task names it; a call about several (a batch
 /// size check) is run-level and names none rather than only the first.
 #[test]
 fn a_decider_record_names_its_task_only_when_it_has_one() {
     let run = run_of(2);
     let make = |tasks: &[String]| {
-        let chosen = (&route("m", Strength::Fast), Vec::new());
+        let chosen = (&route("m"), Vec::new());
         decider_record(
             Some(&run),
             ("9", "size_check"),
@@ -269,32 +227,6 @@ fn a_decider_record_names_its_task_only_when_it_has_one() {
     assert_eq!(make(&["t0".into(), "t1".into()]).trigger, "size_check");
 }
 
-/// Review M-5 (a): a sub-planner's and a scout's ladder is its runtime's entries at or
-/// above the strength, lowest first, then the peer runtime's the same way.
-#[test]
-fn planner_and_scout_ladders_include_the_peer_runtime() {
-    let roster = config::default_roster();
-    let got = ladder_candidates(&roster, Runtime::Codex, Strength::Standard, Effort::High);
-    let rank = |rt: Runtime| {
-        let mut e: Vec<&proto::ModelEntry> = roster
-            .iter()
-            .filter(|e| e.runtime == rt && e.strength >= Strength::Standard)
-            .collect();
-        e.sort_by_key(|e| e.strength);
-        e.into_iter().map(|e| (e.runtime, e.model.clone()))
-    };
-    let want: Vec<(Runtime, String)> = rank(Runtime::Codex).chain(rank(Runtime::Claude)).collect();
-    let got: Vec<(Runtime, String)> = got
-        .into_iter()
-        .map(|c| (c.route.runtime, c.route.model))
-        .collect();
-    assert_eq!(got, want);
-    assert!(
-        want.iter().any(|(r, _)| *r == Runtime::Claude),
-        "the peer is listed"
-    );
-}
-
 /// Review M-5 (b): which reason goes to which unchosen candidate. Before the chosen
 /// one: not in the configured list; after it: an earlier candidate was taken; a
 /// caller's own reason is kept; the chosen one has none.
@@ -302,10 +234,10 @@ fn planner_and_scout_ladders_include_the_peer_runtime() {
 fn each_unchosen_candidate_gets_the_reason_for_its_place() {
     let run = run_of(1);
     let mut listed = vec![
-        candidate("a", Strength::Fast),
-        candidate("b", Strength::Standard),
-        candidate("c", Strength::Frontier),
-        candidate("d", Strength::Frontier),
+        candidate("a"),
+        candidate("b"),
+        candidate("c"),
+        candidate("d"),
     ];
     listed[3].skipped_reason = Some(NOT_INSTALLED.into());
     let reasons = |chosen: &Route| {
@@ -328,12 +260,12 @@ fn each_unchosen_candidate_gets_the_reason_for_its_place() {
     };
     let s = |r: &str| Some(r.to_string());
     assert_eq!(
-        reasons(&route("b", Strength::Standard)),
+        reasons(&route("b")),
         vec![s(NOT_CONFIGURED), None, s(EARLIER_TAKEN), s(NOT_INSTALLED)]
     );
     // A chosen route absent from the list is appended; every listed one came first.
     assert_eq!(
-        reasons(&route("z", Strength::Frontier)),
+        reasons(&route("z")),
         vec![
             s(NOT_CONFIGURED),
             s(NOT_CONFIGURED),

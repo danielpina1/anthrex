@@ -24,7 +24,7 @@ fn reply_both_ways(reply: RunReply) {
 fn a_lane(lane: RaceLane, state: LaneState) -> LaneInfo {
     LaneInfo {
         lane,
-        route: a_route(Runtime::Codex, Strength::Standard, Effort::Medium, "gpt-6"),
+        route: a_route(Runtime::Codex, Effort::MEDIUM, "gpt-6"),
         state,
         checkout: format!("t1.{}", lane.label()),
         head: Some("d1d1d1d".into()),
@@ -53,7 +53,6 @@ fn a_tuning_report() -> TuningReport {
         }),
         weight_secs: Some(550),
         weight_derived: true,
-        route: "standard/low".into(),
     };
     TuningReport {
         path: PathBuf::from("/tmp/data/repos/p-1234/tuning.toml"),
@@ -66,39 +65,23 @@ fn a_tuning_report() -> TuningReport {
             class("hub", RefitState::Configured),
             class("hub", RefitState::Off),
         ],
-        proposals: vec![
-            TuningProposal {
-                id: "threshold-s".into(),
-                text: "S tasks reach 35 lines".into(),
-                current: "20".into(),
-                proposed: "35".into(),
-                change: TuningChange::Threshold {
-                    class: "S".into(),
-                    lines: 35,
-                },
+        proposals: vec![TuningProposal {
+            id: "threshold-s".into(),
+            text: "S tasks reach 35 lines".into(),
+            current: "20".into(),
+            proposed: "35".into(),
+            change: TuningChange::Threshold {
+                class: "S".into(),
+                lines: 35,
             },
-            TuningProposal {
-                id: "route-m".into(),
-                text: "M tasks escalate".into(),
-                current: "standard/medium".into(),
-                proposed: "frontier/high".into(),
-                change: TuningChange::Route {
-                    class: "M".into(),
-                    route: ClassRoute {
-                        strength: Strength::Frontier,
-                        effort: Effort::High,
-                    },
-                },
-            },
-        ],
+        }],
         moved_bad_file: Some(PathBuf::from("/tmp/data/repos/p-1234/tuning.toml.bad-1")),
         parse_error: Some("TOML parse error at line 1, column 1".into()),
-        applied: vec!["route-m".into()],
+        applied: vec!["threshold-s".into()],
         dismissed: vec![ProposalValue {
             id: "threshold-s".into(),
             value: "35".into(),
         }],
-        orchestrator_list: Some("codex/gpt-6.1-sol high".into()),
         project: Some(PathBuf::from("/r/demo")),
     }
 }
@@ -174,7 +157,7 @@ fn every_new_or_changed_message_round_trips() {
     });
     task.pair = Some(PairInfo {
         phase: PairPhase::Implementing,
-        writer_route: a_route(Runtime::Claude, Strength::Standard, Effort::Low, "s"),
+        writer_route: a_route(Runtime::Claude, Effort::LOW, "s"),
         test: Some("a::works".into()),
         red: Some("abcdef1".into()),
         red_checked: Some(true),
@@ -473,4 +456,21 @@ fn a_check_and_a_proof_carry_their_lane() {
     assert!(json.get("lane").is_none(), "{json}");
     let back: crate::ProofInfo = rmp_serde::from_slice(&p15_bytes(&json)).unwrap();
     assert_eq!(back, none);
+}
+
+/// Milestone 9.8 (M9.8.11 fix round 1): `TaskInfo.row` round-trips, and a task info
+/// without it (as sent before the field) decodes with none.
+#[test]
+fn a_task_infos_row_round_trips() {
+    let mut task = a_task_info();
+    task.row = Some(a_route(
+        Runtime::Claude,
+        Effort::new("max"),
+        "claude-opus-5-5",
+    ));
+    both_ways(&task);
+    let mut json = serde_json::to_value(&task).unwrap();
+    json.as_object_mut().unwrap().remove("row");
+    let back: TaskInfo = serde_json::from_value(json).unwrap();
+    assert_eq!(back.row, None);
 }

@@ -264,7 +264,6 @@ mod tests {
                 id: "thresholds.s".into(),
                 value: "38".into(),
             }],
-            orchestrator_list: None,
             parse_error: None,
             project: None,
         };

@@ -432,8 +432,8 @@ pub fn claude_args(
     if !spec.model.is_empty() {
         args.extend(["--model".into(), spec.model.clone()]);
     }
-    if caps.claude_effort_flag {
-        args.extend(["--effort".into(), effort(spec.effort).into()]);
+    if let (true, Some(e)) = (caps.claude_effort_flag, effort(&spec.effort)) {
+        args.extend(["--effort".into(), e.into()]);
     }
     match spec.claude_auth {
         config::ClaudeAuth::ApiKey => args.push("--bare".into()),
@@ -534,10 +534,9 @@ pub fn codex_args(
             caps.codex_filter
         ))
     ));
-    config(format!(
-        "model_reasoning_effort={}",
-        toml_string(effort(spec.effort))
-    ));
+    if let Some(e) = effort(&spec.effort) {
+        config(format!("model_reasoning_effort={}", toml_string(e)));
+    }
     config(format!("approval_policy={}", toml_string("never")));
     let plan = codex_plan(spec);
     match codex_render_dialect(spec, &plan, caps).render(
@@ -574,12 +573,10 @@ pub(crate) fn toml_array(items: &[String]) -> String {
     format!("[{}]", strings.join(","))
 }
 
-pub(crate) fn effort(effort: Effort) -> &'static str {
-    match effort {
-        Effort::Low => "low",
-        Effort::Medium => "medium",
-        Effort::High => "high",
-    }
+/// The effort name a launch passes, `None` for [`Effort::DEFAULT`]: the model's own
+/// default is chosen by passing no flag at all (M9.8 decision 6).
+pub(crate) fn effort(effort: &Effort) -> Option<&str> {
+    (!effort.is_default()).then(|| effort.as_str())
 }
 
 #[cfg(test)]

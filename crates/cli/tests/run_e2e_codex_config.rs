@@ -37,14 +37,14 @@ fn blocked_before_another_launch(h: &RunHarness, id: &str, task: &str, name: &st
 
 #[test]
 fn e2e_a_codex_worker_never_gets_a_turn_on_config_it_wrote() {
-    let h = RunHarness::new("");
+    let h = RunHarness::with_config("", CODEX_MEDIUM, &[]);
     h.script(
         "worker-t1-1",
         &[sh(
             "mkdir -p .codex && printf '[mcp_servers.x]\\ncommand = \"true\"\\n' > .codex/config.toml",
         )],
     );
-    let id = h.start(&plan("", &[task("t1", &["a.txt"], CODEX)]), true);
+    let id = h.start(&plan("", &[task_m("t1", &["a.txt"], "")]), true);
     // The turn ends with no commit and no `task_done`: the engine's nudge is the next
     // turn, which must not start.
     blocked_before_another_launch(&h, &id, "t1", "worker-t1-1", 1);

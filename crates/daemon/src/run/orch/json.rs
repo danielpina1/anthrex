@@ -89,11 +89,7 @@ pub(crate) fn route_text(route: &proto::Route) -> String {
     } else {
         route.model.as_str()
     };
-    let effort = match route.effort {
-        proto::Effort::Low => "low",
-        proto::Effort::Medium => "medium",
-        proto::Effort::High => "high",
-    };
+    let effort = route.effort.to_string();
     format!("{} {model} {effort}", route.runtime.label())
 }
 

@@ -3,7 +3,7 @@
 use super::*;
 use proto::{
     AgentRole, AgentRoundInfo, Effort, HistoryStats, ProfileReply, Route, RunInfo, RunReply,
-    RunRequest, RunState, RunsSnapshot, Strength, TokenUsage,
+    RunRequest, RunState, RunsSnapshot, TokenUsage,
 };
 use std::time::{Duration, Instant};
 
@@ -77,8 +77,7 @@ fn round(until: Option<u64>, flag: bool) -> AgentRoundInfo {
         route: Route {
             runtime: Runtime::Claude,
             model: String::new(),
-            strength: Strength::Standard,
-            effort: Effort::Medium,
+            effort: Effort::MEDIUM,
         },
         session_id: None,
         started_at: 0,

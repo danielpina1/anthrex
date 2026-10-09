@@ -1,9 +1,7 @@
 //! Milestone 9.5 decision 32: the digest's and `task_result`'s `race` and `pair`, the
 //! fingerprint over them, and the trim dropping them with their task. Pure.
 
-use proto::{
-    Effort, GateCounts, LaneState, PairPhase, RaceLane, Route, Runtime, Spend, Strength, TaskState,
-};
+use proto::{Effort, GateCounts, LaneState, PairPhase, RaceLane, Route, Runtime, Spend, TaskState};
 
 use super::*;
 use crate::run::model::{Lane, Pair, Race};
@@ -14,8 +12,7 @@ fn on(runtime: Runtime) -> Route {
     Route {
         runtime,
         model: String::new(),
-        strength: Strength::Standard,
-        effort: Effort::Medium,
+        effort: Effort::MEDIUM,
     }
 }
 

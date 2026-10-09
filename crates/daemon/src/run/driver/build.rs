@@ -187,11 +187,10 @@ fn missing_in<'a>(
     }
 }
 
-/// Decision 26's check of the sub-planners' runtime (`planner_route`, which steps to the
-/// peer runtime only when it is installed, M9.17 fix round 2), on a run whose
-/// `orch.installed` is set. The planners run on the orchestrator's runtime (checked
-/// before this) unless `[orchestrator.planners] runtime` names another, so the hint
-/// names what to change. A runtime the orchestrator's window finds (`window`, the
+/// Decision 26's check of the sub-planners' runtime (`planner_route`, the run's
+/// `planner` row since milestone 9.8, which never moves to another model: D2), on a run
+/// whose `orch.installed` is set. The row chose the runtime, so the hint names the role
+/// table (C-b S) as what to change (MR §7). A runtime the orchestrator's window finds (`window`, the
 /// [`Found::window`] map) only through a `~` entry in `PATH` gets that reason instead
 /// (whole-branch review, item 3): another `--orchestrator` would not help.
 fn planner_refusal(
@@ -206,10 +205,7 @@ fn planner_refusal(
             "the sub-planners' runtime {label} is found only through a `~` entry in PATH, which headless sessions (sub-planners and scouts) do not search; put {label}'s directory in PATH as an absolute path"
         ));
     }
-    let hint = match run.limits.orch.planners.runtime {
-        Some(_) => "change [orchestrator.planners] runtime",
-        None => "choose another runtime with --orchestrator",
-    };
+    let hint = "choose another model for the planner in C-b S";
     not_installed("the sub-planners'", route.runtime, missing, hint)
 }
 
@@ -268,7 +264,7 @@ impl RunService {
         })
         .await?;
         let window = missing_in(&found.window, &bins);
-        let resolved = resolve_planned(run, planned.choice.as_ref(), &found.window, &window)?;
+        let resolved = resolve_planned(run, planned.choice.as_ref(), &window)?;
         make_planned(
             run,
             planned.triage,
@@ -354,6 +350,7 @@ impl RunService {
         let repo_dir = crate::profile::repo_dir(&self.ctx.data_dir, &pre.project);
         let tune = super::tuning::tune_for_start(&config, &self.tuning, &repo_dir, now);
         let tuning = once.tuned.get_or_init(|| tune).await.clone();
+        let (models, models_log) = self.freeze_models(&config.roles, &pre.project).await;
         let ctx = BuildContext {
             id: id.clone(),
             wt_dir,
@@ -364,6 +361,8 @@ impl RunService {
             now,
             yes,
             tuning,
+            models,
+            models_log,
         };
         let mut run = crate::run::plan::build_run(plan, pre, ctx).map_err(BuildError::Plan)?;
         run.title = named.title;
@@ -476,14 +475,11 @@ impl RunService {
         let bins = (config.claude_bin.clone(), config.codex_bin.clone());
         let (claude, codex) = bins.clone();
         let found = blocking(move || Ok(found(&claude, &codex))).await?;
-        // Milestone 9.5: over the map the engine resolves the promotion with, the
-        // window's (whole-branch review B, M8).
-        let Ok(resolved) = resolve_promoted(&run, choice, &found.window) else {
-            return Ok(None);
-        };
+        // Milestone 9.8: the choice, else the run's frozen `orchestrator` row.
+        let resolved = resolve_promoted(&run, choice);
         let window = missing_in(&found.window, &bins);
         let runtime = resolved.route.runtime;
-        let hint = "choose another runtime with --orchestrator";
+        let hint = crate::run::orch::installed::ORCHESTRATOR_HINT;
         if let Some(refusal) = not_installed("the orchestrator's", runtime, &window, hint) {
             return Err(refusal);
         }

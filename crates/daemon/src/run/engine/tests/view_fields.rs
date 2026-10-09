@@ -251,9 +251,20 @@ fn has_clock(s: &str) -> bool {
 
 #[test]
 fn snapshot_carries_the_view_fields() {
-    let mut fx = one_task("[task.route]\nruntime = \"claude\"\neffort = \"low\"");
+    let mut fx = one_task("");
     fx.start(false);
     assert_eq!(snapshot(&fx.state, 777).now, 777);
+    // Milestone 9.8 decision 31: a plan's route is ignored, so the route the view
+    // carries is the user's (`run edit`, decision 10).
+    let mut routed = amend(0);
+    if let PlanEdit::AmendTask { route, .. } = &mut routed[0] {
+        *route = Some(proto::RouteSpec {
+            effort: Some(proto::Effort::LOW),
+            ..Default::default()
+        });
+    }
+    let effects = edit(&mut fx, routed);
+    assert!(replies(&effects)[0].is_ok(), "{effects:#?}");
 
     // Twelve accepted edits; the snapshot shows the newest ten, newest first.
     for n in 0..12 {
@@ -281,9 +292,9 @@ fn snapshot_carries_the_view_fields() {
     assert_eq!(t1.acceptance, ["Accept t1"]);
     let spec = &fx.task("t1").spec.route;
     assert_eq!(&t1.route_spec, spec);
-    assert_eq!(t1.route_spec.strength, None, "unset in the plan: policy");
-    assert_eq!(t1.route_spec.effort, Some(proto::Effort::Low));
-    assert_eq!(t1.route.effort, proto::Effort::Low);
+    assert_eq!(t1.route_spec.strength, None, "unset by the user: policy");
+    assert_eq!(t1.route_spec.effort, Some(proto::Effort::LOW));
+    assert_eq!(t1.route.effort, proto::Effort::LOW);
     assert_eq!(t1.history.len(), 10);
     assert_eq!(t1.history[0].at, base + 11);
     assert_eq!(t1.history[0].text, "event 11");
@@ -451,7 +462,9 @@ fn old_run_json_loads() {
             }
         }
     }
-    let stored: serde_json::Value = serde_json::from_str(text).unwrap();
+    let mut stored: serde_json::Value = serde_json::from_str(text).unwrap();
+    // Milestone 9.8 (task M9.8.13): the roster and the scouts' keys are not written back.
+    crate::run::test_support::without_pre_9_8_keys(&mut stored);
     assert_eq!(back, stored);
 }
 

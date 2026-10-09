@@ -64,20 +64,23 @@ fn a_paste_into_a_modal_over_the_review_still_works() {
     let mut app = gate_app();
     tap(&mut app, KeyCode::Char('p'));
     assert!(tap(&mut app, KeyCode::Char('e')).is_empty());
-    let model = |app: &App| match &app.modal {
-        Some(Modal::EditTask(form)) => (form.focus, form.model.text().to_owned()),
+    // Milestone 9.8: the brief is the form's text that takes a paste (the model is the
+    // picker's).
+    let brief = |app: &App| match &app.modal {
+        Some(Modal::EditTask(form)) => (form.focus, form.brief.text().to_owned()),
         other => panic!("no edit form: {other:?}"),
     };
-    // The form opens on its first field; tab to the model's.
+    // The form opens on its first field; tab to the brief.
     for _ in 0..8 {
-        if model(&app).0 == crate::run_edit::EditField::Model {
+        if brief(&app).0 == crate::run_edit::EditField::Brief {
             break;
         }
         tap(&mut app, KeyCode::Tab);
     }
-    let before = model(&app).1;
+    let before = brief(&app).1;
     assert_eq!(app.on_paste("gpt-5".into()), vec![]);
-    assert_eq!(model(&app).1, format!("{before}gpt-5"));
+    assert_eq!(brief(&app).1.len(), before.len() + 5);
+    assert!(brief(&app).1.contains("gpt-5"));
     assert!(app.plan_review.is_some());
 }
 

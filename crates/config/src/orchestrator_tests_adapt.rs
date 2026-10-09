@@ -3,7 +3,8 @@
 //! tables (M8b decision 3, Interfaces "`config`").
 
 use super::*;
-use proto::{DeciderMode, Effort, Runtime, Strength};
+use crate::orchestrator::LegacyStrength;
+use proto::{DeciderMode, Effort, Runtime};
 
 #[test]
 fn adapt_defaults_when_absent() {
@@ -16,8 +17,8 @@ fn adapt_defaults_when_absent() {
         Deciders {
             mode: DeciderMode::Claude,
             timeout_secs: 90,
-            strength: Strength::Fast,
-            effort: Effort::Low,
+            strength: LegacyStrength::Fast,
+            effort: Effort::LOW,
             slot_wait_secs: 30,
         }
     );
@@ -25,8 +26,8 @@ fn adapt_defaults_when_absent() {
         o.scouts,
         Scouts {
             runtime: None,
-            strength: Strength::Fast,
-            effort: Effort::Low,
+            strength: LegacyStrength::Fast,
+            effort: Effort::LOW,
             timeout_secs: 900,
             max_tool_calls: 120,
         }
@@ -89,8 +90,8 @@ otlp_port = 4318
         Deciders {
             mode: DeciderMode::Codex,
             timeout_secs: 120,
-            strength: Strength::Standard,
-            effort: Effort::Medium,
+            strength: LegacyStrength::Standard,
+            effort: Effort::MEDIUM,
             slot_wait_secs: 0,
         }
     );
@@ -98,8 +99,8 @@ otlp_port = 4318
         o.scouts,
         Scouts {
             runtime: Some(Runtime::Codex),
-            strength: Strength::Frontier,
-            effort: Effort::High,
+            strength: LegacyStrength::Frontier,
+            effort: Effort::HIGH,
             timeout_secs: 60,
             max_tool_calls: 1000,
         }
@@ -285,7 +286,23 @@ auto = "yes"
                 .to_string(),
         ]
     );
-    assert_eq!(config.orchestrator, Orchestrator::default());
+    // Milestone 9.8 decision 14: the scout keys are present, so they still feed the
+    // research row (at their defaults, today's research route) and give a note each.
+    let o = config.orchestrator;
+    // Gate fix B1: the built-in research row is now effortless; the migrated scout
+    // keys still give today's route, Haiku at `low`.
+    let research = crate::models::RoleChoice {
+        effort: Some("low".into()),
+        ..crate::models::builtin_choice(crate::Role::Research)
+    };
+    assert_eq!(o.roles.rows, [(crate::Role::Research, research)].into());
+    assert_eq!(o.roles_notes.len(), 2, "{:?}", o.roles_notes);
+    let unmigrated = Orchestrator {
+        roles: Default::default(),
+        roles_notes: Vec::new(),
+        ..o
+    };
+    assert_eq!(unmigrated, Orchestrator::default());
 }
 
 #[test]

@@ -19,7 +19,7 @@ pub(super) fn worker(runtime: Runtime) -> HeadlessSpec {
             Runtime::Codex => String::new(),
             _ => "claude-sonnet-5".into(),
         },
-        effort: Effort::High,
+        effort: Effort::HIGH,
         cwd: "/tmp/p/.anthrex/wt/t1".into(),
         instructions: "Say \"done\" when done.\nThen stop.".into(),
         mcp: Some(McpTarget {
@@ -73,7 +73,7 @@ pub(super) fn reviewer(runtime: Runtime) -> HeadlessSpec {
             Runtime::Codex => "gpt-5.5".into(),
             _ => "claude-opus-5".into(),
         },
-        effort: Effort::Medium,
+        effort: Effort::MEDIUM,
         instructions: "Review it.".into(),
         mcp: Some(McpTarget {
             role: AgentRole::Reviewer,
@@ -622,4 +622,42 @@ fn deny_write_becomes_filesystem_deny_write() {
     };
     let settings = claude_settings(Path::new(EXE), WINDOW, Some(&none), &CLI_CAPS);
     assert!(settings["sandbox"]["filesystem"].get("denyWrite").is_none());
+}
+
+#[test]
+fn a_default_effort_passes_no_flag() {
+    let mut spec = worker(Runtime::Claude);
+    spec.effort = Effort::DEFAULT;
+    let args = claude(&spec, &new_session(), &CLI_CAPS);
+    assert!(!args.iter().any(|a| a == "--effort"), "{args:?}");
+
+    let mut spec = worker(Runtime::Codex);
+    spec.effort = Effort::DEFAULT;
+    let args = codex(
+        &spec,
+        &SessionArg::New { uuid: None },
+        "Do t1",
+        &legacy_caps(),
+    );
+    assert!(
+        !args.iter().any(|a| a.starts_with("model_reasoning_effort")),
+        "{args:?}"
+    );
+}
+
+#[test]
+fn the_effort_reaches_argv_quoted() {
+    let mut spec = worker(Runtime::Codex);
+    spec.effort = Effort::new("x\"y");
+    let args = codex(
+        &spec,
+        &SessionArg::New { uuid: None },
+        "Do t1",
+        &legacy_caps(),
+    );
+    assert!(
+        args.iter()
+            .any(|a| a == "model_reasoning_effort=\"x\\\"y\""),
+        "{args:?}"
+    );
 }

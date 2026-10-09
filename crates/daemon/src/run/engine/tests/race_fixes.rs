@@ -548,9 +548,10 @@ fn a_declared_transitive_dependent_does_not_skip_the_race() {
 
 /// Ruling FW-5 (O-2): an implicit `owns` dependency never exempts. It links tasks on
 /// one runtime only, so it would vanish once the racer's peer runtime shared owns with
-/// `t2`. `t2`'s only link to `t1` is that implicit edge: `t1` runs single, saying why.
+/// `t2`. `t2`'s only link to `t1` is that implicit edge: the Codex fallback is held off,
+/// and (milestone 9.8 decision 28) lane b races on the task's own route instead.
 #[test]
-fn an_implicit_dependent_alone_still_skips_the_race() {
+fn an_implicit_dependent_alone_still_holds_the_racer_off_codex() {
     let tasks = [
         task("t1", "M", "a", RACING),
         task_toml("t2", "M", "[\"crates/a/src/**\"]", ""),
@@ -558,31 +559,28 @@ fn an_implicit_dependent_alone_still_skips_the_race() {
     let fx = launched(PROFILE, &tasks, config::Orchestrator::default());
     assert_eq!(fx.task("t2").implicit_deps, ["t1"]);
     assert!(fx.task("t2").spec.deps.is_empty());
-    let t1 = fx.task("t1");
-    assert!(t1.race.is_none(), "{:?}", t1.race);
-    let note = "race skipped: a codex racer would overlap an unfinished task's owns";
-    assert!(t1.notes.iter().any(|n| n == note), "{:?}", t1.notes);
+    assert_eq!(lane(&fx, B).route, fx.task("t1").route);
+    assert_eq!(lane(&fx, B).route.runtime, Runtime::Claude);
 }
 
 /// Ruling FW-1's other half: an overlapping task that may run beside `t1` (no declared
 /// or implicit dependency between them, as for two tasks that have both started, which
 /// `implicit_deps` leaves unordered) still holds the peer runtime off, since a Codex
-/// racer would share owns with it on Claude: `t1` runs single, saying why.
+/// racer would share owns with it on Claude: (milestone 9.8 decision 28) lane b races
+/// on the task's own route.
 #[test]
-fn a_concurrent_overlapping_task_still_skips_the_race() {
+fn a_concurrent_overlapping_task_still_holds_the_racer_off_codex() {
     let tasks = [
         task("t1", "M", "a", RACING),
         task_toml("t2", "M", "[\"crates/a/src/**\"]", ""),
     ];
     let plan = plan_with(PROFILE, &tasks);
-    let mut fx = Fixture::with_config(&plan, config::Orchestrator::default());
+    let mut fx = super::race::racers(&plan);
     fx.start_with(true, |run| run.tasks[1].implicit_deps.clear());
     let (op, _) = fx.op("CreateRunBranch");
     fx.done(op, OpResult::Worktree { head: BASE.into() });
     fx.launch_all();
     assert!(fx.task("t2").implicit_deps.is_empty());
-    let t1 = fx.task("t1");
-    assert!(t1.race.is_none(), "{:?}", t1.race);
-    let note = "race skipped: a codex racer would overlap an unfinished task's owns";
-    assert!(t1.notes.iter().any(|n| n == note), "{:?}", t1.notes);
+    assert_eq!(lane(&fx, B).route, fx.task("t1").route);
+    assert_eq!(lane(&fx, B).route.runtime, Runtime::Claude);
 }

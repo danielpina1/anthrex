@@ -84,7 +84,7 @@ fn role() -> RoleLaunch {
             agent_label: None,
         },
         instructions: "the orchestrator contract".into(),
-        effort: Effort::High,
+        effort: Effort::HIGH,
         claude_allowed_tools: ORCHESTRATOR_ALLOWED_TOOLS
             .iter()
             .map(|t| t.to_string())
@@ -369,7 +369,7 @@ async fn unparseable_role_restores_a_window_that_never_restarts() {
 fn broken_role(mut state: daemon::state::StateFile, id: u32) -> daemon::state::StateFile {
     let record: &mut WindowRecord = state.windows.iter_mut().find(|r| r.id == id).unwrap();
     let run = record.run.as_mut().unwrap();
-    run["role_launch"]["effort"] = json!("extreme");
+    run["role_launch"]["effort"] = json!(42);
     state
 }
 

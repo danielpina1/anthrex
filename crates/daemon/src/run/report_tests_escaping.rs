@@ -321,32 +321,24 @@ fn route_and_review_route_content_is_asserted_m2() {
     let run = base_run();
     let t = task(&run, "t1");
     let out = render(&run, 2_000);
-    assert!(out.contains("Route: claude claude-sonnet-5 (standard/high)"));
+    // Milestone 9.8 decision 31: the medium row's effort (the plan's `high` is ignored).
+    assert!(out.contains("Route: claude claude-sonnet-5 (medium)"));
     assert!(
         t.review_route.is_some(),
         "the fixture task must be reviewed"
     );
     // Whatever route the roster picked, its rendered line must name that exact
-    // runtime/model/strength/effort, not a placeholder.
+    // runtime/model/effort, not a placeholder.
     let rr = t.review_route.as_ref().unwrap();
     let expected = format!(
-        "Review route: {} {} ({}/{})",
+        "Review route: {} {} ({})",
         match rr.runtime {
             Runtime::Claude => "claude",
             Runtime::Codex => "codex",
             Runtime::Shell => "shell",
         },
         rr.model,
-        match rr.strength {
-            proto::Strength::Fast => "fast",
-            proto::Strength::Standard => "standard",
-            proto::Strength::Frontier => "frontier",
-        },
-        match rr.effort {
-            proto::Effort::Low => "low",
-            proto::Effort::Medium => "medium",
-            proto::Effort::High => "high",
-        },
+        rr.effort.as_str(),
     );
     assert!(out.contains(&expected), "missing {expected:?} in:\n{out}");
 }

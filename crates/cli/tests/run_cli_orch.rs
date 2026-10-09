@@ -80,29 +80,58 @@ fn orchestrator_flag_parses_and_refuses_bad_values() {
         refused_with(&out, BAD_ORCHESTRATOR);
     }
     assert!(h.snapshot().runs.is_empty(), "a refused flag started a run");
-    // `claude:<model>` reaches the daemon: the planned run's orchestrator runs it (a
-    // roster model; the daemon refuses any other in its own words).
-    let out = run(
-        &h,
-        &[
-            "start",
-            "--goal",
-            "g",
-            "--orchestrator",
-            "claude:test-model",
-        ],
-    );
-    refused_with(&out, "claude:test-model is not in the roster");
-    h.decider("triage", 2, triage_plan());
-    let id = h.start_goal_id(
-        "rework storage",
-        &["--orchestrator", "claude:claude-sonnet-5"],
-    );
+    // `claude:<model>` reaches the daemon and the planned run's orchestrator runs it:
+    // milestone 9.8 lets the user name any model (MR §5.2's `custom…`), so a model
+    // outside the catalog is the user's choice, not a refusal.
+    for n in 1..=2 {
+        h.decider("triage", n, triage_plan());
+    }
+    let id = h.start_goal_id("rework storage", &["--orchestrator", "claude:test-model"]);
     let route = h.run(&id).unwrap().orchestrator.unwrap().route;
     assert_eq!(
         (route.runtime, route.model.as_str()),
-        (Runtime::Claude, "claude-sonnet-5")
+        (Runtime::Claude, "test-model")
     );
+    // Fix round 1 (I2): `--orchestrator claude` names only the runtime: the
+    // `orchestrator` row on it (the built-in Opus), never the CLI's default.
+    let id = h.start_goal_id("rework the cache", &["--orchestrator", "claude"]);
+    let route = h.run(&id).unwrap().orchestrator.unwrap().route;
+    assert_eq!(
+        (route.runtime, route.model.as_str()),
+        (Runtime::Claude, "claude-opus-5-5")
+    );
+}
+
+/// M9.8.13 fix round 1: a model that fails the model-name rule is refused by the flag,
+/// so it never reaches the orchestrator's `--model`.
+#[test]
+fn orchestrator_flag_refuses_a_bad_model_name() {
+    let h = RunHarness::orch("", &[]);
+    let long = format!("claude:{}", "g".repeat(101));
+    let cases = [
+        (
+            "claude:-x",
+            "\"-x\" is not a model name (it may not start with -)",
+        ),
+        (
+            "codex:a b",
+            "\"a b\" is not a model name (1 to 100 visible characters, no spaces)",
+        ),
+        (long.as_str(), "(1 to 100 visible characters, no spaces)"),
+    ];
+    for (spec, why) in cases {
+        for args in [
+            &["start", "--goal", "g", "--orchestrator", spec][..],
+            &["promote", "zzzz", "--orchestrator", spec][..],
+        ] {
+            let out = run(&h, args);
+            assert_eq!(out.code, 1, "{spec}: {}", out.stderr);
+            let last = out.stderr.lines().last().unwrap_or_default();
+            assert!(last.starts_with("--orchestrator: "), "{spec}: {last}");
+            assert!(last.ends_with(why), "{spec}: {last}");
+        }
+    }
+    assert!(h.snapshot().runs.is_empty(), "a refused flag started a run");
 }
 
 #[test]

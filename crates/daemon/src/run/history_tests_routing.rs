@@ -2,31 +2,28 @@
 //! with history, the same gate as its records, so a run restored from milestone 8a
 //! gains no `initial` decision for a session it launched before the upgrade.
 
-use proto::{Effort, Runtime, Strength};
+use proto::{Effort, Runtime};
 
 use super::fixtures::*;
 use crate::run::model::ReviewLevel;
-use crate::run::roster::{escalate, pick_reviewer};
 use crate::run::routing::{record_reviewer, record_worker};
+use crate::run::test_support::{escalated, with_efforts};
 
 #[test]
 fn a_run_without_history_records_no_routing_decisions() {
-    let sonnet = route(
-        Runtime::Claude,
-        "claude-sonnet-5",
-        Strength::Standard,
-        Effort::Medium,
-    );
+    let sonnet = route(Runtime::Claude, "claude-sonnet-5", Effort::MEDIUM);
     for history in [false, true] {
         let mut run = run_of(&["t1"]);
         run.history = history;
-        let up = escalate(&run.roster, &sonnet);
+        with_efforts(&mut run);
+        let up = escalated(&run, "t1", &sonnet);
+        assert_ne!(up, sonnet);
         let task = &mut run.tasks[0];
         task.session = 2;
         task.escalated_from = Some(std::mem::replace(&mut task.route, up.clone()));
         record_worker(&mut run, 0, 100);
         assert_eq!(run.tasks[0].escalated_from, None, "history {history}");
-        let chosen = pick_reviewer(&run.roster, &up, ReviewLevel::Medium);
+        let chosen = run.limits.models().reviewer_route(&up).0;
         record_reviewer(&mut run, 0, (&up, ReviewLevel::Medium), &chosen, 1, 200);
         let recorded = run.tasks[0].routing_decisions.len();
         assert_eq!(recorded, if history { 2 } else { 0 }, "history {history}");

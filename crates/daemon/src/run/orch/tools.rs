@@ -336,8 +336,11 @@ fn edits(map: &Map<String, Value>, min: usize) -> Result<Vec<PlanEdit>, String> 
         .enumerate()
         .map(|(i, v)| {
             bounds::check_edit(v).map_err(|e| format!("edits[{i}]: {e}"))?;
+            // Milestone 9.8 decision 31: the route is ignored, whatever it holds.
+            let mut v = v.clone();
+            crate::run::ignored_route::in_edit(&mut v);
             let edit: PlanEdit =
-                serde_json::from_value(v.clone()).map_err(|e| format!("edits[{i}]: {e}"))?;
+                serde_json::from_value(v).map_err(|e| format!("edits[{i}]: {e}"))?;
             if let PlanEdit::Message { text, .. } = &edit
                 && text.chars().count() > MESSAGE_TEXT_MAX
             {

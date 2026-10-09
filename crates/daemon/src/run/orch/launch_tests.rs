@@ -225,3 +225,136 @@ fn research_spec_is_read_only_and_bound_to_its_task() {
         }
     }
 }
+
+fn row(model: &str, effort: Option<&str>) -> proto::models::RoleChoice {
+    proto::models::RoleChoice {
+        model: proto::models::ModelRef::parse(model).expect("a model"),
+        effort: effort.map(str::to_string),
+        fallback: None,
+    }
+}
+
+fn model_of(route: &Route) -> (Runtime, &str, &str) {
+    (route.runtime, route.model.as_str(), route.effort.as_str())
+}
+
+/// Milestone 9.8 (MR §3.1): the orchestrator takes its row (source `role_table`)
+/// unless the goal form chose (`explicit_choice`); the choice's effort, else the row's
+/// when it chose the row's own model, else the model's default. The candidates are the
+/// chosen route alone.
+#[test]
+fn the_orchestrator_takes_its_row_unless_the_goal_form_chose() {
+    use proto::models::Role;
+    let mut run = run_with(&[task_toml("t1", "S", "[\"a/**\"]", "")]);
+    let sol = "codex:gpt-6.1-sol";
+    crate::run::test_support::set_row(&mut run, Role::Orchestrator, sol, Some("high"), None);
+    let models = run.limits.models();
+    let only = |r: &Resolved| {
+        let one = proto::RoutingCandidate {
+            route: r.route.clone(),
+            skipped_reason: None,
+        };
+        assert_eq!(r.candidates, [one]);
+    };
+    let row = orchestrator_route(None, models);
+    assert_eq!(
+        model_of(&row.route),
+        (Runtime::Codex, "gpt-6.1-sol", "high")
+    );
+    assert_eq!(row.source, "role_table");
+    only(&row);
+    let choice = |runtime, model: &str, effort: Option<&str>| OrchestratorChoice {
+        runtime,
+        model: Some(model.to_string()),
+        effort: effort.map(str::to_string),
+    };
+    let opus = choice(Runtime::Claude, "claude-opus-5-5", Some("max"));
+    let chosen = orchestrator_route(Some(&opus), models);
+    assert_eq!(
+        model_of(&chosen.route),
+        (Runtime::Claude, "claude-opus-5-5", "max")
+    );
+    assert_eq!(chosen.source, "explicit_choice");
+    only(&chosen);
+    let same = orchestrator_route(Some(&choice(Runtime::Codex, "gpt-6.1-sol", None)), models);
+    assert_eq!(
+        model_of(&same.route),
+        (Runtime::Codex, "gpt-6.1-sol", "high")
+    );
+    let other = orchestrator_route(Some(&choice(Runtime::Codex, "gpt-6-luna", None)), models);
+    assert_eq!(other.route.effort, proto::Effort::DEFAULT);
+    assert_eq!(other.route.model, "gpt-6-luna");
+}
+
+/// Fix round 1 (I2, controller ruling): a choice naming only a runtime (`--orchestrator
+/// claude`, the goal form's default, promote's default entry) takes the `orchestrator`
+/// row when the row is on that runtime, else that runtime's built-in orchestrator from
+/// the role table: never the CLI's bare default for Claude.
+#[test]
+fn a_runtime_only_choice_takes_the_row_or_the_runtimes_built_in() {
+    use proto::models::Role;
+    let runtime_only = |runtime, effort: Option<&str>| OrchestratorChoice {
+        runtime,
+        model: None,
+        effort: effort.map(str::to_string),
+    };
+    let mut run = run_with(&[task_toml("t1", "S", "[\"a/**\"]", "")]);
+    let sol = "codex:gpt-6.1-sol";
+    crate::run::test_support::set_row(&mut run, Role::Orchestrator, sol, Some("medium"), None);
+    let models = run.limits.models();
+    // The row's runtime: the row.
+    let codex = orchestrator_route(Some(&runtime_only(Runtime::Codex, None)), models);
+    assert_eq!(
+        model_of(&codex.route),
+        (Runtime::Codex, "gpt-6.1-sol", "medium")
+    );
+    assert_eq!(codex.source, "explicit_choice");
+    // The choice's effort is kept.
+    let max = orchestrator_route(Some(&runtime_only(Runtime::Codex, Some("max"))), models);
+    assert_eq!(model_of(&max.route), (Runtime::Codex, "gpt-6.1-sol", "max"));
+    // Another runtime: its built-in, Opus at high for Claude.
+    let claude = orchestrator_route(Some(&runtime_only(Runtime::Claude, None)), models);
+    assert_eq!(
+        model_of(&claude.route),
+        (Runtime::Claude, "claude-opus-5-5", "high")
+    );
+    // A model named empty is a runtime-only choice too.
+    let empty = OrchestratorChoice {
+        model: Some(String::new()),
+        ..runtime_only(Runtime::Claude, None)
+    };
+    let claude = orchestrator_route(Some(&empty), models);
+    assert_eq!(claude.route.model, "claude-opus-5-5");
+}
+
+/// Milestone 9.8 (MR §3.1): a sub-planner takes the `planner` row, once the run has
+/// an orchestrator.
+#[test]
+fn planner_takes_the_planner_row() {
+    use proto::models::Role;
+    let mut run = run_with(&[task_toml("t1", "S", "[\"a/**\"]", "")]);
+    let luna = "codex:gpt-6-luna";
+    crate::run::test_support::set_row(&mut run, Role::Planner, luna, Some("medium"), None);
+    assert_eq!(planner_route(&run), None, "no orchestrator yet");
+    run.orch.orchestrator = Some(crate::run::orch::test_support::orchestrator());
+    let route = planner_route(&run).expect("a planner route");
+    assert_eq!(model_of(&route), (Runtime::Codex, "gpt-6-luna", "medium"));
+}
+
+/// Milestone 9.8 (MR §3.1): the run scouts and a research task take the `research` row.
+#[test]
+fn scouts_and_research_tasks_take_the_research_row() {
+    use proto::models::Role;
+    let mut config = config::Orchestrator::default();
+    let sonnet = row("claude:claude-sonnet-5", Some("medium"));
+    config.roles.rows.insert(Role::Research, sonnet);
+    let plan = crate::run::test_support::plan_with(
+        crate::run::test_support::PROFILE,
+        &[task_toml("r1", "S", "[]", "kind = \"research\"")],
+    );
+    let run = crate::run::test_support::build_with(&plan, &config)
+        .unwrap_or_else(|e| panic!("{}", crate::run::test_support::show(&e)));
+    let want = (Runtime::Claude, "claude-sonnet-5", "medium");
+    assert_eq!(model_of(&run.tasks[0].route), want);
+    assert_eq!(model_of(&scout_route(&run)), want);
+}

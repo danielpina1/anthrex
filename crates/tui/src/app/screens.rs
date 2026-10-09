@@ -2,16 +2,14 @@
 //! its keys and its tick; and decision 24: the settings the daemon owns, as the client
 //! keeps them.
 //! One tagged `Settings(Get)` leaves with every new connection; its `Current` reply and
-//! every `Saved` become `App.settings_cache`, which the goal form's model picker, the
-//! Promote form and (tasks 13-15) the screens read. None of them sends a request of its
-//! own to read it. Pure: every request leaves as an `Effect`.
+//! every `Saved` become `App.settings_cache`, which the goal form's role table entry
+//! (milestone 9.8) and (tasks 13-15) the screens read. None of them
+//! sends a request of its own to read it. Pure: every request leaves as an `Effect`.
 
 use super::replies::PendingWhat;
 use super::runs::first_line_and_more;
 use super::{App, Effect, Modal, ToastLevel};
-use proto::{
-    ModelEntry, Origin, RunReply, RunRequest, Runtime, SettingsDoc, SettingsReply, SettingsRequest,
-};
+use proto::{Origin, RunReply, RunRequest, SettingsDoc, SettingsReply, SettingsRequest};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Instant;
@@ -92,28 +90,6 @@ pub struct SettingsCache {
     pub id: u64,
 }
 
-impl SettingsCache {
-    /// The enabled roster, in order.
-    pub fn models(&self) -> &[ModelEntry] {
-        &self.doc.models
-    }
-
-    /// The names of `runtime`'s enabled models, in roster order. An entry with an empty
-    /// model is the runtime's own default and is not a name.
-    pub fn models_of(&self, runtime: Runtime) -> Vec<String> {
-        models_of(self.models(), runtime)
-    }
-}
-
-/// [`SettingsCache::models_of`] over any roster.
-pub fn models_of(models: &[ModelEntry], runtime: Runtime) -> Vec<String> {
-    models
-        .iter()
-        .filter(|m| m.runtime == runtime && !m.model.is_empty())
-        .map(|m| m.model.clone())
-        .collect()
-}
-
 impl App {
     /// The connection's one `Settings(Get)` (decision 24): `lib.rs` sends it beside
     /// `run_subscription` after `App::new`, and `on_reconnected` for every new
@@ -151,6 +127,12 @@ impl App {
             None => return Some(vec![]),
             Some(PendingWhat::SettingsGet) => false,
             Some(PendingWhat::SettingsPut) => true,
+            Some(PendingWhat::RepoModels { project, put }) => {
+                let (project, put) = (project.clone(), *put);
+                self.replies.take(Some(id));
+                self.settings_repo_reply(id, project, put, reply);
+                return Some(vec![]);
+            }
             Some(_) => return None,
         };
         // The open Settings screen shows its own save's outcome; no toast for it.
@@ -206,13 +188,14 @@ impl App {
         Some(effects)
     }
 
-    /// Replaces the cache and tells the open goal form its roster changed.
+    /// Replaces the cache and tells the open goal form (its design default, its role
+    /// table entry).
     fn set_cache(&mut self, cache: SettingsCache) {
         if let Some(Modal::StartGoal(form)) = &mut self.modal {
-            form.set_roster(cache.doc.models.clone());
             form.design_default = cache.doc.design_default;
         }
         self.settings_cache = Some(cache);
+        self.refresh_goal_models();
         self.sync_settings_screen();
     }
 }

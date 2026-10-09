@@ -7,14 +7,12 @@ use serde_json::json;
 use super::dispatch::{edit, replies, task_path};
 use super::fixture::*;
 use super::gates::{CHECK_MODE, accepted, check_result, only_op, working_on};
-use super::gates_review::{blocking, reviewed, reviewer, submit, verdict};
+use super::gates_review::{blocking, reviewed, reviewed_with, reviewer, submit, verdict};
 use super::holds::{add_dep, delivers};
 use super::turns_fixes::assert_alive;
 use crate::headless::FailureKind;
 use crate::run::contract::{REVIEW_NUDGE, check_failed_message, rate_limit_continue};
 use crate::run::engine::{AgentSignal, Effect, EventKind, OpKind, OpResult, TurnOutcome};
-
-const CODEX_AUTHOR: &str = "[task.route]\nruntime = \"codex\"\nmodel = \"\"";
 
 fn failed(kind: FailureKind, error: &str) -> TurnOutcome {
     TurnOutcome::Failed {
@@ -143,7 +141,8 @@ fn two_other_reviewer_failures_in_a_row_block() {
 #[test]
 fn the_next_review_round_waits_for_the_last_reviewers_exit() {
     // A Claude reviewer (the author is on Codex).
-    let (mut fx, window, rwindow) = reviewed(PROFILE, CODEX_AUTHOR);
+    // Milestone 9.8: a Codex author (the small row), so the reviewer is Claude.
+    let (mut fx, window, rwindow) = reviewed_with(PROFILE, "", codex_small());
     fx.turn_completed(rwindow);
     ack(&mut fx);
     let effects = fx.turn_completed(rwindow);
@@ -331,11 +330,8 @@ fn rung_3_re_resolves_review_and_budget_for_the_raised_size() {
         t1.review_level,
         Some(crate::run::model::ReviewLevel::Medium)
     );
-    let route = crate::run::roster::pick_reviewer(
-        &fx.run().roster,
-        &t1.route,
-        crate::run::model::ReviewLevel::Medium,
-    );
+    // Milestone 9.8 decision 27: the reviewer row against the task's route.
+    let (route, _) = fx.run().limits.models().reviewer_route(&t1.route);
     assert_eq!(t1.review_route, Some(route));
     assert_eq!(t1.budget, fx.run().limits.budget_m);
 }

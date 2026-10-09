@@ -2,7 +2,8 @@
 
 mod support;
 
-use proto::{ModelEntry, RunReply, RunRequest, Runtime, SettingsReply, SettingsRequest, Strength};
+use proto::models::{ModelRef, Role, RoleChoice};
+use proto::{RunReply, RunRequest, Runtime, SettingsReply, SettingsRequest};
 
 use crate::support::run_harness::{REQUEST_WAIT, RUN_WAIT, RunHarness};
 use crate::support::run_plans::{approve, commit, done, plan, task};
@@ -28,19 +29,16 @@ fn e2e_settings_save_applies_to_new_runs_only() {
         panic!("{reply:?}")
     };
     doc.limits.max_writers = 1;
-    // Preflight F22: a Codex-only roster refuses run B at start (the plan's runtime is
-    // Claude: "the roster has no claude model at standard strength"), so the doc has one
-    // model of each runtime, and B's route is one the built-in roster never gives.
-    let entry = |runtime, model: &str| ModelEntry {
-        runtime,
-        model: model.into(),
-        strength: Strength::Standard,
-        note: String::new(),
-    };
-    doc.models = vec![
-        entry(Runtime::Claude, "claude-opus-5-5"),
-        entry(Runtime::Codex, "gpt-6-sol"),
-    ];
+    // M9.8.12: B's task (size S) takes the saved `implementer.small` row, a model the
+    // built-in table never gives it.
+    doc.roles.rows.insert(
+        Role::ImplementerSmall,
+        RoleChoice {
+            model: ModelRef::parse("claude:claude-opus-5-5").unwrap(),
+            effort: None,
+            fallback: None,
+        },
+    );
     let RunReply::Settings { reply, .. } = h.tagged(
         2,
         RunRequest::Settings(SettingsRequest::Put {
@@ -52,7 +50,7 @@ fn e2e_settings_save_applies_to_new_runs_only() {
     };
     assert!(matches!(*reply, SettingsReply::Saved { .. }), "{reply:?}");
 
-    // A keeps what it froze; B gets the new limits and roster.
+    // A keeps what it froze; B gets the new limits and role table.
     assert_eq!(h.run(&a).unwrap().max_writers, 3);
     h.script("worker-t9-1", &[commit("b.txt", "b\n"), done("added b")]);
     h.script("reviewer-t9-1", &[approve()]);

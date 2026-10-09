@@ -1,6 +1,6 @@
 //! Task M9.6.4: decision 21's `plan.md`, as a snapshot string.
 
-use proto::{DesignMode, Effort, Route, Runtime, Size, Strength, TaskState, TestMode};
+use proto::{DesignMode, Effort, Route, Runtime, Size, TaskState, TestMode};
 
 use super::render;
 use crate::run::design::requirements::Requirement;
@@ -18,7 +18,6 @@ fn route(runtime: Runtime, model: &str, effort: Effort) -> Route {
     Route {
         runtime,
         model: model.to_string(),
-        strength: Strength::Standard,
         effort,
     }
 }
@@ -70,9 +69,9 @@ fn run() -> Run {
         task.spec.brief = format!("Do {id}.\nFiles:\n- a.rs\r\nVerify:\ncargo test");
         task.size = size;
         task.test_mode = mode;
-        task.route = route(Runtime::Claude, "claude-sonnet-5", Effort::High);
+        task.route = route(Runtime::Claude, "claude-sonnet-5", Effort::HIGH);
     }
-    task_mut(&mut run, "t2").route = route(Runtime::Codex, "", Effort::Medium);
+    task_mut(&mut run, "t2").route = route(Runtime::Codex, "", Effort::MEDIUM);
     task_mut(&mut run, "t4").state = TaskState::Cancelled;
     run
 }

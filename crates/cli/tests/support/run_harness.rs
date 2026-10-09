@@ -98,7 +98,24 @@ impl RunHarness {
     /// Milestone 9.1: with `extra_toml` (a `[testing]` table, say) written after the
     /// harness's own tables, and `files` in the base commit.
     pub fn with_config(orchestrator: &str, extra_toml: &str, files: &[(&str, &str)]) -> Self {
-        let harness = Self::unstarted(orchestrator, &[], true, files);
+        Self::with_repo_and_config(orchestrator, &[], files, extra_toml)
+    }
+
+    /// Milestone 9.8: [`Self::with_config`] with extra daemon environment `env` too (no
+    /// files; `ANTHREX_GIT=off`).
+    pub fn with_env_and_config(orchestrator: &str, env: &[(&str, &str)], extra_toml: &str) -> Self {
+        Self::with_repo_and_config(orchestrator, env, &[], extra_toml)
+    }
+
+    /// Milestone 9.8: [`Self::with_repo`] (`ANTHREX_GIT=off`) with `extra_toml` written
+    /// after the harness's own tables (`run_plans::CODEX_MEDIUM`, say).
+    pub fn with_repo_and_config(
+        orchestrator: &str,
+        env: &[(&str, &str)],
+        files: &[(&str, &str)],
+        extra_toml: &str,
+    ) -> Self {
+        let harness = Self::unstarted(orchestrator, env, true, files);
         let config = harness.dir.path().join("config.toml");
         let text = std::fs::read_to_string(&config).unwrap();
         std::fs::write(&config, format!("{text}\n{extra_toml}\n")).unwrap();

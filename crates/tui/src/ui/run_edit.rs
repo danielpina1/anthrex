@@ -3,8 +3,9 @@
 //! accented frame titled `edit <task>` (`kit::dialog_frame`, at most 64 wide), lower-case
 //! labels, `‹ value ›` choices (`< value >` in ASCII), the brief in a four-row text area,
 //! then the error, a blank row and the hints `⏎ save · tab next · ←/→ change · ^J
-//! newline · esc cancel`, kept on a short terminal while the fields scroll. The plan's
-//! text passes `safe_text`.
+//! newline · esc cancel` (`⏎ choose model` on the model row, milestone 9.8), kept on a
+//! short terminal while the fields scroll; the model picker is drawn over it
+//! (`ui/modal.rs`). The plan's text passes `safe_text`.
 
 use crate::run_edit::{EditField, TaskEditForm};
 use crate::safe_text::one_line;
@@ -62,8 +63,14 @@ pub fn render(frame: &mut Frame, form: &TaskEditForm, area: Rect, p: Palette) {
     tail.push(if form.submitting {
         busy_hint("saving…", width, p)
     } else {
+        // Milestone 9.8 decision 39: on the model row `⏎` opens the picker.
+        let enter = if form.focus == EditField::Model {
+            "choose model"
+        } else {
+            "save"
+        };
         let keys = [
-            hint("⏎", "save", 9),
+            hint("⏎", enter, 9),
             hint("tab", "next", 6),
             hint("←/→", "change", 5),
             hint("^J", "newline", 4),

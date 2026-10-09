@@ -34,7 +34,7 @@ pub fn spec(runtime: Runtime, cwd: &Path) -> HeadlessSpec {
     HeadlessSpec {
         runtime,
         model: "model-x".into(),
-        effort: Effort::Medium,
+        effort: Effort::MEDIUM,
         cwd: cwd.to_path_buf(),
         instructions: "the contract".into(),
         mcp: None,

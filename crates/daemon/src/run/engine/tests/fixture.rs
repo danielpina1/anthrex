@@ -13,7 +13,7 @@ use crate::run::model::{OpId, Run, Task};
 use crate::run::plan::{BuildContext, Preflight, build_run, parse_plan};
 use crate::run::refit::Tuned;
 
-pub use crate::run::test_support::{plan_with, task_toml};
+pub use crate::run::test_support::{codex_medium, codex_small, plan_with, task_toml, with_row};
 
 /// `b0` × 20: the base commit.
 pub const BASE: &str = "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0";
@@ -81,6 +81,8 @@ pub fn build_tuned(
             wt_dir: PathBuf::from(WT),
             data_dir: PathBuf::from(format!("/tmp/data/runs/{RUN_ID}")),
             config,
+            models: crate::run::model_roles::RunModels::resolve(&config.roles, None),
+            models_log: Vec::new(),
             testing: &config::Testing::default(),
             now: 1_000,
             yes,
@@ -249,6 +251,28 @@ impl Fixture {
             .runs
             .get_mut(RUN_ID)
             .expect("the fixture run exists")
+    }
+
+    /// Milestone 9.8 decision 21 for a fixture (`test_support::with_efforts`): every
+    /// row model reports `low`, `medium`, `high`, so rung 2 has an effort to raise.
+    pub fn with_efforts(&mut self) {
+        crate::run::test_support::with_efforts(self.run_mut());
+    }
+
+    /// Decision 29: task `id`'s next route from `from` along its row
+    /// (`test_support::escalated`).
+    pub fn escalated(&self, id: &str, from: &proto::Route) -> proto::Route {
+        crate::run::test_support::escalated(self.run(), id, from)
+    }
+
+    /// Ruling F16: the routing record's escalation pool for task `id`'s row from `from`.
+    pub fn escalation_pool(
+        &self,
+        id: &str,
+        from: &proto::Route,
+    ) -> Vec<(proto::Route, Option<String>)> {
+        let role = crate::run::model_roles::RunModels::task_role(self.task(id));
+        crate::run::routing::escalation_pool(self.run().limits.models(), role, from)
     }
 
     pub fn task(&self, id: &str) -> &Task {

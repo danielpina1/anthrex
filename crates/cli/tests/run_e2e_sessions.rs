@@ -81,7 +81,8 @@ fn worker_round<'a>(run: &'a proto::RunInfo, id: &str) -> &'a proto::AgentRoundI
 
 #[test]
 fn e2e_daemon_restart_pauses_and_resume_continues() {
-    let mut h = RunHarness::new("");
+    // Milestone 9.8 decision 31: `t2` is on Codex by its size's row, not a route.
+    let mut h = RunHarness::with_config("", CODEX_MEDIUM, &[]);
     // The first turn is held open (`hang`) rather than ended: a worker turn that ends
     // with commits and no task_done gets decision 32's DONE_NUDGE at once, which a
     // `read_message` expecting the restart message would take instead. See the
@@ -117,13 +118,12 @@ fn e2e_daemon_restart_pauses_and_resume_continues() {
     for task in ["t1", "t2", "t3"] {
         h.script(&format!("reviewer-{task}-1"), &[approve()]);
     }
-    let claude = "route = { runtime = \"claude\" }";
     let plan = plan(
         "",
         &[
-            task("t1", &["a.txt"], claude),
-            task("t2", &["b.txt"], CODEX),
-            task("t3", &["c.txt"], claude),
+            task("t1", &["a.txt"], ""),
+            task_m("t2", &["b.txt"], ""),
+            task("t3", &["c.txt"], ""),
         ],
     );
     let id = h.start(&plan, true);

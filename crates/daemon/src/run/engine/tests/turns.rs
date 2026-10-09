@@ -16,7 +16,18 @@ use crate::run::snapshot::snapshot;
 
 /// A working `t1` (S) whose first turn is open; its window.
 pub(super) fn working_on(extra: &str) -> (Fixture, u32) {
-    let mut fx = Fixture::new(&plan_with(PROFILE, &[task("t1", "S", "a", extra)]));
+    working_under(extra, config::Orchestrator::default())
+}
+
+/// [`working_on`] on Codex: milestone 9.8 decision 31 ignores a plan's route, so the
+/// small row runs on Codex ([`codex_small`]).
+pub(super) fn working_on_codex(extra: &str) -> (Fixture, u32) {
+    working_under(extra, codex_small())
+}
+
+fn working_under(extra: &str, config: config::Orchestrator) -> (Fixture, u32) {
+    let plan = plan_with(PROFILE, &[task("t1", "S", "a", extra)]);
+    let mut fx = Fixture::with_config(&plan, config);
     fx.ready(true);
     let window = fx.launch_all()[0].1;
     assert!(fx.task("t1").rounds[0].turn_open);
@@ -273,7 +284,9 @@ const ROOMY: &str = "[task.budget]\ntool_calls = 1000\nminutes = 1000";
 #[test]
 fn stall_interrupts_then_nudges_then_goes_to_rung_2() {
     let (mut fx, window) = working_on(ROOMY);
-    let effort = fx.task("t1").route.effort;
+    // Milestone 9.8 decision 29: the row's model reports `low`, `medium`, `high`.
+    fx.with_efforts();
+    assert_eq!(fx.task("t1").route.effort, proto::Effort::LOW);
     let quiet = fx.task("t1").rounds[0].last_event;
     // Ruling T24-clock: 600 whole engine seconds may be 599.x real ones; the stall
     // comes one second later.
@@ -326,8 +339,8 @@ fn stall_interrupts_then_nudges_then_goes_to_rung_2() {
     assert!(first_turn.contains("This is session 2 of this task."));
     assert!(first_turn.contains("diff --git a/a.rs b/a.rs"));
     assert_eq!(
-        Some(spec.effort),
-        effort.raised(),
+        spec.effort,
+        proto::Effort::MEDIUM,
         "rung 2 escalates the route"
     );
     assert_eq!(fx.task("t1").session, 2);
@@ -547,7 +560,7 @@ fn a_claude_process_that_exits_between_turns_is_resumed_on_the_next_delivery() {
 
 #[test]
 fn a_codex_exit_after_turn_completed_is_normal() {
-    let (mut fx, window) = working_on("[task.route]\nruntime = \"codex\"\nmodel = \"\"");
+    let (mut fx, window) = working_on_codex("");
     fx.turn_completed(window);
     let before = fx.run().clone();
     let effects = fx.signal(

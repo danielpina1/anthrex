@@ -3,7 +3,7 @@
 //! the same checkout (decisions 24–26; rulings RP-1, RP-2). The implementer's half,
 //! its signals and the slots are in `pair_implementer.rs`.
 
-use proto::{AgentRole, GateCounts, ModelEntry, PairPhase, Runtime, Strength, TaskState};
+use proto::{AgentRole, GateCounts, PairPhase, Runtime, TaskState};
 use serde_json::json;
 
 use super::dispatch::{replies, task_path};
@@ -132,15 +132,6 @@ pub(super) fn implementing() -> (Fixture, Launch, u32, Vec<Effect>) {
     (fx, launch_of(kind), window, effects)
 }
 
-fn entry(runtime: Runtime, model: &str, strength: Strength) -> ModelEntry {
-    ModelEntry {
-        runtime,
-        model: model.to_string(),
-        strength,
-        note: String::new(),
-    }
-}
-
 #[test]
 fn a_paired_task_starts_with_a_test_writer_on_the_peer_runtime() {
     let (fx, launch, _) = paired();
@@ -152,7 +143,16 @@ fn a_paired_task_starts_with_a_test_writer_on_the_peer_runtime() {
         (launch.spec.runtime, launch.spec.model.as_str()),
         (Runtime::Codex, "")
     );
-    assert_eq!(launch.spec.effort, t1.route.effort, "the task's effort");
+    // Milestone 9.8 decision 28: the `test_writer` row (`codex:default` at `medium`).
+    let row = fx
+        .run()
+        .limits
+        .models()
+        .route(proto::models::Role::TestWriter);
+    assert_eq!(
+        launch.spec.effort, row.effort,
+        "the test_writer row's effort"
+    );
     assert_eq!(launch.spec.instructions, TEST_WRITER_CONTRACT);
     assert_eq!(launch.first_turn, test_writer_prompt(fx.run(), t1));
     assert_eq!(launch.worktree, task_path("t1"), "the task's own checkout");
@@ -176,8 +176,8 @@ fn a_paired_task_starts_with_a_test_writer_on_the_peer_runtime() {
         (decision.trigger.as_str(), &decision.chosen),
         ("test_writer", &pair.writer_route)
     );
-    // Fix round 1, minor m1: the source names the peer pick.
-    assert_eq!(decision.source, "peer_route");
+    // Fix round 1, minor m1: the source names the pick (milestone 9.8: the row).
+    assert_eq!(decision.source, "role_table");
     // The prompt, exactly.
     let want = format!(
         "[anthrex] Test for task t1: Title t1\nRun goal: Engine test\nWorktree: {}\n\
@@ -190,22 +190,20 @@ fn a_paired_task_starts_with_a_test_writer_on_the_peer_runtime() {
     );
     assert_eq!(launch.first_turn, want);
 
-    // A Claude-only roster: the task's own route.
-    let claude_only = config::Orchestrator {
-        models: vec![
-            entry(Runtime::Claude, "claude-haiku-4-5", Strength::Fast),
-            entry(Runtime::Claude, "claude-sonnet-5", Strength::Standard),
-            entry(Runtime::Claude, "claude-opus-5-5", Strength::Frontier),
-        ],
-        ..config::Orchestrator::default()
+    // A Claude `test_writer` row (milestone 9.8): that row.
+    let mut claude_only = config::Orchestrator::default();
+    let writer = proto::models::RoleChoice {
+        model: proto::models::ModelRef::parse("claude:claude-haiku-4-5").unwrap(),
+        effort: None,
+        fallback: None,
     };
+    (claude_only.roles.rows).insert(proto::models::Role::TestWriter, writer);
     let tasks = [task("t1", "S", "a", PAIRED)];
-    let (fx, launch, _) = running(PROFILE, &tasks, claude_only, |_| {});
+    let (_, launch, _) = running(PROFILE, &tasks, claude_only, |_| {});
     assert_eq!(role_of(&launch), AgentRole::TestWriter);
-    let route = &fx.task("t1").route;
     assert_eq!(
-        (launch.spec.runtime, &launch.spec.model),
-        (Runtime::Claude, &route.model)
+        (launch.spec.runtime, launch.spec.model.as_str()),
+        (Runtime::Claude, "claude-haiku-4-5")
     );
     // Codex not installed for the run: the task's own route too.
     let (fx, launch, _) = running(PROFILE, &tasks, config::Orchestrator::default(), |run| {

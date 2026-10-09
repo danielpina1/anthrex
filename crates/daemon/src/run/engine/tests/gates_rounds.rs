@@ -7,7 +7,9 @@ use serde_json::json;
 use super::dispatch::replies;
 use super::fixture::*;
 use super::gates::{CHECK_MODE, accepted, check_result, only_op, working_on};
-use super::gates_review::{blocking, in_review, reviewed, reviewer, submit, verdict};
+use super::gates_review::{
+    blocking, in_review, reviewed, reviewed_with, reviewer, submit, verdict,
+};
 use super::turns_fixes::assert_alive;
 use crate::run::contract::REVIEW_NUDGE;
 use crate::run::engine::{AgentSignal, Effect, EventKind, OpResult};
@@ -188,7 +190,8 @@ fn a_reviewer_whose_resume_fails_is_replaced() {
 /// nudge; its window is still the reviewer's and may submit.
 #[test]
 fn a_claude_reviewer_that_exits_between_turns_is_resumed_with_its_nudge() {
-    let (mut fx, _, rwindow) = reviewed(PROFILE, "[task.route]\nruntime = \"codex\"\nmodel = \"\"");
+    // Milestone 9.8: a Codex author (the small row), so the reviewer is Claude.
+    let (mut fx, _, rwindow) = reviewed_with(PROFILE, "", codex_small());
     assert_eq!(
         fx.task("t1").rounds.last().unwrap().route.runtime,
         proto::Runtime::Claude
@@ -308,8 +311,45 @@ fn the_reviewer_is_picked_against_the_authoring_sessions_route() {
     let (op, _) = in_review(&mut fx, window);
     let _ = reviewer(&mut fx, op, "diff --git a/x b/x");
     let t1 = fx.task("t1");
-    let level = t1.review_level.unwrap();
-    let expected = crate::run::roster::pick_reviewer(&fx.run().roster, &author, level);
+    assert!(t1.review_level.is_some());
+    // Milestone 9.8 decision 27: the reviewer row against the author.
+    let (expected, _) = fx.run().limits.models().reviewer_route(&author);
     assert_eq!(expected.runtime, proto::Runtime::Codex);
     assert_eq!(t1.review_route, Some(expected));
+}
+
+/// Milestone 9.8 decision 27 (D3): a reviewer row whose only model is the author's
+/// reviews with it, and the run log says so, once however many rounds run.
+#[test]
+fn a_reviewer_on_the_authors_model_is_logged_once() {
+    use proto::models::{ModelRef, Role, RoleChoice};
+    let mut config = config::Orchestrator::default();
+    let row = RoleChoice {
+        model: ModelRef::parse("claude:claude-sonnet-5").unwrap(),
+        effort: None,
+        fallback: None,
+    };
+    config.roles.rows.insert(Role::Reviewer, row);
+    let (mut fx, window) = super::gates::working_with(PROFILE, CHECK_MODE, config);
+    assert_eq!(fx.task("t1").route.model, "claude-sonnet-5");
+    let (op, _) = in_review(&mut fx, window);
+    let (rwindow, kind) = reviewer(&mut fx, op, "diff --git a/x b/x");
+    let crate::run::engine::OpKind::CreateWindow { spec, .. } = kind else {
+        unreachable!()
+    };
+    assert_eq!(
+        (spec.runtime, spec.model.as_str()),
+        (proto::Runtime::Claude, "claude-sonnet-5")
+    );
+    let line = "reviewer: claude:claude-sonnet-5 reviews work by the same model; set an \"if it struggles\" model for the reviewer in C-b S";
+    let logged = |fx: &Fixture| fx.run().log.iter().filter(|e| e.text == line).count();
+    assert_eq!(logged(&fx), 1);
+    // A second round (the first asked for changes) logs nothing more.
+    submit(&mut fx, rwindow, verdict("changes", blocking()));
+    super::turns::exited(&mut fx, rwindow);
+    fx.turn_completed(window);
+    let (op, _) = in_review(&mut fx, window);
+    let _ = reviewer(&mut fx, op, "p");
+    assert_eq!(fx.task("t1").reviews.len(), 2);
+    assert_eq!(logged(&fx), 1);
 }

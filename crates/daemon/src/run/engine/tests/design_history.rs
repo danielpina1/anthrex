@@ -106,12 +106,6 @@ fn later(fx: &mut Fixture, secs: u64) {
 fn a_phase_record_is_written_per_phase_with_agents_and_versions() {
     let mut fx = brainstorming();
     fx.run_mut().repo_dir = REPO.into();
-    fx.run_mut().roster.push(proto::ModelEntry {
-        runtime: Runtime::Codex,
-        model: "gpt-6".into(),
-        strength: proto::Strength::Frontier,
-        note: String::new(),
-    });
     drafts(&mut fx, (300, 12, 4_000), (400, 20, 8_000));
     // The clock runs from the drafts-in to the report, then from the user's changes to
     // the revision (50 s); the gate's waits never count.

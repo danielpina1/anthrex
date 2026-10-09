@@ -12,7 +12,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::run::{Budget, Effort, Route, Strength};
+use crate::run::{Budget, Route};
 
 /// One of a racing task's two lanes (decision 19): `"a"` or `"b"`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -132,8 +132,9 @@ pub enum TaskPattern {
 pub const TUNING_VERSION: u32 = 1;
 
 /// `<repo_dir>/tuning.toml` (decision 10). `[budgets.*]` and `[weights]` are written by
-/// the automatic refit, `[thresholds]` and `[routes.*]` by `run stats --apply`, and
-/// `[dismissed]` by `run stats --dismiss`.
+/// the automatic refit, `[thresholds]` by `run stats --apply`, and `[dismissed]` by
+/// `run stats --dismiss`. `[routes.*]`, which 9.5's `--apply` wrote, is read and ignored
+/// (milestone 9.8 decision 30, ruling F20).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TuningFile {
@@ -145,9 +146,10 @@ pub struct TuningFile {
     pub weights: Option<PathWeights>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thresholds: Option<SizeThresholds>,
-    /// By class key: `"s"`, `"m"`.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub routes: BTreeMap<String, ClassRoute>,
+    /// Milestone 9.8 decision 30: an old file's `[routes.<class>]` tables load, whatever
+    /// they hold, and are never written.
+    #[serde(default, skip_serializing)]
+    pub routes: Ignored,
     /// Proposal id → the proposed value it was dismissed at.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub dismissed: BTreeMap<String, String>,
@@ -160,7 +162,7 @@ impl Default for TuningFile {
             budgets: BTreeMap::new(),
             weights: None,
             thresholds: None,
-            routes: BTreeMap::new(),
+            routes: Ignored,
             dismissed: BTreeMap::new(),
         }
     }
@@ -208,12 +210,16 @@ impl Default for SizeThresholds {
     }
 }
 
-/// A class's applied route: its strength and effort.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ClassRoute {
-    pub strength: Strength,
-    pub effort: Effort,
+/// A value an older file holds and nothing reads any more (milestone 9.8 decision 30):
+/// any value deserialises to it; a field of this type is skipped when serialising.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Ignored;
+
+impl<'de> Deserialize<'de> for Ignored {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        serde::de::IgnoredAny::deserialize(deserializer)?;
+        Ok(Ignored)
+    }
 }
 
 /// One class's line of the tuning block (decision 11).
@@ -230,8 +236,6 @@ pub struct ClassTuning {
     pub refit_budget: Option<Budget>,
     pub weight_secs: Option<u64>,
     pub weight_derived: bool,
-    /// `"standard/low"`, or `"list (config): …"`.
-    pub route: String,
 }
 
 /// What became of a class's budget refit.
@@ -250,7 +254,6 @@ pub enum RefitState {
 #[serde(rename_all = "snake_case")]
 pub enum TuningChange {
     Threshold { class: String, lines: u32 },
-    Route { class: String, route: ClassRoute },
 }
 
 /// One proposal of `run stats`, applied only on the user's confirmation.
@@ -284,8 +287,6 @@ pub struct TuningReport {
     pub applied: Vec<String>,
     /// Each dismissed proposal with the value stored for it (whole-branch review C, m-2).
     pub dismissed: Vec<ProposalValue>,
-    /// Ruling RH-5: the first candidate of `[orchestrator.routes.orchestrator]`.
-    pub orchestrator_list: Option<String>,
     /// Ruling T8-2: why the moved bad file did not parse (decision 10's `(<error>)`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parse_error: Option<String>,

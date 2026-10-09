@@ -3,16 +3,16 @@
 
 use proto::{
     AgentRole, BlockReason, DiffStats, DoneSignal, Effort, GateCounts, GateTally, HISTORY_VERSION,
-    PhaseSecs, RunPath, RunState, Runtime, Severity, SeverityTally, SizeCheckInfo, Strength,
-    TaskOutcome, TaskRecord, TaskState, TokenUsage, Verdict,
+    PhaseSecs, RunPath, RunState, Runtime, Severity, SeverityTally, SizeCheckInfo, TaskOutcome,
+    TaskRecord, TaskState, TokenUsage, Verdict,
 };
 
 use super::{due, run_outcome, run_record, run_record_due, task_record, task_record_id};
 use crate::run::contract::generated_files_message;
 use crate::run::model::{DoneClaim, ReviewLevel, Run, SizeCheckState};
 use crate::run::phases::set_state;
-use crate::run::roster::{escalate, pick_reviewer};
 use crate::run::routing::{record_reviewer, record_worker};
+use crate::run::test_support::{escalated, set_row, with_efforts};
 
 #[path = "history_tests_fixtures.rs"]
 mod fixtures;
@@ -21,6 +21,41 @@ use fixtures::*;
 mod patterns;
 #[path = "history_tests_routing.rs"]
 mod routing;
+
+/// M9.8.14: the checked-in milestone-9 history (its routes carry `strength`) still
+/// decodes with `HISTORY_VERSION` 5; the key is ignored and never written back.
+#[test]
+fn an_old_routing_line_still_decodes() {
+    assert_eq!(HISTORY_VERSION, 5);
+    let text = include_str!("../../../proto/src/m9_history_v2.jsonl");
+    let lines: Vec<proto::HistoryLine> = (text.lines())
+        .map(|l| serde_json::from_str(l).unwrap_or_else(|e| panic!("{e}: {l}")))
+        .collect();
+    let [
+        proto::HistoryLine::Task(task),
+        proto::HistoryLine::RoleRoute(role),
+    ] = &lines[..]
+    else {
+        panic!("a task line and a role_route line: {lines:?}");
+    };
+    let sonnet = route(Runtime::Claude, "claude-sonnet-5", Effort::HIGH);
+    assert_eq!(task.route, sonnet);
+    assert_eq!(task.review_routes, std::slice::from_ref(&sonnet));
+    let decision = &task.routing_decisions[0];
+    assert_eq!(
+        decision.chosen,
+        route(Runtime::Codex, "gpt-5-codex", Effort::HIGH)
+    );
+    assert_eq!(decision.candidates[0].route, sonnet);
+    assert_eq!(
+        role.chosen,
+        route(Runtime::Claude, "claude-opus-5", Effort::HIGH)
+    );
+    for line in &lines {
+        let json = serde_json::to_string(line).unwrap();
+        assert!(!json.contains("strength"), "{json}");
+    }
+}
 
 #[test]
 fn set_state_accumulates_phase_times() {
@@ -156,7 +191,7 @@ fn task_record_from_a_merged_task() {
     task.phase_since = 900;
     let task = run.tasks[0].clone();
     let record = task_record(&run, &task, TaskOutcome::Merged, 1_000);
-    let reviewer = route(Runtime::Codex, "", Strength::Standard, Effort::Low);
+    let reviewer = route(Runtime::Codex, "", Effort::LOW);
     let want = TaskRecord {
         v: HISTORY_VERSION,
         record_id: format!("{}/t1", run.id),
@@ -233,13 +268,20 @@ fn task_record_from_a_merged_task() {
 fn routing_history_keeps_choice_time_candidates() {
     let mut run = run_of(&["t1"]);
     run.profile_languages = vec!["rust".into()];
-    let sonnet = route(
-        Runtime::Claude,
-        "claude-sonnet-5",
-        Strength::Standard,
-        Effort::Medium,
-    );
+    let sonnet = route(Runtime::Claude, "claude-sonnet-5", Effort::MEDIUM);
     assert_eq!(run.tasks[0].route, sonnet);
+    // The small row back at its built-in `low`, so the task's `medium` is its own (a
+    // user's route, decision 10; a plan's before milestone 9.8 decision 31) and the
+    // row's route is one escalation never steps to.
+    set_row(
+        &mut run,
+        proto::models::Role::ImplementerSmall,
+        "claude:claude-sonnet-5",
+        Some("low"),
+        None,
+    );
+    // Milestone 9.8 decision 29: Sonnet reports `low`, `medium`, `high`.
+    with_efforts(&mut run);
 
     // The first worker: the class default on the task's runtime and strength.
     run.tasks[0].session = 1;
@@ -247,7 +289,14 @@ fn routing_history_keeps_choice_time_candidates() {
     // A repeated start of the same session adds nothing.
     record_worker(&mut run, 0, 101);
     // A fresh escalated worker (rung 2): escalated from the route it had.
-    let up = escalate(&run.roster, &sonnet);
+    let up = escalated(&run, "t1", &sonnet);
+    assert_eq!(
+        up,
+        proto::Route {
+            effort: Effort::HIGH,
+            ..sonnet.clone()
+        }
+    );
     let task = &mut run.tasks[0];
     task.escalated_from = Some(std::mem::replace(&mut task.route, up.clone()));
     task.session = 2;
@@ -256,16 +305,16 @@ fn routing_history_keeps_choice_time_candidates() {
     // A fresh session that is no escalation (a lost resume) chose nothing new.
     run.tasks[0].session = 3;
     record_worker(&mut run, 0, 250);
-    // Two review rounds against the escalated author.
+    // Two review rounds against the escalated author (milestone 9.8 decision 27: the
+    // reviewer row, whatever the level).
+    let chosen = run.limits.models().reviewer_route(&up).0;
     for (round, level, now) in [
         (1, ReviewLevel::Medium, 300),
         (2, ReviewLevel::Frontier, 400),
     ] {
-        let chosen = pick_reviewer(&run.roster, &up, level);
         record_reviewer(&mut run, 0, (&up, level), &chosen, round, now);
     }
     // A review round launched again (a restart) is the same decision.
-    let chosen = pick_reviewer(&run.roster, &up, ReviewLevel::Frontier);
     record_reviewer(&mut run, 0, (&up, ReviewLevel::Frontier), &chosen, 2, 450);
     let decisions = run.tasks[0].routing_decisions.clone();
     let shape: Vec<_> = decisions
@@ -285,25 +334,25 @@ fn routing_history_keeps_choice_time_candidates() {
         vec![
             (
                 (1, 100, AgentRole::Worker, 1, None, None),
-                ("initial", "class_default", "m8a-worker-v1"),
-                1,
+                ("initial", "role_table", "m9.8-roles-v1"),
+                0,
                 None
             ),
             (
                 (2, 200, AgentRole::Worker, 2, None, None),
-                ("escalation", "escalation_policy", "m8a-escalate-v1"),
+                ("escalation", "escalation_policy", "m9.8-roles-v1"),
                 0,
                 None
             ),
             (
                 (3, 300, AgentRole::Reviewer, 1, Some(1), None),
-                ("review", "review_policy", "m8a-review-v1"),
+                ("review", "role_table", "m9.8-roles-v1"),
                 0,
                 None
             ),
             (
                 (4, 400, AgentRole::Reviewer, 2, Some(2), None),
-                ("review", "review_policy", "m8a-review-v1"),
+                ("review", "role_table", "m9.8-roles-v1"),
                 0,
                 None
             ),
@@ -311,91 +360,42 @@ fn routing_history_keeps_choice_time_candidates() {
     );
     decisions.iter().for_each(assert_selected);
     let (claude, codex) = ("claude:", "codex:");
-    let medium_std = s("strength fast, the task needs standard");
+    // Ruling F16: the small row's model (at the task's own effort), with no fallback.
     assert_eq!(
         candidates(&decisions[0]),
-        vec![
-            (
-                format!("{claude}claude-haiku-4-5"),
-                Effort::Medium,
-                medium_std
-            ),
-            (format!("{claude}claude-sonnet-5"), Effort::Medium, None),
-            (
-                format!("{claude}claude-opus-5-5"),
-                Effort::Medium,
-                s("strength frontier, the task needs standard")
-            ),
-            (
-                codex.to_string(),
-                Effort::Medium,
-                s("runtime codex, the task runs on claude")
-            ),
-        ]
+        vec![(format!("{claude}claude-sonnet-5"), Effort::MEDIUM, None)]
     );
     let after = s("ranked after the selected route");
+    // Ruling F16 (M9.8.8): `role_step`'s steps from the route left, that route, then the
+    // row's own route, which escalation never steps to.
     assert_eq!(
         candidates(&decisions[1]),
         vec![
-            (format!("{claude}claude-sonnet-5"), Effort::High, None),
-            (codex.to_string(), Effort::High, after.clone()),
+            (format!("{claude}claude-sonnet-5"), Effort::HIGH, None),
             (
-                format!("{claude}claude-opus-5-5"),
-                Effort::High,
+                format!("{claude}claude-sonnet-5"),
+                Effort::MEDIUM,
                 after.clone()
             ),
             (
                 format!("{claude}claude-sonnet-5"),
-                Effort::Medium,
-                after.clone()
-            ),
-            (
-                format!("{claude}claude-haiku-4-5"),
-                Effort::High,
-                s("not an escalation step from claude-sonnet-5")
+                Effort::LOW,
+                s("not an escalation step from claude:claude-sonnet-5")
             ),
         ]
     );
     assert_eq!(decisions[1].chosen, up);
-    assert_eq!(
-        candidates(&decisions[2]),
-        vec![
-            (codex.to_string(), Effort::Medium, None),
-            (
-                format!("{claude}claude-opus-5-5"),
-                Effort::Medium,
-                after.clone()
-            ),
-            (
-                format!("{claude}claude-sonnet-5"),
-                Effort::Medium,
-                s("the author's own model")
-            ),
-            (
-                format!("{claude}claude-haiku-4-5"),
-                Effort::Medium,
-                s("below the required standard strength")
-            ),
-        ]
-    );
-    let below = s("below the required frontier strength");
-    assert_eq!(
-        candidates(&decisions[3]),
-        vec![
-            (format!("{claude}claude-opus-5-5"), Effort::High, None),
-            (
-                format!("{claude}claude-sonnet-5"),
-                Effort::High,
-                s("the author's own model")
-            ),
-            (
-                format!("{claude}claude-haiku-4-5"),
-                Effort::High,
-                below.clone()
-            ),
-            (codex.to_string(), Effort::High, below),
-        ]
-    );
+    // Ruling F16: the reviewer row (`codex:default` at `high`), then its fallback.
+    let reviewers = vec![
+        (codex.to_string(), Effort::HIGH, None),
+        (
+            format!("{claude}claude-opus-5-5"),
+            Effort::DEFAULT,
+            after.clone(),
+        ),
+    ];
+    assert_eq!(candidates(&decisions[2]), reviewers);
+    assert_eq!(candidates(&decisions[3]), reviewers);
     for d in &decisions {
         assert_eq!(d.input.title, "Title t1");
         assert_eq!(d.input.brief, "Brief t1");
@@ -406,12 +406,11 @@ fn routing_history_keeps_choice_time_candidates() {
         assert!(!d.input.hub && !d.input.interface_change);
     }
 
-    // Amending the brief and the size, and changing the roster, rewrites none of it,
-    // and the task's record copies them in order.
+    // Amending the brief and the size rewrites none of it, and the task's record copies
+    // them in order.
     let task = &mut run.tasks[0];
     task.spec.brief = "Something else".into();
     task.size = proto::Size::M;
-    run.roster.retain(|e| e.runtime == Runtime::Claude);
     run.profile_languages.clear();
     assert_eq!(run.tasks[0].routing_decisions, decisions);
     let task = run.tasks[0].clone();
@@ -419,7 +418,8 @@ fn routing_history_keeps_choice_time_candidates() {
     assert_eq!(record.routing_decisions, decisions);
 }
 
-/// An explicit model outside the roster is appended to the pool and selected.
+/// An explicit model outside the row is appended to the pool and selected; milestone
+/// 9.8 (ruling F16): the pool is the task's row.
 #[test]
 fn an_explicit_route_outside_the_roster_is_appended() {
     let mut run = run_of(&["t1"]);
@@ -431,11 +431,11 @@ fn an_explicit_route_outside_the_roster_is_appended() {
     let d = &run.tasks[0].routing_decisions[0];
     assert_eq!(d.source, "explicit_task");
     assert_eq!(d.selected_index as usize, d.candidates.len() - 1);
-    assert_eq!(d.candidates.len(), run.roster.len() + 1);
-    assert!(d.candidates[..run.roster.len()].iter().all(|c| {
-        c.skipped_reason.as_deref() == Some("the task names the model claude-custom")
-            || c.skipped_reason.as_deref() == Some("runtime codex, the task runs on claude")
-    }));
+    assert_eq!(d.candidates.len(), 2);
+    assert_eq!(
+        d.candidates[0].skipped_reason.as_deref(),
+        Some("the task names the model claude-custom")
+    );
     assert_selected(d);
 }
 

@@ -1,11 +1,12 @@
 //! `[orchestrator.tuning]` (milestone 9.5 decision 3, ruling RH-7): how the refit learns
-//! from history, and the adaptive-concurrency settings. Also the model lists
-//! (`orchestrator/routes.rs`, decision 9a) and whether `[orchestrator.budget.s]` and
+//! from history, and the adaptive-concurrency settings. Also the model lists' problems
+//! (`orchestrator/routes.rs`, decision 9a; milestone 9.8 migrates the lists themselves)
+//! and whether `[orchestrator.budget.s]` and
 //! `[orchestrator.budget.m]` set a value explicitly (ruling RH-5: an explicit budget
 //! beats the refit). Read by one call, [`read_tuning`], from `orchestrator::read`,
 //! after the roster; unknown keys are reported by `orchestrator/unknown.rs`.
 
-use proto::ModelEntry;
+use super::LegacyModel;
 
 use super::read_u32_in_range;
 use crate::{Problem, not_a_table_problem, read_bool_key, read_u64_in_range};
@@ -14,8 +15,10 @@ use crate::{Problem, not_a_table_problem, read_bool_key, read_u64_in_range};
 // gains one `mod` line for both (decision 3's +4).
 #[path = "routes.rs"]
 mod routes;
-pub(crate) use routes::report_unknown_routes;
-pub use routes::{Candidate, Pick, RouteList, RouteLists};
+#[cfg(test)]
+pub(crate) use routes::{Candidate, Pick};
+pub(crate) use routes::{RouteList, RouteLists};
+pub(crate) use routes::{read_routes, report_unknown_routes};
 
 pub(crate) const KNOWN_TUNING_KEYS: &[&str] = &[
     "min_samples",
@@ -50,8 +53,6 @@ pub struct Tuning {
     pub threshold_percentile: u32,
     /// 1..=100: the change, in percent, below which nothing is rewritten or proposed.
     pub min_change_percent: u32,
-    /// 1..=100: the escalated share above which a class's route steps up.
-    pub escalate_above_percent: u32,
     pub refit_budgets: bool,
     pub refit_tokens: bool,
     pub path_weights: bool,
@@ -74,7 +75,6 @@ impl Default for Tuning {
             budget_factor_percent: 250,
             threshold_percentile: 90,
             min_change_percent: 20,
-            escalate_above_percent: 25,
             refit_budgets: true,
             refit_tokens: false,
             path_weights: true,
@@ -98,20 +98,22 @@ pub struct ConfiguredBudgets {
     pub doc_reviewer: bool,
 }
 
-/// Everything 9.5 reads from `[orchestrator]`: `config::Orchestrator.tuning`.
+/// Everything 9.5 reads from `[orchestrator]`: `config::Orchestrator.tuning`. Milestone
+/// 9.8 (task M9.8.13): the model lists are no longer kept here; `models::migrate` reads
+/// them from the raw table.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TuningConfig {
     pub table: Tuning,
-    pub routes: RouteLists,
     pub configured: ConfiguredBudgets,
 }
 
-/// Reads `[orchestrator.tuning]`, `[orchestrator.routes.*]` and the explicit budgets
-/// out of `[orchestrator]` (`orchestrator`). `roster` is the merged roster, already
-/// read. Never fails.
+/// Reads `[orchestrator.tuning]` and the explicit budgets out of `[orchestrator]`
+/// (`orchestrator`), and reports the problems of `[orchestrator.routes.*]` (each
+/// candidate checked against `roster`, the merged roster, already read), whose lists
+/// only the migration uses. Never fails.
 pub(crate) fn read_tuning(
     orchestrator: &toml::Table,
-    roster: &[ModelEntry],
+    roster: &[LegacyModel],
     problems: &mut Vec<Problem>,
 ) -> TuningConfig {
     let mut table = Tuning::default();
@@ -120,15 +122,15 @@ pub(crate) fn read_tuning(
         Some(None) => problems.push(not_a_table_problem("orchestrator.tuning")),
         None => {}
     }
+    routes::read_routes(orchestrator, roster, problems);
     TuningConfig {
         table,
-        routes: routes::read_routes(orchestrator, roster, problems),
         configured: configured_budgets(orchestrator),
     }
 }
 
 fn read_table(t: &toml::Table, o: &mut Tuning, problems: &mut Vec<Problem>) {
-    let u32_keys: [(&str, std::ops::RangeInclusive<u32>, &mut u32); 7] = [
+    let u32_keys: [(&str, std::ops::RangeInclusive<u32>, &mut u32); 6] = [
         ("min_samples", 5..=1000, &mut o.min_samples),
         ("per_run_cap", 1..=1000, &mut o.per_run_cap),
         ("window", 10..=5000, &mut o.window),
@@ -139,15 +141,19 @@ fn read_table(t: &toml::Table, o: &mut Tuning, problems: &mut Vec<Problem>) {
         ),
         ("threshold_percentile", 50..=99, &mut o.threshold_percentile),
         ("min_change_percent", 1..=100, &mut o.min_change_percent),
-        (
-            "escalate_above_percent",
-            1..=100,
-            &mut o.escalate_above_percent,
-        ),
     ];
     for (key, range, field) in u32_keys {
         let full = format!("orchestrator.tuning.{key}");
         read_u32_in_range(t, key, &full, &range, field, problems);
+    }
+    // Milestone 9.8 decision 30: the route refit is gone; the key stays known, its
+    // value unused.
+    if t.contains_key("escalate_above_percent") {
+        problems.push(Problem {
+            key: "orchestrator.tuning.escalate_above_percent".to_string(),
+            message: "no longer used; models come from the role table".to_string(),
+            default: "nothing".to_string(),
+        });
     }
     let bool_keys: [(&str, &mut bool); 4] = [
         ("refit_budgets", &mut o.refit_budgets),

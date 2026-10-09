@@ -8,10 +8,11 @@
 //! default. A non-empty `agent.model` is not checked against the roster here: `run
 //! start --goal` refuses it with decision 6's text.
 
-use proto::{Effort, Runtime, Strength};
+use proto::{Effort, Runtime};
 
 use super::adapt::{read_effort, read_strength, sub_table};
 use super::read_u32_in_range;
+use super::roster::LegacyStrength;
 use crate::{Problem, read_bool_key, read_u64_in_range};
 
 pub(super) const KNOWN_AGENT_KEYS: &[&str] = &["runtime", "model", "effort"];
@@ -55,7 +56,8 @@ pub struct AgentConfig {
 pub struct PlannerConfig {
     /// `None` means the orchestrator's runtime.
     pub runtime: Option<Runtime>,
-    pub strength: Strength,
+    /// Read only to migrate the old keys (task M9.8.14).
+    pub(crate) strength: LegacyStrength,
     pub effort: Effort,
     pub max_tool_calls: u32,
     pub timeout_secs: u64,
@@ -82,7 +84,7 @@ impl Default for AgentConfig {
         AgentConfig {
             runtime: None,
             model: String::new(),
-            effort: Effort::High,
+            effort: Effort::HIGH,
         }
     }
 }
@@ -91,8 +93,8 @@ impl Default for PlannerConfig {
     fn default() -> Self {
         PlannerConfig {
             runtime: None,
-            strength: Strength::Frontier,
-            effort: Effort::High,
+            strength: LegacyStrength::Frontier,
+            effort: Effort::HIGH,
             max_tool_calls: 200,
             timeout_secs: 2400,
             max_rejections: 5,

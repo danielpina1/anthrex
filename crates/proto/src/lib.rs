@@ -129,7 +129,15 @@
 /// a model gave the run at its start (empty when it has none), `#[serde(default)]` and
 /// left out while empty, so a protocol-17 snapshot and `run.json` still load
 /// (`HISTORY_VERSION` stays 5: no history record changes).
-pub const PROTO_VERSION: u32 = 18;
+///
+/// Milestone 9.8 bumps this to 19: `Effort` becomes a string (a protocol-18 value decodes
+/// unchanged), and the model roles append `ClientMsg::ListModels`, `DaemonMsg::Models`,
+/// `SettingsRequest::{RepoModels, PutRepoModels}`, `SettingsReply::{RepoModels,
+/// RepoSaved}`, `OrchestratorChoice.effort`, `SettingsDoc.roles` and
+/// `ModelCatalog.problem`, each defaulted and left out while empty, so an older
+/// `run.json` and snapshot still load. Derivation: 18 at `lib.rs:132` before this
+/// change; 18 + 1 = 19.
+pub const PROTO_VERSION: u32 = 19;
 
 /// How long the daemon waits for a freshly connected client's `Hello`, and how long a
 /// client waits for the daemon's `Welcome`, before giving up on the handshake. Design
@@ -144,8 +152,10 @@ pub mod codec;
 pub mod conversation;
 pub mod delivery;
 pub mod design;
+pub mod effort;
 pub mod history;
 pub mod messages;
+pub mod models;
 pub mod orch;
 pub mod paths;
 pub mod planner;
@@ -188,6 +198,12 @@ pub use history::{
     TaskRecord, TierRunRecord,
 };
 pub use messages::{ClientMsg, DaemonMsg, HookSource};
+// `models::Role` stays under `models::`: the crate root's `Role` is the conversation's.
+pub use models::{
+    BrainstormChoice, CatalogModel, CatalogSource, EFFORT_MAX_CHARS, HelperKind,
+    MODEL_ID_MAX_CHARS, ModelCatalog, ModelRef, ModelTable, RoleChoice, base_model_id,
+    canonical_id, valid_effort,
+};
 pub use orch::{
     HoldInfo, HoldKind, HoldState, IntegrationInfo, IntegrationState, MessageKind, MessageTarget,
     OrchestratorChoice, OrchestratorInfo, TaskNoteInfo, TaskNoteKind,
@@ -205,8 +221,8 @@ pub use profile::{
 pub use rounds::*;
 pub use run::{
     AgentRole, BlockReason, Budget, DoneSignal, EditFile, Effort, Finding, FinishAction,
-    GateCounts, GateKind, ModelEntry, Plan, PlanEdit, PlanTask, ProfileSpec, Route, RouteSpec,
-    RunRef, RunState, STAGES_MAX, Severity, Size, Strength, TaskKind, TaskState, TestMode, Verdict,
+    GateCounts, GateKind, Plan, PlanEdit, PlanTask, ProfileSpec, Route, RouteSpec, RunRef,
+    RunState, STAGES_MAX, Severity, Size, TaskKind, TaskState, TestMode, Verdict,
 };
 pub use run_info::{
     AgentRoundInfo, BaseMovedInfo, BlockInfo, CheckInfo, PlanEditInfo, ProofInfo, ReviewInfo,
@@ -215,13 +231,12 @@ pub use run_info::{
 pub use run_wire::{ProfileReply, ProfileRequest, RunReply, RunRequest, ToolCall};
 pub use scout::{ScoutFile, ScoutInfo, ScoutKind, ScoutReport, ScoutState};
 pub use settings::{
-    BudgetLimit, OrchestratorDefault, Origin, SETTINGS_KEYS, SettingsDoc, SettingsLimits,
-    SettingsReply, SettingsRequest,
+    BudgetLimit, Origin, SETTINGS_KEYS, SettingsDoc, SettingsLimits, SettingsReply, SettingsRequest,
 };
 pub use task_detail::{ACTIVITY_MAX, SummarySource, TaskDetailInfo, WORKER_SUMMARY_MAX};
 pub use tiers::{FullInfo, FullState, SignalInfo, StageInfo, TaskOrigin, TierInfo};
 pub use tuning::{
-    ClassBudget, ClassRoute, ClassTuning, LaneInfo, LaneState, PairInfo, PairPhase, PathWeights,
+    ClassBudget, ClassTuning, Ignored, LaneInfo, LaneState, PairInfo, PairPhase, PathWeights,
     ProposalValue, RaceInfo, RaceLane, RefitState, SizeThresholds, TUNING_VERSION, TaskPattern,
     TuningChange, TuningFile, TuningProposal, TuningReport,
 };
@@ -255,10 +270,14 @@ mod orch_tests;
 mod run_title_tests;
 
 #[cfg(test)]
+#[path = "models_tests.rs"]
+mod models_tests;
+
+#[cfg(test)]
 mod tests {
     #[test]
-    fn proto_version_is_eighteen() {
-        assert_eq!(super::PROTO_VERSION, 18);
+    fn proto_version_is_nineteen() {
+        assert_eq!(super::PROTO_VERSION, 19);
     }
 
     #[test]

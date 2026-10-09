@@ -17,7 +17,7 @@ use super::contract::{mode_label, sha7, size_label};
 use super::model::Run;
 use super::report_escape::{escape_cell, list_item_text, plain_text_line};
 pub use super::report_orch::{RESEARCH_FILE, research_text};
-use super::report_task::{render_task, strength_label};
+use super::report_task::render_task;
 use super::triage::{kinds_scale, source_label};
 use crate::headless::argv::CodexProjectConfig;
 
@@ -69,7 +69,6 @@ fn header(run: &Run, out: &mut String) {
         out.push_str(&line);
     }
     out.push_str(&format!("Approved by: {}\n", approved_by_line(run)));
-    below_frontier(run, out);
     not_metered(run, out);
     // M8b decision 24: `path: fast (triage: <kinds>/<scale>, <source>)`.
     if let (Some(proto::RunPath::Fast), Some(t)) = (run.path, &run.triage) {
@@ -123,28 +122,6 @@ fn not_metered(run: &Run, out: &mut String) {
     {
         out.push_str("orchestrator usage: not metered (codex)\n");
     }
-}
-
-/// Milestone 9 decision 6: an orchestrator whose resolved route is below `frontier`
-/// (with the built-in roster, a Codex orchestrator resolves to `""` at `standard`).
-fn below_frontier(run: &Run, out: &mut String) {
-    let Some(o) = &run.orch.orchestrator else {
-        return;
-    };
-    let route = &o.route;
-    if route.strength == proto::Strength::Frontier {
-        return;
-    }
-    let model = if route.model.is_empty() {
-        "default".to_string()
-    } else {
-        plain_text_line(&route.model)
-    };
-    out.push_str(&format!(
-        "orchestrator below the frontier tier: {} ({model}) {}\n",
-        route.runtime.label(),
-        strength_label(route.strength)
-    ));
 }
 
 fn state_line(run: &Run) -> String {

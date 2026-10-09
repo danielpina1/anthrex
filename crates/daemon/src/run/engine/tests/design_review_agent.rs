@@ -215,8 +215,8 @@ fn a_back_to_the_spec_clears_its_approval() {
     assert!(!earlier(&fx), "paused after the Back");
 }
 
-/// Decision 10's record of the reviewer's session: `spec-r1/1`, the doc reviewer's
-/// policy, its source the peer route, completed once its findings are in.
+/// Decision 10's record of the reviewer's session: `spec-r1/1`, milestone 9.8's policy,
+/// its source the role table (ruling F16), completed once its findings are in.
 #[test]
 fn the_reviewers_session_has_its_routing_record() {
     let mut fx = specifying();
@@ -227,11 +227,8 @@ fn the_reviewers_session_has_its_routing_record() {
         .cloned()
         .unwrap();
     assert_eq!(record.session_id, "spec-r1/1");
-    assert_eq!(
-        record.policy_version,
-        crate::run::orch::roles::DOC_REVIEWER_POLICY
-    );
-    assert_eq!(record.source, "peer_route");
+    assert_eq!(record.policy_version, crate::run::routing::ROLES_POLICY);
+    assert_eq!(record.source, "role_table");
     assert_eq!(record.outcome, Some(RoleOutcome::Completed));
 }
 

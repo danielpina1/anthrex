@@ -143,7 +143,7 @@ fn edit_leaving_an_l_task_is_rejected() {
     );
     let (edited, _) = applied(&run, vec![amend_size("t2", Size::M)]);
     assert_eq!(task(&edited, "t2").size, Size::M);
-    assert_eq!(task(&edited, "t2").route.effort, Effort::Medium);
+    assert_eq!(task(&edited, "t2").route.effort, Effort::MEDIUM);
 }
 
 #[test]

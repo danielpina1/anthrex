@@ -5,7 +5,7 @@
 
 mod support;
 
-use proto::{AgentRole, FullState, ModelEntry, RunInfo, RunState, TaskOrigin, TaskState};
+use proto::{AgentRole, FullState, RunInfo, RunState, TaskOrigin, TaskState};
 use serde_json::{Value, json};
 use support::orch_script::{
     add, edit_plan, marker, passed, plan_task, prompt, until as status_until,
@@ -120,13 +120,25 @@ fn e2e_red_tier3_is_bisected_to_the_culprit_and_fixed() {
     assert_eq!(line["probes"], json!(4), "{line}");
     let (fix, t2) = (t(&run, "fix1"), t(&run, "t2"));
     assert_eq!(fix.owns, t2.owns, "the culprit's owns, copied exactly");
-    // Decision 37: the culprit's route one rung up (`roster::escalate`), from the
-    // run's own roster.
-    let roster: Vec<ModelEntry> =
-        serde_json::from_value(run_json(&run)["roster"].clone()).expect("run.json's roster");
-    let up = daemon::run::roster::escalate(&roster, &t2.route);
-    assert_ne!(up, t2.route, "the harness's route has a rung above it");
-    assert_eq!(fix.route, up, "the culprit's route, one rung up");
+    // Decision 37: the culprit's route one rung up, along its row of the run's frozen
+    // role table (milestone 9.8 decision 29, `role_step::escalate`). The fix task's
+    // route takes its model's roster strength, so the strength is not compared.
+    let engine: daemon::run::model::Run =
+        serde_json::from_value(run_json(&run)).expect("run.json is a run");
+    let culprit = engine.task("t2").expect("t2 in run.json");
+    let role = daemon::run::model_roles::RunModels::task_role(culprit);
+    let failed = daemon::run::model_roles::failed_routes(culprit);
+    let models = engine.limits.models();
+    let up = daemon::run::role_step::escalate(models, role, &t2.route, &failed);
+    // The default table: the built-in effort lists (no catalog at the start) give
+    // Sonnet a rung above the culprit's route (M9.8.8 fix round 1).
+    let up = up.expect("the default row has a rung above the culprit's route");
+    let key = |r: &proto::Route| (r.runtime, r.model.clone(), r.effort.clone());
+    assert_eq!(
+        key(&fix.route),
+        key(&up),
+        "the culprit's route, one rung up"
+    );
     // Then fix1's own path.
     let run = h.wait_run(&id, settled, TIER_WAIT);
     assert_eq!(run.state, RunState::Complete, "{}", report(&run));

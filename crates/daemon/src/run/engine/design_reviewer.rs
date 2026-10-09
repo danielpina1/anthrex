@@ -1,6 +1,7 @@
 //! Milestone 9.6 task M9.6.10 (DF §4.2, §4.3; decisions 9, 10 and 15), part of
 //! `design_agents.rs`: the document reviewer. One per review, queued by a spec's review
-//! draft ([`queue`]) on the orchestrator's peer runtime, else its own (`same_runtime`),
+//! draft ([`queue`]) on the `reviewer` row's pick against the orchestrator (milestone
+//! 9.8, decision 27; `review_pick`), else the orchestrator's own route (`same_runtime`),
 //! it takes a reader slot as a brainstormer does and starts while its review is asked
 //! (specifying, or the spec gate the orchestrator revises; [`start_next`]). Task
 //! M9.6.11: the plan's one review too, queued by the first passing plan submit and
@@ -44,8 +45,9 @@ fn review(design: &DesignState) -> Option<&DocReviewRecord> {
     design.reviews.last()
 }
 
-/// The reviewer's route and, on the orchestrator's own runtime, why (decision 10,
-/// [`review_pick`]), asked before its draft is stored. Ruling WB-A-W2: when no installed
+/// The reviewer's pick (decision 10, milestone 9.8's decision 27, [`review_pick`]):
+/// its route, why when it is the orchestrator's own, and its run-log warning; asked
+/// before its draft is stored. Ruling WB-A-W2: when no installed
 /// runtime can run it unsaved, the run halts with [`UNSAVED_REVIEWER`], the error.
 pub(in crate::run::engine) fn route(run: &mut Run, now: u64) -> Result<Pick, String> {
     review_pick(run, &crate::decider::caps()).ok_or_else(|| {
@@ -62,17 +64,24 @@ pub(in crate::run::engine) fn refused(run: &mut Run, text: &str, now: u64) {
     }
 }
 
-/// A reviewer's route and why it is the orchestrator's own ([`route`]).
-pub(in crate::run::engine) type Pick = (proto::Route, Option<String>);
+/// A reviewer's route, why it is the orchestrator's own, and the run-log line it owes
+/// ([`route`]).
+pub(in crate::run::engine) type Pick = crate::run::orch::roles::lists::ReviewPick;
 
 /// Review `k` of `doc`, asked when the document had `after` gate versions: its record,
 /// and its reviewer queued for a reader slot on `pick` ([`route`]). A reviewer on the
-/// orchestrator's own runtime is said so in the log, with why (fix round 1, m1).
+/// orchestrator's own runtime is said so in the log, with why (fix round 1, m1); a
+/// reviewer on the orchestrator's model, or on the row's fallback, logs its warning once
+/// (milestone 9.8, D3 and decision 27).
 pub(in crate::run::engine) fn queue(
     run: &mut Run,
     doc: DocKind,
     (k, after): (u32, u32),
-    (route, why): Pick,
+    Pick {
+        route,
+        why,
+        warning,
+    }: Pick,
     now: u64,
 ) {
     let same_runtime = why.is_some();
@@ -84,6 +93,9 @@ pub(in crate::run::engine) fn queue(
             "the document reviewer {label}: no peer reviewer: {why}; reviewing on the same runtime, {runtime}"
         );
         log(run, now, text);
+    }
+    if let Some(warning) = warning {
+        log(run, now, warning);
     }
     let Some(design) = run.orch.design.as_mut() else {
         return;

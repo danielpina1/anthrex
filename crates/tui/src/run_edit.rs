@@ -1,20 +1,23 @@
 //! Milestone 8c decision 33: the plan gate's task edit form, pure (`AGENTS.md` hard
-//! rule 5). It edits a task's route (runtime, model, strength, effort), size, test mode
-//! and its reason, and brief, and sends one `PlanEdit::AmendTask` carrying only what
-//! changed. The route fields hold the plan's own `RouteSpec` values
-//! (`TaskInfo.route_spec`), where `None` is "policy"; the resolved `TaskInfo.route` is
-//! only shown beside them. The brief is a multi-line `TextArea` (milestone 9.0.7
+//! rule 5). It edits a task's route (its model and effort), size, test mode and its
+//! reason, and brief, and sends one `PlanEdit::AmendTask` carrying only what changed.
+//! The route is the plan's own `RouteSpec` (`TaskInfo.route_spec`), where `None` is the
+//! role table's; the resolved `TaskInfo.route` is only shown beside it. Milestone 9.8
+//! decision 39: the model is chosen in the model picker (`role table` first, which
+//! clears the route), the effort cycles the chosen model's catalog efforts. The brief is a multi-line `TextArea` (milestone 9.0.7
 //! decision 35): Ctrl-J and a pasted newline are real `\n`s, sent as they are.
 //! Opening, submitting and the replies are `app/runs.rs`; rendering is `ui/run_edit.rs`.
 
+use crate::app::form_picker::cycle_effort;
+use crate::app::model_picker::{ModelPicker, runtime_name};
 use crate::dialog::{TextInput, apply_text_key};
 use crate::text_area::TextArea;
 use crate::theme::Palette;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use cycle::{next_effort, next_runtime, next_size, next_strength, next_test_mode};
+use cycle::{next_size, next_test_mode};
+use proto::models::ModelRef;
 use proto::{
-    Effort, PlanEdit, Route, RouteSpec, RunInfo, Runtime, Size, Strength, TaskInfo, TaskState,
-    TestMode,
+    Effort, PlanEdit, Route, RouteSpec, RunInfo, Size, TaskInfo, TaskKind, TaskState, TestMode,
 };
 
 /// The most characters a text field takes, by typing or pasting: a 1 MB paste stops
@@ -39,9 +42,9 @@ pub const REASON_REQUIRED: &str = "a reason is required when test mode is check 
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditField {
-    Runtime,
+    /// Milestone 9.8 decision 39: `⏎` opens the model picker.
     Model,
-    Strength,
+    /// The chosen model's catalog efforts, then the role table's.
     Effort,
     Size,
     TestMode,
@@ -56,7 +59,6 @@ pub enum EditField {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct TaskInfoValues {
     route_spec: RouteSpec,
-    model: String,
     size: Size,
     test_mode: TestMode,
     reason: String,
@@ -65,17 +67,29 @@ struct TaskInfoValues {
     raw_reason: Option<String>,
     raw_brief: String,
     stage: u16,
+    /// Decision 10: the size picks the task's row (not a hub, research or review task).
+    sized_row: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskEditForm {
     pub run_id: String,
     pub task_id: String,
-    // Route fields hold the plan's RouteSpec values: None is "policy" (decision 33).
-    pub runtime: Option<Runtime>,
-    pub model: TextInput,
-    pub strength: Option<Strength>,
-    pub effort: Option<Effort>,
+    /// The plan's route spec as edited: `None` fields are the role table's.
+    pub route: RouteSpec,
+    /// The picked model as the picker labelled it (`Codex · gpt-6 luna`).
+    pub model_label: Option<String>,
+    /// The route model's catalog efforts, refreshed by the app before each key.
+    pub efforts: Vec<String>,
+    /// `TaskInfo.row`: the task's role table row, as the run resolves it (fix round 1).
+    pub row: Option<Route>,
+    /// Gate fix B2: the models the catalogs say run as the row's, set by the app.
+    pub row_aliases: Vec<ModelRef>,
+    /// The table's model as the catalogs label it (`Claude · Sonnet 5`), set by the app;
+    /// `None` reads the resolved id.
+    pub role_label: Option<String>,
+    /// The model picker, while it is open over the form.
+    pub picker: Option<ModelPicker>,
     pub size: Size,
     pub test_mode: TestMode,
     pub reason: TextInput,
@@ -101,6 +115,8 @@ pub enum EditOutcome {
     Submit(Vec<PlanEdit>),
     /// Enter with nothing changed: the caller closes the form with `nothing changed`.
     Unchanged,
+    /// `⏎` on the model row: the app opens the picker.
+    Pick,
 }
 
 /// A one-line field's text: newlines and every other control character dropped, a tab
@@ -118,24 +134,11 @@ fn clean(text: &str) -> String {
         .collect()
 }
 
-pub fn runtime_word(runtime: Runtime) -> &'static str {
-    runtime.label()
-}
+/// What a route field the plan leaves to the role table reads.
+pub const ROLE_TABLE: &str = "role table";
 
-pub fn strength_word(strength: Strength) -> &'static str {
-    match strength {
-        Strength::Fast => "fast",
-        Strength::Standard => "standard",
-        Strength::Frontier => "frontier",
-    }
-}
-
-pub fn effort_word(effort: Effort) -> &'static str {
-    match effort {
-        Effort::Low => "low",
-        Effort::Medium => "medium",
-        Effort::High => "high",
-    }
+pub fn effort_word(effort: Effort) -> String {
+    effort.to_string()
 }
 
 pub fn size_word(size: Size) -> &'static str {
@@ -156,9 +159,7 @@ pub fn test_mode_word(mode: TestMode) -> &'static str {
 
 pub fn field_label(field: EditField) -> &'static str {
     match field {
-        EditField::Runtime => "runtime",
         EditField::Model => "model",
-        EditField::Strength => "strength",
         EditField::Effort => "effort",
         EditField::Size => "size",
         EditField::TestMode => "test mode",
@@ -192,7 +193,6 @@ impl TaskEditForm {
     pub fn new(run_id: &str, task: &TaskInfo) -> Self {
         let spec = task.route_spec.clone();
         // Control characters are dropped here, so an edited field is sent without them.
-        let model = clean(spec.model.as_deref().unwrap_or(""));
         let reason = clean(task.test_mode_reason.as_deref().unwrap_or(""));
         // `TextArea` keeps newlines and drops control and invisible format characters.
         let brief = TextArea::with_cap(&task.brief, BRIEF_MAX_CHARS);
@@ -200,24 +200,26 @@ impl TaskEditForm {
         Self {
             run_id: run_id.to_string(),
             task_id: task.id.clone(),
-            runtime: spec.runtime,
-            model: TextInput::new(&model),
-            strength: spec.strength,
-            effort: spec.effort,
+            route: spec.clone(),
+            model_label: None,
+            efforts: Vec::new(),
+            role_label: None,
+            row: task.row.clone(),
+            row_aliases: Vec::new(),
+            picker: None,
             size: task.size,
             test_mode: task.test_mode,
             reason: TextInput::new(&reason),
             brief: brief.clone(),
             stage: task.stage,
             stage_max: None,
-            focus: EditField::Runtime,
+            focus: EditField::Model,
             error: brief_cut.then(|| BRIEF_TOO_LONG.to_string()),
             submitting: false,
             request_id: None,
             resolved: task.route.clone(),
             original: TaskInfoValues {
                 route_spec: spec,
-                model,
                 size: task.size,
                 test_mode: task.test_mode,
                 reason,
@@ -225,6 +227,7 @@ impl TaskEditForm {
                 raw_reason: task.test_mode_reason.clone(),
                 raw_brief: task.brief.clone(),
                 stage: task.stage,
+                sized_row: !task.hub && !matches!(task.kind, TaskKind::Research | TaskKind::Review),
             },
         }
     }
@@ -267,9 +270,7 @@ impl TaskEditForm {
     /// Every field in order; `Reason` only while the test mode is not `tdd`.
     pub fn visible_fields(&self) -> Vec<EditField> {
         let mut fields = vec![
-            EditField::Runtime,
             EditField::Model,
-            EditField::Strength,
             EditField::Effort,
             EditField::Size,
             EditField::TestMode,
@@ -293,21 +294,40 @@ impl TaskEditForm {
 
     fn focused_text_mut(&mut self) -> Option<&mut TextInput> {
         match self.focus {
-            EditField::Model => Some(&mut self.model),
             EditField::Reason => Some(&mut self.reason),
             _ => None,
         }
     }
 
+    /// Decision 39: the picker chose `model` (labelled `label`), or the role table
+    /// (`None`), which clears the whole route. A new model's effort is the role
+    /// table's until cycled.
+    pub fn choose(&mut self, model: Option<ModelRef>, label: String) {
+        // Review I1: the same model again keeps the route, its effort with it.
+        if model.is_some() && model == self.current_model() {
+            self.model_label = Some(label).filter(|l| !l.is_empty());
+            return;
+        }
+        self.route = match model {
+            Some(m) => RouteSpec {
+                runtime: Some(m.runtime),
+                model: Some(m.route_model().to_string()),
+                strength: None,
+                effort: None,
+            },
+            None => RouteSpec::default(),
+        };
+        self.model_label = Some(label).filter(|l| !l.is_empty());
+        self.efforts.clear();
+    }
+
     fn cycle(&mut self, forward: bool) {
         match self.focus {
-            EditField::Runtime => {
-                self.runtime = next_runtime(self.runtime, forward);
-                // Decision 33: a model names one runtime's model.
-                self.model.clear();
+            EditField::Effort => {
+                let now = self.route.effort.as_ref().map(|e| e.as_str());
+                let next = cycle_effort(&self.efforts, now, forward);
+                self.route.effort = next.map(Effort::new);
             }
-            EditField::Strength => self.strength = next_strength(self.strength, forward),
-            EditField::Effort => self.effort = next_effort(self.effort, forward),
             EditField::Size => self.size = next_size(self.size, forward),
             EditField::TestMode => self.test_mode = next_test_mode(self.test_mode, forward),
             EditField::Stage => {
@@ -346,12 +366,13 @@ impl TaskEditForm {
             KeyCode::Up | KeyCode::Down if in_brief && self.brief.on_key_in(key, brief_width) => {}
             KeyCode::Tab | KeyCode::Down => self.move_focus(1),
             KeyCode::BackTab | KeyCode::Up => self.move_focus(-1),
+            KeyCode::Enter if self.focus == EditField::Model => return EditOutcome::Pick,
             KeyCode::Enter => return self.submit(),
             _ if in_brief => {
                 self.brief.on_key_in(key, brief_width);
             }
             _ => match self.focus {
-                EditField::Model | EditField::Reason => self.on_text_key(key),
+                EditField::Reason => self.on_text_key(key),
                 _ => match key.code {
                     KeyCode::Right | KeyCode::Char(' ') => self.cycle(true),
                     KeyCode::Left => self.cycle(false),
@@ -415,25 +436,16 @@ impl TaskEditForm {
     /// than `tdd` needs a non-blank reason whenever the mode or its reason is sent.
     pub fn edits(&self) -> Result<Vec<PlanEdit>, (EditField, String)> {
         let original = &self.original;
-        let model_changed = self.model.text() != original.model;
-        let mut route = original.route_spec.clone();
-        let runtime_changed = self.runtime != route.runtime;
-        let strength_changed = self.strength != route.strength;
-        let effort_changed = self.effort != route.effort;
-        if runtime_changed {
-            route.runtime = self.runtime;
-        }
-        if model_changed {
-            let model = self.model.text().trim();
-            route.model = (!model.is_empty()).then(|| model.to_string());
-        }
-        if strength_changed {
-            route.strength = self.strength;
-        }
-        if effort_changed {
-            route.effort = self.effort;
-        }
-        let route_changed = runtime_changed || model_changed || strength_changed || effort_changed;
+        let route_changed = self.route != original.route_spec;
+        // Review minor 4: a route naming no model carries only its effort (the daemon
+        // refuses a runtime or a strength alone).
+        let route = match &self.route.model {
+            Some(_) => self.route.clone(),
+            None => RouteSpec {
+                effort: self.route.effort.clone(),
+                ..RouteSpec::default()
+            },
+        };
 
         let mode_changed = self.test_mode != original.test_mode;
         let reason_changed =
@@ -480,32 +492,40 @@ impl TaskEditForm {
     }
 
     /// A row's value as drawn: the text, and the resolved value shown muted after it
-    /// when the field is `policy` (decision 33) — only while the runtime is the task's
-    /// current one, since a resolution names one runtime's values (review M4). A
+    /// when the field is the role table's (decision 33) — only while the route is the
+    /// one the form opened with, since the resolution is of that route (review M4). A
     /// choice is `theme::choice`'s (`kit::choice_in`'s), `< value >` in ASCII (decision
     /// 35).
     pub fn value_parts_in(&self, field: EditField, p: Palette) -> (String, Option<String>) {
-        let choice = |word: &str| crate::theme::choice(word, p);
-        let current = self.runtime.unwrap_or(self.resolved.runtime) == self.resolved.runtime;
-        let muted = |resolved: String| Some(resolved).filter(|r| current && !r.is_empty());
-        let policy = |resolved: &str| (choice("policy"), muted(resolved.to_string()));
+        let fold = |text: &str| crate::theme::fold(text, p.ascii);
+        let choice = |word: &str| crate::theme::choice(&fold(word), p);
+        let opened = self.route == self.original.route_spec && !self.size_moved_row();
+        let muted = |resolved: String| Some(fold(&resolved)).filter(|r| opened && !r.is_empty());
+        let resolved = &self.resolved;
         match field {
-            EditField::Runtime => match self.runtime {
-                Some(runtime) => (choice(runtime_word(runtime)), None),
-                None => policy(runtime_word(self.resolved.runtime)),
+            EditField::Model => match (self.current_model(), self.route.runtime) {
+                (Some(m), _) => {
+                    let id = m.id.as_deref().map_or_else(|| "default".into(), clean);
+                    let label = (self.model_label.clone())
+                        .unwrap_or_else(|| format!("{} · {id}", runtime_name(m.runtime)));
+                    (choice(&label), None)
+                }
+                // A plan that names only the runtime: the table's model on it.
+                (None, Some(runtime)) => (
+                    choice(&format!("{} · {ROLE_TABLE}", runtime_name(runtime))),
+                    muted(clean(&resolved.model)),
+                ),
+                (None, None) => (choice(&self.role_table_text()), None),
             },
-            EditField::Model if self.model.text().is_empty() => {
-                let resolved = clean(&self.resolved.model);
-                ("policy".to_string(), muted(resolved))
-            }
-            EditField::Model => (self.model.text().to_string(), None),
-            EditField::Strength => match self.strength {
-                Some(strength) => (choice(strength_word(strength)), None),
-                None => policy(strength_word(self.resolved.strength)),
-            },
-            EditField::Effort => match self.effort {
-                Some(effort) => (choice(effort_word(effort)), None),
-                None => policy(effort_word(self.resolved.effort)),
+            EditField::Effort => match (&self.route.effort, &self.route.model) {
+                (Some(effort), _) => (choice(&effort_word(effort.clone())), None),
+                // Fix round 1 (controller ruling I2): a named model with no effort runs
+                // at its default.
+                (None, Some(_)) => (choice(&self.picked_default()), None),
+                (None, None) => (
+                    choice(ROLE_TABLE),
+                    muted(effort_word(resolved.effort.clone())),
+                ),
             },
             EditField::Size => (choice(size_word(self.size)), None),
             EditField::TestMode => (choice(test_mode_word(self.test_mode)), None),
@@ -519,6 +539,13 @@ impl TaskEditForm {
 #[path = "run_edit_cycle.rs"]
 mod cycle;
 
+#[path = "run_edit_row.rs"]
+mod row;
+
 #[cfg(test)]
 #[path = "run_edit_tests.rs"]
 pub(crate) mod tests;
+
+#[cfg(test)]
+#[path = "run_edit_tests_models.rs"]
+mod tests_models;

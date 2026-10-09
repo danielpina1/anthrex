@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use proto::{
     DocAuthor, DocGateKind, DocKind, Effort, Route, RunState, Runtime, ScoutFile, ScoutKind,
-    ScoutReport, Strength, TokenUsage,
+    ScoutReport, TokenUsage,
 };
 
 use super::*;
@@ -30,8 +30,7 @@ fn report(id: &str, summary: &str) -> ScoutReport {
         route: Route {
             runtime: Runtime::Codex,
             model: String::new(),
-            strength: Strength::Standard,
-            effort: Effort::Medium,
+            effort: Effort::MEDIUM,
         },
         window_id: None,
         started_at: 0,

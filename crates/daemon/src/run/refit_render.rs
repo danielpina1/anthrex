@@ -67,11 +67,6 @@ pub fn render(report: &TuningReport) -> String {
             ));
         }
     }
-    for c in &report.classes {
-        if c.route.starts_with("list (config): ") {
-            out.push_str(&format!("  route {}: {}\n", c.class, c.route));
-        }
-    }
     if report.proposals.is_empty() {
         out.push_str("tuning proposals: none\n");
         return out;

@@ -81,7 +81,7 @@ pub(crate) fn role(run_id: &str, ctl: &str) -> RoleLaunch {
             agent_label: None,
         },
         instructions: "the orchestrator contract".into(),
-        effort: Effort::High,
+        effort: Effort::HIGH,
         claude_allowed_tools: Vec::new(),
         claude_disallowed_tools: Vec::new(),
         env: vec![("ANTHREX_TEST_CTL".into(), ctl.into())],

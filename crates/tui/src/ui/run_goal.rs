@@ -10,7 +10,7 @@
 //! page (decision 8). The compact hints read `^S start · tab next · esc cancel`: the text
 //! has the editor's keys, so Enter there is a newline (task 9b fix round 1).
 
-use crate::dialog::TextInput;
+use crate::app::model_picker::runtime_name;
 use crate::run_goal::{GoalField, GoalForm, OrchestratorRow, field_label};
 use crate::safe_text::one_line;
 use crate::theme::{Glyph, Palette, Role, dot_sep, ellipsis, glyph, role};
@@ -21,7 +21,6 @@ use ratatui::layout::Rect;
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
-use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 /// Rows of the goal's text area.
@@ -133,27 +132,6 @@ fn on_off(on: bool) -> &'static str {
     if on { "on" } else { "off" }
 }
 
-/// The custom model's text on one line, the cursor a reversed cell when `focused`.
-fn input_line(input: &TextInput, width: usize, focused: bool) -> Line<'static> {
-    let (visible, column) = input.visible(width as u16);
-    let graphemes: Vec<&str> = visible.graphemes(true).collect();
-    let at = usize::from(column).min(graphemes.len());
-    let before = graphemes[..at].concat();
-    let mut spans = vec![indent(), Span::raw(one_line(&before))];
-    if focused {
-        let under = graphemes.get(at).copied().unwrap_or(" ");
-        let after = graphemes.get(at + 1..).map(|g| g.concat());
-        spans.push(Span::styled(
-            one_line(under),
-            ratatui::style::Style::default().add_modifier(Modifier::REVERSED),
-        ));
-        spans.push(Span::raw(one_line(&after.unwrap_or_default())));
-    } else {
-        spans.push(Span::raw(one_line(&graphemes[at..].concat())));
-    }
-    Line::from(spans)
-}
-
 /// The empty goal's first row: [`PLACEHOLDER`] muted, cut to `width`, its first cell
 /// the cursor's (reversed) while focused (milestone 9.0.7 decision 35).
 pub(crate) fn placeholder(width: usize, focused: bool, p: Palette) -> Line<'static> {
@@ -183,9 +161,9 @@ pub fn goal_width(width: u16) -> u16 {
     width.saturating_sub((MARK_W + LABEL_W) as u16)
 }
 
-/// The option rows (decision 7's order) for `width` interior columns: runtime, model
-/// (and the custom model's text), orchestrator, delivery, design (milestone 9.6), trust,
-/// approve at once and unconfined checks. Continuing a chain, its runtime and model show muted.
+/// The option rows (decision 7's order) for `width` interior columns: model and effort
+/// (milestone 9.8 decision 39), orchestrator, delivery, design (milestone 9.6), trust,
+/// approve at once and unconfined checks. Continuing a chain, its model shows muted.
 pub(crate) fn option_lines(form: &GoalForm, width: u16, p: Palette) -> Vec<Line<'static>> {
     let value_w = usize::from(width).saturating_sub(MARK_W + LABEL_W);
     let mut body = Vec::new();
@@ -195,38 +173,33 @@ pub(crate) fn option_lines(form: &GoalForm, width: u16, p: Palette) -> Vec<Line<
         } else {
             idle.model.as_str()
         };
+        let model = format!("{} · {model}", runtime_name(idle.runtime));
+        let (model, none) = (
+            crate::theme::fold(&model, p.ascii),
+            crate::theme::fold("—", p.ascii),
+        );
         for (field, value) in [
-            (GoalField::Runtime, idle.runtime.label()),
-            (GoalField::Model, model),
+            (GoalField::Model, model.as_str()),
+            (GoalField::Effort, &none),
         ] {
             body.push(muted_line(
                 form,
                 field,
-                kit::choice_in(value, p),
+                kit::choice_in(&one_line(value), p),
                 value_w,
                 p,
             ));
         }
     } else {
-        let runtime = match form.runtime {
-            Some(runtime) => runtime.label(),
-            None => "configured",
+        // Milestone 9.8 decision 39: the picker's choice, or the role table's row.
+        let model = match &form.model {
+            Some(_) => form.model_label.as_str(),
+            None => form.role_table.as_str(),
         };
-        body.push(choice_line(form, GoalField::Runtime, runtime, value_w, p));
-        let options = form.model_options();
-        let shown = options
-            .get(form.model_at())
-            .map_or("default", String::as_str);
-        let shown = if p.ascii && shown == "custom…" {
-            "custom..."
-        } else {
-            shown
-        };
-        body.push(choice_line(form, GoalField::Model, shown, value_w, p));
-    }
-    if form.custom_shown() {
-        let focused = form.focus == GoalField::Model && !form.submitting;
-        body.push(input_line(&form.custom, value_w, focused));
+        let model = crate::theme::fold(model, p.ascii);
+        body.push(choice_line(form, GoalField::Model, &model, value_w, p));
+        let effort = form.effort_text();
+        body.push(choice_line(form, GoalField::Effort, &effort, value_w, p));
     }
     // Decision 33: the chain id and the run's short id are drawn sanitised.
     body.push(match form.orchestrator_row() {
@@ -325,11 +298,15 @@ pub fn body(form: &GoalForm, width: u16, p: Palette) -> Vec<Line<'static>> {
             p,
         ));
     } else {
-        let keys = [
+        let mut keys = vec![
             hint("^S", "start", 9),
             hint("tab", "next", 6),
             hint("esc", "cancel", 1),
         ];
+        // Milestone 9.8 decision 39: on the model row `⏎` opens the picker.
+        if form.focus == GoalField::Model {
+            keys.insert(1, hint("⏎", "choose model", 7));
+        }
         body.push(kit::hints_joined(width, &keys, dot_sep(p), p));
     }
     body

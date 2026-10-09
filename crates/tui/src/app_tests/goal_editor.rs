@@ -99,8 +99,8 @@ pub(super) fn refused(id: u64) -> DaemonMsg {
 fn ctrl_s_starts_from_the_text_and_from_every_row() {
     let fields = [
         GoalField::Goal,
-        GoalField::Runtime,
         GoalField::Model,
+        GoalField::Effort,
         GoalField::Orchestrator,
         GoalField::Delivery,
         GoalField::Trust,
@@ -170,18 +170,18 @@ fn tab_from_the_text_goes_to_the_first_option_and_shift_tab_back() {
         (GoalField::Goal, (2, 4))
     );
     tap(&mut app, KeyCode::Tab);
-    assert_eq!(form(&app).focus, GoalField::Runtime);
+    assert_eq!(form(&app).focus, GoalField::Model);
     tap(&mut app, KeyCode::BackTab);
     assert_eq!(form(&app).focus, GoalField::Goal);
     // Down and Up between the rows; Up from the first option row returns to the text.
     tap(&mut app, KeyCode::Tab);
     tap(&mut app, KeyCode::Down);
-    assert_eq!(form(&app).focus, GoalField::Model);
+    assert_eq!(form(&app).focus, GoalField::Effort);
     tap(&mut app, KeyCode::Down);
     assert_eq!(form(&app).focus, GoalField::Orchestrator);
     tap(&mut app, KeyCode::Up);
     tap(&mut app, KeyCode::Up);
-    assert_eq!(form(&app).focus, GoalField::Runtime);
+    assert_eq!(form(&app).focus, GoalField::Model);
     tap(&mut app, KeyCode::Up);
     assert_eq!(form(&app).focus, GoalField::Goal);
     assert_eq!(
@@ -428,42 +428,49 @@ fn the_orchestrator_row_offers_continue_by_default() {
 }
 
 #[test]
-fn continue_locks_runtime_and_model() {
+fn continue_locks_the_model_and_its_effort() {
+    // Milestone 9.8 decision 39 (was `continue_locks_runtime_and_model`): the chain's
+    // model shows muted on the model row, and its effort row holds.
     let mut app = app_with_chains(vec![idle("/p/a", false)], vec![]);
+    app.catalogs = crate::app::model_picker::tests::fixture_catalogs();
     open_on(&mut app, "/p/a");
-    focus(&mut app, GoalField::Runtime);
-    tap(&mut app, KeyCode::Right);
+    focus(&mut app, GoalField::Effort);
     tap(&mut app, KeyCode::Char(' '));
-    assert_eq!(form(&app).runtime, None, "the chain's runtime holds");
+    assert_eq!(form(&app).effort, None, "the chain's holds");
     focus(&mut app, GoalField::Model);
-    tap(&mut app, KeyCode::Right);
-    assert_eq!(form(&app).model, crate::run_goal::GoalModel::Default);
+    tap(&mut app, KeyCode::Char(' '));
+    assert!(form(&app).picker.is_none());
     let buffer = audit::draw(&app, 120, 40);
     let muted = crate::theme::role(crate::theme::Role::Muted, app.palette()).fg;
-    for value in ["‹ claude ›", "‹ claude-opus-5-5 ›"] {
+    for value in ["‹ Claude · claude-opus-5-5 ›", "‹ — ›"] {
         let (x, y) = audit::find(&buffer, value)[0];
         assert_eq!(buffer[(x + 2, y)].fg, muted.unwrap(), "{value} is muted");
     }
     // `new`: the rows are the user's again.
     focus(&mut app, GoalField::Orchestrator);
     tap(&mut app, KeyCode::Char(' '));
-    focus(&mut app, GoalField::Runtime);
-    tap(&mut app, KeyCode::Right);
-    assert_eq!(form(&app).runtime, Some(Runtime::Claude));
-    assert!(screen(&app).contains("runtime           ‹ claude ›"));
-    assert!(screen(&app).contains("model             ‹ default ›"));
+    focus(&mut app, GoalField::Model);
+    tap(&mut app, KeyCode::Enter);
+    assert!(form(&app).picker.is_some());
+    tap(&mut app, KeyCode::Esc);
+    assert!(screen(&app).contains("model             ‹ role table (Claude · claude-opus-5-5) ›"));
+    assert!(screen(&app).contains("effort            ‹ role table ›"));
 }
 
 #[test]
 fn continue_sends_continue_from_and_no_orchestrator() {
     let mut app = app_with_chains(vec![idle("/p/a", false)], vec![]);
+    app.catalogs = crate::app::model_picker::tests::fixture_catalogs();
     open_on(&mut app, "/p/a");
     typed(&mut app, "next goal");
-    // A runtime chosen under `new`, then continue again: the chain's holds.
+    // A model chosen under `new` (the picker's first, Claude's default), then continue again:
+    // the chain's holds.
     focus(&mut app, GoalField::Orchestrator);
     tap(&mut app, KeyCode::Char(' '));
-    focus(&mut app, GoalField::Runtime);
-    tap(&mut app, KeyCode::Right);
+    focus(&mut app, GoalField::Model);
+    tap(&mut app, KeyCode::Enter);
+    tap(&mut app, KeyCode::Char('j'));
+    tap(&mut app, KeyCode::Enter);
     focus(&mut app, GoalField::Orchestrator);
     tap(&mut app, KeyCode::Char(' '));
     // `approve at once` is the user's, as for a new goal.
@@ -484,14 +491,19 @@ fn continue_sends_continue_from_and_no_orchestrator() {
             design: None,
         }
     );
-    // `new` sends the runtime and no `continue_from`.
+    // `new` sends the model and no `continue_from`.
     let mut app = app_with_chains(vec![idle("/p/a", false)], vec![]);
+    app.catalogs = crate::app::model_picker::tests::fixture_catalogs();
     open_on(&mut app, "/p/a");
     typed(&mut app, "next goal");
     focus(&mut app, GoalField::Orchestrator);
     tap(&mut app, KeyCode::Right);
-    focus(&mut app, GoalField::Runtime);
-    tap(&mut app, KeyCode::Right);
+    focus(&mut app, GoalField::Model);
+    tap(&mut app, KeyCode::Enter);
+    // The picker's second Claude entry: Opus by its alias (real claude 2.1.280).
+    tap(&mut app, KeyCode::Char('j'));
+    tap(&mut app, KeyCode::Char('j'));
+    tap(&mut app, KeyCode::Enter);
     let (_, request) = tagged(&ctrl(&mut app, 's'));
     let RunRequest::StartGoal {
         orchestrator,
@@ -506,7 +518,8 @@ fn continue_sends_continue_from_and_no_orchestrator() {
         (
             Some(OrchestratorChoice {
                 runtime: Runtime::Claude,
-                model: None
+                model: Some("opus[1m]".into()),
+                effort: None
             }),
             None
         )

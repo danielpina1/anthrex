@@ -3,20 +3,32 @@
 
 use std::path::{Path, PathBuf};
 
-use proto::{AgentRole, Effort, RunRef, Runtime, ScoutKind, Strength};
+use proto::{AgentRole, Effort, RunRef, Runtime, ScoutKind};
 use serde_json::{Value, json};
 
 use super::report::{report_path, resolve_ref, validate};
-use super::spec::{ScoutContext, ScoutSpec, headless_spec, route, valid_id};
+use super::spec::{ScoutContext, ScoutSpec, headless_spec, valid_id};
 use crate::headless::argv::{CLI_CAPS, CODEX_SANDBOX_PINS, CliCaps, claude_args, codex_args};
 use crate::headless::codex_guard::{CodexConfigGuard, EntryKind, GuardEntry, ObjectFormat};
 use crate::headless::{ClaudeSandbox, McpTarget, SessionArg};
 
 const BASE: &str = "0123456789abcdef0123456789abcdef01234567";
 
+/// A context whose live table's `research` row runs on `runtime` (milestone 9.8): the
+/// built-in Haiku at `low` on Claude, the Codex default at `low` on Codex.
 fn ctx(runtime: Runtime) -> ScoutContext {
+    use proto::models::{ModelRef, Role, RoleChoice};
+    let mut cfg = config::Orchestrator::default();
+    if runtime == Runtime::Codex {
+        let row = RoleChoice {
+            model: ModelRef::default_of(Runtime::Codex),
+            effort: Some("low".into()),
+            fallback: None,
+        };
+        cfg.roles.rows.insert(Role::Research, row);
+    }
     ScoutContext {
-        roster: config::default_roster().into(),
+        roster: super::spec::Roster::Live(crate::live_config::LiveSettings::defaults_of(cfg)),
         default_runtime: runtime,
         scouts: config::Scouts::default(),
         claude: config::ClaudeHeadless::default(),
@@ -78,7 +90,8 @@ fn area_scout_spec_is_read_only() {
     let spec = headless_spec(&scout(ScoutKind::Area), &ctx(Runtime::Claude));
     assert_eq!(spec.runtime, Runtime::Claude);
     assert_eq!(spec.model, "claude-haiku-4-5");
-    assert_eq!(spec.effort, Effort::Low);
+    // Gate fix B1: the built-in research row has no effort (Haiku reports none).
+    assert_eq!(spec.effort, Effort::DEFAULT);
     assert_eq!(spec.cwd, PathBuf::from("/wt/runs/r1/integration"));
     assert_eq!(spec.instructions, super::contract::SCOUT_CONTRACT);
     assert_eq!(
@@ -214,7 +227,7 @@ fn the_scout_sandbox_does_not_depend_on_worker_sandbox() {
         ..config::Orchestrator::default()
     };
     let context = ScoutContext {
-        roster: off.models.clone().into(),
+        roster: off.roles.clone().into(),
         default_runtime: off.default_runtime,
         scouts: off.scouts.clone(),
         claude: off.claude.clone(),
@@ -295,20 +308,23 @@ fn scouts_pass_the_user_settings_flags_and_codex_pins() {
 }
 
 fn decider_ctx(caps: CliCaps) -> crate::decider::DeciderContext {
+    let defaults = config::Orchestrator::default();
     crate::decider::DeciderContext {
         mode: proto::DeciderMode::Codex,
         program: "codex".into(),
         route: proto::Route {
             runtime: Runtime::Codex,
             model: String::new(),
-            strength: Strength::Standard,
-            effort: Effort::Low,
+            effort: Effort::LOW,
         },
         timeout: std::time::Duration::from_secs(90),
         cwd: PathBuf::from("/data/deciders/cwd"),
         schema_dir: PathBuf::from("/data/deciders/schemas"),
         caps,
-        routing: Default::default(),
+        live: crate::live_config::LiveSettings::defaults_of(defaults),
+        data_dir: PathBuf::from("/data"),
+        bins: ("claude".into(), "codex".into()),
+        decider_bin: None,
         launch_gate: crate::launch::LaunchGate::open_already(),
     }
 }
@@ -333,53 +349,6 @@ fn a_codex_scout_carries_the_codex_config_guard_when_codex_loads_project_config(
     assert_eq!(spec.codex_config_guard, None);
     let claude = headless_spec(&scout(ScoutKind::Onboarding), &ctx(Runtime::Claude));
     assert_eq!(claude.codex_config_guard, None);
-}
-
-#[test]
-fn route_picks_the_lowest_strength_at_or_above() {
-    let roster = config::default_roster();
-    let fast = route(&roster, Runtime::Claude, Strength::Fast, Effort::Low);
-    assert_eq!(
-        (
-            fast.runtime,
-            fast.model.as_str(),
-            fast.strength,
-            fast.effort
-        ),
-        (
-            Runtime::Claude,
-            "claude-haiku-4-5",
-            Strength::Fast,
-            Effort::Low
-        )
-    );
-    let standard = route(&roster, Runtime::Claude, Strength::Standard, Effort::High);
-    assert_eq!(standard.model, "claude-sonnet-5");
-    assert_eq!(standard.effort, Effort::High);
-    let codex = route(&roster, Runtime::Codex, Strength::Fast, Effort::Low);
-    assert_eq!(
-        (codex.runtime, codex.model.as_str(), codex.strength),
-        (Runtime::Codex, "", Strength::Standard)
-    );
-    // Nothing on Codex at or above frontier: the peer's frontier entry.
-    let peer = route(&roster, Runtime::Codex, Strength::Frontier, Effort::Low);
-    assert_eq!(
-        (peer.runtime, peer.model.as_str()),
-        (Runtime::Claude, "claude-opus-5-5")
-    );
-    // Nothing at or above on either runtime: the runtime's first entry.
-    let only_fast = vec![roster[0].clone(), roster[3].clone()];
-    let first = route(&only_fast, Runtime::Claude, Strength::Frontier, Effort::Low);
-    assert_eq!(
-        (first.runtime, first.model.as_str()),
-        (Runtime::Claude, "claude-haiku-4-5")
-    );
-    // An empty roster: the runtime with no model.
-    let none = route(&[], Runtime::Codex, Strength::Fast, Effort::Low);
-    assert_eq!(
-        (none.runtime, none.model.as_str(), none.strength),
-        (Runtime::Codex, "", Strength::Fast)
-    );
 }
 
 #[test]

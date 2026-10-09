@@ -7,7 +7,7 @@
 use super::plan_summary::{overlap_lines, overlaps, plan_stages};
 use super::{App, Effect};
 use crate::inspector::run_format::after_text;
-use crate::inspector::run_format::{effort_text, strength_text, test_mode_text};
+use crate::inspector::run_format::{route_label, test_mode_text};
 use crate::safe_text::{multi_line, one_line};
 use crate::theme::{self, Glyph, Palette};
 use crate::tree::{NodeKey, awaiting_holds, task_held};
@@ -157,20 +157,10 @@ pub(crate) fn stacked(
     }
 }
 
-/// `<runtime> · <model> · <strength> · <effort> effort` (decision 12).
-/// A blank model (the policy's default) is left out.
+/// `<runtime> · <model> · <effort>` (decision 12; strength went in M9.8.14). A blank
+/// model (the runtime's default) is left out.
 fn route_line(route: &Route) -> String {
-    let effort = format!("{} effort", effort_text(route.effort));
-    [
-        route.runtime.label(),
-        route.model.as_str(),
-        strength_text(route.strength),
-        effort.as_str(),
-    ]
-    .into_iter()
-    .filter(|part| !part.trim().is_empty())
-    .collect::<Vec<_>>()
-    .join(" · ")
+    route_label(route)
 }
 
 /// A task's deps, explicit then implicit, without repeats.

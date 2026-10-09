@@ -10,18 +10,13 @@ use proto::{
 use super::super::task_record;
 use super::fixtures::*;
 use crate::run::model::{Pair, Task};
-use crate::run::refit::{SizeClass, budget_samples, route_samples, threshold_samples};
+use crate::run::refit::{SizeClass, budget_samples, threshold_samples};
 use crate::run::test_support::race_of;
 
 fn pair(phase: PairPhase, writer_failures: u8) -> Pair {
     Pair {
         phase,
-        writer_route: route(
-            Runtime::Codex,
-            "",
-            proto::Strength::Standard,
-            proto::Effort::Medium,
-        ),
+        writer_route: route(Runtime::Codex, "", proto::Effort::MEDIUM),
         test: Some("t_feat".into()),
         red: Some("a".repeat(40)),
         red_checked: Some(phase == PairPhase::Implementing),
@@ -120,12 +115,7 @@ fn a_crowned_race_records_the_tasks_route() {
     let raced = &mut run.tasks[0];
     raced.race = Some(race_of(raced, [LaneState::Out, LaneState::Adopted]));
     assert!(raced.race.as_ref().unwrap().crowned);
-    raced.route = route(
-        Runtime::Codex,
-        "gpt-6.1-sol",
-        proto::Strength::Frontier,
-        proto::Effort::High,
-    );
+    raced.route = route(Runtime::Codex, "gpt-6.1-sol", proto::Effort::HIGH);
     let lane = raced.race.as_ref().unwrap().lanes[1].route.clone();
     assert_ne!(raced.route, lane, "the escalation moved the task's route");
     let r = task_record(&run, &run.tasks[0], TaskOutcome::Blocked, 1_000);
@@ -202,9 +192,4 @@ fn refit_excludes_race_records_it_wrote() {
     let single = vec!["t2".to_string()];
     assert_eq!(ids(budget_samples(&lines, SizeClass::S, &t)), single);
     assert_eq!(ids(threshold_samples(&lines, SizeClass::S, &t)), single);
-    let at = proto::ClassRoute {
-        strength: run.tasks[1].route.strength,
-        effort: run.tasks[1].route.effort,
-    };
-    assert_eq!(ids(route_samples(&lines, SizeClass::S, &t, at)), single);
 }

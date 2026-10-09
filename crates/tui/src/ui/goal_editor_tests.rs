@@ -15,7 +15,7 @@ use proto::{IdleOrchestrator, RunState, Runtime};
 fn app_with(form: GoalForm, ascii: bool) -> App {
     let mut app = App::new(vec![], "/tmp".into(), UiSettings::default());
     app.settings.badges.ascii = ascii;
-    app.modal = Some(Modal::StartGoal(form));
+    app.modal = Some(Modal::StartGoal(Box::new(form)));
     app
 }
 
@@ -87,8 +87,8 @@ fn empty_interior(text_rows: usize, ascii: bool) -> Vec<String> {
     let mut rows = vec!["what should the run achieve?".to_string()];
     rows.resize(text_rows + 1, String::new());
     for (label, value) in [
-        ("runtime", "configured"),
-        ("model", "default"),
+        ("model", "role table"),
+        ("effort", "role table"),
         ("orchestrator", "new"),
         ("delivery", "configured"),
         ("design", "configured"),
@@ -145,8 +145,8 @@ fn compact_interior() -> Vec<String> {
     let mut rows = vec!["> goal              what should the run achieve?".to_string()];
     rows.resize(6, String::new());
     for (label, value) in [
-        ("runtime", "configured"),
-        ("model", "default"),
+        ("model", "role table"),
+        ("effort", "role table"),
         ("orchestrator", "new"),
         ("delivery", "configured"),
         ("design", "configured"),
@@ -333,13 +333,11 @@ fn short_ids_are_cleaned_before_they_are_cut() {
     assert!(rows.contains(&format!("│ {busy:<112} │")), "{rows:?}");
 }
 
-/// Review m2: at the 16-row minimum, with `custom…`'s row and an error showing, the
-/// large editor still keeps one text row (the options take the rest).
+/// Review m2: at the 16-row minimum, with an error showing, the large editor still
+/// keeps one text row (the options take the rest).
 #[test]
 fn the_large_text_area_keeps_a_row() {
     let mut f = form();
-    f.runtime = Some(Runtime::Claude);
-    f.model = crate::run_goal::GoalModel::Custom;
     f.error = Some("type a goal first".into());
     f.goal = TextArea::editor("hello");
     assert_eq!(text_view(&f, 60, 16), EditorView { width: 52, rows: 1 });
@@ -349,17 +347,15 @@ fn the_large_text_area_keeps_a_row() {
     assert!(kit::editor(&TextArea::editor("hello"), 0, 40, true).is_empty());
 }
 
-/// Final fix wave C-m1 (carried N1): at 60×16 with `custom…` and an error the body is
-/// one row too tall, so the position row goes and the footer stays: `^S start` is still
-/// the hint for retrying. One row taller, both are drawn. Milestone 9.6 task 18 (changed
-/// expectation): with the design row it is two rows too tall at 60×16, so the blank row
-/// above the options goes too; at 60×17 only the position row goes; at 60×18 both
-/// are drawn.
+/// Final fix wave C-m1 (carried N1): at 60×16 with an error the body is one row too
+/// tall, so the position row goes and the footer stays: `^S start` is still the hint
+/// for retrying. One row taller, both are drawn. Milestone 9.8 (changed expectation):
+/// the custom model's text row is gone (the picker types it), so at 60×16 only the
+/// position row goes, the blank row above the options stays, and at 60×17 both are
+/// drawn (milestone 9.6's two-rows-too-tall case no longer arises).
 #[test]
 fn the_footer_outlasts_the_position_row() {
     let mut f = form();
-    f.runtime = Some(Runtime::Claude);
-    f.model = crate::run_goal::GoalModel::Custom;
     f.error = Some("type a goal first".into());
     f.goal = TextArea::editor("hello");
     let footer = "^S start  Tab options  ^K cut  ^U paste  Esc cancel";
@@ -370,17 +366,12 @@ fn the_footer_outlasts_the_position_row() {
         assert_eq!(interior.len(), 12);
         assert!(interior[11].contains(footer), "{rows:?}");
         assert!(interior[10].contains("type a goal first"), "{rows:?}");
-        assert!(interior[1].contains("runtime"), "no blank row: {rows:?}");
+        assert!(interior[2].contains("model"), "the blank row: {rows:?}");
         assert!(!rows.iter().any(|r| r.contains(position)), "{rows:?}");
         let rows = large_rows(&app_with(f.clone(), ascii), 60, 17);
         let interior = &rows[1..rows.len() - 1];
         assert!(interior[12].contains(footer), "{rows:?}");
-        assert!(interior[2].contains("runtime"), "the blank row: {rows:?}");
-        assert!(!rows.iter().any(|r| r.contains(position)), "{rows:?}");
-        let rows = large_rows(&app_with(f.clone(), ascii), 60, 18);
-        let interior = &rows[1..rows.len() - 1];
-        assert!(interior[13].contains(footer), "{rows:?}");
-        assert!(interior[12].contains(position), "{rows:?}");
+        assert!(interior[11].contains(position), "{rows:?}");
     }
 }
 
@@ -452,7 +443,7 @@ fn a_continued_models_carriers_are_drawn_cleaned() {
         None,
     );
     let rows = large_rows(&app_with(f, false), 120, 40);
-    let model = "  model             ‹ opus-xyz ›";
+    let model = "  model             ‹ Claude · opus-xyz ›";
     assert!(rows.contains(&format!("│ {model:<112} │")), "{rows:?}");
     for row in rows {
         assert_eq!(crate::safe_text::tests::first_hostile(&row), None, "{row}");

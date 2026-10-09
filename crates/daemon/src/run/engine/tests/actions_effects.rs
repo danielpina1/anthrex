@@ -22,16 +22,20 @@ fn effect(fx: &Fixture, node: ActionNode, kind: ActionKind) -> String {
     action(fx, node, &kind).effect
 }
 
-/// `t1` (routed at medium effort) working, `t2` waiting for it, `--yes`; `t1`'s window.
+/// `t1` (at medium effort: milestone 9.8, the small row's, as a plan's route is
+/// ignored) working, `t2` waiting for it, `--yes`; `t1`'s window.
 fn t1_working() -> (Fixture, u32) {
     let plan = plan_with(
         PROFILE,
         &[
-            task("t1", "S", "a", "route = { effort = \"medium\" }"),
+            task("t1", "S", "a", ""),
             task("t2", "S", "b", "deps = [\"t1\"]"),
         ],
     );
-    let mut fx = Fixture::new(&plan);
+    let mut config = config::Orchestrator::default();
+    let small = proto::models::Role::ImplementerSmall;
+    with_row(&mut config, small, "claude:claude-sonnet-5", Some("medium"));
+    let mut fx = Fixture::with_config(&plan, config);
     fx.ready(true);
     let windows = fx.launch_all();
     (fx, windows[0].1)
@@ -207,6 +211,8 @@ fn message_stage_counts_its_unfinished_tasks() {
 #[test]
 fn task_effects_name_the_task() {
     let (mut fx, window) = t1_working();
+    // Milestone 9.8 decision 29: Sonnet reports `low`, `medium`, `high`.
+    fx.with_efforts();
     let t1 = || ActionNode::Task("t1");
     assert_eq!(
         effect(&fx, t1(), ActionKind::Answer),

@@ -17,10 +17,11 @@ use crate::run::contract::{
 };
 use crate::run::env::profile_env;
 use crate::run::model::{BisectRecord, FixOf, Probe, Run, StageMerge, StageRecord};
+use crate::run::model_roles::Mover;
 use crate::run::proof::proof_command;
-use crate::run::route_pick::{Mover, escalate_for};
+use crate::run::role_step::escalate_for;
 use crate::run::tiers::{RETRY_NAMES_MAX, TestAtSpec, TierOutcome};
-use proto::{Route, RouteSpec, TaskOrigin, TestMode};
+use proto::{RouteSpec, TaskOrigin, TestMode};
 
 /// Decision 37's reason for a bisect fix task's `check` test mode.
 pub(crate) const FIX_TEST_MODE_REASON: &str = "the failing tests already exist; they must pass";
@@ -517,7 +518,8 @@ fn culprit(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) {
     );
 }
 
-/// Decision 37: the culprit's fix task on its route one rung up, else on its own route.
+/// Decision 37: the culprit's fix task on its route one rung up, else on its own route,
+/// else on its row's (M9.8.8 fix round 1), logged when the step up was refused.
 fn add_fix(
     run: &mut Run,
     n: u16,
@@ -541,7 +543,7 @@ fn add_fix(
         summary: b.summary.as_deref().unwrap_or_default(),
         show: b.show.as_deref().unwrap_or("(not available)"),
     });
-    let spec = |route: &Route| fixes::FixSpec {
+    let spec = |route: &RouteSpec| fixes::FixSpec {
         origin: TaskOrigin::Bisect,
         fixes: FixOf::Bisect {
             culprit: culprit.to_string(),
@@ -555,20 +557,41 @@ fn add_fix(
         owns: task.spec.owns.clone(),
         size: task.size,
         epic: task.spec.epic.clone(),
-        route: RouteSpec {
-            runtime: Some(route.runtime),
-            model: Some(route.model.clone()),
-            strength: Some(route.strength),
-            effort: Some(route.effort),
-        },
+        route: route.clone(),
         test_mode: TestMode::Check,
         test_mode_reason: Some(FIX_TEST_MODE_REASON.to_string()),
         sync: None,
     };
     let up = escalate_for(run, at, &task.route, Mover::Worker);
-    match fixes::add_fix(run, spec(&up), now, fx) {
-        Ok(id) => Ok(id),
-        Err(_) if up != task.route => fixes::add_fix(run, spec(&task.route), now, fx),
-        Err(message) => Err(message),
+    // M9.8.8 fix round 1: the step up, the culprit's own route, then the row's (as the
+    // CI fix's last resort): a model outside `run.roster` is refused until M9.8.13.
+    let mut tries = vec![(super::delivery::route_spec(&up), "its route one rung up")];
+    if up != task.route {
+        tries.push((
+            super::delivery::route_spec(&task.route),
+            "the culprit's route",
+        ));
     }
+    tries.push((RouteSpec::default(), "its row's route"));
+    let mut first = None;
+    for (k, (route, what)) in tries.iter().enumerate() {
+        match fixes::add_fix(run, spec(route), now, fx) {
+            Ok(id) => {
+                if let Some(why) = first.filter(|_| k > 0) {
+                    let text = format!(
+                        "bisect fix for {culprit}: {}/{} at {} was refused ({why}); it runs on {what}",
+                        up.runtime.label(),
+                        up.model,
+                        up.effort,
+                    );
+                    log(run, now, proto::safe_text::one_line(&text));
+                }
+                return Ok(id);
+            }
+            Err(message) => {
+                first.get_or_insert(message);
+            }
+        }
+    }
+    Err(first.unwrap_or_default())
 }

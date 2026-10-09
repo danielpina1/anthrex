@@ -9,7 +9,7 @@ use serde_json::json;
 use super::dispatch::{edit, replies};
 use super::fixture::*;
 use super::holds::delivers;
-use super::turns::{exited, killed_exit, queue, working_on};
+use super::turns::{exited, killed_exit, queue, working_on, working_on_codex};
 use crate::headless::FailureKind;
 use crate::run::contract::{
     DONE_ACCEPTED, DONE_NUDGE, RESUME_AFTER_EXIT, answer_message, rate_limit_continue, stall_nudge,
@@ -18,7 +18,6 @@ use crate::run::engine::{AgentSignal, Effect, EventKind, OpKind, OpResult, TurnO
 use crate::run::model::{FallbackState, StallState};
 
 const ROOMY: &str = "[task.budget]\ntool_calls = 1000\nminutes = 1000";
-const CODEX_ROOMY: &str = "[task.route]\nruntime = \"codex\"\nmodel = \"\"\n[task.budget]\ntool_calls = 1000\nminutes = 1000";
 
 fn args() -> serde_json::Value {
     json!({"summary": "did it", "test": "a::works", "red": "abcdef1"})
@@ -41,7 +40,7 @@ fn resume_messages(effects: &[Effect]) -> Vec<String> {
 /// and the grace does not kill the session.
 #[test]
 fn a_codex_interrupt_exit_ends_the_turn_and_gets_the_nudge() {
-    let (mut fx, window) = working_on(CODEX_ROOMY);
+    let (mut fx, window) = working_on_codex(ROOMY);
     fx.signal(
         window,
         AgentSignal::Init {

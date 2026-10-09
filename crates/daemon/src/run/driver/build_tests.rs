@@ -80,11 +80,13 @@ fn only_a_window_on_macos_finds_a_binary_through_a_tilde_entry() {
 fn a_planner_runtime_found_only_through_a_tilde_entry_says_so() {
     use proto::Runtime;
     let mut run = crate::run::orch::test_support::run_of(1);
-    run.roster = config::default_roster();
     let mut o = crate::run::orch::test_support::orchestrator();
     o.route.runtime = Runtime::Codex;
     o.route.model = String::new();
     run.orch.orchestrator = Some(o);
+    // Milestone 9.8: the planner row on Codex.
+    let planner = proto::models::Role::Planner;
+    crate::run::test_support::set_row(&mut run, planner, "codex:default", None, None);
     let map = |claude: bool, codex: bool| -> std::collections::BTreeMap<String, bool> {
         [("claude".to_string(), claude), ("codex".to_string(), codex)].into()
     };
@@ -257,6 +259,7 @@ mod tuning {
             choice: Some(proto::OrchestratorChoice {
                 runtime: proto::Runtime::Claude,
                 model: None,
+                effort: None,
             }),
             design: None,
         }))

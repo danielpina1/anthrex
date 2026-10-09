@@ -1,5 +1,7 @@
 //! Deciders (M8b decisions 16 to 21): one-shot headless calls that return
-//! schema-validated JSON, each with a deterministic fallback. Pure except `call.rs`.
+//! schema-validated JSON, each with a deterministic fallback. Pure except `call.rs` and
+//! [`DeciderContext::choice_for`] with a project (milestone 9.8: it reads that
+//! repository's `models.toml`, on `call::routed`'s `spawn_blocking`).
 //!
 //! This file holds the types: what a decider is asked ([`DeciderRequest`]), what it
 //! answers ([`DeciderAnswer`]), and the [`Decision`] the engine records. They travel in
@@ -19,7 +21,10 @@ pub use ci::{CI_SUMMARY_INPUT_BYTES, CiSummaryInput};
 pub use run_name::RunNameInput;
 
 use crate::headless::argv::CliCaps;
+use crate::live_config::LiveSettings;
 use crate::manager::ManagerConfig;
+use crate::run::model_roles::RunModels;
+use proto::models::{HelperKind, Role, RoleChoice};
 use proto::{
     DeciderMode, DeciderSource, Route, Runtime, Scale, Size, SizeThresholds, TaskKind, TestMode,
     TokenUsage,
@@ -27,6 +32,7 @@ use proto::{
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 /// The decider kinds (decision 17; milestone 9.2 decision 18 appends `CiSummary`, and
@@ -62,6 +68,18 @@ impl DeciderKind {
             DeciderKind::BlockedReason => "blocked_reason",
             DeciderKind::CiSummary => "ci_summary",
             DeciderKind::RunName => "run_name",
+        }
+    }
+
+    /// Milestone 9.8: the role table's helper kind of this decider.
+    pub fn helper(self) -> HelperKind {
+        match self {
+            DeciderKind::Triage => HelperKind::Triage,
+            DeciderKind::SizeCheck => HelperKind::SizeCheck,
+            DeciderKind::CheckSummary => HelperKind::CheckSummary,
+            DeciderKind::BlockedReason => HelperKind::BlockedReason,
+            DeciderKind::CiSummary => HelperKind::CiSummary,
+            DeciderKind::RunName => HelperKind::RunName,
         }
     }
 }
@@ -245,11 +263,18 @@ pub struct Decision {
 }
 
 /// Everything a decider call needs besides its request (decision 16). Built once at
-/// daemon start ([`DeciderContext::new`]).
+/// daemon start ([`DeciderContext::new`]); milestone 9.8 (decision 42): each call's
+/// route is its helper row in the live table ([`DeciderContext::route_for`]).
 #[derive(Debug, Clone)]
 pub struct DeciderContext {
+    /// `Off` turns the helpers off; otherwise the call's runtime is its route's
+    /// (milestone 9.8 decision 17, preflight ruling F25).
     pub mode: DeciderMode,
+    /// The route's command: `ANTHREX_DECIDER_BIN`, else the route's runtime's.
     pub program: OsString,
+    /// The route this call runs on: [`call::routed`] sets it from
+    /// [`DeciderContext::route_for`] at each call; [`DeciderContext::new`] sets the live
+    /// `helpers` row's, which a call made without routing (a test's) runs on.
     pub route: Route,
     pub timeout: Duration,
     /// `<data_dir>/deciders/cwd`, an empty directory outside every repository.
@@ -257,42 +282,79 @@ pub struct DeciderContext {
     /// `<data_dir>/deciders/schemas`, where Codex's schema files go.
     pub schema_dir: PathBuf,
     pub caps: CliCaps,
-    /// Milestone 9.5 (rulings RL-2, I6; decision 9a): what each call routes over.
-    pub routing: call::Routing,
+    /// Milestone 9.8 (decision 42): the daemon's live settings, whose role table each
+    /// call reads.
+    pub live: Arc<LiveSettings>,
+    /// Anthrex's data directory: a repository's `models.toml` is under it.
+    pub data_dir: PathBuf,
+    /// The configured `claude` and `codex` commands, which the probe stats.
+    pub bins: (String, String),
+    /// `ANTHREX_DECIDER_BIN`.
+    pub decider_bin: Option<String>,
     /// The manager's launch gate: a Codex call waits for it (the startup version probe)
     /// before choosing its sandbox dialect (final review I1, ruling R6).
     pub launch_gate: crate::launch::LaunchGate,
 }
 
 impl DeciderContext {
-    /// The context every decider call of this daemon uses (decision 16), built from the
-    /// config and the manager's resolved commands. Pure: the call creates `cwd` and
+    /// The context every decider call of this daemon uses (decision 16), from the live
+    /// settings (`[orchestrator.deciders]` `mode` and `timeout_secs`, and the role
+    /// table) and the manager's resolved commands. Pure: the call creates `cwd` and
     /// `schema_dir` itself.
-    /// - `program`: `ANTHREX_DECIDER_BIN` (`manager.decider_bin`), else the mode's
-    ///   runtime command (`claude_bin` or `codex_bin`; `claude_bin` when off, unused).
-    /// - `route`: on the mode's runtime, the first roster entry at the lowest strength at
-    ///   or above `deciders.strength`, else that runtime's first entry, else no model
-    ///   (the CLI's default), at `deciders.effort`.
-    pub fn new(cfg: &config::Orchestrator, manager: &ManagerConfig, data_dir: &Path) -> Self {
-        let deciders = &cfg.deciders;
-        let runtime = match deciders.mode {
-            DeciderMode::Codex => Runtime::Codex,
-            DeciderMode::Claude | DeciderMode::Off => Runtime::Claude,
-        };
-        let routing = call::Routing::new(cfg, manager);
-        let route = call::ladder_route(&cfg.models, runtime, deciders.strength, deciders.effort);
+    pub fn new(live: Arc<LiveSettings>, manager: &ManagerConfig, data_dir: &Path) -> Self {
+        let current = live.current();
+        let deciders = &current.orchestrator.deciders;
+        let helpers = config::models::resolve(Role::Helpers, None, &current.orchestrator.roles);
         let root = data_dir.join("deciders");
-        DeciderContext {
+        let mut ctx = DeciderContext {
             mode: deciders.mode,
-            program: routing.program(runtime),
-            route,
+            program: OsString::new(),
+            route: RunModels::route_of(&helpers.model, helpers.effort.as_deref()),
             timeout: Duration::from_secs(deciders.timeout_secs),
             cwd: root.join("cwd"),
             schema_dir: root.join("schemas"),
             caps: manager.cli_caps,
-            routing,
+            live: live.clone(),
+            data_dir: data_dir.to_path_buf(),
+            bins: (manager.claude_bin.clone(), manager.codex_bin.clone()),
+            decider_bin: manager.decider_bin.clone(),
             launch_gate: manager.launch_gate.clone(),
-        }
+        };
+        ctx.program = ctx.program(ctx.route.runtime);
+        ctx
+    }
+
+    /// `ANTHREX_DECIDER_BIN`, else `runtime`'s command.
+    pub fn program(&self, runtime: Runtime) -> OsString {
+        let command = match runtime {
+            Runtime::Codex => &self.bins.1,
+            _ => &self.bins.0,
+        };
+        OsString::from(self.decider_bin.as_ref().unwrap_or(command))
+    }
+
+    /// Milestone 9.8 (MR §3.4): `kind`'s helper row from the live table and, for a call
+    /// about `project`, that repository's `models.toml` (its kind, the global kind, its
+    /// `helpers`, the global `helpers`, the built-in). Blocking with a project: it reads
+    /// the file, so a caller on a tokio worker runs it on `spawn_blocking`
+    /// ([`call::routed`] does, inside its installed probe's).
+    pub fn choice_for(&self, kind: DeciderKind, project: Option<&Path>) -> RoleChoice {
+        let global = self.live.current().orchestrator.roles.clone();
+        let repo = project.and_then(|project| {
+            let dir = crate::profile::repo_dir(&self.data_dir, project);
+            let (table, problems) = config::models::load_repo(&dir.join(config::models::REPO_FILE));
+            for problem in problems {
+                tracing::warn!("{}", proto::safe_text::one_line(&problem));
+            }
+            table
+        });
+        config::models::resolve(Role::Helper(kind.helper()), repo.as_ref(), &global)
+    }
+
+    /// [`Self::choice_for`]'s model at its effort.
+    pub fn route_for(&self, kind: DeciderKind, project: Option<&Path>) -> Route {
+        let choice = self.choice_for(kind, project);
+        RunModels::route_of(&choice.model, choice.effort.as_deref())
     }
 }
 

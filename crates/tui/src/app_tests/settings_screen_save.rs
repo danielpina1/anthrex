@@ -5,8 +5,7 @@
 use super::actions::tap;
 use super::orch::tagged;
 use super::settings_screen::{
-    cached, current, names, open, opened, origin, puts, reply, sample, screen, select, set_limit,
-    settings_sent, w,
+    cached, current, open, opened, origin, puts, reply, sample, screen, set_limit, settings_sent, w,
 };
 use super::*;
 use crate::app::screens::Screen;
@@ -121,8 +120,7 @@ fn esc_with_changes_asks_first() {
     assert_eq!(app.screen, None, "nothing changed: esc leaves at once");
 
     let mut app = opened();
-    select(&mut app, 0);
-    tap(&mut app, KeyCode::Char(' '));
+    set_limit(&mut app, key::MAX_READERS, "4");
     tap(&mut app, KeyCode::Esc);
     assert_eq!(screen(&app).page, Some(SettingsPage::Discard));
     // Discarding confirms only on `y`.
@@ -150,8 +148,7 @@ fn the_screen_has_the_keys_while_it_is_open() {
         assert!(matches!(app.screen, Some(Screen::Settings(_))));
     }
     // Unsaved changes are not dropped by opening the Profile screen over them.
-    select(&mut app, 0);
-    tap(&mut app, KeyCode::Char(' '));
+    set_limit(&mut app, key::MAX_READERS, "4");
     prefix(&mut app);
     press(&mut app, KeyCode::Char('P'), KeyModifiers::SHIFT);
     assert_eq!(app.toast_text(), Some(UNSAVED_FIRST));
@@ -177,18 +174,56 @@ fn a_new_cache_reaches_an_unchanged_screen_only() {
     assert_eq!(screen(&app).doc().unwrap().limits.max_bounces, 4);
 }
 
+/// Milestone 9.8: a paste reaches only the picker's `custom…` name, as one line; a name
+/// that is not a model is refused there (`ModelRef::parse`).
 #[test]
 fn a_paste_reaches_only_the_custom_name() {
     let mut app = opened();
     app.on_paste("claude-y".into());
+    assert_eq!(screen(&app).models.picker, None);
     assert_eq!(screen(&app).page, None);
-    select(&mut app, 4);
+    // No catalog yet: the picker opens on the row's model (fix round 1), `custom…` is
+    // next; the runtime, then the name.
+    tap(&mut app, KeyCode::Enter);
+    tap(&mut app, KeyCode::Char('j'));
+    tap(&mut app, KeyCode::Enter);
+    app.on_paste("claude-y".into());
+    assert_eq!(
+        screen(&app)
+            .models
+            .picker
+            .as_ref()
+            .unwrap()
+            .custom
+            .as_ref()
+            .unwrap()
+            .name
+            .text(),
+        "",
+        "the runtime step takes no paste"
+    );
     tap(&mut app, KeyCode::Enter);
     app.on_paste("claude-\u{1b}[31my\nz".into());
     tap(&mut app, KeyCode::Enter);
-    let rows = names(&app, Runtime::Claude);
-    let added = &rows.last().unwrap().0;
-    assert!(added.starts_with("claude-") && !added.contains('\u{1b}') && !added.contains('\n'));
+    let custom = (screen(&app).models.picker.as_ref())
+        .and_then(|p| p.custom.clone())
+        .expect("still asking");
+    assert!(!custom.name.text().contains('\n'));
+    assert!(
+        custom.error.is_some(),
+        "a control character is not a model name"
+    );
+    for _ in 0..30 {
+        tap(&mut app, KeyCode::Backspace);
+    }
+    app.on_paste("claude-y\n".into());
+    tap(&mut app, KeyCode::Enter);
+    assert_eq!(screen(&app).models.picker, None);
+    let doc = screen(&app).doc().unwrap();
+    assert_eq!(
+        doc.roles.rows[&proto::models::Role::Orchestrator].model,
+        proto::models::ModelRef::parse("claude:claude-y").unwrap()
+    );
 }
 
 /// Fix round 1, ruling 1: editing stays allowed while a save is in flight, and a `Saved`
@@ -198,17 +233,17 @@ fn a_saved_reply_keeps_edits_made_while_saving() {
     let mut app = opened();
     set_limit(&mut app, key::MAX_READERS, "4");
     let (id, sent) = puts(&w(&mut app))[0].clone();
-    tap(&mut app, KeyCode::BackTab);
-    tap(&mut app, KeyCode::BackTab);
-    tap(&mut app, KeyCode::BackTab);
-    select(&mut app, 0);
-    tap(&mut app, KeyCode::Char(' '));
+    set_limit(&mut app, key::MAX_WRITERS, "5");
     let saved = SettingsReply::Saved {
         doc: sent.clone(),
         origin: origin(&[]),
     };
     app.on_daemon(reply(saved, id));
-    assert!(names(&app, Runtime::Claude)[0].1, "the toggle survives");
+    assert_eq!(
+        screen(&app).doc().unwrap().limits.max_writers,
+        5,
+        "the edit survives"
+    );
     assert!(screen(&app).dirty());
     assert_eq!(screen(&app).base, sent);
     assert_eq!(screen(&app).outcome, Some(SaveOutcome::Saved));
@@ -328,46 +363,27 @@ fn an_unsent_put_says_so_on_the_screen() {
     assert_eq!(app.toast_text(), Some("daemon is not responding"));
 }
 
-/// The sample with hidden format characters a save drops (milestone 9.2's M9.2.6 fix
-/// round 2): `⚠️`'s variation selector in `claude-x`'s note and a soft hyphen in the
-/// orchestrator default's model.
-fn with_hidden() -> SettingsDoc {
-    let mut doc = sample();
-    doc.models[1].note = "\u{26A0}\u{FE0F} careful".into();
-    doc.models[1].model = "claude-\u{AD}x".into();
-    doc.orchestrator.runtime = Some(Runtime::Claude);
-    doc.orchestrator.model = "claude-\u{AD}x".into();
-    doc
-}
-
-fn claude_x(app: &App) -> proto::ModelEntry {
-    let rows = screen(app).rows(Runtime::Claude);
-    let row = rows.iter().find(|r| r.custom).expect("the custom row");
-    row.entry.clone()
-}
-
-/// Ruling (M9.2.15, carried): the Settings screen adopts the `Saved` reply's doc, which
-/// the daemon cleaned (`config::settings::cleaned`), so what the screen holds is what
-/// was stored (`⚠` without its selector) and an unchanged screen is not dirty; edits
-/// made while the save was in flight are kept on top of it.
+/// Ruling (M9.2.15, carried): the Settings screen adopts the `Saved` reply's doc, as the
+/// daemon stored it (`config::settings::cleaned`; since M9.8.12 the doc holds no text a
+/// save cleans), so an unchanged screen is not dirty; edits made while the save was in
+/// flight are kept on top of it.
 #[test]
 fn the_saved_doc_is_adopted_as_the_daemon_cleaned_it() {
     let stored = |sent: &SettingsDoc| config::settings::cleaned(sent);
     // Nothing edited since the send.
-    let mut app = cached(with_hidden(), origin(&[]));
+    let mut app = cached(sample(), origin(&[]));
     open(&mut app);
     set_limit(&mut app, key::MAX_READERS, "4");
     let (id, sent) = puts(&w(&mut app))[0].clone();
-    assert_ne!(stored(&sent), sent, "the save cleans something");
     let saved = SettingsReply::Saved {
         doc: stored(&sent),
         origin: origin(&[]),
     };
     app.on_daemon(reply(saved, id));
-    assert_eq!(claude_x(&app).note, "\u{26A0} careful");
+    assert_eq!(screen(&app).built(), stored(&sent));
     assert!(!screen(&app).dirty());
     // An edit made while saving: kept, and the rest is the stored doc.
-    let mut app = cached(with_hidden(), origin(&[]));
+    let mut app = cached(sample(), origin(&[]));
     open(&mut app);
     set_limit(&mut app, key::MAX_READERS, "4");
     let (id, sent) = puts(&w(&mut app))[0].clone();
@@ -383,8 +399,6 @@ fn the_saved_doc_is_adopted_as_the_daemon_cleaned_it() {
     assert_ne!(want.limits.max_writers, 5);
     want.limits.max_writers = 5;
     assert_eq!(s.built(), want, "only the in-flight edit differs");
-    assert_eq!(claude_x(&app).model, "claude-x");
-    assert_eq!(s.model, "claude-x");
     assert_eq!(s.outcome, Some(SaveOutcome::Saved));
 }
 
@@ -392,7 +406,7 @@ fn the_saved_doc_is_adopted_as_the_daemon_cleaned_it() {
 /// doc, and the screen still knows it as its own and takes it (fix round 1, ruling 2).
 #[test]
 fn a_landed_save_is_known_by_its_cleaned_doc() {
-    let mut app = cached(with_hidden(), origin(&[]));
+    let mut app = cached(sample(), origin(&[]));
     open(&mut app);
     set_limit(&mut app, key::MAX_READERS, "4");
     let (_, sent) = puts(&w(&mut app))[0].clone();

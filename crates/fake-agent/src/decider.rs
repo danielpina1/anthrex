@@ -61,6 +61,9 @@ pub fn claude(
     mode: Option<&str>,
 ) -> Result<Start> {
     let first = stream_claude::read_first_line();
+    if let Some(id) = crate::discovery::claude_initialize(first.as_deref()) {
+        return crate::discovery::answer_claude(&id, args).map(Start::Answered);
+    }
     let message = first.as_deref().and_then(stream_claude::parse_line);
     let Some(Line::Message(prompt)) = message else {
         return Ok(Start::Session(first));

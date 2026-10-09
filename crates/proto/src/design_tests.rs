@@ -117,7 +117,7 @@ fn a_phase_record() -> PhaseRecord {
         agents: vec![
             PhaseAgent {
                 role: AgentRole::Brainstormer,
-                route: a_route(Runtime::Claude, Strength::Frontier, Effort::High, "opus"),
+                route: a_route(Runtime::Claude, Effort::HIGH, "opus"),
                 calls: 31,
                 tokens: 812_000,
                 outcome: "ok".into(),
@@ -126,7 +126,7 @@ fn a_phase_record() -> PhaseRecord {
             },
             PhaseAgent {
                 role: AgentRole::DocReviewer,
-                route: a_route(Runtime::Codex, Strength::Frontier, Effort::Medium, ""),
+                route: a_route(Runtime::Codex, Effort::MEDIUM, ""),
                 calls: 9,
                 tokens: 120_000,
                 outcome: "failed: the session exited".into(),

@@ -170,6 +170,21 @@ pub(super) fn remove_with_worktree(
     });
 }
 
+/// Milestone 9.8 (MR §4.3): the catalogs asked for, answered from a task of its own so
+/// a probe never holds this connection's loop.
+pub(super) fn list_models(
+    models: Arc<crate::models::ModelService>,
+    out: mpsc::Sender<DaemonMsg>,
+    runtime: Option<proto::Runtime>,
+    refresh: bool,
+) {
+    let list = models.list(runtime, refresh);
+    detach(async move {
+        let catalogs = list.await;
+        reply_to(&out, DaemonMsg::Models { catalogs }).await;
+    });
+}
+
 /// `Restart` (design decision 20): relaunch the window's agent, resuming its last known
 /// session, killing whatever was running first if the window was live.
 ///

@@ -6,16 +6,17 @@
 //! model name, note, path and daemon problem passes `safe_text` here or in the kit.
 //! Pure: `&App` in.
 
+use crate::app::models_table::Scope;
 use crate::app::replies::NOT_SENT;
 use crate::app::settings_screen::{
-    DISCARD_ASK, LINK_LOST, SAVED, SHIPPED_FIXED, SaveOutcome, SettingsPage, SettingsScreen,
-    SettingsSection, hard_stop_calls, hard_stop_minutes, strength_name,
+    DISCARD_ASK, LINK_LOST, MODELS_SAVED, SAVED, SaveOutcome, SettingsPage, SettingsScreen,
+    SettingsSection, hard_stop_calls, hard_stop_minutes,
 };
 use crate::app::{App, region::KeyRegion};
 use crate::safe_text::one_line;
 use crate::theme::{Glyph, Palette, Role, dot, dot_sep, ellipsis, glyph, role};
 use crate::ui::kit::{self, Hint, cut, wrap_words};
-use proto::Runtime;
+use crate::ui::{model_picker, models_table};
 use proto::settings::{
     BUDGET_MIN, MAX_BOUNCES_RANGE, MAX_READERS_RANGE, MAX_WRITERS_RANGE, STALL_AFTER_SECS_RANGE,
     key,
@@ -29,9 +30,6 @@ use unicode_width::UnicodeWidthStr;
 
 /// Interfaces "Settings default mark".
 const DEFAULT_MARK: &str = "(default)";
-/// Ruling RH-5: beside the orchestrator default when `[orchestrator.routes.orchestrator]`
-/// is set.
-const OVERRIDDEN: &str = "overridden by [orchestrator.routes.orchestrator]";
 
 fn hint(key: &str, word: &str, priority: u8) -> Hint {
     Hint {
@@ -51,19 +49,23 @@ pub(crate) fn hints(s: &SettingsScreen, ascii: bool) -> Vec<Hint> {
         return vec![hint("esc", "back", 9)];
     }
     let arrows = if ascii { "left/right" } else { "←/→" };
-    let mut out = match s.section.runtime() {
-        Some(runtime) => {
-            let rows = s.rows(runtime);
-            match rows.get(s.selected) {
-                None => vec![hint("⏎", "add a model", 7)],
-                Some(row) if row.custom => {
-                    vec![hint("space", "toggle", 7), hint(arrows, "strength", 6)]
-                }
-                Some(_) => vec![hint("space", "toggle", 7)],
-            }
+    let mut out = match s.section {
+        SettingsSection::Models if s.models.picker.is_some() => {
+            return vec![
+                hint("⏎", "select", 9),
+                hint("r", "refresh", 7),
+                hint("j/k", "move", 6),
+                hint("esc", "cancel", 9),
+            ];
         }
-        None if s.section == SettingsSection::Orchestrator => vec![hint(arrows, "change", 7)],
-        None => vec![hint("0-9", "edit", 7)],
+        SettingsSection::Models => vec![
+            hint("⏎", "choose model", 7),
+            hint("e", "effort", 6),
+            hint("f", "if-it-struggles", 3),
+            hint("x", "reset", 3),
+            hint(arrows, "scope", 2),
+        ],
+        SettingsSection::Limits => vec![hint("0-9", "edit", 7)],
     };
     out.extend([
         hint("w", "save", 8),
@@ -100,96 +102,6 @@ fn sel(on: bool, keys: bool, p: Palette) -> Span<'static> {
         "  ".to_string()
     };
     Span::styled(text, role(kit::bar_role(keys), p))
-}
-
-fn default_span(on: bool, p: Palette) -> Option<Span<'static>> {
-    on.then(|| Span::styled(format!("  {DEFAULT_MARK}"), role(Role::Muted, p)))
-}
-
-/// A model table: its head, one row per model, then `custom…`; and the selected line.
-fn model_lines(
-    s: &SettingsScreen,
-    runtime: Runtime,
-    width: usize,
-    keys: bool,
-    p: Palette,
-) -> (Vec<Line<'static>>, usize) {
-    let bold = Style::default().add_modifier(Modifier::BOLD);
-    let mut head = vec![Span::styled("enabled models", bold)];
-    head.extend(default_span(s.is_default(key::MODELS), p));
-    let mut out = vec![Line::from(head)];
-    let rows = s.rows(runtime);
-    let label = |m: &str, l: &str| {
-        if m.is_empty() && runtime == Runtime::Codex {
-            "Codex default".to_string()
-        } else {
-            one_line(l)
-        }
-    };
-    let name_w = rows
-        .iter()
-        .map(|r| label(&r.entry.model, &r.label).width())
-        .max()
-        .unwrap_or(0)
-        .max(14)
-        .min(width.saturating_sub(24).max(8));
-    for (i, row) in rows.iter().enumerate() {
-        let name = cut(&label(&row.entry.model, &row.label), name_w, ellipsis(p));
-        let strength = strength_name(row.entry.strength);
-        let mut spans = vec![
-            sel(i == s.selected, keys, p),
-            Span::raw(if row.enabled { "[x] " } else { "[ ] " }),
-            Span::raw(pad(&name, name_w + 2)),
-        ];
-        if row.custom {
-            spans.push(Span::raw(kit::choice_in(strength, p)));
-            spans.push(Span::styled("  custom", role(Role::Muted, p)));
-        } else {
-            spans.push(Span::raw(strength.to_string()));
-        }
-        if !row.entry.note.is_empty() {
-            let used: usize = spans.iter().map(|s| s.content.width()).sum();
-            let room = width.saturating_sub(used + 2);
-            let note = cut(&one_line(&row.entry.note), room, ellipsis(p));
-            spans.push(Span::styled(format!("  {note}"), role(Role::Muted, p)));
-        }
-        out.push(Line::from(spans));
-    }
-    out.push(Line::from(vec![
-        sel(s.selected == rows.len(), keys, p),
-        Span::raw(format!("custom{}", ellipsis(p))),
-    ]));
-    (out, s.selected + 1)
-}
-
-/// `runtime ‹ configured ›` and `model ‹ default ›`.
-fn orchestrator_lines(s: &SettingsScreen, keys: bool, p: Palette) -> (Vec<Line<'static>>, usize) {
-    let runtime = s.runtime.map_or("configured", |r| r.label());
-    let model = if s.model.is_empty() {
-        "default".to_string()
-    } else {
-        one_line(&s.model)
-    };
-    let row = |i: usize, label: &str, value: &str, default: bool| {
-        let mut spans = vec![
-            sel(s.selected == i, keys, p),
-            Span::styled(pad(label, 9), role(Role::Muted, p)),
-            Span::raw(kit::choice_in(value, p)),
-        ];
-        spans.extend(default_span(default, p));
-        Line::from(spans)
-    };
-    let mut lines = vec![
-        row(0, "runtime", runtime, s.is_default(key::AGENT_RUNTIME)),
-        row(1, "model", &model, s.is_default(key::AGENT_MODEL)),
-    ];
-    // Ruling RH-5: a model list wins over this default; said under it, in the value
-    // column (beside `runtime ‹ configured ›  (default)` it would be cut at 80 columns).
-    if s.orchestrator_overridden() {
-        let text = format!("{}{OVERRIDDEN}", " ".repeat(2 + 9));
-        lines.push(Line::styled(text, role(Role::Muted, p)));
-    }
-    (lines, s.selected)
 }
 
 /// A limit's allowed range, from the ranges `config` itself reads.
@@ -298,22 +210,14 @@ fn limit_lines(s: &SettingsScreen, keys: bool, p: Palette) -> (Vec<Line<'static>
     (out, selected)
 }
 
-/// The section's lines and the selected line's index; `loading…` before the first doc.
-fn section_lines(
-    s: &SettingsScreen,
-    width: u16,
-    keys: bool,
-    p: Palette,
-) -> (Vec<Line<'static>>, usize) {
+/// The `limits` section's lines and the selected line's index; `loading…` before the
+/// first doc. The `models` section draws whole (`models_table::lines`).
+fn section_lines(s: &SettingsScreen, keys: bool, p: Palette) -> (Vec<Line<'static>>, usize) {
     if !s.loaded {
         let text = format!("loading{}", ellipsis(p));
         return (vec![Line::styled(text, role(Role::Muted, p))], 0);
     }
-    match s.section.runtime() {
-        Some(runtime) => model_lines(s, runtime, usize::from(width), keys, p),
-        None if s.section == SettingsSection::Orchestrator => orchestrator_lines(s, keys, p),
-        None => limit_lines(s, keys, p),
-    }
+    limit_lines(s, keys, p)
 }
 
 /// `glyph text`, wrapped under itself, in `r`.
@@ -330,44 +234,73 @@ fn marked(g: Glyph, text: &str, width: usize, r: Role, p: Palette) -> Vec<Line<'
         .collect()
 }
 
-/// What blocks `w`, what only warns, and the last save's outcome.
-fn footer(app: &App, s: &SettingsScreen, width: u16, p: Palette) -> Vec<Line<'static>> {
+/// What blocks `w`, and in `this repo` the file's unreadable rows.
+fn notes(s: &SettingsScreen, width: u16, p: Palette) -> Vec<Line<'static>> {
     let w = usize::from(width).max(1);
     let mut out = Vec::new();
     for problem in s.problems() {
         out.extend(marked(Glyph::Failed, &problem, w, Role::Failed, p));
     }
-    for warning in s.warnings() {
-        out.extend(marked(Glyph::Warning, &warning, w, Role::Attention, p));
+    // M9.8.12: the roster's strength warnings went with the roster. Fix round 1 (I2):
+    // the repository file's rows the daemon could not read, in `this repo`.
+    let repo = (s.section == SettingsSection::Models && s.models.scope == Scope::Repo)
+        .then_some(s.models.repo.as_ref())
+        .flatten();
+    for problem in repo.iter().flat_map(|r| &r.problems) {
+        out.extend(marked(Glyph::Warning, problem, w, Role::Attention, p));
     }
+    out
+}
+
+/// The last save's outcome, or `saving…` while it is awaited. On the `models` section
+/// a save says so of the models (MR §5.1).
+fn outcome(app: &App, s: &SettingsScreen, width: u16, p: Palette) -> Vec<Line<'static>> {
+    let w = usize::from(width).max(1);
+    let mut out = Vec::new();
     if app.settings_saving() {
         let text = format!("saving{}", ellipsis(p));
         out.push(Line::styled(text, role(Role::Working, p)));
-    } else {
-        match &s.outcome {
-            Some(SaveOutcome::Saved) => {
-                let text = SAVED.replace('·', dot(p));
-                out.push(Line::styled(
-                    cut(&text, w, ellipsis(p)),
-                    role(Role::Done, p),
-                ));
-            }
-            Some(SaveOutcome::Refused(problems)) => {
-                out.push(Line::styled("not saved", role(Role::Failed, p)));
-                for problem in problems {
-                    out.extend(marked(Glyph::Failed, problem, w, Role::Failed, p));
-                }
-            }
-            Some(SaveOutcome::LinkLost) => {
-                out.push(Line::styled(LINK_LOST, role(Role::Failed, p)));
-            }
-            Some(SaveOutcome::NotSent) => {
-                out.push(Line::styled(NOT_SENT, role(Role::Failed, p)));
-            }
-            None => {}
+        return out;
+    }
+    match &s.outcome {
+        Some(SaveOutcome::Saved) => {
+            let saved = match s.section {
+                SettingsSection::Models => MODELS_SAVED,
+                SettingsSection::Limits => SAVED,
+            };
+            let text = saved.replace('·', dot(p));
+            out.push(Line::styled(
+                cut(&text, w, ellipsis(p)),
+                role(Role::Done, p),
+            ));
         }
+        Some(SaveOutcome::Refused(problems)) => {
+            out.push(Line::styled("not saved", role(Role::Failed, p)));
+            for problem in problems {
+                out.extend(marked(Glyph::Failed, problem, w, Role::Failed, p));
+            }
+        }
+        Some(SaveOutcome::LinkLost) => {
+            out.push(Line::styled(LINK_LOST, role(Role::Failed, p)));
+        }
+        Some(SaveOutcome::NotSent) => {
+            out.push(Line::styled(NOT_SENT, role(Role::Failed, p)));
+        }
+        None => {}
     }
     out
+}
+
+/// What blocks `w`, what only warns, and the last save's outcome.
+fn footer(app: &App, s: &SettingsScreen, width: u16, p: Palette) -> Vec<Line<'static>> {
+    let mut out = notes(s, width, p);
+    out.extend(outcome(app, s, width, p));
+    out
+}
+
+/// Whether the `models` section draws (it draws whole, `models_table::lines`).
+fn models_shown(s: &SettingsScreen) -> bool {
+    s.loaded && s.section == SettingsSection::Models
 }
 
 /// `lines` cut to at most `rows`, what is cut marked on the last row.
@@ -390,7 +323,19 @@ pub(crate) fn body_lines(app: &App, s: &SettingsScreen, width: u16) -> Vec<Line<
     let p = app.palette();
     let mut out = vec![section_row(s, p)];
     let keys = app.key_region() == KeyRegion::Screen;
-    out.extend(section_lines(s, width, keys, p).0);
+    if models_shown(s) {
+        let (notes, outcome) = (notes(s, width, p), outcome(app, s, width, p));
+        out.extend(models_table::lines(
+            app,
+            s,
+            (width, 60),
+            keys,
+            notes,
+            outcome,
+        ));
+        return out;
+    }
+    out.extend(section_lines(s, keys, p).0);
     out.extend(footer(app, s, width, p));
     out
 }
@@ -405,7 +350,8 @@ pub fn render(frame: &mut Frame, app: &App, s: &SettingsScreen, area: Rect) {
     };
     // Decision 5: the one accented border is the dialog's while one is open.
     let bars = app.key_region() == KeyRegion::Screen;
-    let keys_here = s.page.is_none() && bars;
+    let picker = s.models.picker.as_ref().filter(|_| models_shown(s));
+    let keys_here = s.page.is_none() && picker.is_none() && bars;
     let block = kit::screen_frame(&title, keys_here, p);
     let inner = block.inner(area);
     frame.render_widget(Clear, area);
@@ -413,10 +359,30 @@ pub fn render(frame: &mut Frame, app: &App, s: &SettingsScreen, area: Rect) {
     if inner.width == 0 || inner.height == 0 {
         return;
     }
+    if models_shown(s) {
+        let (notes, outcome) = (notes(s, inner.width, p), outcome(app, s, inner.width, p));
+        let size = (inner.width, inner.height);
+        let lines = models_table::lines(app, s, size, keys_here, notes, outcome);
+        frame.render_widget(Paragraph::new(lines), inner);
+        if let Some(picker) = picker {
+            let age = app.catalogs.updated_age(app.ticked_at);
+            model_picker::render(frame, picker, age, area, p);
+        }
+    } else {
+        draw_limits(frame, app, s, inner, bars);
+    }
+    if let Some(page) = &s.page {
+        render_page(frame, page, area, p);
+    }
+}
+
+/// The `limits` section (or `loading…`) in the frame's interior.
+fn draw_limits(frame: &mut Frame, app: &App, s: &SettingsScreen, inner: Rect, bars: bool) {
+    let p = app.palette();
     let height = usize::from(inner.height);
     // The footer may take up to half the screen; the section keeps the rest.
     let foot = capped(footer(app, s, inner.width, p), height / 2, p);
-    let (lines, at) = section_lines(s, inner.width, bars, p);
+    let (lines, at) = section_lines(s, bars, p);
     let rows = height.saturating_sub(2 + foot.len());
     let mut all = vec![section_row(s, p), Line::default()];
     all.extend(kit::window(lines, at, rows, p));
@@ -428,16 +394,12 @@ pub fn render(frame: &mut Frame, app: &App, s: &SettingsScreen, area: Rect) {
     }
     all.extend(foot);
     frame.render_widget(Paragraph::new(all), inner);
-    if let Some(page) = &s.page {
-        render_page(frame, page, area, bars, p);
-    }
 }
 
 /// A page's title, whether it is destructive, its body and its hint line.
 fn page_parts(
     page: &SettingsPage,
     width: u16,
-    keys: bool,
     p: Palette,
 ) -> (String, bool, Vec<Line<'static>>, Line<'static>) {
     let hints = |list: &[(&str, &str)]| {
@@ -460,55 +422,21 @@ fn page_parts(
             );
             ("discard changes".into(), true, body, h)
         }
-        SettingsPage::Custom(c) => {
-            let label = |text: &str, on: bool| {
-                vec![
-                    sel(on, keys, p),
-                    Span::styled(pad(text, 10), role(Role::Muted, p)),
-                ]
-            };
-            let inner = width.saturating_sub(12);
-            let mut line = kit::text_area_focus(&c.model, 1, inner, !c.on_strength, p).remove(0);
-            let mut spans = label("model", !c.on_strength);
-            spans.append(&mut line.spans);
-            let mut strength = label("strength", c.on_strength);
-            strength.push(Span::raw(kit::choice_in(strength_name(c.strength), p)));
-            let mut body = vec![Line::from(spans), Line::from(strength)];
-            if c.shipped() {
-                let text = SHIPPED_FIXED.replace('·', dot(p));
-                body.push(Line::styled(text, role(Role::Muted, p)));
-            }
-            if let Some(error) = &c.error {
-                body.push(Line::styled(one_line(error), role(Role::Failed, p)));
-            }
-            let h = hints(&[("⏎", "add"), ("tab", "next"), ("esc", "cancel")]);
-            (
-                format!("custom {} model", c.runtime.label()),
-                false,
-                body,
-                h,
-            )
-        }
     }
 }
 
 /// A page's lines (its body, a blank, its hints), for `width` interior columns.
 #[cfg(test)]
 pub(crate) fn page_lines(app: &App, page: &SettingsPage, width: u16) -> Vec<Line<'static>> {
-    let (_, _, mut body, hints) = page_parts(
-        page,
-        width,
-        app.key_region() == KeyRegion::Screen,
-        app.palette(),
-    );
+    let (_, _, mut body, hints) = page_parts(page, width, app.palette());
     body.push(Line::default());
     body.push(hints);
     body
 }
 
-fn render_page(frame: &mut Frame, page: &SettingsPage, area: Rect, keys: bool, p: Palette) {
+fn render_page(frame: &mut Frame, page: &SettingsPage, area: Rect, p: Palette) {
     let width = area.width.min(kit::DIALOG_MAX).saturating_sub(4);
-    let (title, destructive, body, hints) = page_parts(page, width, keys, p);
+    let (title, destructive, body, hints) = page_parts(page, width, p);
     let room = usize::from(area.height.saturating_sub(4));
     let mut lines: Vec<Line<'static>> = body.into_iter().take(room).collect();
     lines.push(Line::default());

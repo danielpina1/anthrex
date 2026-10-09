@@ -19,8 +19,8 @@ use crate::run::engine::{DocChecked, Effect, EventKind, ScoutEnd};
 use crate::run::snapshot::snapshot;
 
 /// DF §4.2: a `ready: false` spec is stored as review draft 1 (ruling T5-1: not a gate
-/// version) and dispatches the document reviewer on the orchestrator's peer runtime, at
-/// the same strength, pointed at its draft; the run stays in specifying.
+/// version) and dispatches the document reviewer (milestone 9.8: the reviewer row's pick
+/// against the orchestrator), pointed at its draft; the run stays in specifying.
 #[test]
 fn ready_false_dispatches_the_peer_reviewer() {
     let mut fx = specifying();
@@ -42,9 +42,10 @@ fn ready_false_dispatches_the_peer_reviewer() {
     assert_eq!(spec.kind.label(), "spec-r1");
     assert_eq!(spec.kind.role(), AgentRole::DocReviewer);
     assert_eq!(spec.session, 1);
+    // Milestone 9.8 (decision 27): the reviewer row, the built-in Codex default at high.
     assert_eq!(spec.route.runtime, Runtime::Codex);
-    assert_eq!(spec.route.model, "gpt-6");
-    assert_eq!(spec.route.strength, orchestrator.strength);
+    assert_eq!(spec.route.model, "");
+    assert_eq!(spec.route.effort, proto::Effort::HIGH);
     assert!(
         spec.first_turn.contains("get_doc") && spec.first_turn.contains("draft 1"),
         "{}",
@@ -95,30 +96,46 @@ fn no_peer_reviews_on_the_same_runtime_and_says_so() {
 }
 
 /// Fix round 1 (m1): the reviewer falls back to the orchestrator's own runtime with its
-/// reason: the peer is not installed, its CLI cannot run a session unsaved (ruling
-/// T8-4), or the roster has no peer model at the orchestrator's strength.
+/// reason: the reviewer row's pick is not installed, or its CLI cannot run a session
+/// unsaved (ruling T8-4).
 #[test]
 fn the_same_runtime_fallback_names_its_reason() {
     use crate::decider::{DECIDER_CAPS, DeciderCaps};
     use crate::run::orch::roles::lists::review_pick;
     let mut fx = specifying();
-    let (peer, why) = review_pick(fx.run(), &DECIDER_CAPS).unwrap();
-    assert_eq!((peer.runtime, why), (Runtime::Codex, None));
+    let peer = review_pick(fx.run(), &DECIDER_CAPS).unwrap();
+    assert_eq!((peer.route.runtime, peer.why), (Runtime::Codex, None));
     let unsaved = DeciderCaps {
         codex_ephemeral: false,
         ..DECIDER_CAPS
     };
-    let (own, why) = review_pick(fx.run(), &unsaved).unwrap();
-    assert_eq!(own.runtime, Runtime::Claude);
+    let own = review_pick(fx.run(), &unsaved).unwrap();
+    assert_eq!(own.route.runtime, Runtime::Claude);
     let line = "the codex CLI cannot run a session without saving it";
-    assert_eq!(why.as_deref(), Some(line));
-    fx.run_mut().roster.retain(|m| m.runtime != Runtime::Codex);
-    let (_, why) = review_pick(fx.run(), &DECIDER_CAPS).unwrap();
-    let line = "the roster has no codex model at frontier strength";
-    assert_eq!(why.as_deref(), Some(line));
+    assert_eq!(own.why.as_deref(), Some(line));
     fx.run_mut().orch.installed = [("codex".to_string(), false)].into();
-    let (_, why) = review_pick(fx.run(), &unsaved).unwrap();
-    assert_eq!(why.as_deref(), Some("the codex runtime is not installed"));
+    let own = review_pick(fx.run(), &unsaved).unwrap();
+    assert_eq!(
+        own.why.as_deref(),
+        Some("the codex runtime is not installed")
+    );
+}
+
+/// MR D3, decision 27 (fix round 1, I1): a document reviewer on the orchestrator's own
+/// model is warned in the run log once, when its review is queued.
+#[test]
+fn a_document_reviewer_on_the_authors_model_is_logged() {
+    let mut fx = specifying();
+    let own = fx.run().orch.orchestrator.as_ref().unwrap().route.clone();
+    let model = format!("claude:{}", own.model);
+    let reviewer = proto::models::Role::Reviewer;
+    crate::run::test_support::set_row(fx.run_mut(), reviewer, &model, None, None);
+    outcome(&submit_spec(&mut fx, false, Value::Null)).unwrap();
+    let line = format!(
+        "reviewer: {model} reviews work by the same model; set an \"if it struggles\" model for the reviewer in C-b S"
+    );
+    let lines = log_lines(&fx);
+    assert_eq!(lines.iter().filter(|l| **l == line).count(), 1, "{lines:?}");
 }
 
 /// Rulings T10-4 and T10-6: a spec gate revising after a Back or a failed read-back is

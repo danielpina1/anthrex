@@ -416,7 +416,6 @@ fn class(
         refit_budget: None,
         weight_secs: Some(weight.0),
         weight_derived: weight.1,
-        route: "standard/medium".into(),
     }
 }
 
@@ -454,7 +453,6 @@ pub(crate) fn tuning_report() -> proto::TuningReport {
         moved_bad_file: None,
         applied: Vec::new(),
         dismissed: Vec::new(),
-        orchestrator_list: None,
         parse_error: None,
         project: None,
     }

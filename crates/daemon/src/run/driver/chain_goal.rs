@@ -290,6 +290,7 @@ impl RunService {
             choice: OrchestratorChoice {
                 runtime: chain.runtime,
                 model: (!chain.model.is_empty()).then(|| chain.model.clone()),
+                effort: None,
             },
             handoff: Handoff::of(&chain.id, chain.runs.clone(), prev),
             adopt: !chain.ended && chain.window_id != 0,

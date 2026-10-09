@@ -45,10 +45,13 @@ fn a_refused_save_leaves_no_temporary_file() {
     let text = "# mine\r\n[orchestrator]\r\nmax_writers = 2";
     std::fs::write(&path, text).unwrap();
     let mut doc = doc_of(&crate::load(&path).0.orchestrator);
-    doc.models.clear();
+    doc.limits.max_writers = 0;
     let problems = save(&path, &doc, &AtomicBool::new(false)).unwrap_err();
     assert_eq!(problems, validate(&doc));
-    assert_eq!(problems, ["enable at least one model"]);
+    assert_eq!(
+        problems,
+        ["orchestrator.max_writers: must be between 1 and 8"]
+    );
     assert_eq!(std::fs::read(&path).unwrap(), text.as_bytes());
     assert_eq!(entries(dir.path()), ["config.toml"]);
 }
@@ -57,7 +60,8 @@ fn a_refused_save_leaves_no_temporary_file() {
 fn a_cancelled_save_does_not_rename() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");
-    let text = "[orchestrator]\nmax_writers = 2\n";
+    // M9.8.12: an old key, so the save would also write `config.toml.bak`; it does not.
+    let text = "[orchestrator]\nmax_writers = 2\nbuiltin_models = true\n";
     std::fs::write(&path, text).unwrap();
     let mut doc = doc_of(&crate::load(&path).0.orchestrator);
     doc.limits.max_writers = 5;
@@ -172,50 +176,54 @@ fn a_symlinked_config_stays_a_link() {
     assert_eq!(entries(&real_dir), ["anthrex.toml"]);
 }
 
-/// M9.2.6 fix round 2: a stored note with `⚠️` (U+26A0 U+FE0F) no longer blocks every
-/// settings save. The save writes the note without the variation selector, keeps every
-/// comment, and reads back as the doc it wrote.
+/// M9.2.6 fix round 2 kept a stored roster note with `⚠️` from blocking a save. Since
+/// M9.8.12 the roster is an old key a save removes: the note goes with its block, every
+/// comment stays, and `config.toml.bak` holds the file as it was (decision 40).
 #[test]
-fn a_note_with_a_variation_selector_saves_cleaned() {
+fn a_roster_with_a_variation_selector_goes_to_the_bak() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");
     let text = "# my settings\n[orchestrator]\nmax_writers = 2 # mine\n\n[[orchestrator.models]]\nruntime = \"codex\"\nmodel = \"gpt-6-sol\"\nstrength = \"standard\"\nnote = \"\u{26A0}\u{FE0F} careful\"\n";
     std::fs::write(&path, text).unwrap();
     let mut doc = doc_of(&crate::load(&path).0.orchestrator);
-    let at = doc
-        .models
-        .iter()
-        .position(|m| m.model == "gpt-6-sol")
-        .unwrap();
-    assert_eq!(doc.models[at].note, "\u{26A0}\u{FE0F} careful");
     doc.limits.max_writers = 3;
     let saved = save(&path, &doc, &AtomicBool::new(false)).expect("the save goes through");
     let on_disk = std::fs::read_to_string(&path).unwrap();
-    assert!(!on_disk.contains('\u{FE0F}'), "{on_disk}");
-    assert!(
-        on_disk.contains("# my settings\n") && on_disk.contains("# mine"),
-        "{on_disk}"
+    assert_eq!(
+        on_disk,
+        "# my settings\n[orchestrator]\nmax_writers = 3 # mine\n"
     );
     let read = doc_of(&crate::load(&path).0.orchestrator);
-    assert_eq!(read.models[at].note, "\u{26A0} careful");
     assert_eq!(read.limits.max_writers, 3);
     assert_eq!(doc_of(&saved.orchestrator), read);
-    assert_eq!(entries(dir.path()), ["config.toml"]);
+    assert_eq!(entries(dir.path()), ["config.toml", "config.toml.bak"]);
+    let bak = std::fs::read_to_string(dir.path().join("config.toml.bak")).unwrap();
+    assert_eq!(bak, text);
 }
 
-/// …while a C0 control in a note still refuses, and the file is untouched.
+/// A row a save would write with a bad effort refuses, and the file is untouched.
 #[test]
-fn a_control_character_in_a_note_still_refuses() {
+fn a_bad_row_refuses_and_the_file_is_untouched() {
+    use crate::models::{ModelRef, Role, RoleChoice};
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");
-    let text = "[orchestrator]\nmax_writers = 2\n";
+    let text = "[orchestrator]\nmax_writers = 2\nbuiltin_models = true\n";
     std::fs::write(&path, text).unwrap();
     let mut doc = doc_of(&crate::load(&path).0.orchestrator);
-    doc.models[0].note = "a\x07b\u{FE0F}".into();
+    doc.roles.rows.insert(
+        Role::Planner,
+        RoleChoice {
+            model: ModelRef::parse("codex:default").unwrap(),
+            effort: Some("a\x07b".into()),
+            fallback: None,
+        },
+    );
     let problems = save(&path, &doc, &AtomicBool::new(false)).unwrap_err();
     assert_eq!(
         problems,
-        ["model 1 (claude): its note holds a control character"]
+        [
+            "models.planner.effort: \"a\\u{7}b\" is not an effort name (1 to 16 of a-z, 0-9, _ and -)"
+        ]
     );
     assert_eq!(std::fs::read(&path).unwrap(), text.as_bytes());
     assert_eq!(entries(dir.path()), ["config.toml"]);
@@ -246,4 +254,70 @@ fn a_hand_edited_design_default_still_saves() {
             "the hand edit stays"
         );
     }
+}
+
+/// Final review I2: with a `config.toml.bak` already there (a hand-made backup, say), the
+/// save that removes old keys still keeps the file as it was, as `config.toml.bak.1`,
+/// and never replaces the existing backup; the next one takes `.bak.2`.
+#[test]
+fn an_existing_bak_does_not_stop_the_backup_of_the_old_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    let text =
+        "[orchestrator]\nmax_writers = 2\n\n[orchestrator.planners]\nstrength = \"frontier\"\n";
+    std::fs::write(&path, text).unwrap();
+    std::fs::write(dir.path().join("config.toml.bak"), "mine").unwrap();
+    let doc = doc_of(&crate::load(&path).0.orchestrator);
+    save(&path, &doc, &AtomicBool::new(false)).expect("the save goes through");
+    let now = std::fs::read_to_string(&path).unwrap();
+    assert!(!now.contains("planners"), "{now}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("config.toml.bak")).unwrap(),
+        "mine"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("config.toml.bak.1")).unwrap(),
+        text
+    );
+    // A second removing save (old keys again) takes the next free name.
+    let again = format!(
+        "{}\n[orchestrator.scouts]\nstrength = \"standard\"\n",
+        std::fs::read_to_string(&path).unwrap()
+    );
+    std::fs::write(&path, &again).unwrap();
+    let doc = doc_of(&crate::load(&path).0.orchestrator);
+    save(&path, &doc, &AtomicBool::new(false)).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("config.toml.bak.2")).unwrap(),
+        again
+    );
+    assert_eq!(
+        entries(dir.path()),
+        [
+            "config.toml",
+            "config.toml.bak",
+            "config.toml.bak.1",
+            "config.toml.bak.2"
+        ]
+    );
+}
+
+/// Final review I1: `changed_since_loaded` is silent for the file the settings were read
+/// from, and names the change once a `[models]` row is hand-edited.
+#[test]
+fn a_file_edited_after_it_was_read_is_noticed() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, "[models.reviewer]\nmodel = \"codex:gpt-6-sol\"\n").unwrap();
+    let live = crate::load(&path).0.orchestrator;
+    assert_eq!(changed_since_loaded(&path, &live), None);
+    std::fs::write(
+        &path,
+        "[models.reviewer]\nmodel = \"claude:claude-opus-5-5\"\n",
+    )
+    .unwrap();
+    assert_eq!(
+        changed_since_loaded(&path, &live).as_deref(),
+        Some(CHANGED_SINCE_LOADED)
+    );
 }

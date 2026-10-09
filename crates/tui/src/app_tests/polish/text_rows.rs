@@ -57,7 +57,7 @@ fn the_goal_moves_a_wrapped_row_and_stays_on_its_ends() {
         "Down on the last row stays put"
     );
     tap(&mut app, KeyCode::Tab);
-    assert_eq!(goal_form(&app).focus, GoalField::Runtime, "Tab leaves");
+    assert_eq!(goal_form(&app).focus, GoalField::Model, "Tab leaves");
 }
 
 #[test]

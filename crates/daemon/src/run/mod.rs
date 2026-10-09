@@ -11,8 +11,8 @@
 //!   with `validate_graph.rs` (task resolution and the cross-task rules, decisions
 //!   8–13) and `validate_stages.rs` (M9.1's stages and reserved ids), `edits.rs` (plan edits, decision 13) with `edit_log.rs` (M8c's log of
 //!   them), `globs.rs` (`owns` globs, decisions 11
-//!   and 56), `roster.rs` (reviewer and escalation policy, decisions 23, 35 and 39),
-//!   `contract.rs` and `messages.rs` (contracts, prompts and message texts), `env.rs`
+//!   and 56), `model_roles.rs` and `role_step.rs` (the role table and its escalation,
+//!   milestone 9.8), `contract.rs` and `messages.rs` (contracts, prompts and message texts), `env.rs`
 //!   (the profile environment), `role_launch.rs` (session specs and ids), `reach.rs`
 //!   (which runtimes a run can reach), `snapshot.rs` (decision 47's snapshot) and
 //!   `report.rs` with `report_escape.rs` and `report_task.rs` (the run report).
@@ -44,12 +44,15 @@ pub mod git;
 pub mod globs;
 pub mod history;
 pub mod history_io;
+pub mod ignored_route;
 pub mod journal;
 pub mod messages;
 pub mod model;
+pub mod model_roles;
 pub mod orch;
 pub mod phases;
 pub mod plan;
+mod plan_repo;
 pub mod proof;
 pub mod reach;
 pub mod reconcile;
@@ -63,8 +66,7 @@ mod report_task;
 mod report_tiers;
 pub mod role_launch;
 pub mod role_launch_patterns;
-pub mod roster;
-pub mod route_pick;
+pub mod role_step;
 pub mod routing;
 pub mod seatbelt;
 pub mod slots;
@@ -86,5 +88,7 @@ pub mod validate_patterns;
 mod validate_rounds;
 mod validate_stages;
 
+#[cfg(test)]
+mod model_roles_golden;
 #[cfg(test)]
 mod test_support;

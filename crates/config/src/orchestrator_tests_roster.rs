@@ -3,6 +3,8 @@
 //! under the 600-line rule.
 
 use super::*;
+use crate::orchestrator::LegacyModel;
+use crate::orchestrator::LegacyStrength;
 
 #[test]
 fn invalid_model_entries_are_skipped_with_their_index() {
@@ -65,8 +67,7 @@ note = "promoted"
     // Replaced in place: still the second entry, same runtime and model, new strength.
     assert_eq!(models[1].runtime, proto::Runtime::Claude);
     assert_eq!(models[1].model, "claude-sonnet-5");
-    assert_eq!(models[1].strength, proto::Strength::Frontier);
-    assert_eq!(models[1].note, "promoted");
+    assert_eq!(models[1].strength, LegacyStrength::Frontier);
     // The other three built-ins are untouched.
     assert_eq!(models[0], default_roster()[0]);
     assert_eq!(models[2], default_roster()[2]);
@@ -89,11 +90,10 @@ strength = "standard"
     assert!(problems.is_empty(), "unexpected problems: {problems:?}");
     assert_eq!(
         config.orchestrator.models,
-        vec![proto::ModelEntry {
+        vec![LegacyModel {
             runtime: proto::Runtime::Codex,
             model: "my-model".to_string(),
-            strength: proto::Strength::Standard,
-            note: String::new(),
+            strength: LegacyStrength::Standard,
         }]
     );
 }

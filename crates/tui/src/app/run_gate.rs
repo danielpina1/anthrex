@@ -3,6 +3,8 @@
 //! Moved out of `app/runs.rs` (`AGENTS.md` hard rule 8) before milestone 9 adds holds
 //! (`app/run_holds.rs`), which `a` and `x` try first.
 
+use super::form_picker::{self, FormPick};
+use super::model_picker::PickerFor;
 use super::{App, Effect, Modal, PendingAction};
 use crate::run_edit::{EditOutcome, TaskEditForm};
 use crate::tree::NodeKey;
@@ -96,7 +98,12 @@ impl App {
         let modal = match (key, task) {
             ('a', _) => confirm(approve_message(run), PendingAction::ApproveRun(run_id)),
             ('x', _) => confirm(reject_message(run), PendingAction::RejectRun(run_id)),
-            ('e', Some(task)) => Modal::EditTask(Box::new(TaskEditForm::in_run(run, task))),
+            ('e', Some(task)) => {
+                let mut form = TaskEditForm::in_run(run, task);
+                form.role_label = form.table_model().map(|m| self.catalogs.label(&m, false));
+                form.row_aliases = row_aliases(&self.catalogs, form.row.as_ref());
+                Modal::EditTask(Box::new(form))
+            }
             (_, Some(task)) => confirm(
                 format!("Remove {} from run {run_id}'s plan?", task.id),
                 PendingAction::RemoveTask {
@@ -119,11 +126,40 @@ impl App {
         // The brief's text area as the form draws it over the whole terminal, so Up
         // and Down move a drawn row (decision 35).
         let brief_width = crate::ui::run_edit::brief_width(self.body_area.width);
+        let catalogs = &self.catalogs;
         let Some(Modal::EditTask(form)) = &mut self.modal else {
             return vec![];
         };
+        // Milestone 9.8 decision 39: the route model's efforts, as the catalogs say now.
+        form.efforts = (form.effort_model()).map_or_else(Vec::new, |m| catalogs.efforts(&m));
+        form.role_label = form.table_model().map(|m| catalogs.label(&m, false));
+        form.row_aliases = row_aliases(catalogs, form.row.as_ref());
+        if let Some(picker) = &mut form.picker {
+            match form_picker::on_key(picker, key) {
+                FormPick::Stay => {}
+                FormPick::Close => form.picker = None,
+                FormPick::Refresh => return vec![form_picker::refresh()],
+                FormPick::Chose(model) => {
+                    let label =
+                        (model.as_ref()).map_or_else(String::new, |m| catalogs.label(m, false));
+                    form.picker = None;
+                    form.choose(model, label);
+                }
+            }
+            return vec![];
+        }
         match form.on_key_in(key, brief_width) {
             EditOutcome::Stay => vec![],
+            EditOutcome::Pick => {
+                let current = form.current_model();
+                form.picker = Some(form_picker::open(
+                    PickerFor::TaskEdit,
+                    catalogs,
+                    current.as_ref(),
+                    form.role_table_text(),
+                ));
+                vec![]
+            }
             EditOutcome::Cancel => {
                 self.modal = None;
                 vec![]
@@ -246,3 +282,12 @@ impl App {
 #[cfg(test)]
 #[path = "run_view_gate_tests.rs"]
 mod run_view_tests;
+
+/// Gate fix B2: the models the catalogs say run as the task's row's model.
+fn row_aliases(
+    catalogs: &crate::app::model_picker::Catalogs,
+    row: Option<&proto::Route>,
+) -> Vec<proto::models::ModelRef> {
+    let model = row.and_then(|r| form_picker::route_model(Some(r.runtime), Some(&r.model)));
+    model.map_or_else(Vec::new, |m| catalogs.aliases(&m))
+}

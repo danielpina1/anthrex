@@ -194,7 +194,7 @@ You watch it all in the **run view** (`C-b T`, then a run): the plan as a graph 
 - **Rounds.** `anthrex run iterate <run> "<request>"` (or the action menu) asks the orchestrator to plan a new round of a complete run; a design run amends its spec first.
 - **Chains.** `anthrex run start --goal ... --continue <run>` plans a next goal with the same orchestrator, which keeps its context.
 - **Repository profile.** `anthrex profile detect` has a read-only scout propose the repository's check and test commands, verifies them, and stores them only after you confirm (`anthrex profile confirm`).
-- **History.** Every run is recorded. `anthrex run stats` summarises it by task class, and new runs start from what the history learned: size thresholds, model routing, concurrency and a run estimate. Settings (`C-b S`) shows and edits the model lists and limits.
+- **History.** Every run is recorded. `anthrex run stats` summarises it by task class, and new runs start from what the history learned: size thresholds, concurrency and a run estimate. Settings (`C-b S`) shows and edits the models each role runs (below) and the limits.
 
 ## Configuration
 
@@ -228,7 +228,6 @@ truecolor = "auto"          # auto (from COLORTERM) | on | off
 [orchestrator]
 max_writers = 3             # tasks writing at once
 max_readers = 3
-default_runtime = "claude"  # claude | codex: the run agents' default runtime
 worker_sandbox = true
 
 [orchestrator.design]
@@ -245,7 +244,38 @@ ci_fix_max = 2
 review_fix_max = 3
 ```
 
-Other tables: `[conversation]` (the conversation view's limits and runtime badges), `[panes]`, and under `[orchestrator]`: `budget`, `review`, `claude`, `deciders`, `scouts`, `onboarding`, `metering`, `agent`, `planners`, `tuning`, `routes` and `models`. The delivery mode (`local` or `pr`) and remote are per repository, in its profile: `anthrex profile edit`.
+Other tables: `[conversation]` (the conversation view's limits and runtime badges), `[panes]`, and under `[orchestrator]`: `budget`, `review`, `claude`, `deciders`, `scouts`, `onboarding`, `metering`, `planners` and `tuning`. The delivery mode (`local` or `pr`) and remote are per repository, in its profile: `anthrex profile edit`.
+
+### Models
+
+Every model anthrex launches comes from one table, `[models]`: one row per role. A row names a `model` as `<runtime>:<model id>`, an optional `effort`, and an optional `fallback`, the model to switch to if the task struggles. A row you leave out keeps its built-in model.
+
+```toml
+[models.implementer.small]
+model = "claude:claude-sonnet-5"
+effort = "low"
+fallback = "codex:default"      # the model Codex is set to use
+
+[models.reviewer]
+model = "codex:gpt-6-sol"
+effort = "high"
+
+[models.helpers.triage]         # one helper; the others follow [models.helpers]
+model = "claude:claude-haiku-4-5"
+
+[models.brainstorm]             # the design flow's two brainstormers
+first = "claude:claude-opus-5-5"
+second = "codex:default"
+```
+
+- **Rows.** `orchestrator`, `planner`, `implementer.small`, `implementer.medium`, `implementer.hub`, `test_writer`, `reviewer`, `research`, `helpers` (with `helpers.run_name`, `triage`, `size_check`, `check_summary`, `blocked_reason` and `ci_summary` to set one helper apart) and `brainstorm`. The orchestrator gives each task a size; the size picks the row. It never picks a model.
+- **`codex:default`** (or `claude:default`) runs the CLI's own configured model, with no `-m` or `--model`.
+- **Effort.** A task that struggles runs again at its model's next higher effort, up to the highest the CLI offers, then on the row's `fallback` (climbing its efforts too), then stays there. anthrex never switches to a model you did not name.
+- **Per repository.** `<data dir>/repos/<repo>-<hash>/models.toml` holds the same `[models.*]` rows for one repository. A row there replaces the global row whole; a row it leaves out comes from `config.toml`, then the built-in.
+- **Older configs.** The old keys (`[[orchestrator.models]]`, `[orchestrator.routes.*]`, `[orchestrator.agent]`, `default_runtime` and `builtin_models` under `[orchestrator]`, the `strength`, `runtime` and `effort` of `planners` and `scouts`, and the `strength` and `effort` of `deciders`) are read as the same rows, so every role keeps its model. The file is rewritten only when you save in Settings: the old keys are removed, and each save that removes any keeps the previous file as `config.toml.bak`, or as `config.toml.bak.1`, `.2` and so on when that name is taken (an existing backup is never replaced). A save is refused when `config.toml` changed after the daemon read it, so a hand edit is never reverted: restart the daemon or reopen `C-b S`, then save again.
+- **Kept keys.** A key that gave no row is kept on save, along with the roster and `default_runtime` it is read against: a list none of whose models anthrex knows, a review list none of whose models can review the other runtime's work, or a route it could not migrate. The daemon's log has a note naming the row and the model it uses meanwhile. Choose that row's model in Settings and save to remove it.
+
+In Settings (`C-b S`), the `models` section shows the table. `j`/`k` move between rows (Space opens or closes the `helpers` kinds). `⏎` picks the row's model from the list the installed `claude` and `codex` report (or `custom…` for any id; `r` in the list asks the CLIs again), `e` cycles its effort, `f` picks its fallback, `x` resets the row, `←`/`→` switch between `everywhere` (`config.toml`) and `this repo` (`models.toml`), and `w` saves. Runs in progress keep the models they started with.
 
 Environment variables:
 

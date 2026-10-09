@@ -20,7 +20,7 @@ use crate::run::engine::actions::{self, ActionNode};
 use crate::run::engine::{EventKind, OrchEvent};
 use crate::run::git::{self, Git};
 use crate::run::model::Run;
-use crate::run::plan::parse_plan;
+use crate::run::plan::parse_plan_file;
 use crate::run::validate::EditScope;
 
 async fn blocking<T: Send + 'static>(
@@ -318,7 +318,7 @@ impl RunService {
         flags: (bool, bool, bool),
         delivery: Option<proto::DeliveryMode>,
     ) -> Result<Run, String> {
-        let plan = parse_plan(&plan_toml)?;
+        let plan = parse_plan_file(&plan_toml)?;
         let delivery = DeliveryStart::Resolve(delivery);
         let once = super::build::TuneOnce::new();
         self.build_delivered(plan, dir, flags, Shape::PlanFile, delivery, &once)

@@ -334,29 +334,31 @@ fn a_cancel_waits_for_the_worktree_op_in_flight() {
     }
 }
 
-/// Ruling T22-I1b: a run whose roster keeps it on Claude through every rung. An edit
+/// Ruling T22-I1b: a run whose role table keeps it on Claude through every rung. An edit
 /// that would make it reach Codex, for which the driver found a decision-53 refusal, is
 /// refused with that text and changes nothing; an edit that stays on Claude is applied.
 #[test]
 fn an_edit_that_reaches_an_unchecked_runtime_is_refused() {
-    use proto::{ModelEntry, Runtime, Strength};
-    let entry = |runtime, model: &str, strength| ModelEntry {
-        runtime,
-        model: model.to_string(),
-        strength,
-        note: String::new(),
-    };
+    use proto::Runtime;
     let config = config::Orchestrator {
-        models: vec![
-            entry(Runtime::Claude, "claude-sonnet-5", Strength::Standard),
-            entry(Runtime::Claude, "claude-opus-5", Strength::Frontier),
-            entry(Runtime::Codex, "gpt-5-codex-mini", Strength::Fast),
-        ],
         review_small: false,
+        // Milestone 9.8 decision 27: a Claude reviewer row keeps it on Claude.
+        roles: proto::models::ModelTable {
+            rows: [(
+                proto::models::Role::Reviewer,
+                proto::models::RoleChoice {
+                    model: proto::models::ModelRef::parse("claude:claude-opus-5").unwrap(),
+                    effort: None,
+                    fallback: None,
+                },
+            )]
+            .into(),
+            brainstorm: None,
+        },
         ..config::Orchestrator::default()
     };
-    let route = "[task.route]\nruntime = \"claude\"\nmodel = \"claude-sonnet-5\"";
-    let plan = plan_with(PROFILE, &[task_toml("t1", "S", "[\"docs/a.md\"]", route)]);
+    // On the small row's Claude Sonnet (milestone 9.8 decision 31: not a plan route).
+    let plan = plan_with(PROFILE, &[task_toml("t1", "S", "[\"docs/a.md\"]", "")]);
     let mut fx = Fixture::with_config(&plan, config);
     fx.ready(false);
     assert_eq!(

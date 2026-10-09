@@ -64,7 +64,7 @@ pub(in crate::run::driver) fn role(run_id: &str) -> RoleLaunch {
             agent_label: None,
         },
         instructions: "the orchestrator contract".into(),
-        effort: Effort::High,
+        effort: Effort::HIGH,
         claude_allowed_tools: Vec::new(),
         claude_disallowed_tools: Vec::new(),
         env: Vec::new(),
@@ -169,13 +169,7 @@ impl ChainRig {
         prev.data_dir = data.join("runs").join(PREV);
         prev.state = RunState::Accepted;
         prev.chain = Some(CHAIN.into());
-        let resolved = crate::run::orch::launch::resolve_orchestrator(
-            None,
-            &config::AgentConfig::default(),
-            prev.limits.default_runtime,
-            &prev.roster,
-        )
-        .unwrap();
+        let resolved = crate::run::orch::launch::orchestrator_route(None, prev.limits.models());
         let mut record = orchestrator();
         record.route = resolved.route;
         record.window_id = Some(window);

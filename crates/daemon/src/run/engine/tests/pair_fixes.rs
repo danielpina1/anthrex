@@ -17,9 +17,13 @@ use super::*;
 use crate::run::engine::{Effect, OpKind, OpResult};
 use crate::run::orch::RefreshState;
 
-/// A route on the Claude sonnet at `high` effort, so rung 2 cannot raise the effort.
-const SONNET_HIGH: &str =
-    "[task.route]\nruntime = \"claude\"\nmodel = \"claude-sonnet-5\"\neffort = \"high\"";
+/// `config` whose small row is the Claude Sonnet at `high` effort, so rung 2 cannot
+/// raise the effort (milestone 9.8 decision 31: from the table, not a plan's route).
+fn sonnet_high(mut config: config::Orchestrator) -> config::Orchestrator {
+    let small = proto::models::Role::ImplementerSmall;
+    with_row(&mut config, small, "claude:claude-sonnet-5", Some("high"));
+    config
+}
 
 /// The test writer's two failed red checks: rung 2, its window killed and exited.
 fn rung2(fx: &mut Fixture, writer: u32) {
@@ -44,18 +48,36 @@ fn fresh_launch(fx: &mut Fixture) -> Launch {
     launch_of(kind)
 }
 
-/// T16-2: with Codex not installed, rung 2 never steps the writer onto Codex (plain
-/// `roster::escalate` from Claude sonnet at `high` gave the Codex peer), and the pick
-/// is recorded as an escalation.
+/// Milestone 9.8: `config` whose `test_writer` row is Codex's default at `medium`,
+/// falling back to `fallback`.
+fn writer_row(fallback: &str) -> config::Orchestrator {
+    let mut config = config::Orchestrator::default();
+    let row = proto::models::RoleChoice {
+        model: proto::models::ModelRef::parse("codex:default").unwrap(),
+        effort: Some("medium".into()),
+        fallback: Some(proto::models::ModelRef::parse(fallback).unwrap()),
+    };
+    config
+        .roles
+        .rows
+        .insert(proto::models::Role::TestWriter, row);
+    config
+}
+
+/// T16-2: with Codex not installed, rung 2 never steps the writer onto Codex, and the
+/// pick is recorded as an escalation. Milestone 9.8 decision 29: the writer, held to
+/// the task's route (Sonnet at `high`, the top of its list), steps to its row's
+/// fallback, Opus.
 #[test]
 fn the_writers_rung_2_skips_a_runtime_that_is_not_installed() {
-    let tasks = [task("t1", "S", "a", &format!("{PAIRED}\n{SONNET_HIGH}"))];
-    let (mut fx, launch, writer) =
-        running(PROFILE, &tasks, config::Orchestrator::default(), |run| {
-            run.orch.installed.insert("codex".into(), false);
-        });
+    let tasks = [task("t1", "S", "a", PAIRED)];
+    let config = sonnet_high(writer_row("claude:claude-opus-5-5"));
+    let (mut fx, launch, writer) = running(PROFILE, &tasks, config, |run| {
+        run.orch.installed.insert("codex".into(), false);
+        crate::run::test_support::with_efforts(run);
+    });
     assert_eq!(launch.spec.runtime, Runtime::Claude);
-    assert_eq!(launch.spec.effort, Effort::High);
+    assert_eq!(launch.spec.effort, Effort::HIGH);
     rung2(&mut fx, writer);
     let launch = fresh_launch(&mut fx);
     assert_eq!(role_of(&launch), AgentRole::TestWriter);
@@ -66,17 +88,22 @@ fn the_writers_rung_2_skips_a_runtime_that_is_not_installed() {
     );
     assert_eq!(
         launch.spec.model, "claude-opus-5-5",
-        "one step up on Claude"
+        "the row's fallback on Claude"
     );
     let t1 = fx.task("t1");
     let writers: Vec<_> = (t1.routing_decisions.iter())
         .filter(|d| d.role == AgentRole::TestWriter)
         .collect();
     assert_eq!(writers.len(), 2, "{writers:#?}");
-    // Minor m1: the first pick's source is the task's own route (no peer installed).
+    // Minor m1: the first pick is the task's own route (no peer installed); milestone
+    // 9.8 (ruling F16): recorded against the `test_writer` row, its Codex model held off.
     assert_eq!(
         (writers[0].trigger.as_str(), writers[0].source.as_str()),
-        ("test_writer", "explicit_task")
+        ("test_writer", "role_table")
+    );
+    assert_eq!(
+        writers[0].candidates[0].skipped_reason.as_deref(),
+        Some("not installed")
     );
     assert_eq!(
         (writers[1].role, writers[1].session),
@@ -89,10 +116,15 @@ fn the_writers_rung_2_skips_a_runtime_that_is_not_installed() {
 }
 
 /// T16-2 (ruling T10a-5): a writer whose session failed for an environment reason is
-/// substituted by the peer at its strength on `run retry`, never re-run on its route.
+/// substituted on `run retry`, never re-run on its route. Milestone 9.8 decision 29:
+/// by its row's fallback, past the failed model's efforts.
 #[test]
 fn a_writer_that_failed_in_this_task_is_substituted_on_retry() {
-    let (mut fx, launch, writer) = paired();
+    let tasks = [task("t1", "S", "a", PAIRED)];
+    let config = writer_row("claude:claude-sonnet-5");
+    let (mut fx, launch, writer) = running(PROFILE, &tasks, config, |run| {
+        crate::run::test_support::with_efforts(run);
+    });
     assert_eq!(launch.spec.runtime, Runtime::Codex);
     let args = json!({"kind": "environment", "reason": "codex cannot start"});
     assert!(one_reply(&writer_tool(&mut fx, writer, "task_blocked", args)).is_ok());
@@ -105,7 +137,7 @@ fn a_writer_that_failed_in_this_task_is_substituted_on_retry() {
     assert_eq!(
         (launch.spec.runtime, launch.spec.model.as_str()),
         (Runtime::Claude, "claude-sonnet-5"),
-        "the peer at the same strength"
+        "the row's fallback"
     );
     assert_eq!(
         fx.task("t1").route.runtime,
@@ -320,34 +352,4 @@ fn a_red_check_leaves_a_red_only_proof_record() {
     assert_eq!(proofs[1].red, HEAD);
     let tally = crate::run::history::gates(fx.task("t1"));
     assert_eq!((tally.proofs, tally.proofs_failed), (0, 0));
-}
-
-/// Ruling T16-7 (N3): a writer that falls back to the task's route, which a model list
-/// chose, records the list's source and snapshot.
-#[test]
-fn a_writer_on_a_list_chosen_route_records_the_list() {
-    let tasks = [task("t1", "S", "a", &format!("{PAIRED}\n{SONNET_HIGH}"))];
-    let (fx, launch, _) = running(PROFILE, &tasks, config::Orchestrator::default(), |run| {
-        run.orch.installed.insert("codex".into(), false);
-        let route = run.tasks[0].route.clone();
-        run.tasks[0].list_pick = Some(crate::run::model::ListPick {
-            candidates: vec![proto::RoutingCandidate {
-                route,
-                skipped_reason: None,
-            }],
-            chosen: Some(0),
-            pick: Default::default(),
-            slot: None,
-        });
-    });
-    assert_eq!(launch.spec.runtime, Runtime::Claude, "the task's own route");
-    let t1 = fx.task("t1");
-    let writer = (t1.routing_decisions.iter())
-        .find(|d| d.role == AgentRole::TestWriter)
-        .unwrap();
-    assert_eq!(
-        (writer.trigger.as_str(), writer.source.as_str()),
-        ("test_writer", "configured_list")
-    );
-    assert_eq!(writer.pick_policy.as_deref(), Some("first"));
 }

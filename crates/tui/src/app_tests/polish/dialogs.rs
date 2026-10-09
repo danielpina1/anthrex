@@ -132,9 +132,13 @@ fn edit_choices_have_ascii_twins() {
         let buffer = draw(&app, w, h);
         let rows = audit::rows(&buffer).join("\n");
         assert_eq!(audit::first_non_ascii(&buffer), None, "{rows}");
-        assert!(rows.contains("> runtime    < claude >"), "{rows}");
+        // Milestone 9.8 decision 39 (changed expectation): the model row first.
+        assert!(
+            rows.contains("> model      < Claude - role table >  claude-sonnet-5"),
+            "{rows}"
+        );
         assert!(rows.contains("  effort     < medium >"), "{rows}");
-        assert!(rows.contains("enter save - tab next"), "{rows}");
+        assert!(rows.contains("enter choose model - tab next"), "{rows}");
     }
     let ascii = Palette {
         ascii: true,

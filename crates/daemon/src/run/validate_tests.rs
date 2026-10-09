@@ -23,7 +23,7 @@ fn two_modules_raise_s_to_m() {
     assert_eq!(t1.size, Size::M);
     assert!(!t1.hub);
     // Everything derived from the size follows the raised size, not the planned one.
-    assert_eq!(t1.route.effort, proto::Effort::Medium);
+    assert_eq!(t1.route.effort, proto::Effort::MEDIUM);
     assert_eq!(t1.budget, config::Orchestrator::default().budget_m);
     assert_eq!(t1.review_level, Some(ReviewLevel::Medium));
 }
@@ -141,8 +141,13 @@ fn raises_are_recorded_as_notes() {
         &proto::ProfileSpec::default(),
     );
     let config = config::Orchestrator::default();
-    let limits =
+    let mut limits =
         crate::run::plan::run_limits(&config, &config::Testing::default(), None, None, None);
+    // Milestone 9.8 decision 9: what `build_run` freezes before any task resolves.
+    limits.models = Some(crate::run::model_roles::RunModels::resolve(
+        &config.roles,
+        None,
+    ));
     let spec = crate::run::plan::parse_plan(&plan_with(
         PROFILE,
         &[task_toml(
@@ -155,14 +160,7 @@ fn raises_are_recorded_as_notes() {
     .unwrap()
     .tasks
     .remove(0);
-    let big = resolve_task(
-        spec,
-        &profile,
-        &limits,
-        &config.models,
-        config.default_runtime,
-    )
-    .unwrap_or_else(|e| panic!("{}", show(&e)));
+    let big = resolve_task(spec, &profile, &limits).unwrap_or_else(|e| panic!("{}", show(&e)));
     assert_eq!(big.size, Size::L);
     assert_eq!(
         big.notes,
@@ -421,33 +419,24 @@ fn review_small_off_skips_s_but_not_hub() {
 
 // ---- Runtimes and implicit dependencies, decision 11 ----
 
+/// Milestone 9.8 decisions 31 and 33: the runtimes come from the role table (size M on
+/// Codex here), never from a plan's route.
 #[test]
 fn cross_runtime_overlap_is_rejected_on_the_later_task() {
     let text = plan_with(
         PROFILE,
         &[
-            task_toml(
-                "t1",
-                "M",
-                r#"["crates/proto/**"]"#,
-                "[task.route]\nruntime = \"claude\"",
-            ),
-            task_toml(
-                "t2",
-                "M",
-                r#"["crates/proto/src/run.rs"]"#,
-                "[task.route]\nruntime = \"codex\"\nstrength = \"standard\"",
-            ),
+            task_toml("t1", "S", r#"["crates/a/src/**"]"#, ""),
+            task_toml("t2", "M", r#"["crates/a/src/lib.rs"]"#, ""),
         ],
     );
-    // Codex has no frontier model, so t2 (a hub task) names standard explicitly.
     assert_eq!(
-        errors_of(&text),
+        build_with(&text, &codex_medium()).unwrap_err(),
         vec![err(
             Some("t2"),
             "owns",
             "9",
-            "overlaps task t1's owns (crates/proto/**) and the two tasks run on different runtimes (claude, codex) (rule 9)"
+            "overlaps task t1's owns (crates/a/src/**) and the two tasks run on different runtimes (claude, codex): the role table runs size S on claude and size M on codex; give them the same size or separate owns (rule 9)"
         )]
     );
 }

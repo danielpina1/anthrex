@@ -14,77 +14,23 @@ use crate::run::contract::{
     review_changes_message,
 };
 use crate::run::engine::{AgentSignal, Effect, EventKind, OpKind, OpResult};
-use crate::run::model::{OpId, ReviewLevel};
-use crate::run::roster::pick_reviewer;
+use crate::run::model::ReviewLevel;
 
-pub(super) const CODEX_AUTHOR: &str = "[task.route]\nruntime = \"codex\"\nmodel = \"\"";
-
-/// A check-mode `t1` whose check passed: its `PrepareReview`.
-pub(super) fn in_review(fx: &mut Fixture, window: u32) -> (OpId, OpKind) {
-    let effects = accepted(fx, window, json!({"summary": "s"}));
-    let (op, _) = only_op(&effects, "Check");
-    let effects = fx.done(op, check_result(true));
-    assert_eq!(fx.task("t1").state, TaskState::Review);
-    only_op(&effects, "PrepareReview")
-}
-
-/// The reviewer session for a prepared review with `patch`: its window and launch op.
-pub(super) fn reviewer(fx: &mut Fixture, op: OpId, patch: &str) -> (u32, OpKind) {
-    let effects = fx.done(
-        op,
-        OpResult::Review {
-            base: BASE.into(),
-            head: HEAD.into(),
-            patch: patch.into(),
-        },
-    );
-    let (_, kind) = only_op(&effects, "CreateWindow");
-    assert!(
-        !effects
-            .iter()
-            .any(|e| matches!(e, Effect::WatchWorktree { .. })),
-        "a review worktree is never watched: {effects:#?}"
-    );
-    let window = fx.complete_windows()[0].1;
-    (window, kind)
-}
-
-/// A working `t1` under review by a live reviewer: (fixture, worker, reviewer).
-pub(super) fn reviewed(profile: &str, extra: &str) -> (Fixture, u32, u32) {
-    let (mut fx, window) = working_on(profile, &format!("{CHECK_MODE}\n{extra}"));
-    let (op, _) = in_review(&mut fx, window);
-    let (rwindow, _) = reviewer(&mut fx, op, "diff --git a/x b/x");
-    (fx, window, rwindow)
-}
-
-pub(super) fn submit(fx: &mut Fixture, rwindow: u32, args: serde_json::Value) -> Vec<Effect> {
-    fx.tool_as(AgentRole::Reviewer, rwindow, "t1", "submit_review", args)
-}
-
-pub(super) fn finding(severity: &str, extra: serde_json::Value) -> serde_json::Value {
-    let mut f = json!({"severity": severity, "text": format!("{severity} text")});
-    f.as_object_mut()
-        .unwrap()
-        .extend(extra.as_object().unwrap().clone());
-    f
-}
-
-pub(super) fn verdict(verdict: &str, findings: Vec<serde_json::Value>) -> serde_json::Value {
-    json!({"verdict": verdict, "summary": "looked", "findings": findings})
-}
-
-pub(super) fn blocking() -> Vec<serde_json::Value> {
-    vec![
-        finding("critical", json!({"file": "crates/a/src/x.rs", "line": 3})),
-        finding("important", json!({"input": "an empty name"})),
-        finding("minor", json!({"file": "crates/a/src/y.rs"})),
-    ]
-}
+// The review fixtures, moved to `gates_support.rs` (task M9.8.9's fix round 1, for
+// the 600-line rule); re-exported so their importers are unchanged.
+pub(super) use super::gates_support::{
+    blocking, finding, in_review, reviewed, reviewed_with, reviewer, submit, verdict,
+};
 
 #[test]
 fn review_round_uses_a_fresh_session_and_worktree() {
-    for (extra, reviewer_runtime) in [("", Runtime::Codex), (CODEX_AUTHOR, Runtime::Claude)] {
-        let (mut fx, window) = working_on(PROFILE, &format!("{CHECK_MODE}\n{extra}"));
+    // Milestone 9.8: a Codex author from the table (`codex_small`).
+    let authors = [
+        (config::Orchestrator::default(), Runtime::Codex),
+        (codex_small(), Runtime::Claude),
+    ];
+    for (config, reviewer_runtime) in authors {
+        let (mut fx, window) = working_with(PROFILE, CHECK_MODE, config);
         let (op, kind) = in_review(&mut fx, window);
         let t1 = fx.task("t1");
         assert_eq!(
@@ -98,8 +44,9 @@ fn review_round_uses_a_fresh_session_and_worktree() {
             }
         );
         assert_eq!(t1.gate_op, Some(op));
-        let level = t1.review_level.unwrap();
-        let route = pick_reviewer(&fx.run().roster, &t1.route, level);
+        assert!(t1.review_level.is_some());
+        // Milestone 9.8 decision 27: the reviewer row against the author.
+        let (route, _) = fx.run().limits.models().reviewer_route(&t1.route);
         let (_, kind) = reviewer(&mut fx, op, "diff --git a/x b/x");
         let OpKind::CreateWindow {
             name,
@@ -532,33 +479,34 @@ fn the_reviewer_prompt_carries_the_clamped_diff() {
 
 #[test]
 fn the_reviewer_prompt_never_names_the_author() {
-    let roster = working_on(PROFILE, CHECK_MODE).0.run().roster.clone();
-    assert_eq!(roster.len(), 4, "the built-in roster");
-    for entry in roster {
+    // The old built-in roster's four models (milestone 9.8 removed the roster).
+    let (claude, codex) = (proto::Runtime::Claude, proto::Runtime::Codex);
+    let models = [
+        (claude, "claude-haiku-4-5"),
+        (claude, "claude-sonnet-5"),
+        (claude, "claude-opus-5-5"),
+        (codex, ""),
+    ];
+    for (runtime, model) in models {
         let (mut fx, window) = working_on(PROFILE, CHECK_MODE);
         fx.task_mut("t1").route = proto::Route {
-            runtime: entry.runtime,
-            model: entry.model.clone(),
-            strength: entry.strength,
-            effort: proto::Effort::Medium,
+            runtime,
+            model: model.into(),
+            effort: proto::Effort::MEDIUM,
         };
         let (op, _) = in_review(&mut fx, window);
         let (_, kind) = reviewer(&mut fx, op, "diff --git a/x b/x");
         let OpKind::CreateWindow { first_turn, .. } = kind else {
             unreachable!()
         };
-        let label = serde_json::to_value(entry.runtime).unwrap();
+        let label = serde_json::to_value(runtime).unwrap();
         let label = label.as_str().unwrap();
         assert!(
             !first_turn.to_lowercase().contains(label),
             "{label}: {first_turn}"
         );
-        if !entry.model.is_empty() {
-            assert!(
-                !first_turn.contains(&entry.model),
-                "{}: {first_turn}",
-                entry.model
-            );
+        if !model.is_empty() {
+            assert!(!first_turn.contains(model), "{}: {first_turn}", model);
         }
     }
 }
@@ -590,7 +538,14 @@ fn a_review_after_rung_2_is_picked_against_the_new_author() {
     let OpKind::CreateWindow { spec, .. } = kind else {
         unreachable!()
     };
-    let route = pick_reviewer(&fx.run().roster, &fx.task("t1").route, level);
+    // Milestone 9.8 decision 27: the reviewer row (`codex:default`) against a Codex
+    // default author takes the row's fallback, on Claude.
+    let _ = level;
+    let (route, _) = fx
+        .run()
+        .limits
+        .models()
+        .reviewer_route(&fx.task("t1").route);
     assert_eq!(spec.runtime, Runtime::Claude);
     assert_eq!(spec.model, route.model);
     let _ = delivers;

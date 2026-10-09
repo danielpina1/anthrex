@@ -13,6 +13,7 @@ use proto::{EditFile, Plan, PlanEdit, ProfileSpec, RunState};
 
 use super::globs::validate_glob;
 use super::model::{Profile, Run, RunLimits, task_branch, task_path};
+pub(crate) use super::plan_repo::for_repo;
 use super::tiers::{self, TierProfile};
 use super::validate::{
     EditScope, combined_cycles, implicit_deps, resolve_task_lenient, validate_tasks,
@@ -101,12 +102,24 @@ pub struct BuildContext<'a> {
     /// Milestone 9.5 decision 12: what the start learned from history, frozen into the
     /// run's limits; `Tuned::default()` builds exactly what milestone 9.3 built.
     pub tuning: super::refit::Tuned,
+    /// Milestone 9.8 decision 9: the role table the start resolved and validated
+    /// (`driver/build_models.rs`), frozen into the run's limits.
+    pub models: super::model_roles::RunModels,
+    /// The start's lines about it (a broken repository file, an effort replaced),
+    /// logged after the tuning lines.
+    pub models_log: Vec<String>,
 }
 
 /// Parses a plan file. The error is the `toml` crate's, which names the line and the
 /// offending key (every table is `deny_unknown_fields`).
 pub fn parse_plan(text: &str) -> Result<Plan, String> {
     toml::from_str(text).map_err(|e| e.to_string())
+}
+
+/// Milestone 9.8 decision 31 (fix round 1): a plan file as `run start --plan` reads it.
+/// Its routes are ignored, so their values never refuse it (`ignored_route`).
+pub fn parse_plan_file(text: &str) -> Result<Plan, String> {
+    super::ignored_route::plan_file(text)
 }
 
 /// Parses an edit batch (`[[edit]]` tables, `proto::EditFile`).
@@ -202,16 +215,16 @@ pub fn run_limits(
         testing: testing.into(),
         // Milestone 9.5: nothing learned until `RunLimits::freeze`.
         budget_hub: None,
-        class_routes: Default::default(),
         path_weights: None,
         thresholds: Default::default(),
-        route_lists: Default::default(),
         // Decision 16 (ruling T9-2), frozen at start.
         adaptive_concurrency: config.tuning.table.adaptive_concurrency,
         recover_after_secs: config.tuning.table.recover_after_mins.saturating_mul(60),
         halve_hold_secs: config.tuning.table.halve_hold_secs,
         race_slot_wait_secs: config.tuning.table.race_slot_wait_secs,
         design_tuning: Default::default(),
+        // Milestone 9.8 decision 9: set by `build_run` from `BuildContext.models`.
+        models: None,
     }
 }
 
@@ -317,30 +330,6 @@ fn check_plan(plan: &Plan, profile: &Profile, errors: &mut Vec<PlanError>) {
     }
 }
 
-/// The value of a table keyed by repository root (the user's `[orchestrator.cache_dirs]`,
-/// F1c round 3, N3; `[orchestrator.confined_network]`, F1d) for the repository at
-/// `root`. The key is matched both as written and canonicalised, so a config that names
-/// the repository by a path with a symlink or a trailing slash still applies.
-pub(crate) fn for_repo<'a, T>(
-    table: &'a std::collections::BTreeMap<String, T>,
-    root: &std::path::Path,
-) -> Option<&'a T> {
-    let canonical = root.canonicalize().ok();
-    let same = |a: Option<&std::path::Path>, b: Option<&std::path::Path>| match (a, b) {
-        (Some(a), Some(b)) => a == b,
-        _ => false,
-    };
-    table.iter().find_map(|(key, value)| {
-        let key_path = std::path::Path::new(key);
-        let key_canonical = key_path.canonicalize().ok();
-        let matches = key_path == root
-            || same(canonical.as_deref(), Some(key_path))
-            || same(key_canonical.as_deref(), canonical.as_deref())
-            || same(key_canonical.as_deref(), Some(root));
-        matches.then_some(value)
-    })
-}
-
 /// Turns a parsed plan into a run in `awaiting_approval`, or every problem found.
 /// `ctx.yes` records `approved by --yes` in `approved_by`; moving the run to `running`
 /// is the engine's (M8a.11), since that needs the run branch first.
@@ -367,18 +356,17 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         plan.max_bounces,
     );
     limits.freeze(&ctx.tuning, config);
+    // Milestone 9.8 decision 9: before any task resolves its route from it.
+    limits.models = Some(ctx.models.clone());
     let mut errors = Vec::new();
     check_plan(&plan, &profile, &mut errors);
 
     let mut tasks = Vec::with_capacity(plan.tasks.len());
-    for spec in plan.tasks {
-        let (mut task, task_errors) = resolve_task_lenient(
-            spec,
-            &profile,
-            &limits,
-            &config.models,
-            limits.default_runtime,
-        );
+    // Milestone 9.8 decision 31: a plan file's routes are cleared; the rows route.
+    let mut routed = false;
+    for mut spec in plan.tasks {
+        routed |= std::mem::take(&mut spec.route) != proto::RouteSpec::default();
+        let (mut task, task_errors) = resolve_task_lenient(spec, &profile, &limits);
         errors.extend(task_errors);
         errors.extend(super::validate::reserved_new_id(task.id()));
         task.branch = task_branch(&ctx.id, task.id());
@@ -390,9 +378,6 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         tasks.push(task);
     }
 
-    // Milestone 9.5 decision 9a: the class lists route the tasks that leave it to them.
-    super::route_pick::pick_all(&limits, &config.models, &mut tasks);
-
     let touched: BTreeSet<String> = tasks.iter().map(|t| t.spec.id.clone()).collect();
     errors.extend(validate_tasks(
         &tasks,
@@ -400,9 +385,7 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         &EditScope::Run,
         // Milestone 9.3 decision 14: a new plan is round 1's.
         (limits.max_tasks, proto::first_round()),
-        limits.default_runtime,
-        // What is installed is recorded on the run after the build (`make_planned`).
-        (&config.models, &Default::default()),
+        limits.models(),
     ));
     if !errors.is_empty() {
         return Err(errors);
@@ -446,7 +429,6 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         approved_by: ctx.yes.then(|| "--yes".to_string()),
         profile,
         limits,
-        roster: config.models.clone(),
         tasks,
         merge_queue: Vec::new(),
         outbox: Vec::new(),
@@ -466,10 +448,13 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         // Decision 12's tuning lines open the run's log. In a design run, milestone
         // 9.6's design tuning lines follow them once the run enters the flow
         // (`engine::design_spend::tuned`, ruling T13-5).
-        log: (ctx.tuning.log.iter())
+        // Milestone 9.8: the role table's start lines follow them.
+        log: (ctx.tuning.log.iter().chain(&ctx.models_log))
+            .map(String::as_str)
+            .chain(routed.then_some(super::orch::contract::ROUTE_IGNORED))
             .map(|text| super::model::LogEntry {
                 at: ctx.now,
-                text: text.clone(),
+                text: text.to_string(),
             })
             .collect(),
         created_at: ctx.now,

@@ -317,32 +317,6 @@ fn a_user_submit_is_refused_in_any_other_state() {
     );
 }
 
-/// M9.7 review fixes, ruling 3: decision 6's report line, with the built-in roster.
-#[test]
-fn an_orchestrator_below_the_frontier_tier_is_reported() {
-    let mut fx = launched(false);
-    let report = crate::run::report::render(fx.run(), fx.now);
-    assert!(!report.contains("below the frontier tier"), "{report}");
-    let codex = proto::OrchestratorChoice {
-        runtime: proto::Runtime::Codex,
-        model: None,
-    };
-    let run = fx.run();
-    let resolved = crate::run::orch::launch::resolve_orchestrator(
-        Some(&codex),
-        &config::AgentConfig::default(),
-        run.limits.default_runtime,
-        &run.roster,
-    )
-    .unwrap();
-    fx.run_mut().orch.orchestrator.as_mut().unwrap().route = resolved.route;
-    let report = crate::run::report::render(fx.run(), fx.now);
-    assert!(
-        report.contains("\norchestrator below the frontier tier: codex (default) standard\n"),
-        "{report}"
-    );
-}
-
 /// M9.7 second review, ruling 4: while a discard is in flight, neither the
 /// orchestrator's nor the user's submit is taken.
 #[test]
@@ -372,24 +346,6 @@ fn a_submit_while_the_run_is_being_discarded_is_refused() {
         vec![Err(format!("run {RUN_ID} is being discarded"))]
     );
     assert_eq!(*fx.run(), before);
-}
-
-/// M9.7 second review, ruling 6: a `fast` orchestrator is below the frontier too.
-#[test]
-fn a_fast_orchestrator_is_reported_below_the_frontier() {
-    let mut fx = launched(false);
-    let o = fx.run_mut().orch.orchestrator.as_mut().unwrap();
-    o.route.strength = proto::Strength::Fast;
-    let model = o.route.model.clone();
-    let runtime = o.route.runtime.label();
-    let model = if model.is_empty() {
-        "default".into()
-    } else {
-        model
-    };
-    let report = crate::run::report::render(fx.run(), fx.now);
-    let line = format!("\norchestrator below the frontier tier: {runtime} ({model}) fast\n");
-    assert!(report.contains(&line), "{report}");
 }
 
 /// Milestone 9.3 task M9.3.7 fix round 1 (ruling: option (b)): an `edit_plan` with no

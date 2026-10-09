@@ -5,8 +5,7 @@ use std::path::Path;
 use proto::{
     DeciderSource, DiffStats, Effort, GateCounts, GateTally, HISTORY_VERSION, HistoryLine,
     HistoryStats, PhaseSecs, RevertRecord, Route, RunRecord, RunUsage, Runtime, SeverityTally,
-    Size, SizeCheckInfo, StatsRow, Strength, TaskKind, TaskOutcome, TaskRecord, TestMode,
-    TokenUsage,
+    Size, SizeCheckInfo, StatsRow, TaskKind, TaskOutcome, TaskRecord, TestMode, TokenUsage,
 };
 
 use super::{aggregate, render, tokens};
@@ -17,8 +16,7 @@ fn route() -> Route {
     Route {
         runtime: Runtime::Claude,
         model: "m".into(),
-        strength: Strength::Standard,
-        effort: Effort::Medium,
+        effort: Effort::MEDIUM,
     }
 }
 

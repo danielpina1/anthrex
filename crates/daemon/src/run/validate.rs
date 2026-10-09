@@ -7,15 +7,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use proto::{
-    Budget, Effort, ModelEntry, PlanTask, Route, Runtime, Size, Strength, TaskKind, TaskState,
-    TestMode,
-};
+use proto::{Budget, PlanTask, Route, Runtime, Size, TaskKind, TaskState, TestMode};
 
 use super::globs::{ModuleSpan, OwnsMatcher, any_intersect, modules_spanned, validate_glob};
 use super::model::{Profile, ReviewLevel, RunLimits, Task};
+use super::model_roles::RunModels;
 use super::plan::PlanError;
-use super::roster;
 use super::validate_kinds::{READER_TEST_MODE_NOTE, check_reader_fields, is_reader};
 use super::validate_stages::check_stage_fields;
 pub(super) use super::validate_stages::{reserved_new_id, split_child_stage};
@@ -31,14 +28,6 @@ const RESERVED_ID: &str = "integration";
 /// Milestone 9's message target for every running task (`proto::MessageTarget::Running`,
 /// M9.2 review ruling 5). `stage:<n>` needs no reservation: an id cannot hold `:`.
 const RUNNING_ID: &str = "running";
-
-pub(super) fn strength_label(s: Strength) -> &'static str {
-    match s {
-        Strength::Fast => "fast",
-        Strength::Standard => "standard",
-        Strength::Frontier => "frontier",
-    }
-}
 
 fn size_label(s: Size) -> &'static str {
     match s {
@@ -63,17 +52,16 @@ pub(crate) fn is_valid_id(id: &str) -> bool {
 /// (M8a.13), which a runner that does not echo test names never shows.
 pub const NO_TEST_PASSED_NOTE: &str = "the profile has no test_passed: the test proof will require the test's name in the single-test command's output (rule 8.1)";
 
-/// Resolves one planned task: size rules (decision 9), route (decision 8), budget
-/// (decision 40), test mode (decision 10) and review (decision 35). `branch` and
+/// Resolves one planned task: size rules (decision 9), route (milestone 9.8 decision
+/// 10: the task's row of the run's role table), budget (decision 40), test mode
+/// (decision 10) and review (decision 35; its reviewer is the reviewer row's). `branch` and
 /// `worktree` are left empty for the caller, which knows the run id.
 pub fn resolve_task(
     spec: PlanTask,
     profile: &Profile,
     limits: &RunLimits,
-    roster: &[ModelEntry],
-    default_runtime: Runtime,
 ) -> Result<Task, Vec<PlanError>> {
-    let (task, errors) = resolve_task_lenient(spec, profile, limits, roster, default_runtime);
+    let (task, errors) = resolve_task_lenient(spec, profile, limits);
     if errors.is_empty() {
         Ok(task)
     } else {
@@ -88,8 +76,6 @@ pub(super) fn resolve_task_lenient(
     spec: PlanTask,
     profile: &Profile,
     limits: &RunLimits,
-    roster: &[ModelEntry],
-    default_runtime: Runtime,
 ) -> (Task, Vec<PlanError>) {
     let id = spec.id.clone();
     let mut errors = Vec::new();
@@ -189,22 +175,10 @@ pub(super) fn resolve_task_lenient(
         notes.push(NO_TEST_PASSED_NOTE.to_string());
     }
 
-    // Route, decision 8, by the class's frozen default (milestone 9.5 decision 12).
-    let routes = &limits.class_routes;
-    let class = match (hub, size) {
-        (true, _) => routes.hub,
-        (false, Size::S) => routes.s,
-        _ => routes.m,
-    };
-    let (class_strength, class_effort) = (class.strength, class.effort);
-    let route = resolve_route(
-        &spec,
-        roster,
-        default_runtime,
-        class_strength,
-        class_effort,
-        &mut errors,
-    );
+    // Route, milestone 9.8 decision 10: the task's row of the run's role table.
+    let models = limits.models();
+    let row = models.route(RunModels::role_of(spec.kind, hub, size));
+    let route = resolve_route(&spec, row, models, &mut errors);
 
     // Budget, decision 40.
     let budget = match spec.budget {
@@ -230,7 +204,9 @@ pub(super) fn resolve_task_lenient(
     let level = if raise { base.raised() } else { base };
     let skipped = !limits.review_small && !hub && size == Size::S && level == ReviewLevel::Small;
     let review_level = (!skipped).then_some(level);
-    let review_route = review_level.map(|l| super::route_pick::forecast(limits, roster, &route, l));
+    // Milestone 9.8 decision 27: the reviewer row against the route (the level only
+    // decides whether the task is reviewed).
+    let review_route = review_level.map(|_| models.reviewer_route(&route).0);
 
     let task = new_task(
         spec,
@@ -334,71 +310,58 @@ fn check_budget(id: &str, b: &Budget, errors: &mut Vec<PlanError>) {
     }
 }
 
-/// Decision 8: the planner's value wins when valid; policy fills the rest. On an error
-/// the returned route is a best effort (the policy's model, or `""`).
+/// Milestone 9.8 decision 10: the task's row (`row`), unless the route names a model (a
+/// user's amend, or an engine fix task's step up): then that model on the route's
+/// runtime (the row's when it names none), as given: no roster checks it since
+/// `Run.roster` went (task M9.8.13). Either way at the route's effort when it names one
+/// (the task edit form's effort over the row's model), else the row's for the row's own
+/// model, and the named model's default for another (M9.8.11 fix round 1).
 fn resolve_route(
     spec: &PlanTask,
-    roster: &[ModelEntry],
-    default_runtime: Runtime,
-    class_strength: Strength,
-    class_effort: Effort,
+    row: Route,
+    models: &RunModels,
     errors: &mut Vec<PlanError>,
 ) -> Route {
     let id = spec.id.as_str();
     let e = |field: &str, message: String| PlanError::new(Some(id), field, "route", message);
     let given = &spec.route;
-    let mut runtime = given.runtime.unwrap_or(default_runtime);
-    if runtime == Runtime::Shell {
+    if given.runtime == Some(Runtime::Shell) {
         errors.push(e("route.runtime", "must be claude or codex".to_string()));
-        runtime = default_runtime;
     }
-    let effort = given.effort.unwrap_or(class_effort);
-    let (model, strength) = match &given.model {
-        Some(model) => match roster::find(roster, runtime, model) {
-            Some(entry) => {
-                if let Some(s) = given.strength
-                    && s != entry.strength
-                {
-                    errors.push(e(
-                        "route.strength",
-                        format!(
-                            "{model} is {} in the roster, not {}",
-                            strength_label(entry.strength),
-                            strength_label(s)
-                        ),
-                    ));
-                }
-                (model.clone(), entry.strength)
-            }
-            None => {
-                errors.push(e(
-                    "route.model",
-                    format!("{model} is not in the roster for {runtime}"),
-                ));
-                (model.clone(), given.strength.unwrap_or(class_strength))
-            }
-        },
-        None => {
-            let strength = given.strength.unwrap_or(class_strength);
-            match roster::first_at(roster, runtime, strength) {
-                Some(entry) => (entry.model.clone(), strength),
-                None => {
-                    errors.push(e(
-                        "route",
-                        format!(
-                            "the roster has no {runtime} model at {} strength",
-                            strength_label(strength)
-                        ),
-                    ));
-                    (String::new(), strength)
-                }
-            }
-        }
+    let Some(model) = &given.model else {
+        let effort = given.effort.clone().unwrap_or(row.effort.clone());
+        return Route { effort, ..row };
     };
+    // M9.8.13 fix round 1 (I1): with no roster to check it, the name rule alone keeps a
+    // bad model off `-m`/`--model`; `""` is the runtime's default model.
+    if let Err(problem) = proto::models::model_id_problem(model)
+        && !model.is_empty()
+    {
+        errors.push(e("route.model", problem));
+    }
+    let runtime = (given.runtime)
+        .filter(|r| *r != Runtime::Shell)
+        .unwrap_or(row.runtime);
+    // M9.8.11 fix round 1 (controller ruling): another model than the row's, with no
+    // effort, runs at its own default, never at the row's (it may not offer it); the
+    // row's own model keeps the row's, as the goal form's choice does.
+    // Gate fix B2: the row's own model by the run's canonical identity (`opus[1m]` for
+    // a `claude-opus-5-5` row), as the TUI's forms decide it.
+    let named = Route {
+        runtime,
+        model: model.clone(),
+        effort: proto::Effort::DEFAULT,
+    };
+    let own = models.same_model(&named, &row);
+    let effort = given.effort.clone().unwrap_or(if own {
+        row.effort.clone()
+    } else {
+        proto::Effort::DEFAULT
+    });
+    // M9.8.14: an old route's `strength` is read and ignored.
     Route {
         runtime,
-        model,
-        strength,
+        model: model.clone(),
         effort,
     }
 }
@@ -496,8 +459,6 @@ fn new_task(
         pair: None,
         race_wait_since: None,
         race_decision: None,
-        list_pick: None,
-        list_escalation: None,
         paused: Default::default(),
         lane_view: None,
         parked_readers: 0,

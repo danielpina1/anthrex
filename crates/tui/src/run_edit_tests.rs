@@ -3,7 +3,7 @@
 use super::*;
 use crate::tree::run_fixtures::{RUN_ID, task};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use proto::{Effort, Route, RouteSpec, Runtime, Size, Strength, TaskInfo, TaskState, TestMode};
+use proto::{Effort, Route, RouteSpec, Runtime, Size, TaskInfo, TaskState, TestMode};
 
 /// The brief's `t1`: route spec `{ claude, policy, policy, medium }`, resolved to
 /// Claude, `claude-sonnet-5`, standard, medium; M, tdd, brief `Line one\nLine two`.
@@ -13,13 +13,12 @@ pub(crate) fn edit_fixture_task() -> TaskInfo {
         runtime: Some(Runtime::Claude),
         model: None,
         strength: None,
-        effort: Some(Effort::Medium),
+        effort: Some(Effort::MEDIUM),
     };
     t1.route = Route {
         runtime: Runtime::Claude,
         model: "claude-sonnet-5".into(),
-        strength: Strength::Standard,
-        effort: Effort::Medium,
+        effort: Effort::MEDIUM,
     };
     t1.brief = "Line one\nLine two".into();
     t1
@@ -63,16 +62,16 @@ fn amend(form: &TaskEditForm) -> PlanEdit {
 fn visible_fields_hide_the_reason_for_tdd() {
     let mut form = edit_fixture_form();
     use EditField::*;
+    // Milestone 9.8 decision 39 (changed expectation): `model` and `effort` in place of
+    // `runtime`, `model`, `strength` and `effort`.
     assert_eq!(
         form.visible_fields(),
-        vec![Runtime, Model, Strength, Effort, Size, TestMode, Brief]
+        vec![Model, Effort, Size, TestMode, Brief]
     );
     form.test_mode = proto::TestMode::Check;
     assert_eq!(
         form.visible_fields(),
-        vec![
-            Runtime, Model, Strength, Effort, Size, TestMode, Reason, Brief
-        ]
+        vec![Model, Effort, Size, TestMode, Reason, Brief]
     );
     form.test_mode = proto::TestMode::None;
     assert!(form.visible_fields().contains(&Reason));
@@ -81,71 +80,54 @@ fn visible_fields_hide_the_reason_for_tdd() {
 #[test]
 fn tab_and_shift_tab_walk_the_visible_fields_and_wrap() {
     let mut form = edit_fixture_form();
-    assert_eq!(form.focus, EditField::Runtime);
+    assert_eq!(form.focus, EditField::Model);
     form.on_key(key(KeyCode::BackTab));
     assert_eq!(form.focus, EditField::Brief);
     form.on_key(key(KeyCode::Down));
-    assert_eq!(form.focus, EditField::Runtime);
-    form.on_key(key(KeyCode::Down));
     assert_eq!(form.focus, EditField::Model);
+    form.on_key(key(KeyCode::Down));
+    assert_eq!(form.focus, EditField::Effort);
     form.on_key(key(KeyCode::Up));
-    assert_eq!(form.focus, EditField::Runtime);
+    assert_eq!(form.focus, EditField::Model);
 }
 
 #[test]
 fn choices_cycle_both_ways() {
     let mut form = edit_fixture_form();
-    // Runtime: policy → claude → codex → policy.
-    let mut seen = vec![];
-    for _ in 0..3 {
-        form.on_key(key(KeyCode::Right));
-        seen.push(form.runtime);
-    }
-    assert_eq!(
-        seen,
-        vec![Some(Runtime::Codex), None, Some(Runtime::Claude)]
-    );
-    let mut seen = vec![];
-    for _ in 0..3 {
-        form.on_key(key(KeyCode::Left));
-        seen.push(form.runtime);
-    }
-    assert_eq!(
-        seen,
-        vec![None, Some(Runtime::Codex), Some(Runtime::Claude)]
-    );
-    form.on_key(key(KeyCode::Char(' ')));
-    assert_eq!(form.runtime, Some(Runtime::Codex), "Space cycles forward");
-
-    focus(&mut form, EditField::Strength);
-    let mut seen = vec![];
-    for _ in 0..4 {
-        form.on_key(key(KeyCode::Right));
-        seen.push(form.strength);
-    }
-    use proto::Strength::*;
-    assert_eq!(seen, vec![Some(Fast), Some(Standard), Some(Frontier), None]);
-    let mut seen = vec![];
-    for _ in 0..4 {
-        form.on_key(key(KeyCode::Left));
-        seen.push(form.strength);
-    }
-    assert_eq!(seen, vec![Some(Frontier), Some(Standard), Some(Fast), None]);
-
+    // Milestone 9.8 decision 39 (changed expectation): the runtime and strength cycles
+    // are gone; the effort cycles the route model's catalog efforts (here three), then
+    // the role table's.
+    form.efforts = ["low", "medium", "high"].map(String::from).to_vec();
     focus(&mut form, EditField::Effort);
     let mut seen = vec![];
     for _ in 0..4 {
         form.on_key(key(KeyCode::Right));
-        seen.push(form.effort);
+        seen.push(form.route.effort.clone());
     }
-    use proto::Effort::*;
-    assert_eq!(seen, vec![Some(High), None, Some(Low), Some(Medium)]);
+    use proto::Effort;
+    assert_eq!(
+        seen,
+        vec![
+            Some(Effort::HIGH),
+            None,
+            Some(Effort::LOW),
+            Some(Effort::MEDIUM)
+        ]
+    );
     let mut seen = vec![];
     for _ in 0..4 {
         form.on_key(key(KeyCode::Left));
-        seen.push(form.effort);
+        seen.push(form.route.effort.clone());
     }
-    assert_eq!(seen, vec![Some(Low), None, Some(High), Some(Medium)]);
+    assert_eq!(
+        seen,
+        vec![
+            Some(Effort::LOW),
+            None,
+            Some(Effort::HIGH),
+            Some(Effort::MEDIUM)
+        ]
+    );
 
     focus(&mut form, EditField::Size);
     form.on_key(key(KeyCode::Right));
@@ -193,6 +175,7 @@ fn esc_and_ctrl_c_cancel() {
         assert_eq!(form.on_key(cancel), EditOutcome::Cancel);
         // Also while submitting, the only keys that still do anything.
         let mut form = edit_fixture_form();
+        focus(&mut form, EditField::Size);
         form.on_key(key(KeyCode::Right));
         assert!(matches!(
             form.on_key(key(KeyCode::Enter)),
@@ -202,9 +185,10 @@ fn esc_and_ctrl_c_cancel() {
     }
     // A plain `c` is typed, not a cancel.
     let mut form = edit_fixture_form();
-    focus(&mut form, EditField::Model);
+    focus(&mut form, EditField::Brief);
+    form.on_key(key(KeyCode::End));
     assert_eq!(form.on_key(key(KeyCode::Char('c'))), EditOutcome::Stay);
-    assert_eq!(form.model.text(), "c");
+    assert_eq!(form.brief.text(), "Line one\nLine twoc");
 }
 
 #[test]
@@ -313,36 +297,17 @@ fn a_whitespace_reason_is_blank() {
 }
 
 #[test]
-fn the_model_is_sent_trimmed_and_blank_is_policy() {
-    let mut t = edit_fixture_task();
-    t.route_spec.model = Some("m1".into());
-    let mut form = TaskEditForm::new(RUN_ID, &t);
-    focus(&mut form, EditField::Model);
-    assert_eq!(form.model.text(), "m1");
-    form.on_key(ctrl('u'));
-    typed(&mut form, "  m2 ");
-    let PlanEdit::AmendTask { route, .. } = amend(&form) else {
-        panic!("an amend");
-    };
-    assert_eq!(route.expect("a route").model.as_deref(), Some("m2"));
-    form.on_key(ctrl('u'));
-    typed(&mut form, "   ");
-    let PlanEdit::AmendTask { route, .. } = amend(&form) else {
-        panic!("an amend");
-    };
-    assert_eq!(route.expect("a route").model, None, "blank is policy");
-}
-
-#[test]
 fn a_paste_of_a_megabyte_is_bounded() {
-    // A one-line field stops at `TEXT_MAX_CHARS`, and takes no more typing.
+    // A one-line field (the reason, since milestone 9.8 the only one) stops at
+    // `TEXT_MAX_CHARS`, and takes no more typing.
     let mut form = edit_fixture_form();
-    focus(&mut form, EditField::Model);
+    form.test_mode = TestMode::Check;
+    focus(&mut form, EditField::Reason);
     form.on_paste(&"m".repeat(1_000_000));
-    assert_eq!(form.model.text().chars().count(), TEXT_MAX_CHARS);
+    assert_eq!(form.reason.text().chars().count(), TEXT_MAX_CHARS);
     typed(&mut form, "xyz");
-    assert_eq!(form.model.text().chars().count(), TEXT_MAX_CHARS);
-    assert!(!form.model.text().ends_with('z'));
+    assert_eq!(form.reason.text().chars().count(), TEXT_MAX_CHARS);
+    assert!(!form.reason.text().ends_with('z'));
     // The brief holds up to `BRIEF_MAX_CHARS` (decision 35; one million characters
     // since the final fix wave): nearly a megabyte goes in whole, and no more after it.
     focus(&mut form, EditField::Brief);
@@ -355,11 +320,12 @@ fn a_paste_of_a_megabyte_is_bounded() {
 }
 
 #[test]
-fn control_characters_in_a_pasted_model_are_dropped() {
+fn control_characters_in_a_pasted_reason_are_dropped() {
     let mut form = edit_fixture_form();
-    focus(&mut form, EditField::Model);
+    form.test_mode = TestMode::Check;
+    focus(&mut form, EditField::Reason);
     form.on_paste("gpt\u{1b}[31m-5\r\n\u{7}\u{0}x\ty");
-    assert_eq!(form.model.text(), "gpt[31m-5x y");
+    assert_eq!(form.reason.text(), "gpt[31m-5x y");
     focus(&mut form, EditField::Brief);
     form.on_key(key(KeyCode::End));
     form.on_paste("a\u{1b}b\r\nc\rd\te");
@@ -384,19 +350,16 @@ fn hostile_briefs_open_cleaned_and_unchanged() {
 }
 
 #[test]
-fn value_parts_show_policy_with_the_resolved_value() {
+fn value_parts_show_the_role_table_with_the_resolved_value() {
     let form = edit_fixture_form();
-    assert_eq!(
-        form.value_parts(EditField::Runtime),
-        ("‹ claude ›".into(), None)
-    );
+    // Milestone 9.8 (changed expectation): the plan names the runtime only, so the model
+    // is the table's on it; `policy` reads `role table`.
     assert_eq!(
         form.value_parts(EditField::Model),
-        ("policy".into(), Some("claude-sonnet-5".into()))
-    );
-    assert_eq!(
-        form.value_parts(EditField::Strength),
-        ("‹ policy ›".into(), Some("standard".into()))
+        (
+            "‹ Claude · role table ›".into(),
+            Some("claude-sonnet-5".into())
+        )
     );
     assert_eq!(
         form.value_parts(EditField::Effort),
@@ -411,37 +374,44 @@ fn value_parts_show_policy_with_the_resolved_value() {
         form.value_parts(EditField::Brief),
         ("Line one\nLine two".into(), None)
     );
+    let mut t = edit_fixture_task();
+    t.route_spec = RouteSpec::default();
+    let form = TaskEditForm::new(RUN_ID, &t);
+    // Fix round 1 (controller ruling I2): the table's model and effort, named.
+    assert_eq!(
+        form.value_parts(EditField::Model),
+        (
+            "‹ role table (Claude · claude-sonnet-5 · medium) ›".into(),
+            None
+        )
+    );
+    assert_eq!(
+        form.value_parts(EditField::Effort),
+        ("‹ role table ›".into(), Some("medium".into()))
+    );
 }
 
 #[test]
-fn a_pinned_strength_or_effort_back_to_policy_sends_none() {
-    let mut t = edit_fixture_task();
-    t.route_spec.strength = Some(Strength::Frontier);
-    let mut form = TaskEditForm::new(RUN_ID, &t);
-    focus(&mut form, EditField::Strength);
-    form.on_key(key(KeyCode::Right));
-    assert_eq!(form.strength, None);
+fn a_pinned_effort_back_to_the_role_table_sends_none() {
+    let mut form = edit_fixture_form();
+    form.efforts = ["low", "medium", "high"].map(String::from).to_vec();
     focus(&mut form, EditField::Effort);
     form.on_key(key(KeyCode::Left));
     form.on_key(key(KeyCode::Left));
-    assert_eq!(form.effort, None);
+    assert_eq!(form.route.effort, None);
     let PlanEdit::AmendTask { route, .. } = amend(&form) else {
         panic!("an amend");
     };
     assert_eq!(
         route,
-        Some(RouteSpec {
-            runtime: Some(Runtime::Claude),
-            model: None,
-            strength: None,
-            effort: None,
-        }),
-        "policy is sent as policy, never as the value it resolved to"
+        // Fix round 1 (review minor 4): with no model the legacy runtime goes too.
+        Some(RouteSpec::default()),
+        "the role table's is sent as none, never as the value it resolved to"
     );
 }
 
 #[test]
-fn a_pinned_model_is_kept_byte_for_byte_through_a_strength_or_effort_change() {
+fn a_pinned_model_is_kept_byte_for_byte_through_an_effort_change() {
     for hostile in [false, true] {
         let pinned = if hostile {
             " m\u{1b}x "
@@ -451,8 +421,7 @@ fn a_pinned_model_is_kept_byte_for_byte_through_a_strength_or_effort_change() {
         let mut t = edit_fixture_task();
         t.route_spec.model = Some(pinned.into());
         let mut form = TaskEditForm::new(RUN_ID, &t);
-        focus(&mut form, EditField::Strength);
-        form.on_key(key(KeyCode::Right));
+        form.efforts = ["low", "medium", "high"].map(String::from).to_vec();
         focus(&mut form, EditField::Effort);
         form.on_key(key(KeyCode::Right));
         let PlanEdit::AmendTask { route, .. } = amend(&form) else {
@@ -463,8 +432,8 @@ fn a_pinned_model_is_kept_byte_for_byte_through_a_strength_or_effort_change() {
             Some(RouteSpec {
                 runtime: Some(Runtime::Claude),
                 model: Some(pinned.into()),
-                strength: Some(Strength::Fast),
-                effort: Some(Effort::High),
+                strength: None,
+                effort: Some(Effort::HIGH),
             }),
             "an untouched model is the plan's own, hostile {hostile}"
         );
@@ -516,34 +485,24 @@ fn a_resubmit_clears_the_refusal() {
 }
 
 #[test]
-fn after_a_runtime_change_policy_rows_show_no_stale_resolved_value() {
+fn after_a_new_model_the_role_table_rows_show_no_stale_resolved_value() {
     let mut form = edit_fixture_form();
-    form.on_key(key(KeyCode::Right));
-    assert_eq!(form.runtime, Some(Runtime::Codex));
-    assert_eq!(form.value_parts(EditField::Model), ("policy".into(), None));
-    assert_eq!(
-        form.value_parts(EditField::Strength),
-        ("‹ policy ›".into(), None)
-    );
-    focus(&mut form, EditField::Effort);
-    form.on_key(key(KeyCode::Right));
-    form.on_key(key(KeyCode::Right));
-    assert_eq!(form.effort, None);
-    assert_eq!(
-        form.value_parts(EditField::Effort),
-        ("‹ policy ›".into(), None)
-    );
-    // Policy resolves to the task's own runtime again, so its values are current.
-    focus(&mut form, EditField::Runtime);
-    form.on_key(key(KeyCode::Right));
-    assert_eq!(form.runtime, None);
+    let sol = proto::models::ModelRef::parse("codex:gpt-6-sol").unwrap();
+    form.choose(Some(sol), "Codex · gpt-6 sol".into());
     assert_eq!(
         form.value_parts(EditField::Model),
-        ("policy".into(), Some("claude-sonnet-5".into()))
+        ("‹ Codex · gpt-6 sol ›".into(), None)
     );
     assert_eq!(
-        form.value_parts(EditField::Strength),
-        ("‹ policy ›".into(), Some("standard".into()))
+        form.value_parts(EditField::Effort),
+        ("‹ default ›".into(), None),
+        "fix round 1: a named model with no effort runs at its default"
+    );
+    form.choose(None, String::new());
+    assert_eq!(form.route, RouteSpec::default());
+    assert_eq!(
+        form.value_parts(EditField::Model),
+        ("‹ role table (Claude · claude-sonnet-5) ›".into(), None)
     );
 }
 
@@ -568,8 +527,8 @@ fn the_largest_edit_fits_one_frame() {
         route: Some(proto::RouteSpec {
             runtime: Some(proto::Runtime::Codex),
             model: Some(wide(TEXT_MAX_CHARS)),
-            strength: Some(proto::Strength::Frontier),
-            effort: Some(proto::Effort::High),
+            strength: None,
+            effort: Some(proto::Effort::HIGH),
         }),
         test_mode: Some(proto::TestMode::None),
         test_mode_reason: Some(wide(TEXT_MAX_CHARS)),

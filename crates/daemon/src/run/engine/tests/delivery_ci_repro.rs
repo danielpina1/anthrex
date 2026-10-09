@@ -28,7 +28,6 @@ use crate::run::engine::delivery::DeliveryRequest;
 use crate::run::engine::{EventKind, OpResult};
 use crate::run::model::FixOf;
 use crate::run::proof::proof_command;
-use crate::run::roster::escalate;
 
 const SINGLE: &str = "cargo test -- --exact {test}";
 
@@ -140,6 +139,7 @@ fn build_and_lint_reproduce_with_build_check() {
 fn reproduced_with_a_culprit_adds_a_ci_fix_with_the_culprits_owns_one_rung_up() {
     let mut fx = tiered_watched(&["t1", "t2", "t3", "t4"]);
     with_orchestrator(&mut fx);
+    fx.with_efforts();
     // Tier 3 was last green at m1 on the stage's line (the PR head is m4).
     fx.run_mut().stages[0].full.green_at = Some(commit(1));
     red_summarised(&mut fx, &commit(4), &[TEST], CiCategory::Test);
@@ -163,7 +163,8 @@ fn reproduced_with_a_culprit_adds_a_ci_fix_with_the_culprits_owns_one_rung_up() 
     let culprit = fx.task("t3").clone();
     assert_eq!(fix.origin, TaskOrigin::Ci);
     assert_eq!(fix.spec.owns, culprit.spec.owns);
-    assert_eq!(fix.route, escalate(&fx.run().roster, &culprit.route));
+    assert_ne!(fix.route, culprit.route, "a rung up");
+    assert_eq!(fix.route, fx.escalated("t3", &culprit.route));
     assert_eq!(
         fix.fixes,
         Some(FixOf::Ci {
@@ -197,20 +198,13 @@ fn reproduced_with_a_culprit_adds_a_ci_fix_with_the_culprits_owns_one_rung_up() 
     );
 }
 
-/// The roster's weakest and strongest routes, at `effort`.
-fn routes(fx: &Fixture) -> (Route, Route) {
-    let roster = &fx.run().roster;
-    let effort = fx.task("t1").route.effort;
-    let route = |e: &proto::ModelEntry| Route {
-        runtime: e.runtime,
-        model: e.model.clone(),
-        strength: e.strength,
+/// A route on `model` at `effort`.
+fn route(model: &str, effort: proto::Effort) -> Route {
+    Route {
+        runtime: proto::Runtime::Claude,
+        model: model.into(),
         effort,
-    };
-    let weak = roster.iter().min_by_key(|e| e.strength).unwrap();
-    let strong = roster.iter().max_by_key(|e| e.strength).unwrap();
-    assert!(weak.strength < strong.strength, "{roster:#?}");
-    (route(weak), route(strong))
+    }
 }
 
 /// A stage fix's checks: the union of the stage's owns and the strongest route.
@@ -218,7 +212,10 @@ fn assert_stage_fix(fx: &Fixture, owns: &[&str], route: &Route) -> String {
     let fix = ci_fixes(fx).pop().expect("a stage fix");
     let task = fx.task(&fix);
     assert_eq!(task.spec.owns, owns);
-    assert_eq!(&task.route, route);
+    // Milestone 9.8 (task M9.8.13): the fix task names the model; with no roster its
+    // strength is no longer looked up, so the route is compared without it.
+    let key = |r: &Route| (r.runtime, r.model.clone(), r.effort.clone());
+    assert_eq!(key(&task.route), key(route));
     assert!(
         task.spec
             .brief
@@ -239,8 +236,9 @@ fn reproduced_without_a_culprit_adds_a_stage_fix_with_the_strongest_route() {
     }
     green(&mut fx, 1);
     open_stage(&mut fx, 1, PR);
-    let (weak, strong) = routes(&fx);
-    fx.task_mut("t1").route = weak;
+    // Fix round 1 (controller ruling): the strongest route is the highest effort; t2's.
+    let strong = route("claude-opus-5-5", proto::Effort::HIGH);
+    fx.task_mut("t1").route = route("claude-haiku-4-5", proto::Effort::LOW);
     fx.task_mut("t2").route = strong.clone();
     // Deciders off: the fallback's `unknown`, reproduced with tier 2 at the PR head.
     poll_with(&mut fx, red_view(&commit(2), test_red(RUN_A)));
@@ -265,14 +263,16 @@ fn reproduced_without_a_culprit_adds_a_stage_fix_with_the_strongest_route() {
     // A tiered profile whose bisect finds no single culprit (red at G already).
     let mut fx = tiered_watched(&["t1", "t2"]);
     fx.run_mut().stages[0].full.green_at = Some(commit(1));
-    let (_, strong) = routes(&fx);
-    fx.task_mut("t2").route = strong.clone();
+    // Equal efforts: the first task's route.
+    let first = route("claude-opus-5-5", proto::Effort::MEDIUM);
+    fx.task_mut("t1").route = first.clone();
+    fx.task_mut("t2").route = route("claude-haiku-4-5", proto::Effort::MEDIUM);
     red_summarised(&mut fx, &commit(2), &[TEST], CiCategory::Test);
     let (op, spec) = reproduction(&fx);
     fx.done(op, red_probe(&spec.commands[0]));
     assert!(fx.run().stage(1).unwrap().bisect.is_some());
     super::bisect::answer(&mut fx, 0);
-    assert_stage_fix(&fx, &["docs/t1/**", "docs/t2/**"], &strong);
+    assert_stage_fix(&fx, &["docs/t1/**", "docs/t2/**"], &first);
     assert!(
         attention(&fx).is_empty(),
         "9.1's no-culprit line is replaced: {:#?}",

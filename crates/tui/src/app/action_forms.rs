@@ -6,8 +6,8 @@
 
 use super::{ActionFlow, ActionStep, ConfirmPage};
 use crate::actions_request::{ActionInput, ActionTarget};
+use crate::app::model_picker::Catalogs;
 use crate::app::replies::{NOT_CONNECTED, PendingWhat, REPLY_TIMEOUT};
-use crate::app::screens::SettingsCache;
 use crate::app::{App, Effect, Modal};
 use crate::safe_text::one_line;
 use crate::text_area::TextArea;
@@ -102,6 +102,7 @@ impl PromoteOption {
             choice: Some(OrchestratorChoice {
                 runtime,
                 model: (!model.is_empty()).then(|| model.to_string()),
+                effort: None,
             }),
         }
     }
@@ -321,13 +322,33 @@ impl ActionForm {
     }
 }
 
-/// The picker's entries: `configured`, then every enabled roster entry of the settings
-/// cache (decision 24); without a cache only `configured` is offered.
-fn promote_options(cache: Option<&SettingsCache>) -> Vec<PromoteOption> {
-    let roster = cache.into_iter().flat_map(|c| c.models());
-    std::iter::once(PromoteOption::configured())
-        .chain(roster.map(|m| PromoteOption::roster(m.runtime, &m.model)))
-        .collect()
+impl PromoteForm {
+    /// Fix round 1 (M5): the options rebuilt from new catalogs, the selection kept on
+    /// the same entry (else `configured`).
+    pub(crate) fn refresh(&mut self, catalogs: &Catalogs) {
+        let selected = self.options.get(self.at).cloned();
+        self.options = promote_options(catalogs);
+        self.at = (self.options.iter())
+            .position(|o| Some(o) == selected.as_ref())
+            .unwrap_or(0);
+    }
+}
+
+/// The picker's entries: `configured`, then every model the CLIs report
+/// (`App.catalogs`, milestone 9.8: the roster left the settings in M9.8.12), a
+/// catalog's `default` entry as that runtime's default; with no catalog only
+/// `configured` is offered.
+fn promote_options(catalogs: &Catalogs) -> Vec<PromoteOption> {
+    let models = (catalogs.list.iter()).flat_map(|c| c.models.iter().map(|m| (c.runtime, m)));
+    let mut out = vec![PromoteOption::configured()];
+    for (runtime, m) in models {
+        let id = if m.id == "default" { "" } else { m.id.as_str() };
+        let option = PromoteOption::roster(runtime, &one_line(id));
+        if !out.contains(&option) {
+            out.push(option);
+        }
+    }
+    out
 }
 
 /// The form for `info` on `target` of `run`, or `None` when the node cannot give it.
@@ -336,7 +357,7 @@ fn build_form(
     target: &ActionTarget,
     info: &ActionInfo,
     kind: InputKind,
-    cache: Option<&SettingsCache>,
+    catalogs: &Catalogs,
 ) -> Option<ActionForm> {
     let info = info.clone();
     Some(match (kind, target) {
@@ -384,7 +405,7 @@ fn build_form(
         }),
         (InputKind::Promote, ActionTarget::Run) => ActionForm::Promote(PromoteForm {
             info,
-            options: promote_options(cache),
+            options: promote_options(catalogs),
             at: 0,
         }),
         _ => return None,
@@ -400,13 +421,13 @@ impl App {
         info: ActionInfo,
         kind: InputKind,
     ) -> Vec<Effect> {
-        let cache = self.settings_cache.as_ref();
+        let catalogs = &self.catalogs;
         let form = self
             .runs
             .runs
             .iter()
             .find(|r| r.run_id == flow.run_id)
-            .and_then(|run| build_form(run, &flow.target, &info, kind, cache));
+            .and_then(|run| build_form(run, &flow.target, &info, kind, catalogs));
         let Some(mut form) = form else {
             return vec![];
         };
@@ -420,6 +441,14 @@ impl App {
                 // Decision 37: say why at once; `form_brief_reconnected` asks again.
                 f.brief = Brief::Failed(NOT_CONNECTED.into());
             }
+        }
+        // Fix round 1 (M5): no catalog yet, so ask for the lists, as the Settings
+        // screen does; `DaemonMsg::Models` refreshes the open picker.
+        if matches!(form, ActionForm::Promote(_)) && self.catalogs.list.is_empty() {
+            effects.push(Effect::Send(proto::ClientMsg::ListModels {
+                runtime: None,
+                refresh: false,
+            }));
         }
         flow.step = ActionStep::Form(Box::new(form));
         effects

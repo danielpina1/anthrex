@@ -14,10 +14,16 @@ use crate::run::engine::schedule::writer_slots;
 use crate::run::engine::{EventKind, OpResult};
 use crate::run::model::{RaceDecision, RuntimeConcurrency};
 
-/// A task on Codex, with `extra` lines before its route.
-fn on_codex(id: &str, size: &str, module: &str, extra: &str) -> String {
-    let route = "[task.route]\nruntime = \"codex\"\nmodel = \"\"";
-    task(id, size, module, &format!("{extra}\n{route}"))
+/// A task on Codex: milestone 9.8 decision 31 ignores a plan's route, so it is an S
+/// task, whose row [`racers`] puts on Codex (`codex_small`).
+fn on_codex(id: &str, module: &str, extra: &str) -> String {
+    task(id, "S", module, extra)
+}
+
+/// `super::race::racers` with the small row on Codex: S tasks are Codex tasks, M and
+/// hub tasks Claude ones.
+fn racers(plan: &str) -> Fixture {
+    Fixture::with_config(plan, super::race::with_racers(codex_small()))
 }
 
 /// Claude's cap brought down to 1 by a rate limit at the fixture's start.
@@ -56,10 +62,10 @@ fn started(fx: &Fixture, id: &str) -> bool {
 fn held_single() -> Fixture {
     let tasks = [
         task("t0", "M", "z", ""),
-        on_codex("t4", "M", "e", "deps = [\"t0\"]"),
+        on_codex("t4", "e", "deps = [\"t0\"]"),
         task("t1", "M", "a", RACING),
     ];
-    let mut fx = Fixture::new(&plan_with(&profile_with("max_writers = 3"), &tasks));
+    let mut fx = racers(&plan_with(&profile_with("max_writers = 3"), &tasks));
     fx.start_with(true, claude_capped);
     let (op, _) = fx.op("CreateRunBranch");
     fx.done(op, OpResult::Worktree { head: BASE.into() });
@@ -104,13 +110,13 @@ fn a_single_racer_held_by_its_runtimes_cap_logs_its_line_once() {
 #[test]
 fn the_slot_wait_gives_up_once() {
     let tasks = [
-        on_codex("tdep", "S", "d", ""),
+        on_codex("tdep", "d", ""),
         task("t0", "M", "z", ""),
-        task("t1", "S", "a", "race = true\ndeps = [\"tdep\"]"),
-        on_codex("t3", "S", "c", "deps = [\"tdep\"]"),
+        task("t1", "M", "a", "race = true\ndeps = [\"tdep\"]"),
+        on_codex("t3", "c", "deps = [\"tdep\"]"),
         task("t4", "M", "e", "deps = [\"t1\"]"),
     ];
-    let mut fx = Fixture::new(&plan_with(&profile_with("max_writers = 3"), &tasks));
+    let mut fx = racers(&plan_with(&profile_with("max_writers = 3"), &tasks));
     fx.start_with(true, claude_capped);
     let (op, _) = fx.op("CreateRunBranch");
     fx.done(op, OpResult::Worktree { head: BASE.into() });
@@ -343,6 +349,16 @@ fn a_task_back_to_pending_decides_again() {
 #[test]
 fn an_amended_size_clears_the_latch() {
     let mut fx = held_single();
+    // Milestone 9.8: `held_single` runs size S on Codex (`t4`'s row); the small row
+    // goes back to Claude here (its racer's fallback kept), so the amended `t1` stays
+    // on Claude, whose cap holds it, as a route amend's would have before.
+    crate::run::test_support::set_row(
+        fx.run_mut(),
+        proto::models::Role::ImplementerSmall,
+        "claude:claude-sonnet-5",
+        None,
+        Some("codex:default"),
+    );
     let amend = proto::PlanEdit::AmendTask {
         task_id: "t1".into(),
         brief: None,

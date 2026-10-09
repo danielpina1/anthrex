@@ -4,7 +4,7 @@
 
 use super::fixtures::*;
 use crate::messages::DaemonMsg;
-use crate::run::{Effort, RouteSpec, Runtime, Strength};
+use crate::run::{Effort, RouteSpec, Runtime};
 use crate::run_info::{PlanEditInfo, RunsSnapshot, TaskEventInfo};
 use crate::run_wire::RunReply;
 use crate::{PlannerInfo, PlannerState};
@@ -14,7 +14,7 @@ fn a_planner() -> PlannerInfo {
         epic: "A".into(),
         title: "daemon".into(),
         area: vec!["crates/daemon/**".into()],
-        route: a_route(Runtime::Claude, Strength::Frontier, Effort::High, ""),
+        route: a_route(Runtime::Claude, Effort::HIGH, ""),
         window_id: Some(12),
         state: PlannerState::Finished,
         started_at: 1_700_000_050,
@@ -61,7 +61,7 @@ fn a_view_snapshot() -> RunsSnapshot {
         runtime: Some(Runtime::Codex),
         model: Some("gpt-5-codex".into()),
         strength: None,
-        effort: Some(Effort::Low),
+        effort: Some(Effort::LOW),
     };
     task.history = vec![
         TaskEventInfo {
@@ -118,7 +118,7 @@ fn snapshot_view_fields_round_trip() {
     assert_eq!(task.acceptance, ["tokens expire after one hour"]);
     assert_eq!(task.route_spec.strength, None);
     assert_eq!(task.route_spec.runtime, Some(Runtime::Codex));
-    assert_eq!(task.route_spec.effort, Some(Effort::Low));
+    assert_eq!(task.route_spec.effort, Some(Effort::LOW));
     assert_eq!(task.history[0].at, 1_700_000_500);
     assert_eq!(task.history[1].text, "dispatched");
     let round = &task.rounds[0];
@@ -231,12 +231,7 @@ fn orchestrator_snapshot_fields_round_trip() {
     let mut snapshot = a_view_snapshot();
     let run = &mut snapshot.runs[0];
     run.orchestrator = Some(OrchestratorInfo {
-        route: a_route(
-            Runtime::Claude,
-            Strength::Frontier,
-            Effort::High,
-            "claude-opus-5",
-        ),
+        route: a_route(Runtime::Claude, Effort::HIGH, "claude-opus-5"),
         window_id: Some(21),
         live: true,
         started_at: 1_700_000_020,
@@ -320,7 +315,7 @@ fn new_fields_round_trip() {
     ];
     let run = &mut snapshot.runs[0];
     run.orchestrator = Some(OrchestratorInfo {
-        route: a_route(Runtime::Codex, Strength::Frontier, Effort::High, "gpt-5"),
+        route: a_route(Runtime::Codex, Effort::HIGH, "gpt-5"),
         window_id: Some(4),
         live: true,
         started_at: 1_700_000_020,

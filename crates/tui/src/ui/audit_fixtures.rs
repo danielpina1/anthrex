@@ -135,7 +135,6 @@ pub(crate) fn fixtures() -> Vec<(&'static str, App)> {
                     };
                     let mut report = crate::ui::stats::tests::tuning_report();
                     report.classes[0].configured = false;
-                    report.orchestrator_list = Some("claude/claude-opus-5-5 high".into());
                     s.tuning = Some(Box::new(report));
                     s.section = crate::app::settings_screen::SettingsSection::Limits;
                 },

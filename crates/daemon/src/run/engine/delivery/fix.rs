@@ -19,7 +19,8 @@ use crate::run::contract::sha7;
 use crate::run::delivery::quote;
 use crate::run::delivery::{CiPhase, CiRecord};
 use crate::run::model::{BisectRecord, FixOf, Run, Task};
-use crate::run::route_pick::{Mover, escalate_for};
+use crate::run::model_roles::Mover;
+use crate::run::role_step::escalate_for;
 
 /// Decision 26's reason for a CI fix task's `check` test mode.
 pub(crate) const CI_FIX_TEST_MODE_REASON: &str = "fix task: the failing checks are the proof";
@@ -134,12 +135,12 @@ fn brief(run: &Run, n: u16, rec: &CiRecord, repro: &Repro, culprit: Option<&Culp
     out
 }
 
-pub(super) fn route_spec(route: &Route) -> RouteSpec {
+pub(crate) fn route_spec(route: &Route) -> RouteSpec {
     RouteSpec {
         runtime: Some(route.runtime),
         model: Some(route.model.clone()),
-        strength: Some(route.strength),
-        effort: Some(route.effort),
+        strength: None,
+        effort: Some(route.effort.clone()),
     }
 }
 
@@ -163,12 +164,13 @@ pub(super) fn stage_owns(run: &Run, n: u16) -> Vec<String> {
     owns
 }
 
-/// The stage's strongest route: the highest strength, the first task in plan order on
-/// a tie (decision 26).
+/// The stage's strongest route (decision 26): the approved route with the highest
+/// effort, the first task in plan order on a tie. Milestone 9.8 (task M9.8.14, fix
+/// round 1): strength is gone, so effort ranks the routes.
 pub(super) fn strongest(run: &Run, n: u16) -> Option<Route> {
     let mut best: Option<&Route> = None;
     for t in approved(run, n) {
-        if best.is_none_or(|b| t.route.strength > b.strength) {
+        if best.is_none_or(|b| t.route.effort > b.effort) {
             best = Some(&t.route);
         }
     }

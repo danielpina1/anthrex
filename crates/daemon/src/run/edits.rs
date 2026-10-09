@@ -12,7 +12,7 @@
 use super::phases::set_state;
 use std::collections::BTreeSet;
 
-use proto::{BlockInfo, BlockReason, PlanEdit, PlanTask, TaskState};
+use proto::{BlockInfo, BlockReason, PlanEdit, PlanTask, RouteSpec, TaskState};
 
 use super::contract::answer_message;
 use super::delivery::{reply_edit, validate};
@@ -49,6 +49,10 @@ pub enum EditConsequence {
     },
     /// Decision 42b: a `message`'s resolved recipients, for the reply and the edit log.
     Recipients(super::edits_orch::MessageOutcome),
+    /// Milestone 9.8 decision 31: the batch came from the orchestrator or a
+    /// sub-planner and a task in it named a route, which was cleared; the engine logs
+    /// `contract::ROUTE_IGNORED` once.
+    RouteIgnored,
     Pause,
     Resume,
     Finish,
@@ -75,7 +79,6 @@ pub fn apply_edits(
         added_deps: BTreeSet::new(),
         errors: Vec::new(),
         consequences: Vec::new(),
-        picks: BTreeSet::new(),
         now,
     };
     for edit in edits {
@@ -87,19 +90,15 @@ pub fn apply_edits(
         added_deps,
         mut errors,
         consequences,
-        picks,
         ..
     } = batch;
-    // Milestone 9.5 decision 9a: added tasks, and routes amended, take the run's lists.
-    super::route_pick::pick_named(&mut edited, &picks);
     errors.extend(validate_tasks_with(
         &edited.tasks,
         &touched,
         Some(&added_deps),
         scope,
         (edited.limits.max_tasks, edited.round()),
-        edited.limits.default_runtime,
-        (&run.roster, &run.orch.installed),
+        edited.limits.models(),
     ));
     errors.extend(super::validate_stages::single_layout_rule(&edited));
     errors.extend(super::orch::rules::apply(&mut edited, run, source));
@@ -161,8 +160,6 @@ pub(super) struct Batch {
     pub(super) added_deps: BTreeSet<(String, String)>,
     pub(super) errors: Vec<PlanError>,
     pub(super) consequences: Vec<EditConsequence>,
-    /// Decision 9a: the tasks whose route the model lists pick after the batch.
-    pub(super) picks: BTreeSet<String>,
     pub(super) now: u64,
 }
 
@@ -243,13 +240,7 @@ impl Batch {
     /// Resolves a spec exactly as `build_run` resolves a plan task, keeping its errors.
     fn resolve(&mut self, spec: PlanTask) -> Task {
         let run = &self.run;
-        let (mut task, errors) = resolve_task_lenient(
-            spec,
-            &run.profile,
-            &run.limits,
-            &run.roster,
-            run.limits.default_runtime,
-        );
+        let (mut task, errors) = resolve_task_lenient(spec, &run.profile, &run.limits);
         self.errors.extend(errors);
         task.branch = task_branch(&run.id, task.id());
         task.worktree = task_path(&run.wt_dir, &run.id, &task.checkout_name());
@@ -274,12 +265,32 @@ impl Batch {
         }
     }
 
+    /// Milestone 9.8 decision 31: the orchestrator and a sub-planner size tasks; the
+    /// role table routes them. A route one of them sends is cleared before resolution
+    /// (and noted); a user's is kept (decision 10).
+    pub(super) fn unrouted(&mut self, mut spec: PlanTask) -> PlanTask {
+        if self.source != EditSource::User {
+            let sent = std::mem::take(&mut spec.route);
+            self.route_ignored(&sent);
+        }
+        spec
+    }
+
+    /// Decision 31: one [`EditConsequence::RouteIgnored`] per batch, when a cleared
+    /// route named a runtime, a model, a strength or an effort.
+    pub(super) fn route_ignored(&mut self, sent: &RouteSpec) {
+        let noted = self.consequences.contains(&EditConsequence::RouteIgnored);
+        if *sent != RouteSpec::default() && !noted {
+            self.consequences.push(EditConsequence::RouteIgnored);
+        }
+    }
+
     pub(super) fn add_task(&mut self, spec: PlanTask) {
+        let spec = self.unrouted(spec);
         // Milestone 9.1 decision 39: a new task may not take a `fix<n>` id.
         self.errors.extend(reserved_new_id(&spec.id));
         let task = self.resolve(spec);
         self.add_deps_of(&task);
-        self.picks.insert(task.spec.id.clone());
         self.run.tasks.push(task);
         let last = self.run.tasks.len() - 1;
         self.log(last, "added by a plan edit".to_string());
@@ -370,7 +381,7 @@ impl Batch {
             return;
         }
         let parent = self.run.tasks[i].spec.stage;
-        let mut specs = into.to_vec();
+        let mut specs: Vec<PlanTask> = into.iter().map(|s| self.unrouted(s.clone())).collect();
         for s in &mut specs {
             self.errors.extend(reserved_new_id(&s.id));
             self.errors.extend(split_child_stage(parent, s));
@@ -378,7 +389,6 @@ impl Batch {
         let children: Vec<Task> = specs.into_iter().map(|s| self.resolve(s)).collect();
         for child in &children {
             self.add_deps_of(child);
-            self.picks.insert(child.spec.id.clone());
         }
         let child_ids: Vec<String> = children.iter().map(|c| c.spec.id.clone()).collect();
         for task in self.run.tasks.iter_mut() {

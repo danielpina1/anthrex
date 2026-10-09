@@ -1,13 +1,12 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use proto::{Budget, Effort, Route, RunState, Runtime, Strength};
+use proto::{Budget, Effort, Route, RunState, Runtime};
 
 use super::*;
 use crate::run::env::profile_env;
 use crate::run::model::ReviewLevel;
 use crate::run::model::Run;
-use crate::run::roster::pick_reviewer;
 use crate::run::test_support::*;
 
 #[test]
@@ -39,13 +38,17 @@ fn the_brief_example_builds_a_run() {
         t1.worktree,
         PathBuf::from(format!("/tmp/wt/runs/{RUN_ID}/t1"))
     );
+    // Milestone 9.8 decision 31: the plan's route (Sonnet at `high`) is ignored; the
+    // medium row routes it, and the log says so.
     let expected_route = Route {
         runtime: Runtime::Claude,
         model: "claude-sonnet-5".to_string(),
-        strength: Strength::Standard,
-        effort: Effort::High,
+        effort: Effort::MEDIUM,
     };
     assert_eq!(t1.route, expected_route);
+    assert_eq!(t1.spec.route, proto::RouteSpec::default());
+    let log: Vec<&str> = run.log.iter().map(|e| e.text.as_str()).collect();
+    assert_eq!(log, [crate::run::orch::contract::ROUTE_IGNORED]);
     assert_eq!(
         t1.budget,
         Budget {
@@ -55,7 +58,8 @@ fn the_brief_example_builds_a_run() {
         }
     );
     assert_eq!(t1.review_level, Some(ReviewLevel::Medium));
-    let reviewer = pick_reviewer(&config.models, &expected_route, ReviewLevel::Medium);
+    // Milestone 9.8 decision 27: the reviewer row against the task's route.
+    let (reviewer, _) = run.limits.models().reviewer_route(&expected_route);
     assert_eq!(t1.review_route, Some(reviewer));
     assert_eq!(t1.notes, Vec::<String>::new());
     assert_eq!(t1.implicit_deps, Vec::<String>::new());
@@ -70,7 +74,6 @@ fn the_brief_example_builds_a_run() {
     assert_eq!(limits.budget_m, config.budget_m);
     assert_eq!(limits.stall_after_secs, config.stall_after_secs);
     assert_eq!(limits.worker_allowed_tools, config.worker_allowed_tools);
-    assert_eq!(run.roster, config.models);
     assert_eq!(run.run_branch(), format!("anthrex/{RUN_ID}/integration"));
     assert_eq!(run.short(), "3f9a");
 }
@@ -510,8 +513,7 @@ fn limits_are_frozen_at_run_start() {
         note_max_per_task: 4,
         planners: PlannerLimits {
             runtime: Some(Runtime::Codex),
-            strength: Strength::Frontier,
-            effort: Effort::High,
+            effort: Effort::HIGH,
             max_tool_calls: 200,
             timeout_secs: 600,
             max_rejections: 5,
@@ -520,15 +522,8 @@ fn limits_are_frozen_at_run_start() {
         agent: AgentLimits {
             runtime: None,
             model: "claude-sonnet-5".into(),
-            effort: Effort::High,
+            effort: Effort::HIGH,
         },
-        // Whole-branch review, item 1: the run scouts' route keys are frozen too.
-        scouts: Some(crate::scout::spec::ScoutRouting {
-            runtime: None,
-            default_runtime: Runtime::Claude,
-            strength: Strength::Fast,
-            effort: Effort::Low,
-        }),
         // Milestone 9.6 (task M9.6.3): `[orchestrator.design]` is frozen too.
         design: DesignLimits {
             phase_minutes: 45,
@@ -546,6 +541,36 @@ fn limits_are_frozen_at_run_start() {
     let defaults = build(&text).unwrap_or_else(|e| panic!("{}", show(&e)));
     assert_eq!(old.limits.orch, OrchLimits::default());
     assert_eq!(defaults.limits.orch, OrchLimits::default());
+}
+
+/// M9.8.14: an old plan's `[task.route] strength` still loads and is ignored (strength
+/// is gone; the row decides, M9.8.9); every other unknown route key is still refused.
+#[test]
+fn an_old_plan_with_route_strength_still_loads() {
+    let route = "[task.route]\nstrength = \"frontier\"";
+    let text = plan_with(
+        PROFILE,
+        &[task_toml("s", "S", r#"["crates/a/src/lib.rs"]"#, route)],
+    );
+    let plan = parse_plan(&text).unwrap_or_else(|e| panic!("{e}"));
+    let spec = &plan.tasks[0].route;
+    let written = serde_json::to_value(spec).unwrap();
+    assert!(written.get("strength").is_none(), "{written}");
+    let run = run_ok(&text);
+    let t = task(&run, "s");
+    assert_eq!(t.spec.route, proto::RouteSpec::default());
+    let row = run
+        .limits
+        .models()
+        .route(crate::run::model_roles::RunModels::task_role(t));
+    assert_eq!(t.route, row);
+
+    let unknown = text.replace(
+        "strength = \"frontier\"",
+        "strength = \"frontier\"\ntier = \"x\"",
+    );
+    let err = parse_plan(&unknown).unwrap_err();
+    assert!(err.contains("unknown field `tier`"), "{err}");
 }
 
 #[path = "plan_tests_parse.rs"]

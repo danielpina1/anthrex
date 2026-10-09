@@ -264,7 +264,7 @@ fn a_racer_rounds_race_field_follows_doing() {
         &app,
         &round_key("t2", AgentRole::Racer, Some(RaceLane::A), 1),
     );
-    assert_eq!(inspection.name, "racer a  claude · standard · medium");
+    assert_eq!(inspection.name, "racer a  claude · medium");
     let labels: Vec<&str> = pairs(&inspection).iter().map(|(label, _)| *label).collect();
     assert_eq!(labels[..2], ["doing", "race"]);
     assert_eq!(value(&inspection, "race"), Some("lane a · racing"));
@@ -279,7 +279,7 @@ fn a_racer_rounds_race_field_follows_doing() {
     );
     assert_eq!(
         value(&inspection, "judging"),
-        Some("racer b · codex · standard")
+        Some("racer b · codex · medium")
     );
 }
 
@@ -325,7 +325,7 @@ fn test_writer_round_test_field() {
 
     let app = app_of(pair_fixture());
     let inspection = inspect_node(&app, &round_key("t3", AgentRole::TestWriter, None, 1));
-    assert_eq!(inspection.name, "test writer #1  codex · standard · medium");
+    assert_eq!(inspection.name, "test writer #1  codex · medium");
     let labels: Vec<&str> = pairs(&inspection).iter().map(|(label, _)| *label).collect();
     assert_eq!(labels[..2], ["doing", "test"]);
 }
@@ -414,8 +414,8 @@ fn a_kept_checkout_is_named_after_its_salvage() {
 fn each_lane_reviewer_is_inspected_on_its_own() {
     let app = app_of(crate::tree::run_fixtures::lane_reviews_fixture());
     for (lane, racer) in [
-        (RaceLane::A, "racer a · claude · standard"),
-        (RaceLane::B, "racer b · codex · standard"),
+        (RaceLane::A, "racer a · claude · medium"),
+        (RaceLane::B, "racer b · codex · medium"),
     ] {
         let key = round_key("t2", AgentRole::Reviewer, Some(lane), 1);
         let inspection = inspect_node(&app, &key);

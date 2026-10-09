@@ -16,7 +16,7 @@ use super::merge::{commit, doc_task, start_on, window_of};
 use super::propagate::{land_propagates, propagate, stages_on};
 use super::tiers::{proved, working};
 use crate::run::engine::{EventKind, OpKind, OpResult};
-use crate::run::roster::peer;
+use crate::run::model_roles::peer;
 use crate::run::test_support::task_toml;
 use crate::run::tiers::StepKind;
 
@@ -219,8 +219,17 @@ fn a_refused_fix_task_records_the_culprit_and_the_reason() {
     let (mut fx, mut windows) = start_on(&profile(), &tasks);
     fx.run_mut().repo_dir = PathBuf::from(REPO);
     let own = fx.task("t2").route.runtime;
-    fx.task_mut("t3").spec.route.runtime = Some(own);
-    fx.task_mut("t4").spec.route.runtime = Some(peer(own));
+    // Milestone 9.8 decision 33: a route leaves its row by naming a model.
+    let on = |runtime: proto::Runtime| proto::RouteSpec {
+        runtime: Some(runtime),
+        model: Some(match runtime {
+            proto::Runtime::Claude => "claude-sonnet-5".into(),
+            _ => String::new(),
+        }),
+        ..Default::default()
+    };
+    fx.task_mut("t3").spec.route = on(own);
+    fx.task_mut("t4").spec.route = on(peer(own));
     merge_next(&mut fx, &mut windows, "t1", &commit(1));
     merge_next(&mut fx, &mut windows, "t2", &commit(2));
     let since = fx.run().queue_idle_since.expect("idle");

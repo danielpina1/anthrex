@@ -248,6 +248,11 @@ pub struct TaskInfo {
     pub acceptance: Vec<String>,
     #[serde(default)]
     pub route_spec: RouteSpec,
+    /// Milestone 9.8 (M9.8.11 fix round 1): the task's role table row, as the run
+    /// resolves it, so the task edit form shows what a pick of the row's model runs.
+    /// Additive within protocol 19 (unreleased on this branch).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub row: Option<Route>,
     // Milestone 9.
     /// The approval hold (decision 28) the task waits in, by id.
     #[serde(default)]

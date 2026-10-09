@@ -9,6 +9,7 @@ use std::str::FromStr;
 mod conversation;
 mod delivery;
 mod git;
+pub mod models;
 mod orchestrator;
 pub mod reserved_env;
 mod runtimes;
@@ -28,11 +29,13 @@ pub use git::{
     GIT_DEBOUNCE_MS_RANGE, GIT_IGNORE_MAX_CHARS, GIT_IGNORE_MAX_ENTRIES, GIT_POLL_SECS_RANGE, Git,
 };
 use git::{KNOWN_GIT_KEYS, read_git};
+pub use models::{ModelRef, ModelTable, Role, RoleChoice};
 pub use orchestrator::{
-    AgentConfig, Candidate, ClaudeAuth, ClaudeHeadless, ConfiguredBudgets, Deciders, DesignBudget,
-    DesignConfig, Metering, Onboarding, Orchestrator, Pick, RouteList, RouteLists, Scouts, Tuning,
-    TuningConfig, default_roster,
+    AgentConfig, ClaudeAuth, ClaudeHeadless, ConfiguredBudgets, Deciders, DesignBudget,
+    DesignConfig, Metering, Onboarding, Orchestrator, Scouts, Tuning, TuningConfig,
 };
+// Milestone 9.8 (task M9.8.13): the model lists are read for the migration only.
+pub(crate) use orchestrator::{RouteList, RouteLists};
 use runtimes::{read_runtimes, report_unknown_runtimes};
 pub use testing::{
     BISECT_FIX_MAX_RANGE, FLAKY_QUARANTINE_AFTER_RANGE, FLAKY_WINDOW_DAYS_RANGE,
@@ -213,6 +216,23 @@ pub fn parse(text: &str) -> (Config, Vec<Problem>) {
     read_git(&table, &mut config, &mut problems);
     read_conversation(&table, &mut config, &mut problems);
     config.orchestrator = orchestrator::read(&table, &mut problems);
+    // Milestone 9.8 (decisions 14-19): the old model keys migrated into the role table,
+    // overlaid by the explicit `[models]` rows.
+    let explicit = table
+        .get("models")
+        .map(|v| models::read_table(v, &mut problems))
+        .unwrap_or_default();
+    let raw = table.get("orchestrator").and_then(|v| v.as_table());
+    let (migrated, mut notes) = models::migrate(&config.orchestrator, raw);
+    config.orchestrator.roles = migrated.overlaid(&explicit);
+    // M9.8.12 (Task 3's review): a key that migrated to no row is kept by a save; its
+    // note says so.
+    if let Some(raw) = raw {
+        let roles = &config.orchestrator.roles;
+        let kept = models::kept(&config.orchestrator, raw, &migrated, roles);
+        models::kept_notes(&mut notes, &kept, roles);
+    }
+    config.orchestrator.roles_notes = notes;
     read_testing(&table, &mut config, &mut problems);
     read_delivery(&table, &mut config, &mut problems);
     read_theme(&table, &mut config, &mut problems);
@@ -517,6 +537,8 @@ fn report_unknown_keys(table: &toml::Table, problems: &mut Vec<Problem>) {
             "runtimes" => report_unknown_runtimes(value, problems),
             "conversation" => report_unknown_conversation(value, problems),
             "orchestrator" => orchestrator::report_unknown(value, problems),
+            // Its own unknown keys are `models::read_table`'s problems.
+            "models" => {}
             "testing" => report_unknown_nested(value, "testing", KNOWN_TESTING_KEYS, problems),
             "delivery" => report_unknown_delivery(value, problems),
             "theme" => report_unknown_nested(value, "theme", KNOWN_THEME_KEYS, problems),

@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use super::model::{Run, Task};
+use super::model_roles::RunModels;
 use super::plan::{BuildContext, PlanError, Preflight, build_run, parse_plan};
 
 /// Decision 7's example plan, verbatim in every value it sets. Its limits (4, 2, 3)
@@ -99,6 +100,13 @@ pub fn preflight() -> Preflight {
     }
 }
 
+/// The one task spec a `[[task]]` table parses to, as a plan file gives it.
+pub fn spec_of(table: &str) -> proto::PlanTask {
+    let mut plan = parse_plan(&plan_with(PROFILE, &[table.to_string()]))
+        .unwrap_or_else(|e| panic!("fixture task must parse: {e}"));
+    plan.tasks.pop().expect("one task")
+}
+
 pub fn build_full(
     text: &str,
     config: &config::Orchestrator,
@@ -122,7 +130,54 @@ fn build_full_tuned(
     pre: Preflight,
     tuning: super::refit::Tuned,
 ) -> Result<Run, Vec<PlanError>> {
+    // Milestone 9.8: the role table as a start with no repository file freezes it.
+    let models = (RunModels::resolve(&config.roles, None), Vec::new());
+    build_frozen(text, config, pre, tuning, models)
+}
+
+/// [`build_with`], with the role table (and its start lines) a start froze
+/// (`driver::build_models::freeze`).
+pub fn build_with_models(
+    text: &str,
+    config: &config::Orchestrator,
+    models: RunModels,
+    models_log: Vec<String>,
+) -> Result<Run, Vec<PlanError>> {
+    build_frozen(
+        text,
+        config,
+        preflight(),
+        Default::default(),
+        (models, models_log),
+    )
+}
+
+fn build_frozen(
+    text: &str,
+    config: &config::Orchestrator,
+    pre: Preflight,
+    tuning: super::refit::Tuned,
+    models: (RunModels, Vec<String>),
+) -> Result<Run, Vec<PlanError>> {
     let plan = parse_plan(text).unwrap_or_else(|e| panic!("fixture plan must parse: {e}"));
+    build_parsed(plan, config, pre, tuning, models)
+}
+
+/// A run of an already parsed `plan`, with the default config and its table.
+pub fn build_with_plan(plan: proto::Plan) -> Run {
+    let config = config::Orchestrator::default();
+    let models = (RunModels::resolve(&config.roles, None), Vec::new());
+    build_parsed(plan, &config, preflight(), Default::default(), models)
+        .unwrap_or_else(|e| panic!("expected a run, got errors: {}", show(&e)))
+}
+
+fn build_parsed(
+    plan: proto::Plan,
+    config: &config::Orchestrator,
+    pre: Preflight,
+    tuning: super::refit::Tuned,
+    (models, models_log): (RunModels, Vec<String>),
+) -> Result<Run, Vec<PlanError>> {
     build_run(
         plan,
         pre,
@@ -136,12 +191,63 @@ fn build_full_tuned(
             yes: false,
             delivery: &config::Delivery::default(),
             tuning,
+            models,
+            models_log,
         },
     )
 }
 
 pub fn build_with(text: &str, config: &config::Orchestrator) -> Result<Run, Vec<PlanError>> {
     build_full(text, config, preflight())
+}
+
+/// Milestone 9.8: the config whose `implementer.medium` row runs on Codex at its
+/// default model. A plan's route is ignored (decision 31), so with it a size M task is
+/// a Codex task and a size S task a Claude one.
+pub fn codex_medium() -> config::Orchestrator {
+    let mut config = config::Orchestrator::default();
+    with_codex_medium(&mut config);
+    config
+}
+
+/// [`codex_medium`]'s row, set in `config`.
+pub fn with_codex_medium(config: &mut config::Orchestrator) {
+    with_row(
+        config,
+        proto::models::Role::ImplementerMedium,
+        "codex:default",
+        None,
+    );
+}
+
+/// Milestone 9.8: the config whose `implementer.small` row runs on Codex at its default
+/// model, so a size S task is a Codex task (a plan's route is ignored, decision 31).
+pub fn codex_small() -> config::Orchestrator {
+    let mut config = config::Orchestrator::default();
+    with_row(
+        &mut config,
+        proto::models::Role::ImplementerSmall,
+        "codex:default",
+        None,
+    );
+    config
+}
+
+/// Milestone 9.8: `config`'s global `role` row set to `model` (`<runtime>:<id>`) at
+/// `effort`, no fallback: what a test once gave a plan's route (decision 31).
+pub fn with_row(
+    config: &mut config::Orchestrator,
+    role: proto::models::Role,
+    model: &str,
+    effort: Option<&str>,
+) {
+    use proto::models::{ModelRef, RoleChoice};
+    let row = RoleChoice {
+        model: ModelRef::parse(model).expect("a model"),
+        effort: effort.map(str::to_string),
+        fallback: None,
+    };
+    config.roles.rows.insert(role, row);
 }
 
 pub fn build(text: &str) -> Result<Run, Vec<PlanError>> {
@@ -168,6 +274,77 @@ pub fn show(errors: &[PlanError]) -> String {
         .map(|e| format!("[{}] {e}", e.rule))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Milestone 9.8: `run`'s role table with a Claude reviewer and test writer (no
+/// fallbacks), each task's reviewer picked again from it: with Claude implementer rows
+/// (the built-ins), a run whose sessions stay on Claude.
+pub fn claude_rows(run: &mut Run) {
+    use proto::models::{ModelRef, Role, RoleChoice};
+    let mut models = run.limits.models().clone();
+    for (role, model) in [
+        (Role::Reviewer, "claude:claude-opus-5-5"),
+        (Role::TestWriter, "claude:claude-sonnet-5"),
+    ] {
+        let model = ModelRef::parse(model).expect("a model");
+        let row = RoleChoice {
+            model,
+            effort: None,
+            fallback: None,
+        };
+        models.rows.insert(role, row);
+    }
+    for t in &mut run.tasks {
+        if t.review_route.is_some() {
+            t.review_route = Some(models.reviewer_route(&t.route).0);
+        }
+    }
+    run.limits.models = Some(models);
+}
+
+/// Milestone 9.8: one row of `run`'s frozen role table, set to `model` (`<runtime>:<id>`)
+/// at `effort` with `fallback`.
+pub fn set_row(
+    run: &mut Run,
+    role: proto::models::Role,
+    model: &str,
+    effort: Option<&str>,
+    fallback: Option<&str>,
+) {
+    use proto::models::{ModelRef, RoleChoice};
+    let parse = |m: &str| ModelRef::parse(m).expect("a model");
+    let mut models = run.limits.models().clone();
+    let row = RoleChoice {
+        model: parse(model),
+        effort: effort.map(str::to_string),
+        fallback: fallback.map(parse),
+    };
+    models.rows.insert(role, row);
+    run.limits.models = Some(models);
+}
+
+/// Milestone 9.8 decision 21 for a fixture run: every row's model and fallback reported
+/// with the efforts `low`, `medium`, `high` and no default, as a live catalog would, so
+/// rung 2 has an effort to raise (decision 29).
+pub fn with_efforts(run: &mut Run) {
+    let models = run.limits.models.as_mut().expect("frozen at start");
+    let named: Vec<_> = (models.rows.values())
+        .flat_map(|c| std::iter::once(c.model.clone()).chain(c.fallback.clone()))
+        .collect();
+    for model in named {
+        let known = super::model_roles::ModelEfforts {
+            efforts: ["low", "medium", "high"].map(String::from).to_vec(),
+            default: None,
+        };
+        models.efforts.insert(model, known);
+    }
+}
+
+/// Milestone 9.8 decision 29: task `id`'s next route from `from` along its row, nothing
+/// skipped; `from` when nothing is left.
+pub fn escalated(run: &Run, id: &str, from: &proto::Route) -> proto::Route {
+    let role = RunModels::task_role(task(run, id));
+    super::role_step::escalate(run.limits.models(), role, from, &[]).unwrap_or_else(|| from.clone())
 }
 
 pub fn task<'a>(run: &'a Run, id: &str) -> &'a Task {
@@ -236,5 +413,33 @@ pub fn race_of(task: &Task, states: [proto::LaneState; 2]) -> super::model::Race
         started_at: 100,
         crowned: winner.is_some(),
         ended: false,
+    }
+}
+
+/// Milestone 9.8 (task M9.8.13): what a stored pre-9.8 `run.json` holds that the run no
+/// longer writes back: the roster, the scouts' route keys and the model lists. Removed
+/// from `stored` so a load-and-write-back test compares the rest.
+pub(crate) fn without_pre_9_8_keys(stored: &mut serde_json::Value) {
+    stored.as_object_mut().expect("a run").remove("roster");
+    let limits = stored["limits"].as_object_mut().expect("limits");
+    limits.remove("route_lists");
+    limits.remove("class_routes");
+    if let Some(orch) = limits.get_mut("orch").and_then(|o| o.as_object_mut()) {
+        orch.remove("scouts");
+    }
+    // Task M9.8.14: every `strength` (a route's, a route spec's, the planners') is read
+    // and ignored, never written back.
+    without_strength(stored);
+}
+
+/// Every `strength` key in `value`, at any depth, removed.
+pub(crate) fn without_strength(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            map.remove("strength");
+            map.values_mut().for_each(without_strength);
+        }
+        serde_json::Value::Array(items) => items.iter_mut().for_each(without_strength),
+        _ => {}
     }
 }

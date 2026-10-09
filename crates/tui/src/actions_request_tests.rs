@@ -116,6 +116,7 @@ fn promote_carries_its_orchestrator() {
     let choice = OrchestratorChoice {
         runtime: Runtime::Codex,
         model: Some("gpt-6-sol".into()),
+        effort: None,
     };
     assert_eq!(
         on_run(

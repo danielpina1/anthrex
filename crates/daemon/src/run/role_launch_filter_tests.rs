@@ -9,7 +9,7 @@ use crate::output_filter::{FilterHook, LOG_DIR_NAME, codex_filter_note};
 use crate::run::contract_patterns::TEST_WRITER_CONTRACT;
 use crate::run::role_launch_patterns::{racer_spec, test_writer_spec};
 use crate::run::test_support::{PROFILE, plan_with, race_of, run_ok, task_toml};
-use proto::{Effort, LaneState, OutputFilter, ProfileSource, Strength};
+use proto::{Effort, LaneState, OutputFilter, ProfileSource};
 
 fn stored_run() -> Run {
     let mut run = run_ok(&plan_with(
@@ -26,8 +26,7 @@ fn route(runtime: Runtime) -> Route {
     Route {
         runtime,
         model: "m".into(),
-        strength: Strength::Standard,
-        effort: Effort::Medium,
+        effort: Effort::MEDIUM,
     }
 }
 
@@ -289,14 +288,19 @@ fn reviewers_and_scouts_never_get_it() {
     };
     for runtime in [Runtime::Claude, Runtime::Codex] {
         let ctx = crate::scout::spec::ScoutContext {
-            roster: config::default_roster().into(),
+            roster: proto::models::ModelTable::default().into(),
             default_runtime: runtime,
             scouts: config::Scouts::default(),
             claude: config::ClaudeHeadless::default(),
             caps: CLI_CAPS,
             data_dir: PathBuf::from("/data"),
         };
-        let spec = crate::scout::spec::headless_spec(&scout, &ctx);
+        let route = proto::Route {
+            runtime,
+            model: String::new(),
+            effort: proto::Effort::LOW,
+        };
+        let spec = crate::scout::spec::headless_spec_on(&scout, &ctx, &route);
         assert_eq!(spec.runtime, runtime);
         assert_eq!(spec.output_filter, None);
         if runtime == Runtime::Codex {

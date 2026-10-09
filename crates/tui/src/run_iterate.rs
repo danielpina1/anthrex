@@ -48,6 +48,9 @@ pub struct IterateForm {
     pub on_design: bool,
 }
 
+// Protocol 19 grew `ClientMsg`/`RunRequest` (the role table, `OrchestratorChoice.effort`); these
+// values are built once per key press, so boxing would only add noise.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum IterateOutcome {
     Stay,

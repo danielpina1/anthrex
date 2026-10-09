@@ -55,25 +55,7 @@ pub struct RunRef {
     pub lane: Option<crate::tuning::RaceLane>,
 }
 
-/// How capable a route's model should be. Ordered: a task can only be "raised", never
-/// lowered, so the ordering matters, not just the set of values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Strength {
-    Fast,
-    Standard,
-    Frontier,
-}
-
-/// How much reasoning effort a route asks the model for. Ordered for the same reason as
-/// [`Strength`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Effort {
-    Low,
-    Medium,
-    High,
-}
+pub use crate::effort::Effort;
 
 /// How large a task is expected to be. Serializes as a capital letter (`"S"`, `"M"`,
 /// `"L"`), not a word, because the plan author writes it that way.
@@ -113,18 +95,20 @@ pub struct RouteSpec {
     pub runtime: Option<Runtime>,
     #[serde(default)]
     pub model: Option<String>,
-    #[serde(default)]
-    pub strength: Option<Strength>,
+    /// Milestone 9.8 (task M9.8.14): strength is gone; an old plan's or peer's value is
+    /// accepted and ignored, and never written.
+    #[serde(default, skip_serializing)]
+    pub strength: Option<String>,
     #[serde(default)]
     pub effort: Option<Effort>,
 }
 
-/// A fully resolved route: every field filled in.
+/// A fully resolved route: every field filled in. A protocol-18 route's `strength`
+/// (and an old history line's) is ignored when read (task M9.8.14).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Route {
     pub runtime: Runtime,
     pub model: String,
-    pub strength: Strength,
     pub effort: Effort,
 }
 
@@ -381,15 +365,6 @@ pub struct EditFile {
     pub edits: Vec<PlanEdit>,
 }
 
-/// One row of the policy's model table.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ModelEntry {
-    pub runtime: Runtime,
-    pub model: String,
-    pub strength: Strength,
-    pub note: String,
-}
-
 /// The lifecycle a run moves through.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -571,17 +546,6 @@ impl Size {
             Size::S => Size::M,
             Size::M => Size::L,
             Size::L => Size::L,
-        }
-    }
-}
-
-impl Effort {
-    /// Raises an effort one step, or `None` when already at the top (`High`).
-    pub fn raised(self) -> Option<Effort> {
-        match self {
-            Effort::Low => Some(Effort::Medium),
-            Effort::Medium => Some(Effort::High),
-            Effort::High => None,
         }
     }
 }
