@@ -99,3 +99,98 @@ fn a_complete_run_with_an_exited_window_is_not_stuck() {
     assert!(!fx.run().orch.orchestrator.as_ref().unwrap().live);
     assert_eq!(stuck(&fx), None);
 }
+
+fn exit_window(fx: &mut Fixture, live: bool) {
+    let launch = fx.run().orch.orchestrator.as_ref().unwrap().launches;
+    fx.next(EventKind::Orch(OrchEvent::OrchestratorWindow {
+        run_id: RUN_ID.into(),
+        window_id: ORCH,
+        live,
+        launch,
+    }));
+}
+
+#[test]
+fn an_exited_window_on_a_halted_run_is_dead() {
+    let mut fx = approved();
+    fx.run_mut().state = proto::RunState::Halted;
+    exit_window(&mut fx, false);
+    assert!(matches!(stuck(&fx), Some(OrchestratorStuck::Dead { .. })));
+}
+
+#[test]
+fn a_tick_does_not_stall_an_orchestrator_that_is_not_live() {
+    let mut fx = approved();
+    let stall = fx.run().limits.stall_after_secs;
+    user_edit(&mut fx);
+    exit_window(&mut fx, false);
+    fx.send(fx.now + stall * 3, EventKind::Tick);
+    assert_eq!(fx.run().orch.stalled_at, None);
+    assert!(matches!(stuck(&fx), Some(OrchestratorStuck::Dead { .. })));
+}
+
+#[test]
+fn a_call_from_a_wrong_window_does_not_count_as_acting() {
+    let mut fx = approved();
+    let stall = fx.run().limits.stall_after_secs;
+    user_edit(&mut fx);
+    let since = fx.now;
+    orch_tool(&mut fx, ORCH + 1, "edit_plan", json!({"edits": []}));
+    fx.send(since + stall, EventKind::Tick);
+    assert_eq!(stuck(&fx), Some(OrchestratorStuck::Stalled { since }));
+}
+
+#[test]
+fn a_returning_orchestrator_is_not_stalled_by_its_first_tick() {
+    let mut fx = approved();
+    let stall = fx.run().limits.stall_after_secs;
+    user_edit(&mut fx);
+    exit_window(&mut fx, false);
+    let back = fx.now + stall * 2;
+    fx.send(back, EventKind::Tick);
+    let launch = fx.run().orch.orchestrator.as_ref().unwrap().launches;
+    fx.send(
+        back + 1,
+        EventKind::Orch(OrchEvent::OrchestratorWindow {
+            run_id: RUN_ID.into(),
+            window_id: ORCH,
+            live: true,
+            launch,
+        }),
+    );
+    fx.send(back + 2, EventKind::Tick);
+    assert_eq!(stuck(&fx), None);
+    fx.send(back + 1 + stall, EventKind::Tick);
+    assert!(matches!(
+        stuck(&fx),
+        Some(OrchestratorStuck::Stalled { .. })
+    ));
+}
+
+#[test]
+fn a_run_that_completed_after_a_stall_is_not_stuck() {
+    let mut fx = approved();
+    let stall = fx.run().limits.stall_after_secs;
+    user_edit(&mut fx);
+    fx.send(fx.now + stall, EventKind::Tick);
+    assert!(matches!(
+        stuck(&fx),
+        Some(OrchestratorStuck::Stalled { .. })
+    ));
+    fx.run_mut().state = proto::RunState::Complete;
+    fx.send(fx.now + 1, EventKind::Tick);
+    assert_eq!(stuck(&fx), None);
+}
+
+#[test]
+fn a_run_json_without_the_stall_fields_loads() {
+    let fx = approved();
+    let mut json = serde_json::to_value(fx.run()).unwrap();
+    let orch = json["orch"].as_object_mut().unwrap();
+    for key in ["acted_seq", "waiting_since", "stalled_at"] {
+        orch.remove(key);
+    }
+    let run: crate::run::model::Run = serde_json::from_value(json).unwrap();
+    assert_eq!(run.orch.waiting_since, None);
+    assert_eq!(run.orch.stalled_at, None);
+}

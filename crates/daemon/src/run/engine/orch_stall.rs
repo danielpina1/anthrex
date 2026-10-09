@@ -16,8 +16,23 @@ fn last_seq(run: &Run) -> u64 {
         .map_or(0, |o| o.last_note_seq)
 }
 
-/// Post-step: a note beyond `acted_seq` starts the clock, once.
+/// The one rule for a stall: a living orchestrator on a run that still goes on. A
+/// finished run, or an orchestrator whose window is gone, has no clock and no stall.
+fn watching(run: &Run) -> bool {
+    run.orch.orchestrator.as_ref().is_some_and(|o| o.live)
+        && !run.state.is_terminal()
+        && run.state != RunState::Complete
+}
+
+/// Post-step: a note beyond `acted_seq` starts the clock, once. Where [`watching`]
+/// is false the clock and any stall are dropped, so a window that comes back, or a
+/// relaunch, starts its wait afresh.
 pub(super) fn pass(run: &mut Run, now: u64) {
+    if !watching(run) {
+        run.orch.waiting_since = None;
+        run.orch.stalled_at = None;
+        return;
+    }
     if last_seq(run) > run.orch.acted_seq && run.orch.waiting_since.is_none() {
         run.orch.waiting_since = Some(now);
     }
@@ -28,9 +43,8 @@ pub(super) fn tick(run: &mut Run, now: u64) {
     let Some(since) = run.orch.waiting_since else {
         return;
     };
-    let live = run.orch.orchestrator.as_ref().is_some_and(|o| o.live);
     let stall = run.limits.stall_after_secs;
-    if run.orch.stalled_at.is_some() || !live || run.state.is_terminal() || now < since + stall {
+    if run.orch.stalled_at.is_some() || !watching(run) || now < since + stall {
         return;
     }
     run.orch.stalled_at = Some(now);
@@ -62,7 +76,7 @@ pub(crate) fn stuck(run: &Run) -> Option<OrchestratorStuck> {
         return Some(OrchestratorStuck::Dead { since: o.exited_at });
     }
     let at = run.orch.stalled_at?;
-    o.live.then_some(OrchestratorStuck::Stalled {
+    watching(run).then_some(OrchestratorStuck::Stalled {
         since: run.orch.waiting_since.unwrap_or(at),
     })
 }
