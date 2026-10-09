@@ -27,6 +27,9 @@ old daemon (`anthrex daemon stop`) after upgrading.
 - **The orchestrator no longer routes tasks.** It gives each task a size, and the size
   picks the row. A route from the orchestrator, a sub-planner or a plan file is ignored,
   and the run log says `route model ignored: models come from the role table`.
+- **Hub tasks' reviewers change model.** Every review runs the one `reviewer` row
+  (built-in: Codex's own default) instead of picking a model by review level, so a hub
+  task's reviewer is no longer Claude Opus.
 - **A route naming only a runtime no longer selects a model.** `anthrex run edit` refuses
   one (`choose a model; runtime alone no longer selects one`).
 - **Escalation raises effort first.** A task that struggles runs again at its model's
