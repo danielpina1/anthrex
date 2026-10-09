@@ -144,6 +144,26 @@ pub struct RunOrch {
     pub waiting_since: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stalled_at: Option<u64>,
+    /// Milestone 9.9 decision 15: the orchestrator's pending `ask_user`, and the last
+    /// id handed out. Neither is written while empty.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ask: Option<AskRecord>,
+    #[serde(skip_serializing_if = "is_zero_u64")]
+    pub ask_seq: u64,
+}
+
+/// Milestone 9.9 decision 15: a question the orchestrator put to the user. The text is
+/// the orchestrator's, kept as given (bounded by the tool's parse); every client
+/// sanitises where it draws.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AskRecord {
+    pub id: u64,
+    pub question: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub context: String,
+    pub asked_at: u64,
 }
 
 /// `Task.orch`: a task's milestone 9 state. Absent from an older run: empty.

@@ -40,6 +40,7 @@ use super::model::{AgentRound, OpId, PendingOp, Run};
 
 pub(crate) mod actions;
 mod actor;
+mod asks;
 pub use actor::Actor;
 mod batch;
 mod bisect;
@@ -347,6 +348,8 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
         // Milestone 9 decision 39: a note for each task this step blocked.
         let since = applied.as_ref().unwrap_or(&before);
         wake::blocked_notes(since.get(id), run);
+        // Milestone 9.9 decision 16: a question the run has moved past.
+        asks::drop_settled(since.get(id), run);
         orch_stall::pass(run, now);
     }
     // Milestone 9.3 decision 19: the chains follow their current runs.

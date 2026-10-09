@@ -374,3 +374,62 @@ fn start_goal_is_the_orchestrators_alone() {
         );
     }
 }
+
+/// Milestone 9.9 decision 15: `ask_user` takes a question, up to nine options and a
+/// context; the last two default to empty.
+#[test]
+fn ask_user_parses() {
+    assert_eq!(
+        orch(
+            "ask_user",
+            json!({"question": "tabs or spaces?", "options": ["tabs", "spaces"], "context": "no guide"})
+        ),
+        Ok(OrchCall::AskUser {
+            question: "tabs or spaces?".into(),
+            options: vec!["tabs".into(), "spaces".into()],
+            context: "no guide".into(),
+        })
+    );
+    assert_eq!(
+        orch("ask_user", json!({"question": "go?"})),
+        Ok(OrchCall::AskUser {
+            question: "go?".into(),
+            options: Vec::new(),
+            context: String::new(),
+        })
+    );
+    let bad = |args: Value| orch("ask_user", args).unwrap_err();
+    assert_eq!(bad(json!({})), "invalid arguments: question: required");
+    assert_eq!(
+        bad(json!({"question": "q", "extra": 1})),
+        "invalid arguments: extra: unknown field"
+    );
+    assert_eq!(
+        bad(json!({"question": "q".repeat(501)})),
+        "invalid arguments: question: at most 500 characters"
+    );
+    assert_eq!(
+        bad(json!({"question": "q", "options": [""]})),
+        "invalid arguments: options[0]: empty"
+    );
+    assert_eq!(
+        bad(json!({"question": "q", "options": ["x".repeat(201)]})),
+        "invalid arguments: options[0]: at most 200 characters"
+    );
+    assert_eq!(
+        bad(json!({"question": "q", "context": "c".repeat(4001)})),
+        "invalid arguments: context: at most 4000 characters"
+    );
+    // Only the orchestrator has it.
+    for role in [
+        AgentRole::Planner,
+        AgentRole::Worker,
+        AgentRole::Brainstormer,
+    ] {
+        let refused = parse_call(role, "ask_user", &json!({"question": "q"})).unwrap_err();
+        assert!(
+            refused.starts_with("tool ask_user is not available"),
+            "{refused}"
+        );
+    }
+}

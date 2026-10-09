@@ -106,9 +106,15 @@ pub(super) fn orchestrator(run: &Run) -> Option<OrchestratorInfo> {
         notes: o.notes.clone(),
         wakes: o.wakes,
         wake_held: run.orch.wake_held,
-        // Milestone 9.9: `handled` from `RunOrch` (M9.9.2), `stuck` (M9.9.6); `ask` by M9.9.7.
+        // Milestone 9.9: `handled` from `RunOrch` (M9.9.2), `stuck` (M9.9.6), `ask` (M9.9.7).
         stuck: super::engine::orch_stall::stuck(run),
-        ask: None,
+        ask: run.orch.ask.as_ref().map(|a| proto::AskInfo {
+            id: a.id,
+            question: a.question.clone(),
+            options: a.options.clone(),
+            context: a.context.clone(),
+            asked_at: a.asked_at,
+        }),
         handled: run
             .orch
             .handled

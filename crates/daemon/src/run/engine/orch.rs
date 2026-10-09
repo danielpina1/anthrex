@@ -63,6 +63,13 @@ pub(super) fn on_orch_event(
             run_id,
             hold,
         } => gate_holds::verdict(state, reply, (&run_id, &hold), false, now, fx),
+        // Milestone 9.9 decision 16: the user's answer to `ask_user`.
+        OrchEvent::AnswerAsk {
+            reply,
+            run_id,
+            ask,
+            choice,
+        } => super::asks::answer(state, reply, (&run_id, ask, choice), now, fx),
         OrchEvent::ScoutEnded {
             run_id,
             scout_id,
@@ -318,6 +325,12 @@ pub(super) fn tool(
             let call = (&edits[..], submit, summary, &responses[..]);
             edit_plan(run, reply, call, refusals, (now, quiet_base), fx)
         }
+        // Milestone 9.9 ruling R9: a complete run may still ask (decision 15).
+        OrchCall::AskUser {
+            question,
+            options,
+            context,
+        } => super::asks::ask(run, reply, (question, options, context), now, fx),
         _ if run.state == RunState::Complete => {
             let text = format!("run {} is {}", run.id, run.state.label());
             refuse(fx, reply, text)

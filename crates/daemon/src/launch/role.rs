@@ -35,7 +35,8 @@ pub struct RoleLaunch {
 }
 
 /// Decision 7: the orchestrator's anthrex tools, in `anthrex mcp`'s order (six,
-/// milestone 9.3's `start_goal`, then milestone 9.6's three design tools), and its
+/// milestone 9.3's `start_goal`, milestone 9.6's three design tools, then milestone
+/// 9.9's `ask_user`), and its
 /// read-only tools. A drift test keeps the anthrex half equal to
 /// `mcp::tools::tools_for(Orchestrator)`.
 pub const ORCHESTRATOR_ALLOWED_TOOLS: &[&str] = &[
@@ -49,6 +50,7 @@ pub const ORCHESTRATOR_ALLOWED_TOOLS: &[&str] = &[
     "mcp__anthrex__start_brainstorm",
     "mcp__anthrex__submit_doc",
     "mcp__anthrex__get_doc",
+    "mcp__anthrex__ask_user",
     "Read",
     "Glob",
     "Grep",

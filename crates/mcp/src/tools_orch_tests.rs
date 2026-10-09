@@ -55,6 +55,11 @@ const DESIGN: [&str; 3] = [
      (from).",
 ];
 
+/// Milestone 9.9 decision 15 (task M9.9.7).
+const ASK_USER: &str = "Ask the user one question when only they can decide, with up to nine \
+    short options and the context they need. Returns at once; their choice arrives as a \
+    message. Never ask in chat instead.";
+
 /// Milestone 9.3 decision 29.
 const START_GOAL: &str = "Start a new goal on this orchestrator when the user gives you one; \
     only while your last run has ended.";
@@ -89,6 +94,8 @@ fn tools_for_orchestrator_and_planner_are_exact() {
         ("start_brainstorm", DESIGN[0]),
         ("submit_doc", DESIGN[1]),
         ("get_doc", DESIGN[2]),
+        // Milestone 9.9 task M9.9.7.
+        ("ask_user", ASK_USER),
     ];
     assert_eq!(
         described(&tools_for(AgentRole::Orchestrator)),
@@ -123,6 +130,7 @@ fn no_role_gets_a_tool_it_must_not_have() {
                 "start_brainstorm",
                 "submit_doc",
                 "get_doc",
+                "ask_user",
             ],
         ),
         (AgentRole::Planner, &["get_context", "submit_epic"]),
@@ -198,11 +206,12 @@ fn every_schema_is_closed_at_every_level() {
     // edit_plan and submit_epic each hold plan_edit, its plan_task and route, and
     // `into`'s plan_task and route: seven objects with the tool's own. start_goal
     // (milestone 9.3) is the orchestrator's thirteenth; milestone 9.6 adds edit_plan's
-    // response item, start_brainstorm, submit_doc and its response item, and get_doc.
+    // response item, start_brainstorm, submit_doc and its response item, and get_doc
+    // (eighteen); milestone 9.9's ask_user adds its own object: nineteen.
     assert_eq!(
         counts,
         [
-            ("orchestrator", 18),
+            ("orchestrator", 19),
             ("worker", 3),
             ("reviewer", 2),
             ("scout", 4),
@@ -243,8 +252,8 @@ fn schemas_match_the_interface_table() {
         }
     }
     assert_eq!(
-        checked, 16,
-        "ten orchestrator tools, two planner tools, task_note, and the design agents' three"
+        checked, 17,
+        "eleven orchestrator tools, two planner tools, task_note, and the design agents' three"
     );
 }
 
@@ -363,11 +372,12 @@ fn mcp_schema_has_reply_comment_and_addresses() {
 
 /// Milestone 9.3 decision 29: the orchestrator lists `start_goal` seventh, taking one
 /// required `goal` of 1 to 16,384 characters. Milestone 9.6's three design tools follow
-/// it (task M9.6.6: appended, so the earlier seven keep their places).
+/// it (task M9.6.6: appended, so the earlier seven keep their places), and milestone 9.9's
+/// `ask_user` (task M9.9.7) the eleventh.
 #[test]
 fn orchestrator_tools_list_start_goal_seventh() {
     let tools = tools_for(AgentRole::Orchestrator);
-    assert_eq!(tools.len(), 10);
+    assert_eq!(tools.len(), 11);
     let last = &tools[6];
     assert_eq!(last.name, "start_goal");
     assert_eq!(last.description.as_deref(), Some(START_GOAL));
@@ -515,5 +525,37 @@ fn a_route_is_described_as_ignored() {
     }
     for edit in [super::plan_edit(), super::plan_task()] {
         assert_eq!(edit["properties"]["route"], route);
+    }
+}
+
+/// Milestone 9.9 decision 15: `ask_user` is the orchestrator's alone, last, taking a
+/// required `question` and optional `options` (at most nine) and `context`.
+#[test]
+fn ask_user_is_the_orchestrators_only() {
+    let tools = tools_for(AgentRole::Orchestrator);
+    let last = tools.last().unwrap();
+    assert_eq!(last.name, "ask_user");
+    assert_eq!(last.description.as_deref(), Some(ASK_USER));
+    assert_eq!(
+        Value::Object((*last.input_schema).clone()),
+        json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "question": {"type": "string", "minLength": 1, "maxLength": 500},
+                "options": {"type": "array", "maxItems": 9,
+                    "items": {"type": "string", "minLength": 1, "maxLength": 200}},
+                "context": {"type": "string", "minLength": 1, "maxLength": 4000},
+            },
+            "required": ["question"],
+        })
+    );
+    for role in ROLES
+        .into_iter()
+        .chain([AgentRole::Brainstormer, AgentRole::DocReviewer])
+    {
+        let has = names(role).iter().any(|n| n == "ask_user");
+        assert_eq!(has, role == AgentRole::Orchestrator, "{}", role_name(role));
+        assert_eq!(allowed(role, "ask_user"), role == AgentRole::Orchestrator);
     }
 }

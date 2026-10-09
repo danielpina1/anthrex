@@ -49,6 +49,7 @@ fn each_role_gets_exactly_its_tools() {
                 "start_brainstorm",
                 "submit_doc",
                 "get_doc",
+                "ask_user",
             ],
         ),
         (

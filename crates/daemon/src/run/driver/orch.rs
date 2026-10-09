@@ -184,6 +184,24 @@ impl RunService {
         answer(label, result)
     }
 
+    /// Milestone 9.9 decision 16: `AnswerAsk`, the user's choice for the orchestrator's
+    /// pending `ask_user` question (`None`: answered in the window).
+    pub(super) async fn answer_ask(
+        &self,
+        run_id: String,
+        ask: u64,
+        choice: Option<u32>,
+    ) -> RunReply {
+        let event = |reply| OrchEvent::AnswerAsk {
+            reply,
+            run_id,
+            ask,
+            choice,
+        };
+        let result = self.ask(|r| EventKind::Orch(event(r))).await;
+        answer(request::ANSWER_ASK, result)
+    }
+
     /// Decision 15's routing: `get_context`, `run_status`, `task_result` and (milestone
     /// 9.6) `get_doc` go to the driver's read path; every other call, with the runtime
     /// refusals an `edit_plan` or `submit_epic` batch needs (ruling T22-I1b), goes to the

@@ -127,6 +127,15 @@ pub enum OrchEvent {
     /// Milestone 9.3 decision 19: an idle chain's window closed, or exited for
     /// `EXIT_CONFIRM` (`driver/chain_ops.rs::idle_windows`).
     ChainWindowGone { chain: String, window_id: u32 },
+    /// Milestone 9.9 decision 16 (OFA §4.3): the user's answer to the orchestrator's
+    /// `ask_user` question `ask`; `choice` is an option's 0-based index, `None` answered
+    /// in the window.
+    AnswerAsk {
+        reply: ReplyId,
+        run_id: String,
+        ask: u64,
+        choice: Option<u32>,
+    },
     /// Task 6b fix round 1 (m1): run `run_id` never took window `window_id`, gone
     /// before the adoption rebound it, or still the previous run's after a restart
     /// (`driver/chain_ops.rs`); `first_prompt` is the run's handoff for a fresh session.
@@ -166,6 +175,7 @@ impl OrchEvent {
             OrchEvent::Tool { reply, .. }
             | OrchEvent::ApproveHold { reply, .. }
             | OrchEvent::RejectHold { reply, .. }
+            | OrchEvent::AnswerAsk { reply, .. }
             | OrchEvent::RoleRoute { reply, .. } => Some(*reply),
             OrchEvent::ScoutEnded { .. }
             | OrchEvent::PlannerEnded { .. }

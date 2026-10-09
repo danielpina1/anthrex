@@ -20,12 +20,14 @@ pub const TASK_RESULT: &str = "task_result";
 pub const SUBMIT_EPIC: &str = "submit_epic";
 pub const TASK_NOTE: &str = "task_note";
 pub const START_GOAL: &str = "start_goal";
+pub const ASK_USER: &str = "ask_user";
 
 /// The most `run_status` waits, in seconds (decision 16).
 pub const RUN_STATUS_MAX_WAIT: u64 = 50;
 
 /// `tools_for(Orchestrator)`, in decision 15's order, then milestone 9.3's `start_goal`
-/// (decision 29), then milestone 9.6's three (`tools_design.rs`).
+/// (decision 29), then milestone 9.6's three (`tools_design.rs`), then milestone 9.9's
+/// `ask_user`.
 pub fn orchestrator_tools() -> Vec<Tool> {
     let mut tools = vec![
         get_context(),
@@ -37,6 +39,7 @@ pub fn orchestrator_tools() -> Vec<Tool> {
         start_goal(),
     ];
     tools.extend(crate::tools_design::orchestrator_design_tools());
+    tools.push(ask_user());
     tools
 }
 
@@ -57,6 +60,25 @@ pub fn task_note() -> Tool {
                 "text": text(4000),
             }),
             &["kind", "text"],
+        ),
+    )
+}
+
+/// Milestone 9.9 decision 15: the orchestrator's one question to the user. The daemon
+/// parses the call again with the same bounds (`orch/tools.rs`).
+fn ask_user() -> Tool {
+    Tool::new(
+        ASK_USER,
+        "Ask the user one question when only they can decide, with up to nine short options \
+         and the context they need. Returns at once; their choice arrives as a message. \
+         Never ask in chat instead.",
+        closed(
+            json!({
+                "question": text(500),
+                "options": array(text(200), None, 9),
+                "context": text(4000),
+            }),
+            &["question"],
         ),
     )
 }
