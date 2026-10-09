@@ -312,17 +312,49 @@ fn planner_cannot_call_edit_plan() {
     }
 }
 
+/// Milestone 9.9 decision 11: `override` and `approve_hold` are the orchestrator's own
+/// ops now and parse into `PlanEdit`s (each needs its reason); the plan's `approve` and
+/// `accept` stay unknown ops, so a model still cannot approve a plan.
 #[test]
-fn override_op_fails_to_parse_with_the_documented_message() {
+fn override_and_approve_hold_parse_but_approve_and_accept_do_not() {
+    let call = orch(
+        "edit_plan",
+        json!({"edits": [{"op": "override", "task_id": "t1", "reason": "fine"}]}),
+    )
+    .unwrap();
+    let OrchCall::EditPlan { edits, .. } = call else {
+        panic!("{call:?}");
+    };
+    assert_eq!(
+        edits,
+        vec![proto::PlanEdit::Override {
+            task_id: "t1".into(),
+            reason: "fine".into()
+        }]
+    );
+    let call = orch(
+        "edit_plan",
+        json!({"edits": [{"op": "approve_hold", "hold": "promotion", "reason": "ok"}]}),
+    )
+    .unwrap();
+    let OrchCall::EditPlan { edits, .. } = call else {
+        panic!("{call:?}");
+    };
+    assert_eq!(
+        edits,
+        vec![proto::PlanEdit::ApproveHold {
+            hold: "promotion".into(),
+            reason: "ok".into()
+        }]
+    );
+    // The reason is not optional.
     let error = orch(
         "edit_plan",
         json!({"edits": [{"op": "override", "task_id": "t1"}]}),
     )
     .unwrap_err();
-    assert!(
-        error.starts_with("invalid arguments: edits[0]: unknown variant `override`"),
-        "{error}"
-    );
+    assert!(error.starts_with("invalid arguments: edits[0]:"), "{error}");
+    assert!(error.contains("reason"), "{error}");
     for op in ["approve", "accept"] {
         let error = orch("edit_plan", json!({"edits": [{"op": op}]})).unwrap_err();
         assert!(

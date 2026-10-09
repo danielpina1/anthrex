@@ -348,27 +348,38 @@ fn orchestrator_calls_from_another_window_are_refused() {
     );
 }
 
-/// Design rule: no model approves. The orchestrator's tools reach no approval of the
-/// plan, a task or a hold; only the user's requests do.
+/// Design rule: no model approves the plan. Milestone 9.9 gave the orchestrator
+/// `override` and `approve_hold`, but only on a running run (the user path's
+/// preconditions): at the plan gate both reach the engine and are refused, `approve`
+/// and `accept` are still no ops, and no tool of that name exists.
 #[test]
-fn orchestrator_tools_cannot_approve() {
+fn orchestrator_tools_cannot_approve_a_plan() {
     let mut fx = launched(false);
     edit_plan(
         &mut fx,
         json!({"edits": [add("t1", "auth")], "submit": true}),
     );
-    let before = fx.run().clone();
-    for edit in [
-        json!({"op": "override", "task_id": "t1", "reason": "fine"}),
-        json!({"op": "approve"}),
-        json!({"op": "approve_hold", "hold": "promotion"}),
-    ] {
+    let tasks = fx.run().tasks.clone();
+    for edit in [json!({"op": "approve"}), json!({"op": "accept"})] {
         let effects = edit_plan(&mut fx, json!({"edits": [edit]}));
         assert!(
             error(&effects).starts_with("invalid arguments: edits[0]: unknown variant"),
             "{effects:?}"
         );
     }
+    for edit in [
+        json!({"op": "override", "task_id": "t1", "reason": "fine"}),
+        json!({"op": "approve_hold", "hold": "promotion", "reason": "fine"}),
+    ] {
+        let effects = edit_plan(&mut fx, json!({"edits": [edit]}));
+        let text = error(&effects);
+        assert!(!text.starts_with("invalid arguments"), "it parses: {text}");
+        assert!(text.contains(RUN_ID), "the engine's refusal: {text}");
+    }
+    assert_eq!(fx.run().state, RunState::AwaitingApproval);
+    assert!(fx.run().orch.handled.is_empty());
+    assert_eq!(fx.run().approved_by, None);
+    assert_eq!(fx.run().tasks, tasks);
     for tool in ["approve", "approve_hold", "accept", "override"] {
         let effects = orch_tool(&mut fx, ORCH, tool, json!({"hold": "promotion"}));
         assert_eq!(
@@ -378,7 +389,6 @@ fn orchestrator_tools_cannot_approve() {
     }
     // Submitting again at the gate approves nothing.
     edit_plan(&mut fx, json!({"edits": [], "submit": true}));
-    assert_eq!(*fx.run(), before);
     assert_eq!(fx.run().state, RunState::AwaitingApproval);
     assert_eq!(fx.run().approved_by, None);
 }

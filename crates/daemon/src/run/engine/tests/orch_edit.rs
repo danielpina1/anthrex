@@ -328,10 +328,10 @@ fn a_submit_while_the_run_is_being_discarded_is_refused() {
         reply,
         run_id: RUN_ID.into(),
     });
-    let before = fx.run().clone();
+    let before = but_the_stall(fx.run());
     let effects = edit_plan(&mut fx, json!({"edits": [], "submit": true}));
     assert_eq!(error(&effects), format!("run {RUN_ID} is being discarded"));
-    assert_eq!(*fx.run(), before);
+    assert_eq!(but_the_stall(fx.run()), before);
     let reply = fx.reply();
     let effects = fx.next(EventKind::Edit {
         reply,
@@ -345,7 +345,7 @@ fn a_submit_while_the_run_is_being_discarded_is_refused() {
         replies(&effects),
         vec![Err(format!("run {RUN_ID} is being discarded"))]
     );
-    assert_eq!(*fx.run(), before);
+    assert_eq!(but_the_stall(fx.run()), before);
 }
 
 /// Milestone 9.3 task M9.3.7 fix round 1 (ruling: option (b)): an `edit_plan` with no
@@ -383,6 +383,20 @@ fn an_edit_plan_without_edits_is_an_empty_batch() {
     assert!(ok, "{value}");
     let o = fx.run().orch.orchestrator.as_ref().unwrap();
     assert_eq!(o.summary.as_deref(), Some("All done."));
+}
+
+/// `run` without the stall watchdog's bookkeeping (task M9.9.6): a refused call from the
+/// live orchestrator still counts as acting (liveness, not success), so it moves these.
+/// Moving them is itself a change the step reports, so the revision and the step's time
+/// they cause are left out too.
+fn but_the_stall(run: &crate::run::model::Run) -> crate::run::model::Run {
+    let mut run = run.clone();
+    run.revision = 0;
+    run.last_step_at = 0;
+    run.orch.acted_seq = 0;
+    run.orch.waiting_since = None;
+    run.orch.stalled_at = None;
+    run
 }
 
 /// `run` without what a rejected batch still changes (task M9.9, decision 40): its

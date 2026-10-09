@@ -196,7 +196,7 @@ fn nested_lists_past_their_bound_are_refused() {
 
 /// The schema's objects are closed: a field it does not have is refused, at every
 /// level. `budget` is left to rule 7.1's own refusal (`edit_plan_reply_shapes`), and an
-/// unknown `op` to serde's (`orchestrator_tools_cannot_approve`).
+/// unknown `op` to serde's (`orchestrator_tools_cannot_approve_a_plan`).
 #[test]
 fn unknown_nested_fields_are_refused() {
     let mut budgeted = task(false);
