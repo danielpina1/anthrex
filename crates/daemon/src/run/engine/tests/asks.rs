@@ -115,16 +115,54 @@ fn bounds_are_checked_again_by_the_daemon() {
 }
 
 #[test]
-fn a_run_entering_complete_drops_its_question_and_a_terminal_one_is_refused() {
+fn a_question_asked_while_complete_waits_through_a_step() {
     let mut fx = approved();
     ask(&mut fx, json!({"question": "still there?"}));
     fx.run_mut().state = proto::RunState::Complete;
-    // `before` of this step is Complete too (set directly): the question waits.
+    // `before` of this step is Complete too: the run did not enter it.
     fx.tick();
     assert!(pending(&fx).is_some());
+}
+
+#[test]
+fn a_run_entering_complete_in_a_step_drops_its_question() {
+    use super::kinds_integration::{C1, merge_real};
+    use super::orch::{add, edit_plan, launched};
+    use crate::run::engine::OpResult;
+    let mut fx = launched(false);
+    edit_plan(
+        &mut fx,
+        json!({"edits": [add("t1", "auth")], "submit": true}),
+    );
+    fx.approve();
+    merge_real(&mut fx, "t1", C1);
+    ask(&mut fx, json!({"question": "before the end?"}));
+    assert_ne!(fx.run().state, proto::RunState::Complete);
+    assert!(pending(&fx).is_some());
+    let (op, _) = fx.op("VerifyRefs");
+    fx.done(op, OpResult::RefsOk);
+    assert_eq!(fx.run().state, proto::RunState::Complete);
+    assert_eq!(pending(&fx), None);
+}
+
+#[test]
+fn a_terminal_run_refuses_a_question_with_its_state() {
+    let mut fx = approved();
     fx.run_mut().state = proto::RunState::Failed;
     let effects = ask(&mut fx, json!({"question": "late"}));
-    assert!(error(&effects).starts_with("run "), "{effects:?}");
+    assert_eq!(error(&effects), format!("run {RUN_ID} is failed"));
+}
+
+#[test]
+fn an_option_choice_on_a_question_without_options_is_refused() {
+    let mut fx = approved();
+    ask(&mut fx, json!({"question": "free text?"}));
+    let effects = answer(&mut fx, 1, Some(0));
+    assert_eq!(
+        replies(&effects)[0].clone().unwrap_err(),
+        "this question has no options"
+    );
+    assert!(pending(&fx).is_some());
 }
 
 #[test]

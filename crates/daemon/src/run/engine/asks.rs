@@ -85,6 +85,7 @@ fn answered(run: &mut Run, id: u64, choice: Option<u32>, now: u64) -> Result<Str
         None => None,
         Some(i) => match ask.options.get(i as usize) {
             Some(option) => Some(option.clone()),
+            None if ask.options.is_empty() => return Err("this question has no options".into()),
             None => return Err(format!("choose 1 to {}", ask.options.len())),
         },
     };
