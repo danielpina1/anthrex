@@ -330,3 +330,7 @@ pub(crate) use detail::detail_lines;
 #[cfg(test)]
 #[path = "alerts_view_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "alerts_footer_tests.rs"]
+mod footer_tests;
