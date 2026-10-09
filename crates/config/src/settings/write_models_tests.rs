@@ -546,7 +546,7 @@ fn an_existing_bak_is_never_overwritten() {
         OLD,
         "the first .bak stays"
     );
-    // A `.bak` that is not a file is left alone too; the save still goes through.
+    // A `.bak` that is not a file is left alone too; the backup goes to `.bak.1`.
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");
     std::fs::create_dir(dir.path().join("config.toml.bak")).unwrap();
@@ -565,7 +565,7 @@ fn an_existing_bak_is_never_overwritten() {
     names.sort();
     assert_eq!(
         names,
-        ["config.toml", "config.toml.bak"],
+        ["config.toml", "config.toml.bak", "config.toml.bak.1"],
         "no temporary file left"
     );
 }

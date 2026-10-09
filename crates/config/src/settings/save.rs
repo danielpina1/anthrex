@@ -25,9 +25,10 @@ pub struct Saved {
 /// back, temporary files, fsync, `cancel` check, rename, fsync the directory. The check
 /// swaps `cancel` to `true`, so exactly one of this save and a caller that swaps it
 /// later reads `false`. A missing file (and its directory) is created. When the edit
-/// removed an old model key and no `.bak` exists yet, the file as it was is kept as
-/// `config.toml.bak` (decision 40, fix round 1's M1), renamed into place just before
-/// the file is; an existing `.bak` is never replaced. On any refusal the file is
+/// removed an old model key, the file as it was is kept as `config.toml.bak`
+/// (decision 40, fix round 1's M1), renamed into place just before
+/// the file is; an existing `.bak` is never replaced: the next free `config.toml.bak.N`
+/// (N = 1, 2, ...) is written instead (final review I2). On any refusal the file is
 /// untouched and no temporary file is left.
 pub fn save(path: &Path, doc: &SettingsDoc, cancel: &AtomicBool) -> Result<Saved, Vec<String>> {
     // M9.2.6 fix round 2: what is written, validated and read back is the cleaned doc.
@@ -54,10 +55,13 @@ pub fn save(path: &Path, doc: &SettingsDoc, cancel: &AtomicBool) -> Result<Saved
     std::fs::create_dir_all(&dir)
         .map_err(|e| vec![format!("could not create {}: {e}", dir.display())])?;
     let temp = temp_path(&dir, path);
-    // Fix round 1 (M1): the first save that removes old keys keeps the file as it was;
-    // an existing `.bak` (whatever it is) is never replaced.
-    let first = std::fs::symlink_metadata(bak_path(path)).is_err();
-    let bak = (edited.removed && first).then(|| (temp_path(&dir, &bak_path(path)), bak_path(path)));
+    // Fix round 1 (M1) and the final review's I2: a save that removes old keys keeps the
+    // file as it was; an existing backup (whatever it is) is never replaced, so the next
+    // free `.bak.N` is used.
+    let bak = edited.removed.then(|| {
+        let target = free_bak_path(path);
+        (temp_path(&dir, &target), target)
+    });
     let written = write_temp(&temp, &out, mode)
         .and_then(|()| match &bak {
             Some((bak_temp, _)) => write_temp(bak_temp, &text, mode),
@@ -94,6 +98,27 @@ pub fn save(path: &Path, doc: &SettingsDoc, cancel: &AtomicBool) -> Result<Saved
     })
 }
 
+/// Final review I1: the refusal text of a save over a file that changed after the daemon
+/// read it.
+pub const CHANGED_SINCE_LOADED: &str = "config.toml changed since anthrex read it (its [models] rows or old model keys were edited); restart the daemon or reopen C-b S, then change it again";
+
+/// Final review I1: `Some(problem)` when the file at `path` no longer reads as the
+/// `live` settings do, in the role table or in the notes about the old model keys. A
+/// save writes the live table, so saving over such a file would silently revert the
+/// edit. A missing file reads as the defaults. Blocking.
+pub fn changed_since_loaded(path: &Path, live: &Orchestrator) -> Option<String> {
+    let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let text = match std::fs::read_to_string(&resolved) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        // The save itself reports an unreadable file.
+        Err(_) => return None,
+    };
+    let now = crate::parse(&text).0.orchestrator;
+    (now.roles != live.roles || now.roles_notes != live.roles_notes)
+        .then(|| CHANGED_SINCE_LOADED.to_string())
+}
+
 /// Decision 40: `config.toml.bak` beside `config.toml`.
 pub(crate) fn bak_path(path: &Path) -> PathBuf {
     let mut name = path
@@ -101,6 +126,22 @@ pub(crate) fn bak_path(path: &Path) -> PathBuf {
         .map_or_else(|| "config.toml".into(), |n| n.to_os_string());
     name.push(".bak");
     path.with_file_name(name)
+}
+
+/// `config.toml.bak`, or the first of `config.toml.bak.1`, `.2`, ... that does not exist.
+pub(crate) fn free_bak_path(path: &Path) -> PathBuf {
+    let first = bak_path(path);
+    if std::fs::symlink_metadata(&first).is_err() {
+        return first;
+    }
+    (1u32..)
+        .map(|n| {
+            let mut name = first.file_name().unwrap_or_default().to_os_string();
+            name.push(format!(".{n}"));
+            first.with_file_name(name)
+        })
+        .find(|p| std::fs::symlink_metadata(p).is_err())
+        .unwrap_or(first)
 }
 
 /// `<dir>/.<name>.anthrex-<pid>-<nanos>.tmp`, beside the original so the rename stays on
