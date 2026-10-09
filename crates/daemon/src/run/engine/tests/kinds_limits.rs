@@ -9,7 +9,7 @@ use super::dispatch::{edit, replies};
 use super::fixture::*;
 use super::kinds::{B1, H1, research, review, reviewer_window, running, window_task};
 use super::kinds_integration::{C1, mail_epic, merge_real};
-use super::orch::{add, edit_plan, launched};
+use super::orch::{add, edit_plan, error, launched};
 use super::planners::epic;
 use crate::run::engine::{Effect, EventKind, OpKind};
 use crate::run::orch::contract::integration_review_prompt;
@@ -153,6 +153,49 @@ fn the_users_rewrite_and_retry_are_not_capped() {
     let task = fx.task("t1");
     assert_eq!(task.state, TaskState::Working);
     assert_eq!(task.orch.rewrite_restarts, 1);
+}
+
+/// Final review C-1: the cap's block is the user's. It is user-only, the orchestrator's
+/// retry is refused with the user-only text and leaves the count, and the user's retry
+/// still lifts it.
+#[test]
+fn the_rewrite_cap_block_is_user_only_and_only_the_user_lifts_it() {
+    let mut fx = orchestrated_mis_sized();
+    for n in 1..=4 {
+        orch_rewrite(&mut fx, &format!("step {n}"));
+        if n < 4 {
+            mis_sized_again(&mut fx);
+        }
+    }
+    let block = fx.task("t1").block.clone().unwrap();
+    assert!(block.user_only, "{block:?}");
+    let retry = json!({"op": "retry", "task_id": "t1", "reason": "once more"});
+    let effects = edit_plan(&mut fx, json!({"edits": [retry]}));
+    assert_eq!(
+        error(&effects),
+        "task t1 waits on something only the user can fix, and they have been alerted: rewritten 3 times; the user decides"
+    );
+    let task = fx.task("t1");
+    assert_eq!(task.state, TaskState::Blocked);
+    assert_eq!(task.orch.rewrite_restarts, 3);
+    // The user's retry lifts it.
+    let effects = super::control::retry(&mut fx, "t1");
+    assert!(matches!(&replies(&effects)[..], [Ok(_)]), "{effects:#?}");
+    assert_eq!(fx.task("t1").orch.rewrite_restarts, 0);
+}
+
+/// Final review C-1: the orchestrator's own retry never starts the count again.
+#[test]
+fn the_orchestrators_retry_keeps_the_rewrite_count() {
+    let mut fx = orchestrated_mis_sized();
+    for n in 1..=2 {
+        orch_rewrite(&mut fx, &format!("step {n}"));
+        mis_sized_again(&mut fx);
+    }
+    let retry = json!({"op": "retry", "task_id": "t1", "reason": "once more"});
+    let effects = edit_plan(&mut fx, json!({"edits": [retry]}));
+    assert!(matches!(&replies(&effects)[..], [Ok(_)]), "{effects:#?}");
+    assert_eq!(fx.task("t1").orch.rewrite_restarts, 2);
 }
 
 #[test]

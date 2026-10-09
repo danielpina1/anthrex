@@ -414,8 +414,11 @@ pub(super) fn retry_on(
             "task {task_id} retried: its race's winner is crowned again"
         ));
     }
-    // M9.9 second review, M-c: a retry lifts decision 25's cap.
-    run.tasks[i].orch.rewrite_restarts = 0;
+    // M9.9 second review, M-c: the user's retry lifts decision 25's cap. Final review
+    // C-1: the orchestrator's does not, or it could lift the cap on its own loop.
+    if actor == Actor::User {
+        run.tasks[i].orch.rewrite_restarts = 0;
+    }
     let how = rung2(run, i, format!("{who} retried it{was}"), now, fx);
     history(run, i, now, format!("retried by {who} at rung 2{was}"));
     if actor == Actor::User {
