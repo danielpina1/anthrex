@@ -109,6 +109,83 @@ fn bells_follow_settings() {
     );
 }
 
+fn with_role(id: u32, name: &str, status: Status, role: Option<proto::AgentRole>) -> WindowInfo {
+    let mut w = win(id, name, status);
+    w.run = role.map(|role| proto::RunRef {
+        run_id: "r".into(),
+        task_id: None,
+        role,
+        session: 1,
+        lane: None,
+    });
+    w
+}
+
+/// Milestone 9.9 (OFA §4.6, D5): only orchestrator and user windows toast and ring on
+/// Attention; a worker's Done is unchanged.
+#[test]
+fn only_orchestrator_and_user_windows_ring_on_attention() {
+    use proto::AgentRole::*;
+    let settings = UiSettings {
+        bell_attention: true,
+        bell_done: true,
+        ..UiSettings::default()
+    };
+    for (role, rings) in [
+        (None, true),
+        (Some(Orchestrator), true),
+        (Some(Worker), false),
+        (Some(Reviewer), false),
+        (Some(Scout), false),
+        (Some(Planner), false),
+        (Some(Decider), false),
+        (Some(Racer), false),
+        (Some(TestWriter), false),
+        (Some(Brainstormer), false),
+        (Some(DocReviewer), false),
+    ] {
+        let mut app = App::new(
+            vec![
+                win(1, "focused", Status::Idle),
+                with_role(2, "b", Status::Working, role),
+            ],
+            "/tmp".into(),
+            settings.clone(),
+        );
+        let _ = app.set_terminal_size(80, 24);
+        let effects = app.on_daemon(DaemonMsg::WindowsChanged {
+            windows: vec![
+                win(1, "focused", Status::Idle),
+                with_role(2, "b", Status::Attention, role),
+            ],
+        });
+        assert_eq!(effects.contains(&Effect::Bell), rings, "{role:?}");
+        assert_eq!(
+            app.toast_text()
+                .is_some_and(|t| t.contains("needs attention")),
+            rings,
+            "{role:?}"
+        );
+    }
+    // Done still rings for a worker (bell.done unchanged).
+    let mut app = App::new(
+        vec![
+            win(1, "focused", Status::Idle),
+            with_role(2, "w", Status::Working, Some(Worker)),
+        ],
+        "/tmp".into(),
+        settings,
+    );
+    let _ = app.set_terminal_size(80, 24);
+    let effects = app.on_daemon(DaemonMsg::WindowsChanged {
+        windows: vec![
+            win(1, "focused", Status::Idle),
+            with_role(2, "w", Status::Done, Some(Worker)),
+        ],
+    });
+    assert!(effects.contains(&Effect::Bell));
+}
+
 /// Decision 37's own last sentence: "It sends at most one bell per `WindowsChanged`."
 /// Whole-branch-review Minor m1: `replace_windows` pushed one `Effect::Bell` per
 /// transitioning background window inside its loop, so two background windows

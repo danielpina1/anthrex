@@ -6,7 +6,7 @@
 
 use super::{App, Effect};
 use crate::tree;
-use proto::{Status, WindowInfo};
+use proto::{AgentRole, Status, WindowInfo};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::Instant;
@@ -88,7 +88,12 @@ impl App {
                 .map(|old| old.status);
             if previous != Some(w.status) {
                 match w.status {
-                    Status::Attention => {
+                    // Milestone 9.9 (OFA §4.6, D5, decision 26): only orchestrator and
+                    // user windows (no run role) toast and ring; a run's other agents
+                    // are the orchestrator's to handle.
+                    Status::Attention
+                        if (w.run.as_ref()).is_none_or(|r| r.role == AgentRole::Orchestrator) =>
+                    {
                         self.toast(format!("{} needs attention", w.name));
                         rings |= self.settings.bell_attention;
                     }

@@ -16,6 +16,18 @@ pub fn answer_request(run: &RunInfo, choice: Option<u32>) -> Option<RunRequest> 
     })
 }
 
+/// Milestone 9.9 (OFA §4.6): the Alerts view footer's line for `run` — its title, what its
+/// orchestrator handled, and where to read it; none when it handled nothing.
+pub fn handled_line(run: &RunInfo) -> Option<String> {
+    let n = run.orchestrator.as_ref()?.handled_total;
+    (n > 0).then(|| {
+        format!(
+            "{}: orchestrator handled {n} · o on its alerts opens the run",
+            crate::safe_text::one_line(crate::tree::run_title(run))
+        )
+    })
+}
+
 impl App {
     /// Keys typed into a focused PTY window: the input, and where that window is an
     /// orchestrator with a pending ask and the key is Enter, the answer "in the window"

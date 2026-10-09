@@ -77,3 +77,29 @@ pub(super) fn notes_text(task: &TaskInfo, app: &App) -> Option<String> {
         .collect();
     (!notes.is_empty()).then(|| notes.join(" · "))
 }
+
+/// Milestone 9.9 (OFA §4.6): the orchestrator's quiet history, as inspector rows — a
+/// `handled` row with the count, then what it resolved, newest first, each with its
+/// local time. Empty until it has handled something.
+pub(super) fn handled_rows(orchestrator: &OrchestratorInfo, app: &App) -> Vec<(String, String)> {
+    if orchestrator.handled_total == 0 {
+        return Vec::new();
+    }
+    let mut rows = vec![(
+        "handled".to_owned(),
+        format!("orchestrator handled {}", orchestrator.handled_total),
+    )];
+    rows.extend(orchestrator.handled.iter().rev().map(|h| {
+        (
+            String::new(),
+            format!(
+                "{} {} {} — {}",
+                local_hhmm(h.at, app.utc_offset_secs),
+                clean(&h.op),
+                clean(&h.target),
+                clean(&h.reason)
+            ),
+        )
+    }));
+    rows
+}

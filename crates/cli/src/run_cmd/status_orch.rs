@@ -19,6 +19,23 @@ pub(super) fn orchestrator_lines(run: &RunInfo) -> String {
             o.route.runtime.label(),
             if o.live { "live" } else { "exited" }
         ));
+        // Milestone 9.9 (OFA §4.6): what it resolved on its own, and what it asks.
+        if o.handled_total > 0 {
+            out.push_str(&format!("  orchestrator handled {}\n", o.handled_total));
+        }
+        if let Some(ask) = &o.ask {
+            out.push_str(&format!(
+                "  orchestrator asks: {}\n",
+                super::status::one_line(&ask.question)
+            ));
+            for (i, option) in ask.options.iter().enumerate() {
+                out.push_str(&format!(
+                    "    {}. {}\n",
+                    i + 1,
+                    super::status::one_line(option)
+                ));
+            }
+        }
     }
     if !run.planners.is_empty() {
         let planners: Vec<String> = run
