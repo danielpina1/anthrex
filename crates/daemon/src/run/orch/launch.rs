@@ -56,7 +56,10 @@ pub fn orchestrator_route(choice: Option<&OrchestratorChoice>, models: &RunModel
                         runtime: c.runtime,
                         id: Some(id),
                     };
-                    let own = (model == row.model).then_some(row.effort.clone()).flatten();
+                    // Gate fix B2: the row's own model by canonical identity.
+                    let own = (models.same_model_ref(&model, &row.model))
+                        .then_some(row.effort.clone())
+                        .flatten();
                     (model, own)
                 }
                 None => runtime_default(c.runtime, row),

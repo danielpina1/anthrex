@@ -396,6 +396,13 @@ pub fn canonical_id(catalogs: &[ModelCatalog], m: &ModelRef) -> String {
         .to_string()
 }
 
+/// Gate fix B2: whether `a` and `b` are one model: the same runtime and the same
+/// [`canonical_id`]. The TUI's forms decide "the row's own model" with it, as the
+/// daemon's `RunModels::same_model_ref` does from the catalogs a run learned.
+pub fn same_model(catalogs: &[ModelCatalog], a: &ModelRef, b: &ModelRef) -> bool {
+    a.runtime == b.runtime && canonical_id(catalogs, a) == canonical_id(catalogs, b)
+}
+
 impl ModelCatalog {
     /// The model `m` names, if the catalog lists it (`id: None` is the entry with
     /// `is_default`, else none). An id finds the entry of that id; else (the real-CLI

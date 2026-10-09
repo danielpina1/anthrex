@@ -25,7 +25,7 @@ fn live(runtime: Runtime, models: Vec<proto::CatalogModel>) -> ModelCatalog {
 }
 
 /// Both real catalogs, as the probes parse the fixtures.
-fn real_catalogs() -> Vec<ModelCatalog> {
+pub(super) fn real_catalogs() -> Vec<ModelCatalog> {
     let claude: serde_json::Value = serde_json::from_str(include_str!(
         "../../../fake-agent/fixtures/claude-initialize.json"
     ))

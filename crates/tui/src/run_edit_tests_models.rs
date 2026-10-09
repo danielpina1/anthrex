@@ -336,6 +336,30 @@ fn the_effort_row_shows_the_rows_effort_for_the_rows_model() {
     assert_eq!(effort_shown(&app), "‹ default ›");
 }
 
+/// Gate fix B2: the real Claude catalog lists Opus only by alias (`opus[1m]`,
+/// resolving to `claude-opus-5-5[1m]`); picking it for a `claude-opus-5-5` row is the
+/// row's own model, so it runs and reads at the row's effort, as the daemon decides.
+#[test]
+fn picking_the_rows_alias_shows_the_rows_effort() {
+    let task = with_opus_row(edit_fixture_task());
+    let mut app = edit_app();
+    app.modal = Some(Modal::EditTask(Box::new(TaskEditForm::new(RUN_ID, &task))));
+    app.on_key(key(KeyCode::Enter));
+    for _ in 0..12 {
+        app.on_key(key(KeyCode::Char('k')));
+    }
+    for _ in 0..12 {
+        let picker = form(&app).picker.as_ref().unwrap();
+        if selected_model(picker) == Some(mref("claude:opus[1m]")) {
+            break;
+        }
+        app.on_key(key(KeyCode::Char('j')));
+    }
+    app.on_key(key(KeyCode::Enter));
+    assert_eq!(form(&app).current_model(), Some(mref("claude:opus[1m]")));
+    assert_eq!(effort_shown(&app), "‹ max (role table) ›");
+}
+
 /// The task's row, Opus 5.5 at `max` (`TaskInfo.row`), on `task`.
 fn with_opus_row(mut task: proto::TaskInfo) -> proto::TaskInfo {
     task.row = Some(proto::Route {

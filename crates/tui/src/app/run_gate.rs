@@ -101,6 +101,7 @@ impl App {
             ('e', Some(task)) => {
                 let mut form = TaskEditForm::in_run(run, task);
                 form.role_label = form.table_model().map(|m| self.catalogs.label(&m, false));
+                form.row_aliases = row_aliases(&self.catalogs, form.row.as_ref());
                 Modal::EditTask(Box::new(form))
             }
             (_, Some(task)) => confirm(
@@ -132,6 +133,7 @@ impl App {
         // Milestone 9.8 decision 39: the route model's efforts, as the catalogs say now.
         form.efforts = (form.effort_model()).map_or_else(Vec::new, |m| catalogs.efforts(&m));
         form.role_label = form.table_model().map(|m| catalogs.label(&m, false));
+        form.row_aliases = row_aliases(catalogs, form.row.as_ref());
         if let Some(picker) = &mut form.picker {
             match form_picker::on_key(picker, key) {
                 FormPick::Stay => {}
@@ -280,3 +282,12 @@ impl App {
 #[cfg(test)]
 #[path = "run_view_gate_tests.rs"]
 mod run_view_tests;
+
+/// Gate fix B2: the models the catalogs say run as the task's row's model.
+fn row_aliases(
+    catalogs: &crate::app::model_picker::Catalogs,
+    row: Option<&proto::Route>,
+) -> Vec<proto::models::ModelRef> {
+    let model = row.and_then(|r| form_picker::route_model(Some(r.runtime), Some(&r.model)));
+    model.map_or_else(Vec::new, |m| catalogs.aliases(&m))
+}

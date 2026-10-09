@@ -28,7 +28,7 @@ pub fn escalate(
 ) -> Option<Route> {
     ladder(models, role, current)
         .into_iter()
-        .find(|route| !failed_in(failed, route))
+        .find(|route| !failed_in(models, failed, route))
 }
 
 /// Every route escalation can reach from `from` in order, with nothing skipped: the
@@ -148,7 +148,7 @@ fn route_failed_line(
     route: &Route,
 ) -> Option<String> {
     let task = &run.tasks[i];
-    if !failed_in(&failed_routes(task), route) {
+    if !failed_in(run.limits.models(), &failed_routes(task), route) {
         return None;
     }
     let (id, runtime, model) = (task.id(), route.runtime.label(), &route.model);

@@ -356,9 +356,11 @@ pub fn failed_routes(task: &Task) -> Vec<Route> {
 }
 
 /// Whether `route` is, by runtime and model, one of `failed` (an effort changes nothing
-/// about a model that cannot run).
-pub fn failed_in(failed: &[Route], route: &Route) -> bool {
-    (failed.iter()).any(|f| f.runtime == route.runtime && f.model == route.model)
+/// about a model that cannot run). Gate fix B2: one model by the run's canonical
+/// identity ([`RunModels::same_model`]), so `opus[1m]` failing rules out
+/// `claude-opus-5-5` too.
+pub fn failed_in(models: &RunModels, failed: &[Route], route: &Route) -> bool {
+    (failed.iter()).any(|f| models.same_model(f, route))
 }
 
 pub(crate) fn overlap(a: &Task, b: &Task) -> bool {
@@ -419,14 +421,14 @@ pub fn reviewer_at_launch(
     failed: &[Route],
 ) -> (Route, Option<String>) {
     let (route, line) = models.reviewer_route(author);
-    if !failed_in(failed, &route) {
+    if !failed_in(models, failed, &route) {
         return (route, line);
     }
     let choice = models.choice(Role::Reviewer);
     let own = models.route(Role::Reviewer);
     let fallback = (choice.fallback.as_ref()).map(|f| RunModels::route_of(f, None));
     let other = (std::iter::once(own).chain(fallback))
-        .find(|r| !(failed_in(failed, r) || models.same_model(r, author)));
+        .find(|r| !(failed_in(models, failed, r) || models.same_model(r, author)));
     other.map_or((route, line), |r| (r, None))
 }
 
@@ -482,3 +484,7 @@ mod tests_user;
 #[cfg(test)]
 #[path = "model_roles_tests_real.rs"]
 mod tests_real;
+
+#[cfg(test)]
+#[path = "model_roles_tests_canon.rs"]
+mod tests_canon;

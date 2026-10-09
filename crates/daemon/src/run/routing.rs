@@ -120,13 +120,13 @@ pub fn escalation_pool(models: &RunModels, role: Role, from: &Route) -> Vec<Raw>
 /// Milestone 9.5 ruling RL-1: each pool entry whose route failed in this task says so,
 /// except at the `chosen` model (every entry failed: the selector fell back to it, and
 /// the record must not call its own choice skipped).
-fn mark_failed(mut raw: Vec<Raw>, task: &Task, chosen: &Route) -> Vec<Raw> {
+fn mark_failed(models: &RunModels, mut raw: Vec<Raw>, task: &Task, chosen: &Route) -> Vec<Raw> {
     use super::model_roles::{failed_in, failed_routes};
     let failed = (failed_routes(task).into_iter())
-        .filter(|f| !failed_in(std::slice::from_ref(chosen), f))
+        .filter(|f| !failed_in(models, std::slice::from_ref(chosen), f))
         .collect::<Vec<_>>();
     for (route, reason) in raw.iter_mut() {
-        if failed_in(&failed, route) {
+        if failed_in(models, &failed, route) {
             *reason = Some(super::model_roles::FAILED_IN_TASK.to_string());
         }
     }
@@ -200,6 +200,7 @@ pub fn record_worker(run: &mut Run, i: usize, now: u64) {
             ("escalation", "escalation_policy", ROLES_POLICY),
             &chosen,
             mark_failed(
+                run.limits.models(),
                 escalation_pool(run.limits.models(), RunModels::task_role(task), &from),
                 task,
                 &chosen,
@@ -266,6 +267,7 @@ pub fn record_test_writer(run: &mut Run, i: usize, chosen: &Route, now: u64) {
             ("escalation", "escalation_policy", ROLES_POLICY),
             chosen,
             mark_failed(
+                run.limits.models(),
                 escalation_pool(run.limits.models(), Role::TestWriter, &from),
                 task,
                 chosen,
@@ -319,7 +321,7 @@ pub fn record_reviewer(
         let same = models.same_model(route, author);
         (same && route != chosen).then(|| "the author's own model".to_string())
     };
-    let pool = mark_failed(row_pool(run, Role::Reviewer, own), task, chosen);
+    let pool = mark_failed(models, row_pool(run, Role::Reviewer, own), task, chosen);
     let decision = decision(
         run,
         task,

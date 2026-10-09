@@ -28,6 +28,14 @@ pub(crate) fn clean(text: &str) -> String {
     one_line(text).trim().to_string()
 }
 
+/// Gate fix B2: whether `m` is the row's model `row`: the same ref, one of `aliases`
+/// ([`Catalogs::aliases`] of `row`), or the same id past a context tag or a date. The
+/// daemon applies the same rule (`RunModels::same_model_ref`), so a pick of `opus[1m]`
+/// for a `claude-opus-5-5` row runs, and reads, at the row's effort.
+pub fn is_row_model(row: &ModelRef, aliases: &[ModelRef], m: &ModelRef) -> bool {
+    row == m || aliases.contains(m) || proto::models::same_model(&[], row, m)
+}
+
 /// `Claude`, `Codex`: the runtime as the table names it.
 pub fn runtime_name(runtime: Runtime) -> &'static str {
     match runtime {
@@ -122,6 +130,33 @@ impl Catalogs {
                 .unwrap_or_else(|| clean(id)),
         };
         format!("{name} · {label}")
+    }
+
+    /// Gate fix B2: every model the catalogs list that runs as `model` (its aliases, the
+    /// default entry as `<runtime>:default`), for a form to tell the row's own model
+    /// without holding the catalogs ([`is_row_model`]).
+    pub fn aliases(&self, model: &ModelRef) -> Vec<ModelRef> {
+        let Some(catalog) = self.of(model.runtime) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for entry in &catalog.models {
+            let ids = [Some(entry.id.clone())].into_iter();
+            let ids = ids.chain(entry.is_default.then_some(None));
+            for id in ids {
+                let alias = ModelRef {
+                    runtime: model.runtime,
+                    id,
+                };
+                if alias != *model
+                    && !out.contains(&alias)
+                    && proto::models::same_model(&self.list, &alias, model)
+                {
+                    out.push(alias);
+                }
+            }
+        }
+        out
     }
 
     /// The model's efforts as the catalog reports them (empty when unknown), each an

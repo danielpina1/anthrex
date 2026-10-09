@@ -104,6 +104,7 @@ impl App {
         }
         form.role_table = self.goal_role_table();
         let row = self.goal_row();
+        form.row_aliases = self.catalogs.aliases(&row.model);
         form.row = Some((row.model, row.effort));
         if let Some(draft) = draft {
             form.goal = TextArea::editor(&draft);
@@ -139,6 +140,7 @@ impl App {
         let catalogs = &self.catalogs;
         if let Some(Modal::StartGoal(form)) = &mut self.modal {
             form.role_table = role_table;
+            form.row_aliases = catalogs.aliases(&row.model);
             form.row = Some((row.model, row.effort));
             form.efforts = (form.model.as_ref()).map_or_else(Vec::new, |m| catalogs.efforts(m));
         }
