@@ -262,6 +262,9 @@ pub(super) fn tool(
             let text = format!("run {} is paused; the user must resume it", run.id);
             return refuse(fx, reply, text);
         }
+        RunState::Halted if call.role == Orchestrator => {
+            return refuse(fx, reply, super::orch_ops::halted_refusal(&run.id));
+        }
         other => return refuse(fx, reply, format!("run {} is {}", run.id, other.label())),
     }
     // M9.9 second review, C-1: a run being ended takes no new work; the reads, and

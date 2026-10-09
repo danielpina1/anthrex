@@ -15,6 +15,7 @@ use crate::run::edit_log::{self, EditOutcome};
 use crate::run::engine::actions::rules;
 use crate::run::model::Run;
 use crate::run::orch::contract::ACTION_ALONE;
+use crate::run::orch::tools::{OrchCall, parse_call};
 use crate::run::orch::{EditSource, handled};
 
 /// The longest `reason`, in characters (decision 10).
@@ -206,7 +207,9 @@ fn accept_red(run: &mut Run, n: u16, reason: &str, now: u64) -> Result<String, S
 
 /// The gate for a halted or paused run (decision 6): a halted run takes `ask_user` and
 /// an `edit_plan` of exactly one `resume_run`; a paused one takes `ask_user` only.
-/// Anything else keeps the state's own gate (`orch.rs`).
+/// Anything else keeps the state's own gate (`orch.rs`). Final review I-3: the call is
+/// admitted by what it parses to, so a `submit` of false or an empty `responses` (the
+/// schema's defaults) does not shut it out.
 pub(super) fn admitted(state: RunState, call: &ToolCall) -> bool {
     if call.tool == "ask_user" {
         return true;
@@ -214,15 +217,27 @@ pub(super) fn admitted(state: RunState, call: &ToolCall) -> bool {
     if state != RunState::Halted || call.tool != "edit_plan" {
         return false;
     }
-    let Some(object) = call.args.as_object() else {
+    let Ok(OrchCall::EditPlan {
+        edits,
+        submit,
+        summary,
+        iterate,
+        responses,
+    }) = parse_call(call.role, &call.tool, &call.args)
+    else {
         return false;
     };
-    let Some(edits) = object.get("edits").and_then(|e| e.as_array()) else {
-        return false;
-    };
-    object.len() == 1
-        && edits.len() == 1
-        && edits[0].get("op").and_then(|o| o.as_str()) == Some("resume_run")
+    matches!(&edits[..], [PlanEdit::ResumeRun { .. }])
+        && !submit
+        && summary.is_none()
+        && iterate.is_none()
+        && responses.is_empty()
+}
+
+/// The orchestrator's refusal on a halted run it may not act on (final review I-3): it
+/// names what the run does take.
+pub(super) fn halted_refusal(run_id: &str) -> String {
+    format!("run {run_id} is halted; a lone resume_run (or ask_user) is all it takes")
 }
 
 /// An override that waited for its commit count landed (or failed): the orchestrator's

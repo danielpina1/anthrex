@@ -9,6 +9,9 @@ use super::full::verify_ok;
 use super::merge::commit;
 use super::orch::{edit_plan, error};
 
+/// Final review I-3: the orchestrator's refusal on a halted run names what it takes.
+const HALTED_REFUSAL: &str = "is halted; a lone resume_run (or ask_user) is all it takes";
+
 fn with_orchestrator(fx: &mut Fixture) {
     let orch = super::orch::launched(false).run().orch.orchestrator.clone();
     fx.run_mut().orch.orchestrator = orch;
@@ -105,7 +108,7 @@ fn a_halted_run_takes_a_lone_resume_run_and_nothing_else() {
         &mut fx,
         json!({"edits": [{"op": "cancel_task", "task_id": "t1"}]}),
     );
-    assert_eq!(error(&effects), format!("run {RUN_ID} is halted"));
+    assert_eq!(error(&effects), format!("run {RUN_ID} {HALTED_REFUSAL}"));
     let effects = op(
         &mut fx,
         json!({"op": "resume_run", "reason": "the refs read again"}),
@@ -201,6 +204,18 @@ fn the_halted_gate_admits_a_lone_resume_run_and_ask_user_only() {
     assert!(!admitted(RunState::Halted, &call("edit_plan", extra)));
     let other = json!({"edits": [{"op": "retry", "task_id": "t1", "reason": "r"}]});
     assert!(!admitted(RunState::Halted, &call("edit_plan", other)));
+    // Final review I-3: the call is admitted by what it parses to, not by its keys. A
+    // `submit` of false and an empty `responses` are the schema's defaults.
+    let defaults = json!({
+        "edits": [{"op": "resume_run", "reason": "r"}], "submit": false, "responses": [],
+    });
+    assert!(admitted(RunState::Halted, &call("edit_plan", defaults)));
+    let submitted = json!({"edits": [{"op": "resume_run", "reason": "r"}], "submit": true});
+    assert!(!admitted(RunState::Halted, &call("edit_plan", submitted)));
+    let iterate = json!({"edits": [{"op": "resume_run", "reason": "r"}], "iterate": "more"});
+    assert!(!admitted(RunState::Halted, &call("edit_plan", iterate)));
+    let malformed = json!({"edits": [{"op": "resume_run"}]});
+    assert!(!admitted(RunState::Halted, &call("edit_plan", malformed)));
     assert!(admitted(RunState::Halted, &call("ask_user", json!({}))));
     assert!(admitted(RunState::Paused, &call("ask_user", json!({}))));
     assert!(!admitted(RunState::Halted, &call("submit", json!({}))));
