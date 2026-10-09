@@ -1,4 +1,4 @@
-//! Gate fix (2026-10-09), ruling B2: every same-model rule uses the run's
+//! Gate fix (2026-10-09), rulings B2 and C2: every same-model rule uses the run's
 //! canonical model identity (`RunModels::same_model`), so a Claude alias the real CLI
 //! lists (`opus[1m]`) is the row's `claude-opus-5-5`: the row's own model keeps the
 //! row's effort, a failed alias rules out its full id, and the routing record does not
@@ -130,4 +130,22 @@ fn failed_in_matches_an_alias_and_its_resolved_model() {
         &at("claude:claude-opus-5-5", Some("high"))
     ));
     assert!(!failed_in(&models, &failed, &at("claude:sonnet", None)));
+}
+
+/// C2: a task whose route names the alias of its row's model records the row's model
+/// as its choice, not a second, skipped candidate "the task names the model …".
+#[test]
+fn the_initial_record_counts_the_rows_alias_as_the_rows_model() {
+    let mut run = run_on_opus();
+    run.history = true;
+    let task = &mut run.tasks[0];
+    task.spec.route.model = Some("opus[1m]".into());
+    task.route.model = "opus[1m]".into();
+    task.session = 1;
+    crate::run::routing::record_worker(&mut run, 0, 10);
+    let d = &run.tasks[0].routing_decisions[0];
+    assert_eq!(d.source, "explicit_task");
+    assert_eq!(d.candidates.len(), 1, "{:?}", d.candidates);
+    assert_eq!(d.candidates[0].route.model, "opus[1m]");
+    assert_eq!(d.candidates[0].skipped_reason, None);
 }

@@ -217,7 +217,10 @@ pub fn record_worker(run: &mut Run, i: usize, now: u64) {
             } else {
                 ROLE_TABLE
             };
-            let same = |r: &Route| r.runtime == chosen.runtime && r.model == chosen.model;
+            // Gate fix C2: one model by the run's canonical identity, as every other
+            // same-model rule (`opus[1m]` is the row's `claude-opus-5-5`).
+            let models = run.limits.models();
+            let same = |r: &Route| models.same_model(r, &chosen);
             let names = |r: &Route| {
                 (explicit && !same(r)).then(|| format!("the task names the model {}", chosen.model))
             };
