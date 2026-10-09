@@ -582,7 +582,7 @@ fn several_handled_runs_leave_the_list_and_detail_usable_at_80x24() {
         "{bottom:?}"
     );
     for y in m.y..m.y + m.height {
-        assert_eq!(buffer[(m.x + m.width - 1, y)].symbol() != " ", true, "{y}");
+        assert!(buffer[(m.x + m.width - 1, y)].symbol() != " ", "{y}");
     }
 }
 
