@@ -210,10 +210,21 @@ fn detail_window(
 /// Milestone 9.9 (OFA §4.6): the quiet lines below the list, one per run whose
 /// orchestrator handled something. Never alerts, never selectable.
 fn footer(app: &App) -> Vec<String> {
-    (app.runs.runs.iter())
+    crate::tree::shown_runs(&app.runs.runs)
         .filter_map(handled_line)
         .map(|line| one_line(&line))
         .collect()
+}
+
+/// `lines` cut to `rows`, the last row `+N more` for the N lines it displaced.
+fn fitted_footer(mut lines: Vec<String>, rows: usize) -> Vec<String> {
+    if lines.len() > rows && rows > 0 {
+        let hidden = lines.len() - (rows - 1);
+        lines.truncate(rows - 1);
+        lines.push(format!("+{hidden} more"));
+    }
+    lines.truncate(rows);
+    lines
 }
 
 /// How many footer rows fit in `main`'s interior, leaving the list and detail three.
@@ -267,9 +278,8 @@ pub(crate) fn render_with(frame: &mut Frame, app: &App, area: Rect, all: &[Alert
     let muted = theme::role(Role::Muted, p);
     let rows = footer_rows(app, area);
     let whole = inset(area);
-    let lines: Vec<Line<'static>> = footer(app)
+    let lines: Vec<Line<'static>> = fitted_footer(footer(app), usize::from(rows))
         .into_iter()
-        .take(usize::from(rows))
         .map(|line| {
             let text = truncate_in(&line, usize::from(whole.width), p.ascii);
             Line::styled(text, muted)
