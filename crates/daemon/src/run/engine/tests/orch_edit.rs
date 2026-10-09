@@ -7,7 +7,9 @@ use serde_json::json;
 
 use super::dispatch::replies;
 use super::fixture::*;
-use super::orch::{ORCH, add, answer, edit_plan, error, launched, orch_tool};
+use super::orch::{
+    ORCH, add, answer, but_the_log, but_the_stall, edit_plan, error, launched, orch_tool,
+};
 use crate::run::engine::{Effect, EventKind};
 use crate::run::orch::{EpicRecord, PlannerPhase};
 
@@ -383,33 +385,6 @@ fn an_edit_plan_without_edits_is_an_empty_batch() {
     assert!(ok, "{value}");
     let o = fx.run().orch.orchestrator.as_ref().unwrap();
     assert_eq!(o.summary.as_deref(), Some("All done."));
-}
-
-/// `run` without the stall watchdog's bookkeeping (task M9.9.6): a refused call from the
-/// live orchestrator still counts as acting (liveness, not success), so it moves these.
-/// Moving them is itself a change the step reports, so the revision and the step's time
-/// they cause are left out too.
-fn but_the_stall(run: &crate::run::model::Run) -> crate::run::model::Run {
-    let mut run = run.clone();
-    run.revision = 0;
-    run.last_step_at = 0;
-    run.orch.acted_seq = 0;
-    run.orch.waiting_since = None;
-    run.orch.stalled_at = None;
-    run
-}
-
-/// `run` without what a rejected batch still changes (task M9.9, decision 40): its
-/// edit-log record, and the revisions that record moves.
-fn but_the_log(run: &crate::run::model::Run) -> crate::run::model::Run {
-    let mut run = run.clone();
-    run.plan_edits.clear();
-    run.revision = 0;
-    // Milestone 9.5 decision 15: the logged batch is a change, so its step's time.
-    run.last_step_at = 0;
-    run.orch.digest_rev = 0;
-    run.orch.digest_fp = 0;
-    run
 }
 
 /// M9.11 re-review finding 3: a 17-character id reaches the plan rules, whose error

@@ -348,6 +348,40 @@ fn orchestrator_calls_from_another_window_are_refused() {
     );
 }
 
+/// `run` without the stall watchdog's bookkeeping (task M9.9.6): a refused call from the
+/// live orchestrator still counts as acting (liveness, not success), so it moves these.
+/// Moving them is itself a change the step reports, so the revision and the step's time
+/// they cause are left out too.
+pub(super) fn but_the_stall(run: &crate::run::model::Run) -> crate::run::model::Run {
+    let mut run = run.clone();
+    run.revision = 0;
+    run.last_step_at = 0;
+    run.orch.acted_seq = 0;
+    run.orch.waiting_since = None;
+    run.orch.stalled_at = None;
+    run
+}
+
+/// `run` without what a rejected batch still changes (task M9.9, decision 40): its
+/// edit-log record, and the revisions that record moves.
+pub(super) fn but_the_log(run: &crate::run::model::Run) -> crate::run::model::Run {
+    let mut run = run.clone();
+    run.plan_edits.clear();
+    run.revision = 0;
+    // Milestone 9.5 decision 15: the logged batch is a change, so its step's time.
+    run.last_step_at = 0;
+    run.orch.digest_rev = 0;
+    run.orch.digest_fp = 0;
+    run
+}
+
+/// `run` without everything a refused call from the live orchestrator legitimately
+/// moves: its rejected-edit record, the revisions and step time that record and the
+/// stall bookkeeping move, and the digest's counters.
+pub(super) fn norm(run: &crate::run::model::Run) -> crate::run::model::Run {
+    but_the_stall(&but_the_log(run))
+}
+
 /// Design rule: no model approves the plan. Milestone 9.9 gave the orchestrator
 /// `override` and `approve_hold`, but only on a running run (the user path's
 /// preconditions): at the plan gate both reach the engine and are refused, `approve`
@@ -360,6 +394,8 @@ fn orchestrator_tools_cannot_approve_a_plan() {
         json!({"edits": [add("t1", "auth")], "submit": true}),
     );
     let tasks = fx.run().tasks.clone();
+    let before = norm(fx.run());
+    let logged = fx.run().plan_edits.len();
     for edit in [json!({"op": "approve"}), json!({"op": "accept"})] {
         let effects = edit_plan(&mut fx, json!({"edits": [edit]}));
         assert!(
@@ -376,6 +412,7 @@ fn orchestrator_tools_cannot_approve_a_plan() {
         assert!(!text.starts_with("invalid arguments"), "it parses: {text}");
         assert!(text.contains(RUN_ID), "the engine's refusal: {text}");
     }
+    assert_eq!(norm(fx.run()), before, "a refused op changes nothing else");
     assert_eq!(fx.run().state, RunState::AwaitingApproval);
     assert!(fx.run().orch.handled.is_empty());
     assert_eq!(fx.run().approved_by, None);
@@ -389,6 +426,11 @@ fn orchestrator_tools_cannot_approve_a_plan() {
     }
     // Submitting again at the gate approves nothing.
     edit_plan(&mut fx, json!({"edits": [], "submit": true}));
+    assert_eq!(norm(fx.run()), before);
     assert_eq!(fx.run().state, RunState::AwaitingApproval);
     assert_eq!(fx.run().approved_by, None);
+    // `norm` clears the edit log, so check it: only rejected records were added.
+    let added = &fx.run().plan_edits[logged..];
+    assert!(!added.is_empty());
+    assert!(added.iter().all(|e| !e.accepted), "{added:?}");
 }
