@@ -205,3 +205,45 @@ fn the_halted_gate_admits_a_lone_resume_run_and_ask_user_only() {
     assert!(admitted(RunState::Paused, &call("ask_user", json!({}))));
     assert!(!admitted(RunState::Halted, &call("submit", json!({}))));
 }
+
+fn push_held(fx: &mut Fixture) {
+    let run = fx.run_mut();
+    run.delivery.mode = proto::DeliveryMode::Pr;
+    crate::run::engine::delivery::stage_mut(run, 1).held = Some("protected branch".into());
+}
+
+#[test]
+fn resume_run_with_a_stage_releases_a_held_push() {
+    let mut fx = super::actions_rules::running();
+    with_orchestrator(&mut fx);
+    push_held(&mut fx);
+    let effects = op(
+        &mut fx,
+        json!({"op": "resume_run", "reason": "r", "stage": 1}),
+    );
+    assert_eq!(
+        replies(&effects)[0].clone().unwrap(),
+        format!("run {RUN_ID}: stage 1 released")
+    );
+    assert_eq!(fx.run().delivery.stage(1).unwrap().held, None);
+}
+
+#[test]
+fn resume_run_with_a_stage_releases_both_holds() {
+    let mut fx = super::actions_rules::running();
+    with_orchestrator(&mut fx);
+    push_held(&mut fx);
+    super::actions_twins::hold_stage(fx.run_mut());
+    let effects = op(
+        &mut fx,
+        json!({"op": "resume_run", "reason": "r", "stage": 1}),
+    );
+    assert!(replies(&effects)[0].is_ok());
+    assert_eq!(fx.run().stage(1).unwrap().full.infra, None);
+    assert_eq!(fx.run().delivery.stage(1).unwrap().held, None);
+    let again = op(
+        &mut fx,
+        json!({"op": "resume_run", "reason": "r", "stage": 1}),
+    );
+    assert!(error(&again).contains("is not held"));
+}

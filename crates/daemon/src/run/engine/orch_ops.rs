@@ -137,10 +137,9 @@ fn resume_run(
             if let Some(refusal) = rules::resume_stage(run, n) {
                 return Err(refusal);
             }
-            // A stage is held by one of the two; release whichever holds it.
-            if !full::retry_stage(run, n, now) {
-                delivery::release_stage(run, n, now);
-            }
+            // As the user's `run resume`: every hold on the stage, tier 3 and push.
+            full::retry_stage(run, n, now);
+            delivery::release_stage(run, n, now);
             let text = format!("run {}: stage {n} released", run.id);
             (text, format!("stage {n}"), format!("resumed stage {n}"))
         }
