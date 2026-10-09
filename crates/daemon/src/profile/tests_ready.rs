@@ -67,7 +67,7 @@ pub(super) fn repo(dir: &Path, name: &str) -> PathBuf {
 }
 
 /// A service wired as the daemon wires it, on `dir`'s data directory.
-fn service(dir: &Path) -> Arc<ProfileService> {
+pub(super) fn service(dir: &Path) -> Arc<ProfileService> {
     let socket = dir.join("d.sock");
     let data = dir.join("data");
     let mut config = ManagerConfig::for_tests(socket.clone(), "/bin/sh".into());
@@ -103,7 +103,7 @@ impl Rig {
         }
     }
 
-    fn repo_dir(&self, project: &Path) -> PathBuf {
+    pub(super) fn repo_dir(&self, project: &Path) -> PathBuf {
         super::repo_dir(&self.data, project)
     }
 
@@ -159,7 +159,7 @@ impl Rig {
     }
 }
 
-fn record(project: &Path, state: ProposalState, updated_at: u64) -> ProposalRecord {
+pub(super) fn record(project: &Path, state: ProposalState, updated_at: u64) -> ProposalRecord {
     ProposalRecord {
         project: project.to_path_buf(),
         state,

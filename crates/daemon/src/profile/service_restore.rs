@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use proto::{AgentRole, ProposalOrigin, ProposalState};
 
+use super::queue::{self, GoalQueue};
 use super::service::{ProfileService, RESTART_REASON, auto_allowed, blocking, in_progress};
 use super::store::{self, Stored};
 use crate::run::driver::unix_now;
@@ -110,6 +111,11 @@ impl ProfileService {
             let service = self.clone();
             tokio::spawn(async move { service.auto_at_start(project, meta).await });
         }
+        // Milestone 9.10 decision 11: the queues `restore` loaded.
+        let waiting: Vec<PathBuf> = crate::lock(&self.table).queued.keys().cloned().collect();
+        for project in waiting {
+            tokio::spawn(self.clone().drain_at_start(project));
+        }
     }
 
     /// Step 2 for one repository data directory, and what it records.
@@ -118,14 +124,20 @@ impl ProfileService {
         let loaded = blocking(move || {
             store::sweep_leftovers(&dir).map_err(|e| e.to_string())?;
             let proposal = store::load_proposal(&dir).ok().flatten();
-            Ok((proposal, store::load(&dir), store::load_detection(&dir)))
+            // Milestone 9.10 decision 11: the goals waiting for this profile.
+            let queue = queue::load(&dir).unwrap_or_else(|error| {
+                tracing::warn!(%error, "a goal queue that does not read is ignored");
+                GoalQueue::default()
+            });
+            let loaded = (store::load(&dir), store::load_detection(&dir));
+            Ok((proposal, loaded.0, loaded.1, queue))
         })
         .await;
-        let (proposal, stored, marker) = match loaded {
+        let (proposal, stored, marker, queue) = match loaded {
             Ok(loaded) => loaded,
             Err(error) => {
                 tracing::warn!(repo_dir = %repo_dir.display(), %error, "profile restore");
-                (None, Stored::Absent, None)
+                (None, Stored::Absent, None, GoalQueue::default())
             }
         };
         // A record counts only for the data directory its own project keys to, so one
@@ -153,15 +165,24 @@ impl ProfileService {
                     reason: RESTART_REASON.to_string(),
                 };
                 failed.updated_at = unix_now();
-                let dir = repo_dir.to_path_buf();
+                let (dir, written) = (repo_dir.to_path_buf(), failed.clone());
                 let saved = blocking(move || {
-                    store::save_proposal(&dir, &failed).map_err(|e| e.to_string())
+                    store::save_proposal(&dir, &written).map_err(|e| e.to_string())
                 })
                 .await;
-                if let Err(error) = saved {
-                    tracing::warn!(repo_dir = %repo_dir.display(), %error, "profile restore");
+                match saved {
+                    // Milestone 9.10 decision 10: memory says `Failed` too.
+                    Ok(()) => self.note_proposal(&failed.project, Some(&failed)),
+                    Err(error) => {
+                        tracing::warn!(repo_dir = %repo_dir.display(), %error, "profile restore")
+                    }
                 }
             }
+        }
+        let queued = queue.goals.first().map(|goal| goal.project.clone());
+        let queued = queued.filter(|project| ours(project)).or(project.clone());
+        if let Some(queued) = queued.filter(|_| !queue.is_empty()) {
+            self.remember_queue(&queued, queue);
         }
         Found {
             project: marker.filter(|project| ours(project)).or(project),

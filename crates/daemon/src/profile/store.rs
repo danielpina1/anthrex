@@ -157,7 +157,13 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
 pub fn sweep_leftovers(repo_dir: &Path) -> io::Result<()> {
     sweep_named(
         repo_dir,
-        &[PROFILE_FILE, META_FILE, PROPOSAL_FILE, DETECTION_FILE],
+        &[
+            PROFILE_FILE,
+            META_FILE,
+            PROPOSAL_FILE,
+            DETECTION_FILE,
+            super::queue::QUEUE_FILE,
+        ],
     )
 }
 

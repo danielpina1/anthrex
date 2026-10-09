@@ -12,6 +12,7 @@ use super::proposal::{apply_edit, show_text};
 use super::service::{
     ProfileService, already_running, auto_allowed, blocking, in_progress, state_label,
 };
+use super::service_queue::{DISCARDED, dropped_note};
 use super::service_run::{Job, confirm_record};
 use super::store::{self, Stored};
 use crate::run::driver::unix_now;
@@ -148,6 +149,7 @@ impl ProfileService {
                 .and_then(|active| active.counter.progress()),
             _ => None,
         };
+        let (queued, dropped_goals) = self.queued_for(&project);
         Ok(ProfileStatus {
             repo_dir: self.repo_dir(&project),
             project,
@@ -158,11 +160,11 @@ impl ProfileService {
             proposal,
             scout,
             verify_confined: self.verify_confined(),
-            queued: Vec::new(),
+            queued,
             checking,
             verified_at,
             unreadable_text,
-            dropped_goals: Vec::new(),
+            dropped_goals,
         })
     }
 
@@ -230,7 +232,7 @@ impl ProfileService {
 
     /// `profile confirm`: the ready proposal stored, the proposal deleted.
     pub(super) async fn confirm(
-        &self,
+        self: &Arc<Self>,
         dir: PathBuf,
         shown: Option<String>,
     ) -> Result<ProfileReply, String> {
@@ -259,7 +261,11 @@ impl ProfileService {
         let p = project.clone();
         let message = blocking(move || confirm_record(&dir, &p, &record)).await?;
         self.note_proposal(&project, None);
-        Ok(ProfileReply::Done { message })
+        // Milestone 9.10 decision 6: the queued goals start once the store is done.
+        let starting = self.drain_after_store(&project);
+        Ok(ProfileReply::Done {
+            message: format!("{message}{starting}"),
+        })
     }
 
     /// `profile reject`: a running scout stopped (through `ScoutService::stop`, the
@@ -267,7 +273,7 @@ impl ProfileService {
     /// work, or here when none runs), and `proposal.json` deleted.
     pub(super) async fn reject(&self, dir: PathBuf) -> Result<ProfileReply, String> {
         let project = self.project_of(dir).await?;
-        let _writes = self.writes.lock().await;
+        let writes = self.writes.lock().await;
         let running = {
             let mut table = crate::lock(&self.table);
             table.active.get_mut(&project).map(|active| {
@@ -292,12 +298,19 @@ impl ProfileService {
             }
             let dir = self.repo_dir(&project);
             blocking(move || store::delete_detection(&dir).map_err(|e| e.to_string())).await?;
-            if !existed {
-                return Err(format!("no proposal for {}", project.display()));
-            }
+        }
+        drop(writes);
+        // Milestone 9.10 decision 8: a goal cannot start without the proposal.
+        let dropped = self.drop_queued(&project, DISCARDED).await;
+        if running.is_none() && !existed && dropped == 0 {
+            return Err(format!("no proposal for {}", project.display()));
         }
         Ok(ProfileReply::Done {
-            message: format!("rejected the proposal for {}", project.display()),
+            message: format!(
+                "rejected the proposal for {}{}",
+                project.display(),
+                dropped_note(dropped)
+            ),
         })
     }
 
@@ -419,7 +432,7 @@ fn unparseable_text(path: &Path, error: &str) -> String {
 }
 
 /// The proposal's profile when it is `Ready`, else why it cannot be shown or stored.
-fn ready_profile(record: &ProposalRecord) -> Result<proto::RepoProfile, String> {
+pub(super) fn ready_profile(record: &ProposalRecord) -> Result<proto::RepoProfile, String> {
     match (&record.state, &record.profile) {
         (ProposalState::Ready, Some(profile)) => Ok(profile.clone()),
         (ProposalState::Failed { reason }, _) => Err(format!(

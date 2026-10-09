@@ -105,6 +105,12 @@ pub(super) struct Table {
     pub(super) ready: BTreeMap<PathBuf, u64>,
     /// Moves on every change to `ready`, so the run service publishes it once.
     pub(super) ready_generation: u64,
+    /// Milestone 9.10 decision 4: each project's goal queue, as its file holds it.
+    pub(super) queued: BTreeMap<PathBuf, super::queue::GoalQueue>,
+    /// Decision 10: each project's proposal state, as `note_proposal` last saw it.
+    pub(super) states: BTreeMap<PathBuf, ProposalState>,
+    /// Decision 10: moves on every `note_proposal` and every change to `queued`.
+    pub(super) setup_generation: u64,
 }
 
 /// See the module doc.
@@ -122,6 +128,8 @@ pub struct ProfileService {
     /// Milestone 9.10 decision 10: one tick per verified command, shared by every
     /// `CheckCounter`; it only grows.
     pub(super) progress_ticks: Arc<AtomicU64>,
+    /// Decision 6: starts a drained goal (`set_goal_starter`).
+    pub(super) starter: Mutex<Option<super::service_queue::GoalStarter>>,
 }
 
 /// Decision 37: the ids of the runs live in a project (`RunService::live_runs_in`).
@@ -201,6 +209,7 @@ impl ProfileService {
             live_runs: Mutex::new(None),
             host: std::sync::OnceLock::new(),
             progress_ticks: Arc::new(AtomicU64::new(0)),
+            starter: Mutex::new(None),
         })
     }
 
@@ -379,12 +388,20 @@ impl ProfileService {
 
     /// Records what `project`'s `proposal.json` now holds, called only after the write
     /// (`Some`) or the delete (`None`) succeeded, and by `restore` for what it loaded.
-    /// Memory only, never across an `.await`.
+    /// Memory only, never across an `.await`. Every call moves `setup_generation` and
+    /// records the state (milestone 9.10 decision 10).
     pub(super) fn note_proposal(&self, project: &Path, record: Option<&ProposalRecord>) {
         let ready = record
             .filter(|record| record.state == ProposalState::Ready)
             .map(|record| record.updated_at);
         let mut table = crate::lock(&self.table);
+        table.setup_generation += 1;
+        match record {
+            Some(record) => table
+                .states
+                .insert(project.to_path_buf(), record.state.clone()),
+            None => table.states.remove(project),
+        };
         let changed = match ready {
             Some(at) => table.ready.insert(project.to_path_buf(), at) != Some(at),
             None => table.ready.remove(project).is_some(),
@@ -455,6 +472,8 @@ pub fn wire(
         },
     );
     profiles.set_host(runs.host());
+    // Milestone 9.10 decision 6: a drained goal starts through the run service.
+    profiles.set_goal_starter(runs.queued_starter());
     // Decision 37: a weak handle, since the run service holds this one (`Adaptation`).
     let weak = Arc::downgrade(runs);
     profiles.set_live_runs(Arc::new(move |project: &Path| {

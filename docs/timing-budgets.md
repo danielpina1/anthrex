@@ -640,6 +640,14 @@ milestone's bounds:
 | The start's repository `models.toml` read (`MODELS_READ_BOUND`) | `crates/daemon/src/run/driver/build_models.rs` (production) | 5 s, then the global table and a log line | One small file read on `spawn_blocking`. No test waits on the bound. | **Recorded.** No test bound. |
 | `run_e2e_model_roles.rs` | `crates/cli/tests/` | the harness's `RUN_WAIT` and `ORCH_WAIT` (and `RUN_WAIT * 3` for the run with a sub-planner, a race, a pair and a research task, as `run_e2e_large`'s epic runs) | The harness's own rows above. Measured: the three tests together 15 to 16 s. | **Recorded.** |
 
+### Recorded, from M9.10.4 (2026-10-10)
+
+The goal queue's service tests (`crates/daemon/src/profile/tests_queue_service.rs`). Measured: the sixteen `profile::tests_queue*` tests together 0.5 s.
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| The drain waits (`a_queued_goal_waits_and_a_confirm_starts_it`, `a_failed_start_is_dropped_with_its_reason`, `after_ready_stores_…`, `restore_keeps_the_queue_and_drains_…`, `restore_drops_a_goal_whose_directory_is_gone`) | `daemon/src/profile/tests_queue_service.rs` (`REQUEST_WAIT`) | 75 s, a deadline loop every 20 ms | A spawned drain: the `writes` mutex (held by nothing else once the request has answered), the queue file written on `spawn_blocking`, a test starter that answers at once, and at restore one `is_dir` per goal and one `store::load`. No git, no agent, no scheduler slot. The bound is the CLI harness's `REQUEST_WAIT`; a hang guard. | **Recorded.** |
+
 ### Fixed, from M9.5.8's flake fix (ruling F-1, 2026-10-03)
 
 | Test | File | Bound | Derivation | Status |

@@ -347,7 +347,11 @@ impl ProfileService {
     /// Verifying and Ready (decision 8, steps 3 and 4; decision 9). The proposal keeps
     /// the scout's raw profile in `proposed`; verification runs `from_findings`'
     /// (ruling R-T10-1), and an `Err` from it fails the proposal with its reason.
-    async fn verify_phase(&self, job: &mut Job, proposed: RepoProfile) -> Result<(), Stop> {
+    async fn verify_phase(
+        self: &Arc<Self>,
+        job: &mut Job,
+        proposed: RepoProfile,
+    ) -> Result<(), Stop> {
         job.record.proposed = Some(proposed.clone());
         if !self.advance(job, ProposalState::Verifying).await {
             return Err(Stop::Cancelled);
@@ -392,6 +396,10 @@ impl ProfileService {
         job.record.dropped = dropped;
         if !self.advance(job, ProposalState::Ready).await {
             return Err(Stop::Cancelled);
+        }
+        // Milestone 9.10 decision 9: a detection's first `Ready`, never a row edit's.
+        if !matches!(job.record.origin, ProposalOrigin::Edit { .. }) && job.record.edit.is_none() {
+            self.after_ready(&pre.project).await;
         }
         if job.record.auto_confirm && self.may_auto_confirm(&job.record) {
             let _writes = self.writes.lock().await;

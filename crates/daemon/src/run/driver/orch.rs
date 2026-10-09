@@ -139,8 +139,12 @@ impl RunService {
         for run in snap.runs.iter_mut() {
             run.scouts = adaptation.scouts.run_scouts(&run.run_id);
         }
-        let (generation, proposals) = adaptation.profiles.ready_proposals();
-        snap.proposals = proposals;
+        // Milestone 9.10 decision 10: the generation that moves with the queued goals,
+        // the set-up's state and its progress, read first so a change made while the
+        // lists are read moves it past what is recorded.
+        let generation = adaptation.profiles.snapshot_generation();
+        snap.proposals = adaptation.profiles.ready_proposals().1;
+        snap.queued_goals = adaptation.profiles.queued_goals();
         (snap, generation)
     }
 
@@ -149,7 +153,7 @@ impl RunService {
         let Some(adaptation) = self.adaptation.get() else {
             return false;
         };
-        let generation = adaptation.profiles.ready_proposals().0;
+        let generation = adaptation.profiles.snapshot_generation();
         generation != crate::lock(&self.book).proposals_published
     }
 

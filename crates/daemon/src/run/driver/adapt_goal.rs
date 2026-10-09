@@ -503,6 +503,9 @@ async fn no_profile(
     }
 }
 
+#[path = "goal_queue.rs"]
+mod queue;
+
 #[cfg(test)]
 #[path = "adapt_goal_tests.rs"]
 mod tests;
