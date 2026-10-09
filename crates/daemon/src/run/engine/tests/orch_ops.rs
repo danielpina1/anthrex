@@ -196,6 +196,30 @@ fn the_orchestrator_approves_a_hold_without_noting_itself() {
     assert_eq!(fx.run().state, RunState::Running);
 }
 
+/// Final review I-2: a promoted run's `promotion` hold is the user's plan approval, so
+/// the orchestrator may not approve it; the user still can.
+#[test]
+fn the_orchestrator_may_not_approve_a_promotion_hold() {
+    let mut fx = super::promote::promoted();
+    edit_plan(&mut fx, json!({"edits": [super::orch::add("t2", "mail")]}));
+    edit_plan(&mut fx, json!({"edits": [], "submit": true}));
+    assert_eq!(fx.run().orch.gate_holds[0].state, HoldState::Awaiting);
+    let effects = op(
+        &mut fx,
+        json!({"op": "approve_hold", "hold": "promotion", "reason": "the plan is fine"}),
+    );
+    assert_eq!(
+        error(&effects),
+        "hold promotion approves a promoted run's plan; only the user can"
+    );
+    assert_eq!(fx.run().orch.gate_holds[0].state, HoldState::Awaiting);
+    assert_eq!(fx.task("t2").state, TaskState::Queued);
+    assert!(fx.run().orch.handled.is_empty());
+    let effects = super::promote::hold_verdict(&mut fx, "promotion", true);
+    assert!(replies(&effects)[0].is_ok(), "{effects:#?}");
+    assert_eq!(fx.run().orch.gate_holds[0].state, HoldState::Approved);
+}
+
 #[test]
 fn a_full_handled_list_keeps_the_newest_fifty_and_counts_all() {
     let mut fx = approved();

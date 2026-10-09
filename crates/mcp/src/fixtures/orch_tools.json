@@ -118,7 +118,7 @@
     },
     {
       "name": "edit_plan",
-      "description": "Apply plan edits as one batch. Set submit to open the plan gate. Add a summary for the user when the run is complete. Set iterate, with no edits and nothing else, to start a round the user asked for. retry, override, resume_run, approve_hold and accept_red each come alone, with a reason. Returns at once.",
+      "description": "Apply plan edits as one batch. Set submit to open the plan gate. Add a summary for the user when the run is complete. Set iterate, with no edits and nothing else, to start a round the user asked for. retry, override, resume_run, approve_hold and accept_red each come alone, with a reason. approve_hold never approves a promoted run's promotion hold: that is the user's plan approval. Returns at once.",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,

@@ -53,6 +53,15 @@ fn is_promotion(hold: &GateHoldRecord) -> bool {
     matches!(hold.kind, HoldKind::Promotion)
 }
 
+/// Whether `id` names one of the run's `promotion` rounds (milestone 9.9 final review
+/// I-2: the orchestrator may not approve it).
+pub(super) fn promotion(run: &Run, id: &str) -> bool {
+    run.orch
+        .gate_holds
+        .iter()
+        .any(|h| h.id == id && is_promotion(h))
+}
+
 /// The undecided `promotion` round, if any: the last one, when it is `Drafting` or
 /// `Awaiting`.
 fn open_round(run: &Run) -> Option<&GateHoldRecord> {

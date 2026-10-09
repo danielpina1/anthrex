@@ -96,7 +96,14 @@ pub(super) fn intercept(
             }
         }
         PlanEdit::ApproveHold { hold, .. } => {
-            let result = gate_holds::decide_on(run, hold, true, Actor::Orchestrator, now, fx);
+            // Final review I-2: a promotion round is the user's plan approval (OFA §4.2).
+            let result = if gate_holds::promotion(run, hold) {
+                Err(format!(
+                    "hold {hold} approves a promoted run's plan; only the user can"
+                ))
+            } else {
+                gate_holds::decide_on(run, hold, true, Actor::Orchestrator, now, fx)
+            };
             if result.is_ok() {
                 let args = ("approve_hold", "approved hold", hold.as_str());
                 handled::record(run, now, args, reason);
