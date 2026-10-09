@@ -19,9 +19,14 @@ fn lane_rounds(task: &TaskInfo) -> Vec<(AgentRole, Option<RaceLane>)> {
     task.rounds.iter().map(|r| (r.role, r.lane)).collect()
 }
 
+/// The built-in medium row (Claude Sonnet, `medium`) with a Codex fallback.
+const MEDIUM_FALLS_BACK_TO_CODEX: &str = "[models.implementer.medium]\nmodel = \"claude:claude-sonnet-5\"\neffort = \"medium\"\nfallback = \"codex:default\"\n";
+
 #[test]
 fn a_racing_tasks_snapshot_names_its_lanes_and_winner() {
-    let h = RunHarness::new("");
+    // Milestone 9.8 (MR §3.1, decision 28): lane b takes the medium row's fallback, so
+    // the row falls back to Codex to keep the race across runtimes.
+    let h = RunHarness::with_config("", MEDIUM_FALLS_BACK_TO_CODEX, &[]);
     let watcher = h.subscribe();
     h.script(
         "racer-t1-a-1",
