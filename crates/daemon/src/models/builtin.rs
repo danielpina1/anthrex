@@ -7,6 +7,7 @@ use proto::{CatalogModel, CatalogSource, ModelCatalog, Runtime};
 fn entry(id: &str, label: &str, efforts: bool, is_default: bool) -> CatalogModel {
     CatalogModel {
         id: id.to_string(),
+        resolved: None,
         label: label.to_string(),
         description: String::new(),
         efforts: if efforts {

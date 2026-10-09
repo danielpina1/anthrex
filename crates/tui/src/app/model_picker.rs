@@ -108,10 +108,15 @@ impl Catalogs {
         } else {
             name.to_string()
         };
+        // Real-CLI manual check fix: the catalog's label names the entry's own model, so
+        // it stands for an id that is the entry's id or exactly its resolved model; an id
+        // matched past a context tag or a date (`claude-opus-5-5` for `opus[1m]`, a 1M
+        // context model) reads as itself.
         let label = match &model.id {
             None => "default".to_string(),
             Some(id) => self
                 .find(model)
+                .filter(|m| m.id == *id || m.resolved.as_deref() == Some(id))
                 .map(|m| clean(&m.label))
                 .filter(|l| !l.is_empty())
                 .unwrap_or_else(|| clean(id)),
@@ -271,6 +276,15 @@ fn entry(runtime: Runtime, m: &CatalogModel, current: Option<&ModelRef>) -> Opti
         .filter(|l| !l.is_empty())
         .unwrap_or_else(|| clean(&m.id));
     let mut description = clean(&m.description);
+    // Real-CLI manual check fix, decision 3: the entry keeps the CLI's own id (Claude's
+    // alias, always launchable) and names the model it resolves to beside the label.
+    if let Some(resolved) = m.resolved.as_deref().map(clean).filter(|r| *r != m.id) {
+        description = if description.is_empty() {
+            resolved
+        } else {
+            format!("{resolved} · {description}")
+        };
+    }
     if m.is_default {
         let mark = format!("({} default)", runtime_name(runtime));
         description = if description.is_empty() {
@@ -307,11 +321,20 @@ fn entries(
             .iter()
             .any(|e| matches!(e, PickerEntry::Model { current: true, .. }));
         if let Some(m) = current.filter(|m| m.runtime == runtime && !listed) {
+            // Real-CLI manual check fix: a current id the catalog lists under an alias
+            // (`claude-opus-5-5` as `opus[1m]`) is reported: it reads as that entry.
+            let (description, efforts) = match catalog.and_then(|c| c.find(m)) {
+                Some(found) => (
+                    format!("as {}", clean(&found.label)),
+                    efforts_text(&efforts_of(found)),
+                ),
+                None => (NOT_REPORTED.into(), NO_EFFORT.into()),
+            };
             out.push(PickerEntry::Model {
                 model: m.clone(),
                 label: m.id.as_deref().map_or_else(|| "default".into(), clean),
-                description: NOT_REPORTED.into(),
-                efforts: NO_EFFORT.into(),
+                description,
+                efforts,
                 current: true,
             });
         }

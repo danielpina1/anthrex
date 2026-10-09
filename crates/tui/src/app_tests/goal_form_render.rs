@@ -129,7 +129,7 @@ fn the_unicode_form_draws_its_choices() {
     open_form(&mut app);
     let rows = crate::ui::audit::rows(&crate::ui::audit::draw(&app, 120, 40)).join("\n");
     assert!(
-        rows.contains("  model             ‹ role table (Claude · Opus 5.5) ›"),
+        rows.contains("  model             ‹ role table (Claude · claude-opus-5-5) ›"),
         "{rows}"
     );
     assert!(
@@ -144,10 +144,10 @@ fn the_unicode_form_draws_its_choices() {
         "{rows}"
     );
     assert!(
-        rows.contains("▸ ● role table (Claude · Opus 5.5)"),
+        rows.contains("▸ ● role table (Claude · claude-opus-5-5)"),
         "{rows}"
     );
-    for _ in 0..3 {
+    for _ in 0..2 {
         tap(&mut app, KeyCode::Char('j'));
     }
     tap(&mut app, KeyCode::Enter);
@@ -155,7 +155,7 @@ fn the_unicode_form_draws_its_choices() {
     tap(&mut app, KeyCode::Char(' '));
     let rows = crate::ui::audit::rows(&crate::ui::audit::draw(&app, 120, 40)).join("\n");
     assert!(
-        rows.contains("  model             ‹ Claude · Opus 5.5 ›"),
+        rows.contains("  model             ‹ Claude · Opus (1M context) ›"),
         "{rows}"
     );
     assert!(rows.contains("▌ effort            ‹ low ›"), "{rows}");

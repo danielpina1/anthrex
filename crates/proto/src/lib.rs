@@ -201,7 +201,8 @@ pub use messages::{ClientMsg, DaemonMsg, HookSource};
 // `models::Role` stays under `models::`: the crate root's `Role` is the conversation's.
 pub use models::{
     BrainstormChoice, CatalogModel, CatalogSource, EFFORT_MAX_CHARS, HelperKind,
-    MODEL_ID_MAX_CHARS, ModelCatalog, ModelRef, ModelTable, RoleChoice, valid_effort,
+    MODEL_ID_MAX_CHARS, ModelCatalog, ModelRef, ModelTable, RoleChoice, base_model_id,
+    canonical_id, valid_effort,
 };
 pub use orch::{
     HoldInfo, HoldKind, HoldState, IntegrationInfo, IntegrationState, MessageKind, MessageTarget,

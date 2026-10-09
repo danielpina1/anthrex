@@ -314,8 +314,9 @@ pub fn record_reviewer(
         return;
     }
     let task = &run.tasks[i];
+    let models = run.limits.models();
     let own = |route: &Route| {
-        let same = route.runtime == author.runtime && route.model == author.model;
+        let same = models.same_model(route, author);
         (same && route != chosen).then(|| "the author's own model".to_string())
     };
     let pool = mark_failed(row_pool(run, Role::Reviewer, own), task, chosen);

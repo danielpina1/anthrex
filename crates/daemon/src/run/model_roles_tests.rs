@@ -183,6 +183,7 @@ fn catalog(models: &[(&str, &[&str], Option<&str>)], source: CatalogSource) -> M
         problem: None,
         models: (models.iter())
             .map(|(id, efforts, default)| CatalogModel {
+                resolved: None,
                 id: id.to_string(),
                 label: id.to_string(),
                 description: String::new(),

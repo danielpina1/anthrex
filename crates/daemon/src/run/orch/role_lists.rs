@@ -150,7 +150,7 @@ pub fn review_pick(run: &Run, caps: &DeciderCaps) -> Option<ReviewPick> {
         .fallback
         .as_ref())
     .map(|f| RunModels::route_of(f, None))
-    .filter(|f| *f != pick && !RunModels::same_model(f, &own) && blocked(f).is_none());
+    .filter(|f| *f != pick && !models.same_model(f, &own) && blocked(f).is_none());
     if let Some(route) = fallback {
         let warning = format!(
             "reviewer: {} cannot review: {why}; its \"if it struggles\" model {} reviews",

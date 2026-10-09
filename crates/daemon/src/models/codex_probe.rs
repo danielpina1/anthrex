@@ -84,7 +84,7 @@ fn answer(
     }
 }
 
-fn parse_models(data: &Value) -> Vec<CatalogModel> {
+pub(crate) fn parse_models(data: &Value) -> Vec<CatalogModel> {
     let text = |v: &Value| v.as_str().map(str::to_string);
     data.as_array()
         .into_iter()
@@ -101,6 +101,7 @@ fn parse_models(data: &Value) -> Vec<CatalogModel> {
                 .filter_map(|e| text(e).or_else(|| text(&e["reasoningEffort"])))
                 .collect();
             Some(CatalogModel {
+                resolved: None,
                 label: text(&m["displayName"]).unwrap_or_else(|| id.clone()),
                 description: text(&m["description"]).unwrap_or_default(),
                 efforts,

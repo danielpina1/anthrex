@@ -71,7 +71,7 @@ fn the_goal_form_chooses_the_orchestrator_from_the_picker() {
     assert_eq!(picker.target, PickerFor::Goal);
     assert_eq!(
         picker.entries[0],
-        PickerEntry::RoleTable("role table (Claude · Opus 5.5)".into())
+        PickerEntry::RoleTable("role table (Claude · claude-opus-5-5)".into())
     );
     assert_eq!(picker.selected, 0, "no choice yet: on the role table");
     let sol = mref("codex:gpt-6.1-sol");
@@ -349,6 +349,7 @@ fn re_picking_keeps_the_effort_and_a_models_reply_refreshes_the_picker() {
 #[test]
 fn the_effort_row_shows_the_rows_effort_for_the_rows_model() {
     let mut app = goal_app();
+    crate::app::model_picker::tests::with_opus_full_id(&mut app.catalogs);
     let _ = app.set_terminal_size(120, 40);
     let pick = |app: &mut crate::app::App, label: &str| {
         app.on_key(key(KeyCode::Enter));
@@ -377,7 +378,7 @@ fn the_effort_row_shows_the_rows_effort_for_the_rows_model() {
         shown.contains("  effort            ‹ high (role table) ›"),
         "{shown}"
     );
-    pick(&mut app, "Haiku 4.5");
+    pick(&mut app, "Haiku");
     let shown = rows(&app);
     assert!(shown.contains("  effort            ‹ default ›"), "{shown}");
 }
