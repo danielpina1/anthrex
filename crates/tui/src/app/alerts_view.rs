@@ -16,6 +16,8 @@ use proto::{ActionInfo, ActionKind, BlockReason, RunInfo, WindowKind};
 pub(crate) fn alert_node(key: &AlertKey) -> Option<(String, ActionTarget)> {
     match key {
         AlertKey::Orchestrator(run)
+        | AlertKey::OrchestratorAsks(run)
+        | AlertKey::OrchestratorStuck(run)
         | AlertKey::Gate(run)
         | AlertKey::Halted(run)
         | AlertKey::Accept(run)
@@ -60,7 +62,10 @@ pub(crate) fn alert_actions(app: &App, key: &AlertKey) -> Vec<ActionInfo> {
 /// 17): none where Enter opens no menu (an orchestrator, a proposal).
 pub(crate) fn preselected(app: &App, key: &AlertKey) -> Option<ActionKind> {
     match key {
-        AlertKey::Orchestrator(_) | AlertKey::Proposal(_) => None,
+        AlertKey::Orchestrator(_)
+        | AlertKey::OrchestratorAsks(_)
+        | AlertKey::OrchestratorStuck(_)
+        | AlertKey::Proposal(_) => None,
         // Milestone 9.6 decision 34: a brainstorm or spec gate's document is reviewed on
         // the gate screen; a plan gate (a design run's too) on the plan review.
         AlertKey::Gate(run) => Some(
@@ -98,7 +103,9 @@ pub(crate) fn preselected(app: &App, key: &AlertKey) -> Option<ActionKind> {
 /// the hint line sanitises it.
 pub(crate) fn enter_label(app: &App, key: &AlertKey) -> String {
     match key {
-        AlertKey::Orchestrator(_) => "focus".to_owned(),
+        AlertKey::Orchestrator(_)
+        | AlertKey::OrchestratorAsks(_)
+        | AlertKey::OrchestratorStuck(_) => "focus".to_owned(),
         AlertKey::Proposal(_) => "open profile".to_owned(),
         _ => {
             let items = menu(app, key);
@@ -188,6 +195,12 @@ impl App {
                     return self.open_actions(node, Some(ActionKind::Message));
                 }
             }
+            // Milestone 9.9 decision 24: `1`-`9` answer the selected ask; the view stays.
+            KeyCode::Char(c @ '1'..='9') => {
+                if let Some(key) = selected {
+                    return self.answer_key(&key, u32::from(c) - u32::from('0'));
+                }
+            }
             KeyCode::Char('o') => {
                 if let Some(key) = selected {
                     self.leave_alerts();
@@ -237,7 +250,9 @@ impl App {
     /// on a proposal, else the menu on the alert's node with its preselection.
     pub(super) fn enter_alert(&mut self, key: AlertKey) -> Vec<Effect> {
         match &key {
-            AlertKey::Orchestrator(run_id) => self.enter_orchestrator(run_id),
+            AlertKey::Orchestrator(run_id)
+            | AlertKey::OrchestratorAsks(run_id)
+            | AlertKey::OrchestratorStuck(run_id) => self.enter_orchestrator(run_id),
             // Preflight F26: the Profile screen on that project's proposal.
             AlertKey::Proposal(project) => self.open_profile_on(project.clone(), true),
             _ => match alert_node(&key) {
@@ -252,7 +267,7 @@ impl App {
 
     /// Priority 1's Enter: focus the orchestrator's window and leave tree mode, as
     /// `enter_run_root` does; a headless one opens its conversation.
-    fn enter_orchestrator(&mut self, run_id: &str) -> Vec<Effect> {
+    pub(super) fn enter_orchestrator(&mut self, run_id: &str) -> Vec<Effect> {
         let window = run_of(self, run_id)
             .and_then(|run| run.orchestrator.as_ref()?.window_id)
             .and_then(|id| self.windows.iter().find(|w| w.id == id))

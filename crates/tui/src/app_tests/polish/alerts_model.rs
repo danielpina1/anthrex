@@ -14,8 +14,9 @@ fn texts(app: &crate::app::App) -> Vec<String> {
 
 #[test]
 fn alert_texts_follow_decision_7() {
-    // Every source: the orchestrator's three texts unchanged, the gate, the hold, a
-    // `Human` block with its reason, a question without one, the halted reason's first
+    // Every source: the orchestrator's three texts unchanged, the gate, the hold (M9.9.8:
+    // c-held's `Human` block is its living orchestrator's, no longer listed), a
+    // question without a reason, the halted reason's first
     // line, the complete run and the proposal.
     assert_eq!(
         texts(&every_app()),
@@ -25,7 +26,6 @@ fn alert_texts_follow_decision_7() {
             "orchestrator wake-up held",
             "plan awaits approval · 1 task",
             "hold epic:ui awaits approval · 1 task",
-            "blocked (human): needs a key",
             "blocked: which db?",
             "run halted: disk full",
             "ready to accept · 2/2 merged",
@@ -79,7 +79,17 @@ fn alert_texts_follow_decision_7() {
 #[test]
 fn blocked_alerts_carry_the_task_and_the_full_detail() {
     let all = alerts(&every_app());
-    let human = all
+    // M9.9.8: with a living orchestrator the `Human` block is its own, so this run has
+    // none.
+    let mut r = at("c-held", RunState::Running, 3);
+    r.tasks = vec![blocked(
+        "t1",
+        BlockReason::Human,
+        "needs a key\nsecond line",
+    )];
+    let human_app = app_with_runs(vec![], snapshot(1, vec![r]));
+    let human_all = alerts(&human_app);
+    let human = human_all
         .iter()
         .find(|alert| {
             alert.key

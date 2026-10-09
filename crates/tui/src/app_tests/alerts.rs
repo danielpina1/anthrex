@@ -49,7 +49,6 @@ fn alerts_in_priority_order() {
             line(1, "c-held", "orchestrator wake-up held"),
             line(2, "b-gate", "plan awaits approval · 1 task"),
             line(2, "c-held", "hold epic:ui awaits approval · 1 task"),
-            line(3, "c-held › t1", "blocked (human): needs a key"),
             line(3, "d-bare › t1", "blocked: which db?"),
             line(3, "e-halt", "run halted: disk full"),
             line(4, "f-done", "ready to accept · 2/2 merged"),
@@ -67,10 +66,6 @@ fn alerts_in_priority_order() {
             AlertKey::Hold {
                 run: "c-held".into(),
                 hold: "epic:ui".into()
-            },
-            AlertKey::Blocked {
-                run: "c-held".into(),
-                task: "t1".into()
             },
             AlertKey::Blocked {
                 run: "d-bare".into(),
@@ -157,7 +152,8 @@ fn each_priority_rule() {
         vec![line(2, "r", "hold h4 awaits approval · 2 tasks")]
     );
 
-    // P3: while the orchestrator lives, only Human, Conflict and Environment.
+    // P3: while the orchestrator lives, only what is user-only (M9.9.8; before, also
+    // Human, Conflict and Environment).
     let mut live = with_orch(at("r", RunState::Running, 1), 11);
     live.tasks = vec![
         blocked("t1", BlockReason::Conflict, "merge conflict in a.rs"),
@@ -169,13 +165,7 @@ fn each_priority_rule() {
     ];
     let window = orch_window(11, "r", Working, true);
     let app = app_with_runs(vec![window], snapshot(1, vec![live.clone()]));
-    assert_eq!(
-        listed(&app),
-        vec![
-            line(3, "r › t1", "blocked (conflict): merge conflict in a.rs"),
-            line(3, "r › t2", "blocked (environment)"),
-        ]
-    );
+    assert_eq!(listed(&app), vec![]);
     // With no live orchestrator every reason but a pause.
     live.orchestrator = None;
     let app = app_with_runs(vec![], snapshot(1, vec![live]));

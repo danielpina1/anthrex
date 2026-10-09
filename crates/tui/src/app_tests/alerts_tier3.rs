@@ -72,18 +72,21 @@ fn tier_3_states_raise_alerts() {
         ]
     );
 
-    // A live orchestrator is woken for the two reds; the held stage still alerts.
+    // M9.9.8: a living orchestrator is woken for every tier-3 state, the held stage
+    // and the halt it causes included, so none is listed.
     let app = app_with_runs(vec![], snapshot(1, 100, runs(true)));
-    assert_eq!(
-        listed(&app),
-        vec![
-            line(3, "h-held", "run halted: stage 1: tier 3 held"),
-            line(
-                3,
-                "h-held",
-                "stage 1 tier 3 held after executor failures; anthrex run resume retries"
-            ),
-        ]
+    assert_eq!(listed(&app), vec![]);
+    // One that is stuck gives them all back.
+    let mut stuck = runs(true);
+    for run in &mut stuck {
+        run.orchestrator.as_mut().unwrap().stuck =
+            Some(proto::OrchestratorStuck::Dead { since: None });
+    }
+    let app = app_with_runs(vec![], snapshot(1, 100, stuck));
+    let texts: Vec<String> = listed(&app).into_iter().map(|(_, _, t)| t).collect();
+    assert!(
+        texts.contains(&"stage 2 tier 3 red · fix task fix1".to_owned()),
+        "{texts:?}"
     );
 }
 

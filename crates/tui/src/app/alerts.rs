@@ -5,6 +5,7 @@
 //! resolved. The box is drawn by `ui/alerts.rs`, the view by `ui/alerts_view.rs`, and
 //! the view's keys are `app/alerts_view.rs`'s (decision 11). Pure: no I/O.
 
+use super::alerts_route::{Route, RouteKind, alert_route, is_you, orchestrator_lives, route_kind};
 pub use super::alerts_stage::StageAlert;
 use super::alerts_stage::stage_alerts;
 use super::{App, Effect, ReviewTarget};
@@ -12,13 +13,20 @@ use crate::inspector::run_format::reason_text;
 use crate::safe_text::one_line;
 use crate::tree::{self, awaiting_holds, is_paused};
 use crossterm::event::KeyEvent;
-use proto::{BlockReason, DeliveryAlertKind, RunInfo, RunState, Runtime, Status, TaskState};
+use proto::{
+    BlockReason, DeliveryAlertKind, OrchestratorStuck, RunInfo, RunState, Runtime, Status,
+    TaskState,
+};
 use std::path::PathBuf;
 
 /// What an alert is about: its identity, which the focus follows (decision 21).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AlertKey {
     Orchestrator(String),
+    /// Milestone 9.9 decision 24: the orchestrator's pending `ask_user`.
+    OrchestratorAsks(String),
+    /// Milestone 9.9 decision 21: the orchestrator is stalled or dead.
+    OrchestratorStuck(String),
     Gate(String),
     Hold {
         run: String,
@@ -69,6 +77,9 @@ pub struct Alert {
     pub text: String,
     pub detail: String,
     pub age: Option<u64>,
+    /// Milestone 9.9 decision 23: the user's only because the cause is user-only, while
+    /// the orchestrator lives; drawn as a `you` badge.
+    pub you: bool,
 }
 
 /// The Alerts view's state (milestone 9.0.7 decision 11; 9.0.5 decision 21's focus).
@@ -121,8 +132,52 @@ fn orchestrator_text(app: &App, run: &RunInfo) -> Option<(&'static str, Option<u
     }
 }
 
+/// Milestone 9.9 decision 21: the stuck orchestrator's alert, with how long ago it began
+/// when the daemon knows.
+fn stuck_text(app: &App, run: &RunInfo) -> Option<(String, Option<u64>)> {
+    let orch = run.orchestrator.as_ref()?;
+    Some(match orch.stuck? {
+        OrchestratorStuck::Stalled { since } => {
+            let age = app.run_age(since);
+            let text = format!(
+                "orchestrator has not acted for {} min; its alerts are yours",
+                age / 60
+            );
+            (text, Some(age))
+        }
+        OrchestratorStuck::Dead { since } => {
+            let name = orch
+                .window_id
+                .and_then(|id| app.windows.iter().find(|w| w.id == id))
+                .map_or_else(|| "its window".to_owned(), |w| w.name.clone());
+            let text = format!(
+                "orchestrator exited; its alerts are yours · anthrex restart {name} restarts it"
+            );
+            (text, since.map(|at| app.run_age(at)))
+        }
+    })
+}
+
+/// Milestone 9.9 decision 24: the pending `ask_user` as `(text, detail, age)`; the
+/// detail is the context, then the options numbered from 1.
+fn ask_text(app: &App, run: &RunInfo) -> Option<(String, String, Option<u64>)> {
+    let ask = run.orchestrator.as_ref()?.ask.as_ref()?;
+    let mut parts = Vec::new();
+    if !ask.context.trim().is_empty() {
+        parts.push(ask.context.clone());
+    }
+    if !ask.options.is_empty() {
+        let numbered: Vec<String> = (ask.options.iter().enumerate())
+            .map(|(i, option)| format!("{}. {option}", i + 1))
+            .collect();
+        parts.push(numbered.join("\n"));
+    }
+    let text = format!("orchestrator asks: {}", one_line(&ask.question));
+    Some((text, parts.join("\n\n"), Some(app.run_age(ask.asked_at))))
+}
+
 /// Decision 18's priority 3 for a blocked task: while the orchestrator lives, only
-/// what it cannot answer; with none, every reason. A paused task is never an alert,
+/// what is user-only (milestone 9.9 decision 22); with none, every reason. A paused task is never an alert,
 /// nor one at the plan gate or under a hold awaiting approval: the gate's or the
 /// hold's alert covers it, and it is drawn as planned (`○`, milestone 9.0.7 ruling).
 fn blocked_text(run: &RunInfo, task: &proto::TaskInfo) -> Option<String> {
@@ -132,13 +187,11 @@ fn blocked_text(run: &RunInfo, task: &proto::TaskInfo) -> Option<String> {
     if run.state == RunState::AwaitingApproval || tree::task_held(run, task) {
         return None;
     }
-    let orchestrator_lives = orchestrator_lives(run);
-    let reason = task.block.as_ref().map(|block| block.reason);
-    let asks_the_user = matches!(
-        reason,
-        Some(BlockReason::Human | BlockReason::Conflict | BlockReason::Environment)
-    );
-    if orchestrator_lives && !asks_the_user {
+    let kind = RouteKind::Blocked {
+        reason: task.block.as_ref().map(|block| block.reason),
+        user_only: task.block.as_ref().is_some_and(|block| block.user_only),
+    };
+    if alert_route(kind, orchestrator_lives(run)) == Route::Orchestrator {
         return None;
     }
     // Milestone 9.0.7 decision 7: the task id is the alert's `task`, drawn in its who
@@ -180,10 +233,6 @@ pub fn task_needs_you(run: &RunInfo, task: &proto::TaskInfo) -> bool {
     blocked_text(run, task).is_some()
 }
 
-pub(super) fn orchestrator_lives(run: &RunInfo) -> bool {
-    run.orchestrator.as_ref().is_some_and(|orch| orch.live)
-}
-
 /// Decisions 17 and 18: every alert, most urgent first — by priority, then the run's
 /// `created_at` (the order `shown_runs` gives), then the order the rules list.
 pub fn alerts(app: &App) -> Vec<Alert> {
@@ -197,9 +246,21 @@ pub fn alerts(app: &App) -> Vec<Alert> {
             id: one_line(&id),
         };
         // `detail` defaults to the text; `age` only where decision 8 knows it.
-        let mut push = |priority, key, text: String, task: Option<&str>, detail, age| {
+        let lives = orchestrator_lives(run);
+        let mut push = |priority,
+                        key: AlertKey,
+                        text: String,
+                        task: Option<&str>,
+                        detail: Option<&str>,
+                        age| {
+            // Milestone 9.9 decision 22: what the living orchestrator handles is not listed.
+            let kind = route_kind(&key, Some(run));
+            if alert_route(kind, lives) == Route::Orchestrator {
+                return;
+            }
             let text = one_line(&text);
             out.push(Alert {
+                you: is_you(kind, lives),
                 priority,
                 key,
                 who: who.clone(),
@@ -212,6 +273,20 @@ pub fn alerts(app: &App) -> Vec<Alert> {
         if let Some((text, age)) = orchestrator_text(app, run) {
             let key = AlertKey::Orchestrator(id.clone());
             push(1, key, text.to_owned(), None, None, age);
+        }
+        if let Some((text, age)) = stuck_text(app, run) {
+            push(
+                1,
+                AlertKey::OrchestratorStuck(id.clone()),
+                text,
+                None,
+                None,
+                age,
+            );
+        }
+        if let Some((text, detail, age)) = ask_text(app, run) {
+            let key = AlertKey::OrchestratorAsks(id.clone());
+            push(1, key, text, None, Some(detail.as_str()), age);
         }
         if run.doc_gate.is_some() && run.state == RunState::AwaitingApproval {
             // Milestone 9.6 (DF §2.1): a design gate's version waiting for the user; none
@@ -301,6 +376,7 @@ pub fn alerts(app: &App) -> Vec<Alert> {
             detail: text.clone(),
             text,
             age: Some(app.run_age(proposal.updated_at)),
+            you: false,
         });
     }
     // Stable: within a priority the runs' order, then the rules', then the proposals.

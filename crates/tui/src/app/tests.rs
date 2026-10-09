@@ -561,3 +561,6 @@ fn background_status_changes_raise_toasts() {
 // startup config-problems notice) live in `app_tests/settings.rs`; task M6.10's rename,
 // restart and quit tests live in `app_tests/lifecycle.rs` (both declared above, per
 // `AGENTS.md` hard rule 8).
+
+#[path = "../app_tests/asks.rs"]
+mod asks;
