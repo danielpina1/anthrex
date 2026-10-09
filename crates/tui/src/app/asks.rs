@@ -21,7 +21,7 @@ impl App {
     /// orchestrator with a pending ask and the key is Enter, the answer "in the window"
     /// (decision 14: the user's reply is on its way, whatever it says).
     pub(super) fn forward(&mut self, window_id: u32, bytes: Vec<u8>) -> Vec<Effect> {
-        let enter = matches!(bytes.as_slice(), b"\r");
+        let enter = bytes.contains(&b'\r');
         let mut effects = vec![Effect::Send(ClientMsg::Input { window_id, bytes })];
         if enter
             && let Some(request) = (self.runs.runs.iter())

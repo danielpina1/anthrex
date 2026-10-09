@@ -10,7 +10,8 @@ use crate::tree::alert_fixtures::{at, blocked, orch_window, with_orch};
 use crate::tree::run_fixtures::snapshot;
 use crate::tree::stage_fixtures::stage;
 use proto::{
-    AskInfo, BlockReason, ClientMsg, FullState, OrchestratorStuck, RunInfo, RunRequest, RunState,
+    AskInfo, BlockReason, ClientMsg, DeliveryAlert, DeliveryAlertKind, FullState,
+    OrchestratorStuck, RunInfo, RunRequest, RunState,
 };
 
 const NOW: u64 = 10_000;
@@ -151,9 +152,13 @@ fn option_keys_answer_and_a_missing_option_toasts() {
 #[test]
 fn enter_on_an_ask_or_a_stuck_alert_focuses_the_orchestrator() {
     let mut app = app_with_runs(
-        vec![orch_window(11, "r", Status::Working, true)],
+        vec![
+            crate::tree::run_fixtures::pty(2, "shell", "/r/demo", Status::Idle),
+            orch_window(11, "r", Status::Working, true),
+        ],
         snapshot(NOW, vec![asking(&["tabs"])]),
     );
+    app.focus(2);
     open_view(&mut app);
     press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
     assert_eq!(app.focused, Some(11));
@@ -240,4 +245,109 @@ fn an_ask_with_hostile_text_draws_on_one_line() {
     assert_eq!(crate::safe_text::tests::first_hostile(&all[0].text), None);
     // The detail is raw; the view sanitises it where it draws.
     assert!(all[0].detail.contains("1. o"));
+}
+
+fn answer_effects(window: u32) -> Vec<Effect> {
+    vec![
+        Effect::Send(ClientMsg::Input {
+            window_id: window,
+            bytes: b"\x1b\r".to_vec(),
+        }),
+        Effect::Send(ClientMsg::Run(RunRequest::AnswerAsk {
+            run_id: "r".into(),
+            ask: 1,
+            choice: None,
+        })),
+    ]
+}
+
+/// Decision 17: any forwarded bytes containing a carriage return answer, so `ESC CR`
+/// (Alt+Enter) does too.
+#[test]
+fn forwarded_bytes_with_a_carriage_return_answer() {
+    let mut app = app_with_runs(
+        vec![orch_window(11, "r", Status::Working, true)],
+        snapshot(NOW, vec![asking(&["tabs"])]),
+    );
+    assert_eq!(app.forward(11, b"\x1b\r".to_vec()), answer_effects(11));
+    assert_eq!(app.forward(11, b"abc".to_vec()).len(), 1);
+}
+
+/// M8: a halt the daemon marked user-only is listed under a living orchestrator, with
+/// the `you` badge; the same halt unmarked goes to the orchestrator.
+#[test]
+fn a_user_only_halt_reaches_the_user_and_an_ordinary_one_the_orchestrator() {
+    let mut run = with_orch(at("r", RunState::Halted, 1), 11);
+    run.halted_reason = Some("base branch moved".into());
+    run.halt_user_only = true;
+    let app = app_with_runs(vec![], snapshot(NOW, vec![run.clone()]));
+    let all = alerts(&app);
+    assert_eq!(all.len(), 1, "{all:?}");
+    assert_eq!(all[0].text, "run halted: base branch moved");
+    assert!(all[0].you);
+
+    run.halt_user_only = false;
+    let app = app_with_runs(vec![], snapshot(NOW, vec![run]));
+    assert_eq!(listed(&app), vec![]);
+}
+
+/// M9: the same for a held host op (a push refused for credentials, say).
+#[test]
+fn a_user_only_held_host_op_reaches_the_user_and_an_ordinary_one_the_orchestrator() {
+    let deliver = |user_only| {
+        let (mut snap, windows) = crate::tree::pr_fixtures::pr_fixture();
+        let run = &mut snap.runs[0];
+        run.orchestrator = with_orch(at("x", RunState::Running, 1), 11).orchestrator;
+        run.delivery.as_mut().expect("pr mode").alerts = vec![DeliveryAlert {
+            kind: DeliveryAlertKind::HostOpHeld,
+            stage: Some(3),
+            text: "PR #143: push refused".into(),
+            user_only,
+        }];
+        let app = app_with_runs(windows, snap);
+        alerts(&app)
+            .into_iter()
+            .filter(|a| matches!(a.key, AlertKey::Delivery { .. }))
+            .collect::<Vec<_>>()
+    };
+    let mine = deliver(true);
+    assert_eq!(mine.len(), 1, "{mine:?}");
+    assert!(mine[0].you);
+    assert_eq!(deliver(false), vec![]);
+}
+
+/// Decision 25, read run-major: each run's stuck then ask alert, then the next run's.
+#[test]
+fn stuck_and_ask_alerts_are_ordered_run_major() {
+    let mut a = asking(&["tabs"]);
+    a.run_id = "a".into();
+    a.created_at = 1;
+    a.orchestrator.as_mut().unwrap().stuck = Some(OrchestratorStuck::Dead { since: None });
+    let mut b = a.clone();
+    b.run_id = "b".into();
+    b.created_at = 2;
+    let app = app_with_runs(vec![], snapshot(NOW, vec![a, b]));
+    let keys: Vec<AlertKey> = alerts(&app).into_iter().map(|a| a.key).collect();
+    assert_eq!(
+        keys,
+        vec![
+            AlertKey::OrchestratorStuck("a".into()),
+            AlertKey::OrchestratorAsks("a".into()),
+            AlertKey::OrchestratorStuck("b".into()),
+            AlertKey::OrchestratorAsks("b".into()),
+        ]
+    );
+}
+
+#[test]
+fn a_dead_orchestrator_with_no_known_window_has_no_restart_clause() {
+    let mut run = with_orch(at("r", RunState::Running, 1), 11);
+    let orch = run.orchestrator.as_mut().unwrap();
+    orch.live = false;
+    orch.stuck = Some(OrchestratorStuck::Dead { since: None });
+    let app = app_with_runs(vec![], snapshot(NOW, vec![run]));
+    assert_eq!(
+        listed(&app),
+        vec![line(1, "r", "orchestrator exited; its alerts are yours")]
+    );
 }

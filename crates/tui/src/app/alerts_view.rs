@@ -267,7 +267,7 @@ impl App {
 
     /// Priority 1's Enter: focus the orchestrator's window and leave tree mode, as
     /// `enter_run_root` does; a headless one opens its conversation.
-    pub(super) fn enter_orchestrator(&mut self, run_id: &str) -> Vec<Effect> {
+    fn enter_orchestrator(&mut self, run_id: &str) -> Vec<Effect> {
         let window = run_of(self, run_id)
             .and_then(|run| run.orchestrator.as_ref()?.window_id)
             .and_then(|id| self.windows.iter().find(|w| w.id == id))

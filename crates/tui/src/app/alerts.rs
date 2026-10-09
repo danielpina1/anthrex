@@ -149,10 +149,13 @@ fn stuck_text(app: &App, run: &RunInfo) -> Option<(String, Option<u64>)> {
             let name = orch
                 .window_id
                 .and_then(|id| app.windows.iter().find(|w| w.id == id))
-                .map_or_else(|| "its window".to_owned(), |w| w.name.clone());
-            let text = format!(
-                "orchestrator exited; its alerts are yours · anthrex restart {name} restarts it"
-            );
+                .map(|w| w.name.clone());
+            let text = match name {
+                Some(name) => format!(
+                    "orchestrator exited; its alerts are yours \u{b7} anthrex restart {name} restarts it"
+                ),
+                None => "orchestrator exited; its alerts are yours".to_owned(),
+            };
             (text, since.map(|at| app.run_age(at)))
         }
     })
@@ -177,9 +180,10 @@ fn ask_text(app: &App, run: &RunInfo) -> Option<(String, String, Option<u64>)> {
 }
 
 /// Decision 18's priority 3 for a blocked task: while the orchestrator lives, only
-/// what is user-only (milestone 9.9 decision 22); with none, every reason. A paused task is never an alert,
-/// nor one at the plan gate or under a hold awaiting approval: the gate's or the
-/// hold's alert covers it, and it is drawn as planned (`○`, milestone 9.0.7 ruling).
+/// what is user-only (milestone 9.9 decision 22); with none, every reason. A paused
+/// task is never an alert, nor one at the plan gate or under a hold awaiting approval:
+/// the gate's or the hold's alert covers it, and it is drawn as planned (`○`,
+/// milestone 9.0.7 ruling).
 fn blocked_text(run: &RunInfo, task: &proto::TaskInfo) -> Option<String> {
     if task.state != TaskState::Blocked || is_paused(task) {
         return None;
