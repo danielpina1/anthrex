@@ -39,6 +39,8 @@ use std::collections::BTreeMap;
 use super::model::{AgentRound, OpId, PendingOp, Run};
 
 pub(crate) mod actions;
+mod actor;
+pub use actor::Actor;
 mod batch;
 mod bisect;
 mod chains;
@@ -81,6 +83,7 @@ mod merge;
 mod op_result;
 mod ops;
 mod orch;
+mod orch_ops;
 mod orch_window;
 mod outbox;
 mod pair;

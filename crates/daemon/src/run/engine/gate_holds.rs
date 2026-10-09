@@ -9,6 +9,7 @@
 
 use proto::{HoldKind, HoldState, PlanEdit, TaskState};
 
+use super::actor::Actor;
 use super::complete::cancel_now;
 use super::requests::log;
 use super::{Effect, EngineState, ReplyId};
@@ -467,20 +468,26 @@ pub(super) fn verdict(
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
-    let result = decide(state, (run_id, id), approve, now, fx);
+    let result = match state.runs.get_mut(run_id) {
+        Some(run) => decide_on(run, id, approve, Actor::User, now, fx),
+        None => Err(format!("unknown run {run_id}")),
+    };
     fx.push(Effect::Reply { reply, result });
 }
 
-fn decide(
-    state: &mut EngineState,
-    (run_id, id): (&str, &str),
+/// The hold verdict's core, shared by the user's request and the orchestrator's
+/// `approve_hold` (milestone 9.9 decision 9). The orchestrator is not told of its own act
+/// (decision 14), and `decided_by` is the actor's label.
+pub(super) fn decide_on(
+    run: &mut Run,
+    id: &str,
     approve: bool,
+    actor: Actor,
     now: u64,
     fx: &mut Vec<Effect>,
 ) -> Result<String, String> {
-    let Some(run) = state.runs.get_mut(run_id) else {
-        return Err(format!("unknown run {run_id}"));
-    };
+    let run_id = run.id.clone();
+    let run_id = run_id.as_str();
     super::actions::rules::hold(run, id).map_or(Ok(()), Err)?;
     let Some(hold) = run.orch.gate_holds.iter_mut().find(|h| h.id == id) else {
         return Err(super::actions::rules::refused(super::actions::rules::hold(
@@ -488,12 +495,14 @@ fn decide(
         )));
     };
     hold.decided_at = Some(now);
-    hold.decided_by = Some("user".into());
+    hold.decided_by = Some(actor.label().into());
     let tasks = hold.tasks.clone();
     if approve {
         hold.state = HoldState::Approved;
-        log(run, now, format!("hold {id} approved by the user"));
-        super::wake::note(run, format!("the user approved hold {id}"));
+        if actor == Actor::User {
+            log(run, now, format!("hold {id} approved by the user"));
+            super::wake::note(run, format!("the user approved hold {id}"));
+        }
         // Only live work counts: a task the user's own `run edit` cancelled or split
         // (its children are the user's and carry no hold) is released already (M9.7
         // second review, ruling 3).
@@ -518,8 +527,10 @@ fn decide(
         cancel_now(run, i, &format!("its hold {id} was rejected"), now, fx);
         cancelled += 1;
     }
-    log(run, now, format!("hold {id} rejected by the user"));
-    super::wake::note(run, format!("the user rejected hold {id}"));
+    if actor == Actor::User {
+        log(run, now, format!("hold {id} rejected by the user"));
+        super::wake::note(run, format!("the user rejected hold {id}"));
+    }
     Ok(format!(
         "hold {id} of run {run_id} rejected: {cancelled} task{} cancelled",
         plural(cancelled)

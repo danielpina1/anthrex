@@ -11,6 +11,7 @@ use crate::run::phases::set_state;
 use proto::{BlockReason, GateKind, TaskState, TestMode};
 
 use super::actions::rules;
+use super::actor::Actor;
 use super::dispatch::{block, history};
 use super::{
     Effect, EngineState, OpId, OpKind, OpResult, OverrideCount, ReplyId, ScratchAt, deciders,
@@ -361,25 +362,41 @@ pub(super) fn override_task(
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
-    let answer = |fx: &mut Vec<Effect>, result| fx.push(Effect::Reply { reply, result });
     let Some(run) = state.runs.get_mut(run_id) else {
-        return answer(fx, Err(format!("unknown run {run_id}")));
+        let result = Err(format!("unknown run {run_id}"));
+        return fx.push(Effect::Reply { reply, result });
     };
+    let call = (task_id, reason);
+    if let Some(result) = override_on(run, reply, call, Actor::User, now, fx) {
+        fx.push(Effect::Reply { reply, result });
+    }
+}
+
+/// The override's core, shared by the user's request and the orchestrator's op (milestone
+/// 9.9 decision 9). `None`: the reply waits for the commit count (`reply` is kept in
+/// [`OverrideCount`], decision 13).
+pub(super) fn override_on(
+    run: &mut Run,
+    reply: ReplyId,
+    (task_id, reason): (&str, &str),
+    actor: Actor,
+    now: u64,
+    fx: &mut Vec<Effect>,
+) -> Option<Result<String, String>> {
     if let Some(text) = rules::override_task(run, task_id) {
-        return answer(fx, Err(text));
+        return Some(Err(text));
     }
     let Some(i) = run.tasks.iter().position(|t| t.id() == task_id) else {
-        return answer(fx, Err(rules::refused(rules::override_task(run, task_id))));
+        return Some(Err(rules::refused(rules::override_task(run, task_id))));
     };
     let task = &run.tasks[i];
     // A blocked task's branch is counted even with an accepted claim: only a claim that
     // is still the branch's tip merges (T15-minors).
     if task.state == TaskState::Review {
-        let text = send_to_queue(run, i, reason, now, fx);
-        return answer(fx, Ok(text));
+        return Some(Ok(send_to_queue(run, i, reason, actor, now, fx)));
     }
     let Some(start) = task.start_commit.clone() else {
-        return answer(fx, Err(rules::refused(rules::override_task(run, task_id))));
+        return Some(Err(rules::refused(rules::override_task(run, task_id))));
     };
     let kind = OpKind::CountCommits {
         worktree: task.worktree.clone(),
@@ -393,13 +410,23 @@ pub(super) fn override_task(
         op,
         reply,
         reason: reason.to_string(),
+        actor,
     });
     emit_op(run, op, Some(task_id), kind, fx);
     history(run, i, now, "counting its commits for an override");
+    None
 }
 
-/// Task `i` goes to the merge queue without review; the reply's text.
-fn send_to_queue(run: &mut Run, i: usize, reason: &str, now: u64, fx: &mut Vec<Effect>) -> String {
+/// Task `i` goes to the merge queue without review; the reply's text. The orchestrator's
+/// act is recorded as handled (decision 12).
+fn send_to_queue(
+    run: &mut Run,
+    i: usize,
+    reason: &str,
+    actor: Actor,
+    now: u64,
+    fx: &mut Vec<Effect>,
+) -> String {
     review::stop_reviewers(run, i, now, fx);
     let task = &mut run.tasks[i];
     task.merged_without_approval = Some(reason.to_string());
@@ -413,7 +440,10 @@ fn send_to_queue(run: &mut Run, i: usize, reason: &str, now: u64, fx: &mut Vec<E
         now,
         format!("overridden: to the merge queue without review ({reason})"),
     );
-    let id = run.tasks[i].id();
+    let id = run.tasks[i].id().to_string();
+    if actor == Actor::Orchestrator {
+        crate::run::orch::handled::record(run, now, ("override", "overrode", &id), reason);
+    }
     format!("task {id} goes to the merge queue without review: {reason}")
 }
 
@@ -435,7 +465,13 @@ pub(super) fn override_counted(
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
-    let Some(OverrideCount { reply, reason, .. }) = run.tasks[i].override_count.take() else {
+    let Some(OverrideCount {
+        reply,
+        reason,
+        actor,
+        ..
+    }) = run.tasks[i].override_count.take()
+    else {
         return;
     };
     let id = run.tasks[i].id().to_string();
@@ -458,12 +494,15 @@ pub(super) fn override_counted(
         }
         OpResult::Commits { head, .. } => {
             run.tasks[i].head = Some(head);
-            Ok(send_to_queue(run, i, &reason, now, fx))
+            Ok(send_to_queue(run, i, &reason, actor, now, fx))
         }
         OpResult::Failed { message } => {
             Err(format!("could not count task {id}'s commits: {message}"))
         }
         other => Err(format!("could not count task {id}'s commits: {other:?}")),
     };
+    if actor == Actor::Orchestrator {
+        super::orch_ops::override_landed(run, (&id, &reason), &result, now);
+    }
     fx.push(Effect::Reply { reply, result });
 }

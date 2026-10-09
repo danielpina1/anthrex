@@ -31,6 +31,7 @@ pub mod contract_design;
 pub mod contract_rounds;
 pub mod digest;
 pub mod extract;
+pub mod handled;
 pub mod installed;
 pub(crate) mod json;
 pub mod launch;
@@ -127,6 +128,10 @@ pub struct RunOrch {
     /// run without the design flow, which behaves as 9.5's.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub design: Option<crate::run::design::state::DesignState>,
+    /// Milestone 9.9 decision 12: what the orchestrator resolved on its own (newest last,
+    /// at most `handled::HANDLED_KEPT`) and how many in all.
+    pub handled: Vec<handled::HandledRecord>,
+    pub handled_total: u32,
 }
 
 /// `Task.orch`: a task's milestone 9 state. Absent from an older run: empty.

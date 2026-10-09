@@ -363,6 +363,11 @@ fn edit_plan(
         write_summary(run, summary, now, fx);
         return accepted(run, reply, (Vec::new(), None, None), (now, base), fx);
     }
+    // Milestone 9.9 decision 11: an op is alone in its call and answered there.
+    let others = summary.is_some() || !responses.is_empty();
+    if super::orch_ops::intercept(run, reply, (edits, submit, others), (now, base), fx) {
+        return;
+    }
     // Decision 42: a `message` or `refresh` is alone in its call, before any effect.
     if let Err(error) = one_edit_rule(edits, submit, summary.is_some()) {
         return refuse(fx, reply, error.to_string());
