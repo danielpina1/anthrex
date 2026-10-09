@@ -2040,3 +2040,19 @@ The gaps tasks M9.8.6 to M9.8.14 left on purpose, each detailed under its task i
   - Picking `default` freezes the account's model when the run starts. The brief doesn't say this.
   - The picker's "as <label>" disagrees with `label()`'s rule for matches past the context tag.
 - **The TUI and the daemon briefly disagree on model identity until the catalogs load** (9.8 gate-fix review, minor).
+
+## From milestone 9.9 (2026-10-09, recorded by M9.9.11), for later
+
+What the task reviews of milestone 9.9 parked, each detailed in `docs/milestones/M9.9-orchestrator-first-alerts.md`'s Implementation notes or the task reviews.
+
+- **The manual check is outstanding** (the brief's "Manual check"): a real orchestrator retrying a real environment block, answering an `ask_user` with `2` from the Alerts view, and an orchestrator closed with `/exit` handing its alerts back. It needs the real `claude` and a person.
+- **Orchestrator `resume_run` and the user's `run resume` are parallel call sites** over the same primitives, not one shared function (M9.9.3 minor). A later change to one can miss the other; the double-hold test pins today's agreement.
+- **`accept_red` is allowed while a bisect or fix task on that head is in flight** (M9.9.3 M2, kept under autonomy "Everything"). The in-flight fix then finishes against an accepted red.
+- **A digest read marks every wake note answered, even one newer than the read** (M9.9.6 M3, as OFA's text says). A stall can stay hidden until the next note.
+- **`over_cap` notes once per thread**: N review threads over the cap give the orchestrator N notes (M9.9.4 minor, unpinned). `wake_routed.rs` also duplicates `full_fixes.rs`' three-failure setup.
+- **`handled.rs` repeats `LOG_MAX` (500)** from `requests.rs`, and `orch_ops::intercept` matches `edits[0]` twice (M9.9.2 minors).
+- **`user_only_task` trusts `BlockInfo.user_only`** as set where the block is raised; a block raised without the marker check is the orchestrator's (M9.9.5 minor).
+- **Give `submit_epic` its own op list** (M9.9.10 minor): `plan_edit` is shared with `edit_plan`, so the sub-planner's schema advertises the five ops the daemon always refuses from a sub-planner (as it already did for `answer` and `pause`).
+- **Alerts view and `run status` edges** (M9.9.9 minors, parked for the final review): no hostile-text test for the CLI's `orchestrator asks` lines; the footer at 80x24 with several runs, and `detail_scroll` with a footer, are untested; footer lines past the cap are dropped silently (consider `+N more`).
+- **Files near the limit**: `cli/src/run_cmd/status_tests.rs` (598) and `daemon/src/run/engine/planners.rs` (589) after M9.9.1; the next test or arm goes in a new file (R11).
+- **The module-graph temp file can collide** (seen in M9.9.11's full run, pre-existing): `daemon/src/profile/verify_tiers.rs:58` names it `anthrex-graph-<pid>-<nanos>.json` and creates it exclusively, so two threads of one process in the same nanosecond collide (`File exists`). The tier then falls back to a full run (`module graph unknown`). This flaked `tier::tests::cache::a_cached_build_runs_again_when_a_later_step_misses` once. Fix direction: add a process-wide atomic counter to the name, or retry with a new name on `AlreadyExists`.
