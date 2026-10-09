@@ -113,10 +113,10 @@ fn an_adopted_lanes_crown_moves_the_worktree_too() {
     let mut race = crate::run::test_support::race_of(t1, [LaneState::Adopted, LaneState::Out]);
     race.crowned = false;
     race.lanes[0].head = Some(HEAD.into());
-    race.lanes[0].gates.block = Some(proto::BlockInfo {
-        reason: proto::BlockReason::Question,
-        text: "which API?".into(),
-    });
+    race.lanes[0].gates.block = Some(proto::BlockInfo::new(
+        proto::BlockReason::Question,
+        "which API?",
+    ));
     t1.race = Some(race);
     let effects = fx.tick();
     let (op, kind) = only_op(&effects, "CrownRacer");

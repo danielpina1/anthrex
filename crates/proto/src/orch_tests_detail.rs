@@ -166,6 +166,8 @@ fn appended_variants_keep_their_indices() {
     expected.push("McpReady");
     // Milestone 9.6 appends `DocGate` and `ShowDoc` after `McpReady` (`design_tests.rs`).
     expected.extend(["DocGate", "ShowDoc"]);
+    // Milestone 9.9 appends `AnswerAsk` after `ShowDoc` (`orch_first_tests.rs`).
+    expected.push("AnswerAsk");
     assert_eq!(variant_names::<RunRequest>(), expected);
     assert_eq!(
         variant_at::<RunRequest>(

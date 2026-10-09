@@ -137,7 +137,17 @@
 /// `ModelCatalog.problem`, each defaulted and left out while empty, so an older
 /// `run.json` and snapshot still load. Derivation: 18 at `lib.rs:132` before this
 /// change; 18 + 1 = 19.
-pub const PROTO_VERSION: u32 = 19;
+///
+/// Milestone 9.9 bumps this to 20: the five orchestrator `edit_plan` ops, `AnswerAsk`,
+/// `OrchestratorInfo.{stuck, ask, handled, handled_total}`, `BlockInfo.user_only`,
+/// `RunInfo.halt_user_only`, `DeliveryAlert.user_only`, `FullInfo.accepted`. Derivation:
+/// 19 at `lib.rs:140` before this change (milestone 9.8); 19 + 1 = 20.
+pub const PROTO_VERSION: u32 = 20;
+
+/// `skip_serializing_if` for a `u32` count that is left out while zero.
+pub(crate) fn is_zero_u32(n: &u32) -> bool {
+    *n == 0
+}
 
 /// How long the daemon waits for a freshly connected client's `Hello`, and how long a
 /// client waits for the daemon's `Welcome`, before giving up on the handshake. Design
@@ -205,8 +215,9 @@ pub use models::{
     MODEL_ID_MAX_CHARS, ModelCatalog, ModelRef, ModelTable, RoleChoice, valid_effort,
 };
 pub use orch::{
-    HoldInfo, HoldKind, HoldState, IntegrationInfo, IntegrationState, MessageKind, MessageTarget,
-    OrchestratorChoice, OrchestratorInfo, TaskNoteInfo, TaskNoteKind,
+    AskInfo, HandledInfo, HoldInfo, HoldKind, HoldState, IntegrationInfo, IntegrationState,
+    MessageKind, MessageTarget, OrchestratorChoice, OrchestratorInfo, OrchestratorStuck,
+    TaskNoteInfo, TaskNoteKind,
 };
 // Re-exported by name, never by glob (C20): a glob re-export of `run` or `run_wire`
 // could silently shadow an existing root name (for instance `run_wire::request` beside
@@ -274,10 +285,14 @@ mod run_title_tests;
 mod models_tests;
 
 #[cfg(test)]
+#[path = "orch_first_tests.rs"]
+mod orch_first_tests;
+
+#[cfg(test)]
 mod tests {
     #[test]
-    fn proto_version_is_nineteen() {
-        assert_eq!(super::PROTO_VERSION, 19);
+    fn proto_version_is_twenty() {
+        assert_eq!(super::PROTO_VERSION, 20);
     }
 
     #[test]

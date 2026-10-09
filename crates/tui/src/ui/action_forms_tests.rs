@@ -42,10 +42,7 @@ fn app_with_blocked_question(question: &str, moved: bool) -> App {
     }
     let t1 = &mut run.tasks[1];
     t1.state = TaskState::Blocked;
-    t1.block = Some(BlockInfo {
-        reason: BlockReason::Question,
-        text: question.into(),
-    });
+    t1.block = Some(BlockInfo::new(BlockReason::Question, question));
     t1.actions = vec![
         action(ActionKind::Answer, "answer"),
         action(ActionKind::Message, "message"),
@@ -436,10 +433,7 @@ fn menu_and_forms_render_no_hostile_character() {
         let t1 = &mut run.tasks[1];
         t1.title = hostile.clone();
         t1.state = TaskState::Blocked;
-        t1.block = Some(BlockInfo {
-            reason: BlockReason::Question,
-            text: hostile.clone(),
-        });
+        t1.block = Some(BlockInfo::new(BlockReason::Question, hostile.clone()));
         let mut refused = action(ActionKind::Retry, &hostile);
         refused.refused_why = Some(hostile.clone());
         t1.actions = vec![

@@ -161,10 +161,10 @@ fn retry_refuses_l_and_dep_cancelled() {
 fn a_retried_held_task_is_handed_back_before_its_fresh_session() {
     let mut fx = blocked_t1();
     let window = fx.task("t1").rounds[0].window_id.unwrap();
-    let conflict = proto::BlockInfo {
-        reason: BlockReason::Conflict,
-        text: "its branch conflicts with the run branch again: crates/a/x.rs".into(),
-    };
+    let conflict = proto::BlockInfo::new(
+        BlockReason::Conflict,
+        "its branch conflicts with the run branch again: crates/a/x.rs",
+    );
     fx.task_mut("t1").block = Some(conflict.clone());
     edit(&mut fx, vec![add_dep("t1", "t2")]);
     assert!(fx.task("t1").awaiting_deps);

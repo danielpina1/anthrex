@@ -454,6 +454,12 @@ fn forbidden(edit: &PlanEdit) -> Option<String> {
         PlanEdit::Message { .. } => "message",
         PlanEdit::Refresh { .. } => "refresh",
         PlanEdit::Iterate { .. } => return Some(ITERATE_BY_PLANNER.to_string()),
+        // Milestone 9.9 decision 11: the orchestrator's action ops.
+        PlanEdit::Retry { .. } => "retry",
+        PlanEdit::Override { .. } => "override",
+        PlanEdit::ResumeRun { .. } => "resume_run",
+        PlanEdit::ApproveHold { .. } => "approve_hold",
+        PlanEdit::AcceptRed { .. } => "accept_red",
         _ => return None,
     };
     Some(format!("op {op} is not available to a sub-planner"))

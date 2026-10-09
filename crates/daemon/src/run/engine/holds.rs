@@ -52,10 +52,7 @@ pub(super) fn enforce_holds(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             let task = &mut run.tasks[i];
             task.held_answered = true;
             set_state(task, TaskState::Blocked, now);
-            task.block = Some(BlockInfo {
-                reason: BlockReason::Question,
-                text,
-            });
+            task.block = Some(BlockInfo::new(BlockReason::Question, text));
         }
     }
 }
@@ -219,10 +216,7 @@ pub(super) fn handed_back(
                 };
                 if run.tasks[i].held_answered {
                     let text = format!("answered; resumes once {} merged", waiting.join(", "));
-                    run.tasks[i].block = Some(BlockInfo {
-                        reason: BlockReason::Question,
-                        text,
-                    });
+                    run.tasks[i].block = Some(BlockInfo::new(BlockReason::Question, text));
                 }
                 history(run, i, now, note);
                 return;

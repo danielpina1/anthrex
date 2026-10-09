@@ -18,6 +18,7 @@ fn alert(kind: DeliveryAlertKind, stage: Option<u16>, text: &str) -> DeliveryAle
         kind,
         stage,
         text: text.into(),
+        user_only: false,
     }
 }
 

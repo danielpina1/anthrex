@@ -51,6 +51,7 @@ pub(crate) fn staged_fixture() -> (RunsSnapshot, Vec<WindowInfo>) {
         bisect_fixes: 1,
         note: None,
         held: false,
+        accepted: false,
     };
     one.fix_tasks = vec!["fix1".into()];
     info.stages = vec![one, stage(2, None, 1, 0)];

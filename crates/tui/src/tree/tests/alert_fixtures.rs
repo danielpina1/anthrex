@@ -27,10 +27,7 @@ pub(crate) fn at(id: &str, state: RunState, created_at: u64) -> RunInfo {
 
 pub(crate) fn blocked(id: &str, reason: BlockReason, text: &str) -> proto::TaskInfo {
     let mut t = task(id, "work", Size::S, TaskState::Blocked);
-    t.block = Some(BlockInfo {
-        reason,
-        text: text.into(),
-    });
+    t.block = Some(BlockInfo::new(reason, text));
     t
 }
 

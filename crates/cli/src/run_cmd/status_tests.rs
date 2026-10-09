@@ -199,6 +199,7 @@ pub(in crate::run_cmd) fn example() -> RunInfo {
         state: RunState::Running,
         paused_from: None,
         halted_reason: None,
+        halt_user_only: false,
         approved_by: Some("user".into()),
         base_branch: "main".into(),
         base_sha: "1a2b3c4d5e6f".into(),
@@ -500,6 +501,10 @@ fn status_shows_orchestrator_planners_holds_summary_and_paused_lines() {
         notes: vec![],
         wakes: 0,
         wake_held: false,
+        stuck: None,
+        ask: None,
+        handled: vec![],
+        handled_total: 0,
     });
     let planner = |epic: &str, state| PlannerInfo {
         epic: epic.into(),
@@ -538,10 +543,10 @@ fn status_shows_orchestrator_planners_holds_summary_and_paused_lines() {
     run.tasks[2].hold = Some("epic:mail".into());
     run.tasks[1].hold = Some("promotion".into());
     run.tasks[3].epic = Some("mail".into());
-    run.tasks[3].block = Some(BlockInfo {
-        reason: BlockReason::MessagePause,
-        text: "asked to stop and wait: hold on".into(),
-    });
+    run.tasks[3].block = Some(BlockInfo::new(
+        BlockReason::MessagePause,
+        "asked to stop and wait: hold on",
+    ));
     run.tasks[0].state = TaskState::Reported;
     let text = run_block(&run, 0);
     let lines: Vec<&str> = text.lines().collect();

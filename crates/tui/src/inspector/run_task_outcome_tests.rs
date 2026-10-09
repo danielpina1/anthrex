@@ -477,10 +477,10 @@ fn a_blocked_task_says_why_in_outcome() {
     let (mut snapshot, windows) = in_review_snapshot();
     let task = t2(&mut snapshot.runs[0]);
     task.state = TaskState::Blocked;
-    task.block = Some(proto::BlockInfo {
-        reason: proto::BlockReason::Question,
-        text: "Which event pairs?\nStart or Stop".into(),
-    });
+    task.block = Some(proto::BlockInfo::new(
+        proto::BlockReason::Question,
+        "Which event pairs?\nStart or Stop",
+    ));
     let inspection = inspect_node(&app_of((snapshot, windows)), &t2_key());
     assert_eq!(
         value(&inspection, "OUTCOME", "blocked"),

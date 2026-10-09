@@ -21,6 +21,7 @@ pub(super) use super::edits_state::{not_started, state_label};
 use super::engine::actions::rules;
 use super::model::{Run, Task, TaskEvent, task_branch, task_path};
 use super::orch::EditSource;
+use super::orch::contract::ACTION_ALONE;
 use super::orch::contract_rounds::{ITERATE_BY_PLANNER, ITERATE_BY_USER, ITERATE_IN_EDITS};
 use super::plan::PlanError;
 use super::validate::{
@@ -194,7 +195,26 @@ impl Batch {
                 };
                 self.errors.push(PlanError::new(None, "", "43", text));
             }
+            // Milestone 9.9 decision 11: the orchestrator's action ops are intercepted
+            // before a batch (M9.9.2); one that reaches it is misplaced.
+            PlanEdit::Retry { .. } => self.orch_op("retry", "retry"),
+            PlanEdit::Override { .. } => self.orch_op("override", "override"),
+            PlanEdit::ResumeRun { .. } => self.orch_op("resume_run", "resume"),
+            PlanEdit::ApproveHold { .. } => self.orch_op("approve_hold", "approve --hold"),
+            PlanEdit::AcceptRed { .. } => self.orch_op("accept_red", "finish"),
         }
+    }
+
+    /// Refuses `op`, worded by who sent it: `cmd` is the command a user has instead.
+    fn orch_op(&mut self, op: &str, cmd: &str) {
+        let text = match self.source {
+            EditSource::User => {
+                format!("op {op} is the orchestrator's; you have anthrex run {cmd}")
+            }
+            EditSource::Orchestrator => ACTION_ALONE.to_string(),
+            EditSource::Planner { .. } => format!("op {op} is not available to a sub-planner"),
+        };
+        self.errors.push(PlanError::new(None, "", "26", text));
     }
 
     /// The first task with `id`, or an error naming it.
@@ -355,10 +375,7 @@ impl Batch {
                 _ => format!("blocked: {text}"),
             };
             set_state(dependent, TaskState::Blocked, self.now);
-            dependent.block = Some(BlockInfo {
-                reason: BlockReason::DepCancelled,
-                text,
-            });
+            dependent.block = Some(BlockInfo::new(BlockReason::DepCancelled, text));
             self.log(j, history);
         }
     }

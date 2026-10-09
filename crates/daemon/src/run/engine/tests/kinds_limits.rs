@@ -75,10 +75,7 @@ pub(super) fn mis_sized_again(fx: &mut Fixture) {
     let task = fx.task_mut("t1");
     task.state = TaskState::Blocked;
     task.fresh_session = None;
-    task.block = Some(proto::BlockInfo {
-        reason: BlockReason::MisSized,
-        text: "does not fit".into(),
-    });
+    task.block = Some(proto::BlockInfo::new(BlockReason::MisSized, "does not fit"));
     for round in &mut task.rounds {
         round.ended = true;
         round.turn_open = false;

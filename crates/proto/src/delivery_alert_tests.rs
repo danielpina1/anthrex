@@ -30,6 +30,7 @@ fn every_kind() -> Vec<DeliveryAlert> {
         kind,
         stage,
         text: format!("{kind:?}"),
+        user_only: false,
     })
     .collect()
 }

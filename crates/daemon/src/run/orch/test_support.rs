@@ -41,10 +41,7 @@ pub fn task_mut<'a>(run: &'a mut Run, id: &str) -> &'a mut Task {
 
 pub fn block(task: &mut Task, reason: BlockReason, text: &str) {
     task.state = TaskState::Blocked;
-    task.block = Some(BlockInfo {
-        reason,
-        text: text.to_string(),
-    });
+    task.block = Some(BlockInfo::new(reason, text.to_string()));
 }
 
 pub fn event(task: &mut Task, at: u64, text: &str) {

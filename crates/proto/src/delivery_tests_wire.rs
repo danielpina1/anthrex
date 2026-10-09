@@ -50,9 +50,10 @@ pub(crate) fn variant_at<T: DeserializeOwned>(index: u8, payload: &serde_json::V
 #[test]
 fn appended_variants_keep_their_indices() {
     let names = tagged_names::<PlanEdit>("op");
-    // Milestone 9.3 appends `iterate` (`rounds_tests.rs`).
+    // Milestone 9.3 appends `iterate` (`rounds_tests.rs`); milestone 9.9 appends the
+    // five orchestrator ops after it (`orch_first_tests.rs`).
     assert_eq!(
-        names[names.len() - 4..],
+        names[names.len() - 9..names.len() - 5],
         ["message", "refresh", "reply_comment", "iterate"],
         "{names:?}"
     );
@@ -80,11 +81,11 @@ fn appended_variants_keep_their_indices() {
     // Milestone 9.3 appends `Iterate` after `Watch`, 9.5 `McpReady` after it, and 9.6
     // `DocGate` and `ShowDoc` after that (`design_tests.rs`).
     assert_eq!(
-        names[names.len() - 8..names.len() - 3],
+        names[names.len() - 9..names.len() - 4],
         ["TaskDetail", "Settings", "Deliver", "Watch", "Iterate"],
         "{names:?}"
     );
-    let n = names.len() as u8 - 4;
+    let n = names.len() as u8 - 5;
     assert_eq!(
         variant_at::<RunRequest>(n - 2, &serde_json::json!({"run_id": "r1", "stage": 2})),
         Some(RunRequest::Deliver {

@@ -189,7 +189,7 @@ pub(super) fn block(run: &mut Run, i: usize, reason: BlockReason, text: String, 
     history(run, i, now, format!("blocked ({label}): {text}"));
     let task = &mut run.tasks[i];
     set_state(task, TaskState::Blocked, now);
-    task.block = Some(BlockInfo { reason, text });
+    task.block = Some(BlockInfo::new(reason, text));
     // Ruling T12-I4b: a pending interrupt no longer applies to a blocked task; its
     // stale nudge is dropped, so whatever unblocks the task is delivered.
     let mut cleared = false;

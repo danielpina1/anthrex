@@ -89,7 +89,8 @@ fn submit_epic_cannot_add_dep_on_another_epics_or_the_orchestrators_task() {
     assert_eq!(fx.task("m1").spec.deps, vec!["t1".to_string()]);
 }
 
-/// The steering ops are refused whole, before any effect.
+/// The steering ops, and milestone 9.9's five orchestrator ops, are refused whole,
+/// before any effect.
 #[test]
 fn submit_epic_refuses_answer_pause_resume_finish_message_refresh() {
     let mut fx = with_neighbours();
@@ -106,6 +107,24 @@ fn submit_epic_refuses_answer_pause_resume_finish_message_refresh() {
             json!({"op": "message", "to": ["t1"], "text": "hi", "kind": "info"}),
         ),
         ("refresh", json!({"op": "refresh", "task_id": "t1"})),
+        // Milestone 9.9 decision 11: the orchestrator's action ops.
+        (
+            "retry",
+            json!({"op": "retry", "task_id": "t1", "reason": "r"}),
+        ),
+        (
+            "override",
+            json!({"op": "override", "task_id": "t1", "reason": "r"}),
+        ),
+        ("resume_run", json!({"op": "resume_run", "reason": "r"})),
+        (
+            "approve_hold",
+            json!({"op": "approve_hold", "hold": "epic:ui", "reason": "r"}),
+        ),
+        (
+            "accept_red",
+            json!({"op": "accept_red", "stage": 1, "reason": "r"}),
+        ),
     ];
     for (name, op) in ops {
         let before = fx.run().clone();

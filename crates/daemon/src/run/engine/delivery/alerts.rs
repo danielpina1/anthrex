@@ -65,6 +65,8 @@ pub(crate) fn alerts(run: &Run) -> Vec<DeliveryAlert> {
                 kind: line.kind?,
                 stage: line.stage,
                 text: proto::safe_text::one_line(&line.text),
+                // Milestone 9.9 decision 18: set by M9.9.5.
+                user_only: false,
             })
         })
         .collect()

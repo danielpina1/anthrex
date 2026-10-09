@@ -52,10 +52,7 @@ fn set_state(run: &mut Run, id: &str, state: TaskState, block: Option<BlockReaso
         .find(|t| t.spec.id == id)
         .unwrap_or_else(|| panic!("no task {id}"));
     task.state = state;
-    task.block = block.map(|reason| BlockInfo {
-        reason,
-        text: format!("fixture block on {id}"),
-    });
+    task.block = block.map(|reason| BlockInfo::new(reason, format!("fixture block on {id}")));
 }
 
 fn apply(run: &Run, edits: Vec<PlanEdit>) -> Result<(Run, Vec<EditConsequence>), Vec<PlanError>> {
@@ -321,10 +318,10 @@ fn cancel_of_a_pending_task_marks_dependents_dep_cancelled() {
     assert_eq!(t3.state, TaskState::Blocked);
     assert_eq!(
         t3.block,
-        Some(BlockInfo {
-            reason: BlockReason::DepCancelled,
-            text: "dependency t2 was cancelled".to_string(),
-        })
+        Some(BlockInfo::new(
+            BlockReason::DepCancelled,
+            "dependency t2 was cancelled".to_string()
+        ))
     );
     assert_eq!(task(&edited, "t1").state, TaskState::Pending);
     assert_eq!(task(&edited, "t4").state, TaskState::Pending);
@@ -483,6 +480,77 @@ fn split_rewires_dependents_to_every_child() {
         rejected(&run, vec![empty]),
         vec!["task t2: into: at least one task is required"]
     );
+}
+
+/// Milestone 9.9 decision 11: the five orchestrator ops are not a user's edit; each is
+/// refused with the command the user has instead, and with rule 26.
+#[test]
+fn the_orchestrators_ops_are_refused_in_a_users_edit() {
+    let run = chain();
+    let reason = || "r".to_string();
+    let ops = [
+        (
+            PlanEdit::Retry {
+                task_id: "t2".into(),
+                reason: reason(),
+            },
+            "retry",
+            "retry",
+        ),
+        (
+            PlanEdit::Override {
+                task_id: "t2".into(),
+                reason: reason(),
+            },
+            "override",
+            "override",
+        ),
+        (
+            PlanEdit::ResumeRun {
+                reason: reason(),
+                stage: None,
+            },
+            "resume_run",
+            "resume",
+        ),
+        (
+            PlanEdit::ApproveHold {
+                hold: "epic:ui".into(),
+                reason: reason(),
+            },
+            "approve_hold",
+            "approve --hold",
+        ),
+        (
+            PlanEdit::AcceptRed {
+                stage: 1,
+                reason: reason(),
+            },
+            "accept_red",
+            "finish",
+        ),
+    ];
+    for (edit, op, cmd) in ops {
+        assert_eq!(
+            rejected(&run, vec![edit.clone()]),
+            vec![format!(
+                "op {op} is the orchestrator's; you have anthrex run {cmd}"
+            )]
+        );
+        // From the orchestrator one that reaches a batch is misplaced, not a user's.
+        let errors = apply_edits(
+            &run,
+            &[edit],
+            &EditScope::Run,
+            &EditSource::Orchestrator,
+            5_000,
+        )
+        .expect_err("an action op never edits the plan");
+        assert_eq!(
+            errors.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            vec![crate::run::orch::contract::ACTION_ALONE.to_string()]
+        );
+    }
 }
 
 #[path = "edits_tests_rules.rs"]

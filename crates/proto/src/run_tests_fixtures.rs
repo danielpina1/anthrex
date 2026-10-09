@@ -108,10 +108,10 @@ pub(super) fn a_task_info() -> TaskInfo {
             tokens: 5600,
         },
         state: TaskState::Review,
-        block: Some(BlockInfo {
-            reason: BlockReason::Question,
-            text: "waiting on an answer about the token TTL".into(),
-        }),
+        block: Some(BlockInfo::new(
+            BlockReason::Question,
+            "waiting on an answer about the token TTL",
+        )),
         // `rung`, `failures`, `stalls`, `budget_exceeded` and `conflicts` are all `u8`;
         // each gets its own value so a swap between any two of them survives neither
         // this fixture nor the by-name assertions below.
@@ -196,6 +196,7 @@ pub(super) fn a_run_info() -> RunInfo {
         state: RunState::Running,
         paused_from: None,
         halted_reason: None,
+        halt_user_only: false,
         approved_by: Some("user".into()),
         base_branch: "main".into(),
         base_sha: "0000000000000000000000000000000000000a".into(),

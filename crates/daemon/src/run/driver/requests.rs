@@ -238,6 +238,12 @@ impl RunService {
                 };
                 self.show_doc(run, query).await
             }
+            // Milestone 9.9 (OFA §4.3): the engine side arrives with `ask_user` (M9.9.7);
+            // until then no run has a pending question.
+            RunRequest::AnswerAsk { run_id, .. } => answer(
+                request::ANSWER_ASK,
+                Err(format!("run {run_id} has no pending question")),
+            ),
             RunRequest::Subscribe | RunRequest::Unsubscribe => {
                 RunReply::refused("run", "subscriptions are answered by the connection")
             }

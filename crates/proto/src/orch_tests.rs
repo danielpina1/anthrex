@@ -120,6 +120,10 @@ fn orch_types_round_trip() {
         notes: vec!["t3 blocked: which table?".into()],
         wakes: 4,
         wake_held: false,
+        stuck: None,
+        ask: None,
+        handled: Vec::new(),
+        handled_total: 0,
     };
     both_ways(&orchestrator);
 
@@ -350,6 +354,12 @@ fn appended_variants_keep_their_indices() {
             "refresh",
             "reply_comment",
             "iterate",
+            // Milestone 9.9 (`orch_first_tests.rs`).
+            "retry",
+            "override",
+            "resume_run",
+            "approve_hold",
+            "accept_red",
         ]
     );
 }

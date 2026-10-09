@@ -204,10 +204,10 @@ pub(super) fn running() -> Fixture {
     // whole gate history, so the block is set in place as `ladder` leaves it.
     let human = fx.task_mut("human");
     human.state = TaskState::Blocked;
-    human.block = Some(BlockInfo {
-        reason: BlockReason::Human,
-        text: "bounced three times at the check".into(),
-    });
+    human.block = Some(BlockInfo::new(
+        BlockReason::Human,
+        "bounced three times at the check",
+    ));
     let cancel = PlanEdit::CancelTask {
         task_id: "doomed".into(),
     };

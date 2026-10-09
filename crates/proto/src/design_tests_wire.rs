@@ -247,11 +247,12 @@ fn appended_variants_keep_their_indices() {
 
     let names = variant_names::<RunRequest>();
     assert_eq!(
-        names[names.len() - 3..],
+        names[names.len() - 4..names.len() - 1],
         ["McpReady", "DocGate", "ShowDoc"],
         "{names:?}"
     );
-    let n = names.len() as u8;
+    // Milestone 9.9 appends `AnswerAsk` after `ShowDoc` (`orch_first_tests.rs`).
+    let n = names.len() as u8 - 1;
     assert_eq!(
         variant_at::<RunRequest>(
             n - 2,

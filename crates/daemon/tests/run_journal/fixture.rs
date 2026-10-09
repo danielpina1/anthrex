@@ -295,10 +295,7 @@ pub fn full_run(data_dir: &Path) -> Run {
     );
 
     let task = &mut run.tasks[0];
-    task.block = Some(BlockInfo {
-        reason: BlockReason::Question,
-        text: "which?".into(),
-    });
+    task.block = Some(BlockInfo::new(BlockReason::Question, "which?"));
     task.rung = 2;
     task.failures = 1;
     task.start_commit = Some("b".repeat(40));

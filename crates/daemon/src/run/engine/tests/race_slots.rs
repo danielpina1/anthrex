@@ -253,10 +253,10 @@ fn an_adopted_lane_b_counts_its_slot_on_the_tasks_route() {
     let mut race = crate::run::test_support::race_of(t1, [LaneState::Out, LaneState::Adopted]);
     race.crowned = false;
     race.lanes[1].head = Some(HEAD_B.into());
-    race.lanes[1].gates.block = Some(proto::BlockInfo {
-        reason: proto::BlockReason::Question,
-        text: "which API?".into(),
-    });
+    race.lanes[1].gates.block = Some(proto::BlockInfo::new(
+        proto::BlockReason::Question,
+        "which API?",
+    ));
     t1.race = Some(race);
     let effects = fx.tick();
     let (op, _) = only_op(&effects, "CrownRacer");

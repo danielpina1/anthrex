@@ -201,6 +201,15 @@ pub enum RunRequest {
         #[serde(default)]
         findings: bool,
     },
+    /// Milestone 9.9 (OFA §4.3): the user's answer to the orchestrator's `ask_user`
+    /// `ask`; `choice` is an option's 0-based index, `None` answered in the window.
+    /// Answered under `request::ANSWER_ASK`.
+    AnswerAsk {
+        run_id: String,
+        ask: u64,
+        #[serde(default)]
+        choice: Option<u32>,
+    },
 }
 
 /// `anthrex profile …`, carried inside `RunRequest::Profile` (milestone 8b decision 10).
@@ -465,4 +474,6 @@ pub mod request {
     /// Milestone 9.6 decision 7 and DF §7.
     pub const DOC_GATE: &str = "run doc gate";
     pub const SHOW_DOC: &str = "run show";
+    /// Milestone 9.9 (OFA §4.3).
+    pub const ANSWER_ASK: &str = "run answer-ask";
 }

@@ -88,6 +88,51 @@ pub struct OrchestratorInfo {
     /// Milestone 9.0.5 decision 8: a wake-up is held back (`RunOrch.wake_held`).
     #[serde(default)]
     pub wake_held: bool,
+    /// Milestone 9.9 (OFA §4.1): why this orchestrator no longer counts as living.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stuck: Option<OrchestratorStuck>,
+    /// Milestone 9.9 (OFA §4.3): its pending `ask_user`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ask: Option<AskInfo>,
+    /// Milestone 9.9 (OFA §4.5): what it resolved on its own, newest last, at most 50.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub handled: Vec<HandledInfo>,
+    /// How many it has resolved in all, including those `handled` dropped.
+    #[serde(default, skip_serializing_if = "crate::is_zero_u32")]
+    pub handled_total: u32,
+}
+
+/// Milestone 9.9 (OFA §4.1): why an orchestrator no longer counts as living.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum OrchestratorStuck {
+    /// A wake note has waited `stall_after_secs` with no anthrex tool call since `since`.
+    Stalled { since: u64 },
+    /// Its window exited (`since`, when known) while the run still has work.
+    Dead { since: Option<u64> },
+}
+
+/// Milestone 9.9 (OFA §4.3): the orchestrator's pending `ask_user`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AskInfo {
+    pub id: u64,
+    pub question: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub context: String,
+    pub asked_at: u64,
+}
+
+/// Milestone 9.9 (OFA §4.5): one thing the orchestrator resolved on its own.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HandledInfo {
+    pub at: u64,
+    /// `retry`, `override`, `resume_run`, `approve_hold` or `accept_red`.
+    pub op: String,
+    /// `t3`, `run`, `stage 2`, `hold epic:ui`.
+    pub target: String,
+    pub reason: String,
 }
 
 /// Decision 37: where an epic's integration review stands.

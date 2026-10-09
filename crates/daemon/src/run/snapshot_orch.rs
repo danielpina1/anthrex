@@ -106,6 +106,11 @@ pub(super) fn orchestrator(run: &Run) -> Option<OrchestratorInfo> {
         notes: o.notes.clone(),
         wakes: o.wakes,
         wake_held: run.orch.wake_held,
+        // Milestone 9.9: filled from `RunOrch` by M9.9.2, M9.9.6 and M9.9.7.
+        stuck: None,
+        ask: None,
+        handled: Vec::new(),
+        handled_total: 0,
     })
 }
 

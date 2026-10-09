@@ -202,20 +202,14 @@ fn stage_words() {
         task.state = state;
         assert_eq!(project::stage_words(&run, &task), words, "{state:?}");
     }
-    task.block = Some(BlockInfo {
-        reason: BlockReason::Question,
-        text: "which?".into(),
-    });
+    task.block = Some(BlockInfo::new(BlockReason::Question, "which?"));
     assert_eq!(project::stage_words(&run, &task), "blocked: question");
     task.block_source = Some(proto::DeciderSource::Fallback);
     assert_eq!(
         project::stage_words(&run, &task),
         "blocked: question (fallback)"
     );
-    task.block = Some(BlockInfo {
-        reason: BlockReason::MessagePause,
-        text: String::new(),
-    });
+    task.block = Some(BlockInfo::new(BlockReason::MessagePause, String::new()));
     assert_eq!(project::stage_words(&run, &task), "paused by a message");
     // Held by a hold that awaits approval; not by one that was approved.
     task.state = TaskState::Queued;

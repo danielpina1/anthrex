@@ -101,15 +101,12 @@ fn the_stage_field_follows_the_daemons_not_started() {
     let run = snap.runs.remove(0);
     let mut task = run.tasks[0].clone();
     task.state = TaskState::Blocked;
-    task.block = Some(BlockInfo {
-        reason: BlockReason::MisSized,
-        text: "check failed 3 times".into(),
-    });
+    task.block = Some(BlockInfo::new(
+        BlockReason::MisSized,
+        "check failed 3 times",
+    ));
     assert!(has_stage_field(&run, &task), "blocked, not started");
-    task.block = Some(BlockInfo {
-        reason: BlockReason::MessagePause,
-        text: String::new(),
-    });
+    task.block = Some(BlockInfo::new(BlockReason::MessagePause, String::new()));
     assert!(!has_stage_field(&run, &task), "paused by a message");
 
     // A task with a round has started, whatever its state says.

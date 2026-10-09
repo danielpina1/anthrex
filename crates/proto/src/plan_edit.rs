@@ -91,6 +91,33 @@ pub enum PlanEdit {
     Iterate {
         goal: String,
     },
+    /// Milestone 9.9 (OFA §4.2): the orchestrator's `run retry`, alone in its call.
+    Retry {
+        task_id: String,
+        reason: String,
+    },
+    /// The orchestrator's `run override`.
+    Override {
+        task_id: String,
+        reason: String,
+    },
+    /// The orchestrator's `run resume` without `--rebaseline`; with `stage`, only that
+    /// held stage's tier 3 or push is released.
+    ResumeRun {
+        reason: String,
+        #[serde(default)]
+        stage: Option<u16>,
+    },
+    /// The orchestrator's approval of an awaiting hold.
+    ApproveHold {
+        hold: String,
+        reason: String,
+    },
+    /// The orchestrator accepts the red tier 3 on stage `stage`'s head.
+    AcceptRed {
+        stage: u16,
+        reason: String,
+    },
 }
 
 /// A batch of edits, the shape `anthrex run edit --file` reads.

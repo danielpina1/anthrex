@@ -166,10 +166,7 @@ fn a_started_hub_task_holds_the_hub_until_it_finishes() {
     assert_eq!(tasks_of(&fx.log, "PrepareWorktree"), vec!["h"]);
     let h = fx.task_mut("h");
     h.state = TaskState::Blocked;
-    h.block = Some(proto::BlockInfo {
-        reason: BlockReason::Question,
-        text: "which one?".into(),
-    });
+    h.block = Some(proto::BlockInfo::new(BlockReason::Question, "which one?"));
     fx.tick();
     assert_eq!(tasks_of(&fx.log, "PrepareWorktree"), vec!["h"]);
     fx.merge("h", &"c1".repeat(20));
@@ -196,10 +193,7 @@ fn a_hub_task_held_on_a_new_dependency_lets_that_dependency_run() {
     fx.launch_all();
     let h = fx.task_mut("h");
     h.state = TaskState::Blocked;
-    h.block = Some(proto::BlockInfo {
-        reason: BlockReason::Question,
-        text: "which one?".into(),
-    });
+    h.block = Some(proto::BlockInfo::new(BlockReason::Question, "which one?"));
     fx.tick();
     assert_eq!(tasks_of(&fx.log, "PrepareWorktree"), vec!["h"]);
     let effects = super::dispatch::edit(&mut fx, vec![super::holds::add_dep("h", "t4")]);

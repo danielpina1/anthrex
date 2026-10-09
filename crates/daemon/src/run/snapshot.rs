@@ -81,6 +81,8 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
         state: run.state,
         paused_from: run.paused_from,
         halted_reason: run.halted_reason.clone(),
+        // Milestone 9.9 (decision 18): computed in M9.9.5.
+        halt_user_only: false,
         approved_by: run.approved_by.clone(),
         base_branch: run.base_branch.clone(),
         base_sha: run.base_sha.clone(),

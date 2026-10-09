@@ -234,10 +234,7 @@ pub(super) fn blocked(reason: BlockReason) -> Fixture {
     fx.launch_all();
     let task = fx.task_mut("t1");
     task.state = TaskState::Blocked;
-    task.block = Some(BlockInfo {
-        reason,
-        text: "does not fit".into(),
-    });
+    task.block = Some(BlockInfo::new(reason, "does not fit"));
     for round in &mut task.rounds {
         round.ended = true;
         round.turn_open = false;

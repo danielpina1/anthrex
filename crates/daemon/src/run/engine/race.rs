@@ -380,5 +380,5 @@ pub(super) fn lane_out(
     task.fresh_session = None;
     set_state(task, TaskState::Blocked, now);
     let reason = BlockReason::Environment;
-    task.block = Some(proto::BlockInfo { reason, text });
+    task.block = Some(proto::BlockInfo::new(reason, text));
 }

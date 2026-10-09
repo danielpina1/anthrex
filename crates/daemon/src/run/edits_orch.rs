@@ -297,10 +297,10 @@ fn record(
     if kind == MessageKind::StopAndWait {
         let first: String = text.chars().take(120).collect();
         set_state(task, TaskState::Blocked, now);
-        task.block = Some(BlockInfo {
-            reason: BlockReason::MessagePause,
-            text: format!("asked to stop and wait: {first}"),
-        });
+        task.block = Some(BlockInfo::new(
+            BlockReason::MessagePause,
+            format!("asked to stop and wait: {first}"),
+        ));
     }
     outcome.delivered.push(id);
 }

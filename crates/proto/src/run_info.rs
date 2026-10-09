@@ -80,6 +80,20 @@ impl std::ops::AddAssign for TokenUsage {
 pub struct BlockInfo {
     pub reason: BlockReason,
     pub text: String,
+    /// Milestone 9.9 (OFA §4.4): only the user can fix the cause.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub user_only: bool,
+}
+
+impl BlockInfo {
+    /// A block the orchestrator may handle (`user_only` false).
+    pub fn new(reason: BlockReason, text: impl Into<String>) -> Self {
+        Self {
+            reason,
+            text: text.into(),
+            user_only: false,
+        }
+    }
 }
 
 /// The outcome of one `check` run.
@@ -376,6 +390,10 @@ pub struct RunInfo {
     pub state: RunState,
     pub paused_from: Option<RunState>,
     pub halted_reason: Option<String>,
+    /// Milestone 9.9: a halt only the user can resume (a `--rebaseline`, or a user-only
+    /// cause).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub halt_user_only: bool,
     /// `"user"`, `"--yes"` or `"fast path"`.
     pub approved_by: Option<String>,
     pub base_branch: String,

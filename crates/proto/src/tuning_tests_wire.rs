@@ -355,11 +355,11 @@ fn appended_variants_keep_their_indices() {
     let names = variant_names::<RunRequest>();
     // Milestone 9.6 appends `DocGate` and `ShowDoc` after `McpReady`.
     assert_eq!(
-        names[names.len() - 5..names.len() - 2],
+        names[names.len() - 6..names.len() - 3],
         ["Watch", "Iterate", "McpReady"],
         "{names:?}"
     );
-    let n = names.len() as u8 - 2;
+    let n = names.len() as u8 - 3;
     assert_eq!(
         variant_at::<RunRequest>(n - 1, &json!({"run_id": "r1", "window_id": 3})),
         Some(RunRequest::McpReady {
@@ -376,7 +376,7 @@ fn appended_variants_keep_their_indices() {
         })
     );
     let names = tagged_names::<PlanEdit>("op");
-    assert_eq!(names[names.len() - 1], "iterate", "{names:?}");
+    assert_eq!(names[names.len() - 6], "iterate", "{names:?}");
 }
 
 /// Ruling T8-2: a moved bad file's parse error rides `TuningReport.parse_error`, absent

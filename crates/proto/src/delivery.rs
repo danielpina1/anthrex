@@ -142,6 +142,9 @@ pub struct DeliveryAlert {
     #[serde(default)]
     pub stage: Option<u16>,
     pub text: String,
+    /// Milestone 9.9 (OFA §4.4): only the user can fix the cause.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub user_only: bool,
 }
 
 /// How a stage PR ended, in its `stage` history line (decision 44).
