@@ -109,6 +109,7 @@ mod signals;
 pub(crate) mod stages;
 mod tiers;
 mod tools;
+pub(crate) mod user_only;
 mod wake;
 pub(crate) mod weakening;
 mod worker_messages;

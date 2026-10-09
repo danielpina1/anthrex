@@ -7,7 +7,7 @@
 use proto::{AgentRole, BlockReason, Runtime, TaskState, TokenUsage};
 
 use super::clock::{not_before, stall_due};
-use super::dispatch::{block, history};
+use super::dispatch::{block, block_user_only, history};
 use super::ladder::{self, check_budget, kill_worker, live, worker_round};
 use super::{
     AgentSignal, Effect, EngineState, OpKind, TurnOutcome, early, emit_op, fallback, next_op,
@@ -348,16 +348,15 @@ fn failed_turn(
         FailureKind::SandboxUnavailable => {
             kill_worker(run, i, fx);
             run.tasks[i].rounds[r].environment_failed = true;
-            block(
-                run,
-                i,
-                BlockReason::Environment,
-                sandbox_unavailable_text(&error),
-                now,
-            );
+            block_user_only(run, i, sandbox_unavailable_text(&error), now);
         }
-        // Ruling F-1: a client error is as final as a failed login.
-        FailureKind::Authentication | FailureKind::Billing | FailureKind::ClientError => {
+        // Ruling F-1: a client error is as final as a failed login. A login or credit
+        // is the user's to fix; a client error stays the orchestrator's (R2).
+        FailureKind::Authentication | FailureKind::Billing => {
+            run.tasks[i].rounds[r].environment_failed = true;
+            block_user_only(run, i, error, now);
+        }
+        FailureKind::ClientError => {
             run.tasks[i].rounds[r].environment_failed = true;
             block(run, i, BlockReason::Environment, error, now);
         }

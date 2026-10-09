@@ -189,7 +189,9 @@ pub(super) fn block(run: &mut Run, i: usize, reason: BlockReason, text: String, 
     history(run, i, now, format!("blocked ({label}): {text}"));
     let task = &mut run.tasks[i];
     set_state(task, TaskState::Blocked, now);
-    task.block = Some(BlockInfo::new(reason, text));
+    let mut info = BlockInfo::new(reason, text);
+    info.user_only = reason == BlockReason::Environment && super::user_only::marked(&info.text);
+    task.block = Some(info);
     // Ruling T12-I4b: a pending interrupt no longer applies to a blocked task; its
     // stale nudge is dropped, so whatever unblocks the task is delivered.
     let mut cleared = false;
@@ -203,6 +205,14 @@ pub(super) fn block(run: &mut Run, i: usize, reason: BlockReason, text: String, 
         let id = task.spec.id.clone();
         run.outbox
             .retain(|m| m.task_id != id || m.delivered_at.is_some() || !is_stall_nudge(&m.text));
+    }
+}
+
+/// A block only the user can fix, whatever the text (milestone 9.9 decision 18).
+pub(super) fn block_user_only(run: &mut Run, i: usize, text: String, now: u64) {
+    block(run, i, BlockReason::Environment, text, now);
+    if let Some(b) = run.tasks[i].block.as_mut() {
+        b.user_only = true;
     }
 }
 
@@ -388,7 +398,12 @@ pub(super) fn window_done(
             round.ended_at = Some(now);
             if !state.is_finished() && !stale_reviewer {
                 let text = format!("could not start the session: {message}");
-                block(run, i, BlockReason::Environment, text, now);
+                // `os error 2`: the CLI binary is missing, which only the user can fix.
+                if message.contains("os error 2") {
+                    block_user_only(run, i, text, now);
+                } else {
+                    block(run, i, BlockReason::Environment, text, now);
+                }
             }
         }
         _ => {}

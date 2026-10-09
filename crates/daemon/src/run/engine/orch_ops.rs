@@ -10,7 +10,7 @@ use proto::{PlanEdit, RunState, ToolCall};
 use super::actor::Actor;
 use super::batch::record_rejected;
 use super::orch::refuse;
-use super::{Effect, ReplyId, delivery, full, gate_holds, gates, requests, restore};
+use super::{Effect, ReplyId, delivery, full, gate_holds, gates, requests, restore, user_only};
 use crate::run::edit_log::{self, EditOutcome};
 use crate::run::engine::actions::rules;
 use crate::run::model::Run;
@@ -72,7 +72,10 @@ pub(super) fn intercept(
     }
     let result = match &edits[0] {
         PlanEdit::Retry { task_id, .. } => {
-            let result = requests::retry_on(run, task_id, Actor::Orchestrator, now, fx);
+            let result = match user_only_task(run, task_id, rules::retry(run, task_id)) {
+                Some(refusal) => Err(refusal),
+                None => requests::retry_on(run, task_id, Actor::Orchestrator, now, fx),
+            };
             if result.is_ok() {
                 handled::record(run, now, ("retry", "retried", task_id), reason);
             }
@@ -80,6 +83,12 @@ pub(super) fn intercept(
         }
         PlanEdit::Override { task_id, .. } => {
             let call = (task_id.as_str(), reason);
+            let rule = rules::override_task(run, task_id);
+            if let Some(refusal) = user_only_task(run, task_id, rule) {
+                record_rejected(run, edits, &source, refusal.clone(), now);
+                refuse(fx, reply, refusal);
+                return true;
+            }
             match gates::override_on(run, reply, call, Actor::Orchestrator, now, fx) {
                 Some(result) => result,
                 // The reply, the handled record and the log entry wait for the count.
@@ -116,6 +125,22 @@ pub(super) fn intercept(
     true
 }
 
+/// Decision 10: the user path's own refusal first, then a block only the user can fix.
+fn user_only_task(run: &Run, task_id: &str, rule: Option<String>) -> Option<String> {
+    if rule.is_some() {
+        return rule;
+    }
+    let block = run
+        .tasks
+        .iter()
+        .find(|t| t.id() == task_id)?
+        .block
+        .as_ref()?;
+    block
+        .user_only
+        .then(|| user_only::refusal(&format!("task {task_id}"), &block.text))
+}
+
 /// `resume_run` (decision 6): without `stage`, `run resume` as the user's, never a
 /// rebaseline; with one, only that held stage is released.
 fn resume_run(
@@ -130,12 +155,22 @@ fn resume_run(
             if let Some(refusal) = rules::resume(run, false) {
                 return Err(refusal);
             }
+            if user_only::marked(run.halted_reason.as_deref().unwrap_or_default()) {
+                let reason = run.halted_reason.clone().unwrap_or_default();
+                return Err(user_only::refusal(&format!("run {}", run.id), &reason));
+            }
             let text = restore::resume_on(run, None, now, fx)?;
             (text, "run".to_string(), "resumed the run".to_string())
         }
         Some(n) => {
             if let Some(refusal) = rules::resume_stage(run, n) {
                 return Err(refusal);
+            }
+            let held = (usize::from(n).checked_sub(1))
+                .and_then(|i| run.delivery.stages.get(i))
+                .and_then(|s| s.held.as_deref());
+            if let Some(held) = held.filter(|h| user_only::marked(h)) {
+                return Err(user_only::refusal(&format!("stage {n}"), held));
             }
             // As the user's `run resume`: every hold on the stage, tier 3 and push.
             full::retry_stage(run, n, now);

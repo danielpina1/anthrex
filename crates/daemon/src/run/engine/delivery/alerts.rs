@@ -65,8 +65,10 @@ pub(crate) fn alerts(run: &Run) -> Vec<DeliveryAlert> {
                 kind: line.kind?,
                 stage: line.stage,
                 text: proto::safe_text::one_line(&line.text),
-                // Milestone 9.9 decision 18: set by M9.9.5.
-                user_only: false,
+                // Milestone 9.9 decision 18: a lost login always; a held op by its text.
+                user_only: line.kind == Some(DeliveryAlertKind::GhLoggedOut)
+                    || line.kind == Some(DeliveryAlertKind::HostOpHeld)
+                        && crate::run::engine::user_only::marked(&line.text),
             })
         })
         .collect()
