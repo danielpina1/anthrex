@@ -255,7 +255,7 @@ pub(super) fn halted() -> Fixture {
 
 /// The one task of a run merged; the ref guard could not read the refs twice: halted,
 /// and a plain resume retries it (review m1).
-fn halted_retryable() -> Fixture {
+pub(super) fn halted_retryable() -> Fixture {
     let mut fx = all_merged();
     for _ in 0..2 {
         fx.tick();

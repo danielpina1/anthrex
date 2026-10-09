@@ -211,6 +211,38 @@ pub(crate) fn resume(run: &Run, rebaseline: bool) -> Option<String> {
     })
 }
 
+/// Milestone 9.9 decision 6, the orchestrator's `resume_run` with a stage: a running run
+/// whose stage `n` is held (tier 3 after executor failures, or a refused push).
+pub(crate) fn resume_stage(run: &Run, n: u16) -> Option<String> {
+    if run.state != RunState::Running {
+        return Some(is(run));
+    }
+    if run.stage(n).is_none() {
+        return Some(format!("run {} has no stage {n}", run.id));
+    }
+    (!(full::stage_held(run, n) || delivery::stage_held(run, n))).then(|| {
+        format!("stage {n} is not held; resume_run with a stage releases a held stage only")
+    })
+}
+
+/// Milestone 9.9 decision 6, the orchestrator's `accept_red`: a running run whose stage
+/// `n` has a red tier 3 on its head that is not accepted yet.
+pub(crate) fn accept_red(run: &Run, n: u16) -> Option<String> {
+    if run.state != RunState::Running {
+        return Some(is(run));
+    }
+    let Some(s) = run.stage(n) else {
+        return Some(format!("run {} has no stage {n}", run.id));
+    };
+    if !full::red_at_head(s) {
+        return Some(format!("stage {n} has no red tier 3 on its head"));
+    }
+    full::passed_at(&s.full, &s.head).then(|| {
+        let head = crate::run::contract::sha7(&s.head);
+        format!("stage {n}'s red on {head} is already accepted")
+    })
+}
+
 /// `run cancel` (`complete::cancel`).
 pub(crate) fn cancel(run: &Run) -> Option<String> {
     if let Some(text) = being_finished(run) {

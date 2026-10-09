@@ -114,8 +114,8 @@ fn full(run: &Run, s: &StageRecord, head: &str) -> FullInfo {
         note: s.full.note.clone(),
         // Milestone 9.5 decision 45: held after executor failures (ruling C-18).
         held: super::engine::infra_held(s),
-        // Milestone 9.9 decision 6: set from `StageFull.accepted_red` by M9.9.3.
-        accepted: false,
+        // Milestone 9.9 decision 6: the orchestrator accepted the red on this head.
+        accepted: s.full.accepted_red.as_deref() == Some(head),
     }
 }
 

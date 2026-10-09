@@ -248,6 +248,9 @@ pub(super) fn tool(
         // Ruling WB-A-W1: a design agent's one write is held, not refused.
         RunState::Halted | RunState::Paused
             if super::design_agents::held::takes(run, call.role) => {}
+        // Milestone 9.9 decision 6: a halted run takes the orchestrator's lone `resume_run`
+        // (and `ask_user`, here and on a paused run).
+        RunState::Halted | RunState::Paused if super::orch_ops::admitted(run.state, call) => {}
         RunState::Paused => {
             let text = format!("run {} is paused; the user must resume it", run.id);
             return refuse(fx, reply, text);

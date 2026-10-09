@@ -2,15 +2,17 @@
 //! `approve_hold`. Each runs the user path's core with `Actor::Orchestrator`: the user's
 //! preconditions and refusal texts, then the run log line, the handled list and the
 //! plan-edit log (`handled::record`, `edit_log::record`). An op is alone in its call.
-//! `resume_run` and `accept_red` join in M9.9.3. Pure (design decision 2).
+//! `resume_run` and `accept_red` (decision 6) join them, and [`admitted`] opens a halted
+//! run's gate to the lone `resume_run`. Pure (design decision 2).
 
-use proto::PlanEdit;
+use proto::{PlanEdit, RunState, ToolCall};
 
 use super::actor::Actor;
 use super::batch::record_rejected;
 use super::orch::refuse;
-use super::{Effect, ReplyId, gate_holds, gates, requests};
+use super::{Effect, ReplyId, delivery, full, gate_holds, gates, requests, restore};
 use crate::run::edit_log::{self, EditOutcome};
+use crate::run::engine::actions::rules;
 use crate::run::model::Run;
 use crate::run::orch::contract::ACTION_ALONE;
 use crate::run::orch::{EditSource, handled};
@@ -53,7 +55,8 @@ pub(super) fn intercept(
         PlanEdit::Retry { reason, .. } => ("retry", reason),
         PlanEdit::Override { reason, .. } => ("override", reason),
         PlanEdit::ApproveHold { reason, .. } => ("approve_hold", reason),
-        // M9.9.3.
+        PlanEdit::ResumeRun { reason, .. } => ("resume_run", reason),
+        PlanEdit::AcceptRed { reason, .. } => ("accept_red", reason),
         _ => return false,
     };
     let reason = reason.trim();
@@ -91,6 +94,8 @@ pub(super) fn intercept(
             }
             result
         }
+        PlanEdit::ResumeRun { stage, .. } => resume_run(run, *stage, reason, now, fx),
+        PlanEdit::AcceptRed { stage, .. } => accept_red(run, *stage, reason, now),
         _ => return false,
     };
     match result {
@@ -109,6 +114,74 @@ pub(super) fn intercept(
         }
     }
     true
+}
+
+/// `resume_run` (decision 6): without `stage`, `run resume` as the user's, never a
+/// rebaseline; with one, only that held stage is released.
+fn resume_run(
+    run: &mut Run,
+    stage: Option<u16>,
+    reason: &str,
+    now: u64,
+    fx: &mut Vec<Effect>,
+) -> Result<String, String> {
+    let (text, target, line) = match stage {
+        None => {
+            if let Some(refusal) = rules::resume(run, false) {
+                return Err(refusal);
+            }
+            let text = restore::resume_on(run, None, now, fx)?;
+            (text, "run".to_string(), "resumed the run".to_string())
+        }
+        Some(n) => {
+            if let Some(refusal) = rules::resume_stage(run, n) {
+                return Err(refusal);
+            }
+            // A stage is held by one of the two; release whichever holds it.
+            if !full::retry_stage(run, n, now) {
+                delivery::release_stage(run, n, now);
+            }
+            let text = format!("run {}: stage {n} released", run.id);
+            (text, format!("stage {n}"), format!("resumed stage {n}"))
+        }
+    };
+    handled::record_line(run, now, ("resume_run", &target, &line), reason);
+    Ok(text)
+}
+
+/// `accept_red` (decision 6): the stage's red tier 3 on its head passes.
+fn accept_red(run: &mut Run, n: u16, reason: &str, now: u64) -> Result<String, String> {
+    if let Some(refusal) = rules::accept_red(run, n) {
+        return Err(refusal);
+    }
+    let sha = full::accept_red(run, n, now).ok_or(rules::DRIFT)?;
+    let target = format!("stage {n}");
+    let line = format!("accepted the red tier 3 of stage {n}");
+    handled::record_line(run, now, ("accept_red", &target, &line), reason);
+    Ok(format!(
+        "stage {n}'s red tier 3 on {sha} is accepted; completion and delivery go on"
+    ))
+}
+
+/// The gate for a halted or paused run (decision 6): a halted run takes `ask_user` and
+/// an `edit_plan` of exactly one `resume_run`; a paused one takes `ask_user` only.
+/// Anything else keeps the state's own gate (`orch.rs`).
+pub(super) fn admitted(state: RunState, call: &ToolCall) -> bool {
+    if call.tool == "ask_user" {
+        return true;
+    }
+    if state != RunState::Halted || call.tool != "edit_plan" {
+        return false;
+    }
+    let Some(object) = call.args.as_object() else {
+        return false;
+    };
+    let Some(edits) = object.get("edits").and_then(|e| e.as_array()) else {
+        return false;
+    };
+    object.len() == 1
+        && edits.len() == 1
+        && edits[0].get("op").and_then(|o| o.as_str()) == Some("resume_run")
 }
 
 /// An override that waited for its commit count landed (or failed): the orchestrator's

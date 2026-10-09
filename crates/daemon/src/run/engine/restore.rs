@@ -232,7 +232,7 @@ fn settle(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     }
 }
 
-/// `run resume` (decision 45; a halted run's, decision 21, is `merge::resume`).
+/// `run resume` (decision 45; a halted run's, decision 21, is `merge::resume_on`).
 pub(super) fn resume(
     state: &mut EngineState,
     reply: ReplyId,
@@ -241,86 +241,68 @@ pub(super) fn resume(
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
+    let result = match state.runs.get_mut(run_id) {
+        Some(run) => resume_on(run, rebaseline, now, fx),
+        None => Err(format!("unknown run {run_id}")),
+    };
+    fx.push(Effect::Reply { reply, result });
+}
+
+/// [`resume`] on a run: the answer the reply carries, the effects in `fx`. Milestone 9.9
+/// decision 6: the orchestrator's `resume_run` (never on a paused run: its gate refuses
+/// it) takes this path too, without a rebaseline.
+pub(super) fn resume_on(
+    run: &mut Run,
+    rebaseline: Option<super::Rebaseline>,
+    now: u64,
+    fx: &mut Vec<Effect>,
+) -> Result<String, String> {
     // Milestone 9.0.6 decision 8: every refusal first, changing nothing.
-    let refusal = state.runs.get(run_id).and_then(|r| {
-        let rebaseline = rebaseline.is_some();
-        super::actions::rules::resume(r, rebaseline)
-    });
-    if let Some(text) = refusal {
-        return fx.push(Effect::Reply {
-            reply,
-            result: Err(text),
-        });
+    if let Some(text) = super::actions::rules::resume(run, rebaseline.is_some()) {
+        return Err(text);
     }
     // Milestone 9.1 ruling C-18: a resume retries tier 3 after the executor's failures;
     // a running run whose stage was held needs nothing more. Ruling C-27 (5): a running
     // run with no held stage is refused below, and a refused resume changes nothing.
     // Milestone 9.2 ruling R-11: a stage held by a refused push pushes again.
-    if let Some(run) = state.runs.get_mut(run_id)
-        && run.state == RunState::Running
+    if run.state == RunState::Running
         && let Some(text) = retry_held(run, now)
     {
-        return fx.push(Effect::Reply {
-            reply,
-            result: Ok(text),
-        });
+        return Ok(text);
     }
-    let paused = state
-        .runs
-        .get(run_id)
-        .is_some_and(|r| r.state == RunState::Paused);
-    if !paused {
+    if run.state != RunState::Paused {
         // Milestone 9.6 decision 8: a run a design phase's budget halted goes back to it.
-        if let Some(run) = state.runs.get_mut(run_id)
-            && rebaseline.is_none()
+        if rebaseline.is_none()
             && let Some(text) = super::design::resume_phase(run, now)
         {
             // Milestone 9.6 ruling T10-3: an unread approved spec is read again.
             super::design::review::read_again(run, fx);
             // Ruling WB-A-W1: the design agents' writes held while it was halted.
             super::design_agents::held::apply(run, now, fx);
-            return fx.push(Effect::Reply {
-                reply,
-                result: Ok(text),
-            });
+            return Ok(text);
         }
         // Milestone 9 decision 11: a run at the gate (or planning, or in a design
         // phase) keeps its state, and its dormant orchestrator restarts.
-        if let Some(run) = state.runs.get_mut(run_id)
-            && matches!(
-                run.state,
-                RunState::AwaitingApproval
-                    | RunState::Planning
-                    | RunState::Brainstorming
-                    | RunState::Specifying
-            )
-            && super::orch_window::relaunch(run, now, fx)
+        if matches!(
+            run.state,
+            RunState::AwaitingApproval
+                | RunState::Planning
+                | RunState::Brainstorming
+                | RunState::Specifying
+        ) && super::orch_window::relaunch(run, now, fx)
         {
-            let text = format!("run {run_id}: its orchestrator restarts");
-            return fx.push(Effect::Reply {
-                reply,
-                result: Ok(text),
-            });
+            return Ok(format!("run {}: its orchestrator restarts", run.id));
         }
-        let halted = state
-            .runs
-            .get(run_id)
-            .is_some_and(|r| r.state == RunState::Halted);
-        merge::resume(state, reply, run_id, rebaseline, now, fx);
-        if let Some(run) = state.runs.get_mut(run_id)
-            && halted
-            && run.state == RunState::Running
-        {
+        let halted = run.state == RunState::Halted;
+        let result = merge::resume_on(run, rebaseline, now, fx);
+        if halted && run.state == RunState::Running {
             super::full::retry(run, now);
             super::delivery::release(run, now);
             resumed(run, now, fx);
         }
-        return;
+        return result;
     }
-    let Some(run) = state.runs.get_mut(run_id) else {
-        return;
-    };
-    let mut text = format!("run {run_id} resumed");
+    let mut text = format!("run {} resumed", run.id);
     // `--rebaseline` records the refs the driver read, as for a halted run.
     if let Some(read) = rebaseline {
         text.push_str(&super::stages::rebaseline(run, &read, now, fx));
@@ -333,10 +315,7 @@ pub(super) fn resume(
         let reason = run.halted_reason.as_deref().unwrap_or_default();
         text.push_str(&format!(" and halted: {reason}"));
     }
-    fx.push(Effect::Reply {
-        reply,
-        result: Ok(text),
-    });
+    Ok(text)
 }
 
 /// What a running run's `run resume` retries: a stage's tier 3 held after executor

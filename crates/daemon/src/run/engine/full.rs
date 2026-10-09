@@ -50,6 +50,11 @@ const LINE_MAX: usize = 200;
 mod ended;
 pub(super) use ended::fix_ended_pass;
 
+// Milestone 9.9: a head passes by a green tier 3 or by the orchestrator accepting its red.
+#[path = "full_accept.rs"]
+mod accept;
+pub(crate) use accept::{accept_red, passed_at};
+
 // The run's tier-3 attention lines, split out to keep this file under 600 lines.
 #[path = "full_attention.rs"]
 mod attention_lines;
@@ -64,7 +69,7 @@ pub(super) fn active(run: &Run) -> bool {
 /// Stage `s`'s head still needs a green tier 3: it is not the base (nothing merged,
 /// as M8a's final check skips it) and has none.
 pub(super) fn lacks_green(run: &Run, s: &StageRecord) -> bool {
-    s.head != run.base_sha && s.full.green_at.as_deref() != Some(s.head.as_str())
+    s.head != run.base_sha && !passed_at(&s.full, &s.head)
 }
 
 /// Stage `s`'s head is the commit its last tier 3 found red.
@@ -263,6 +268,22 @@ pub(super) fn retry(run: &mut Run, now: u64) -> bool {
     true
 }
 
+/// Milestone 9.9 decision 6: [`retry`] for stage `n` alone (the orchestrator's
+/// `resume_run` with a stage). `true` when the stage was held.
+pub(super) fn retry_stage(run: &mut Run, n: u16, now: u64) -> bool {
+    let Some(s) = stage_mut(run, n).filter(|s| infra_held(s)) else {
+        return false;
+    };
+    s.full.infra = None;
+    log(run, now, format!("stage {n}: tier 3 retries (run resume)"));
+    true
+}
+
+/// Stage `n`'s tier 3 is held after the executor's failures (ruling C-18).
+pub(crate) fn stage_held(run: &Run, n: u16) -> bool {
+    run.stage(n).is_some_and(infra_held)
+}
+
 /// Milestone 9.0.6 decision 42: whether [`retry`] would retry anything, changing
 /// nothing: a stage is held.
 pub(super) fn retryable(run: &Run) -> bool {
@@ -288,7 +309,7 @@ pub(crate) fn request(
     let Some(s) = run.stage(stage) else {
         return false;
     };
-    if s.full.green_at.as_deref() == Some(s.head.as_str()) || infra_waiting(s, now) {
+    if passed_at(&s.full, &s.head) || infra_waiting(s, now) {
         return false;
     }
     start(run, stage, why, now, fx);

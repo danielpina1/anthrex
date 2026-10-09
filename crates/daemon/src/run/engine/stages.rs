@@ -402,6 +402,10 @@ pub(super) fn forget_line(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>)
         record.full.red_at = None;
         record.full.note = None;
     }
+    // Milestone 9.9: an accepted red is forgotten with the line it was accepted on.
+    if (record.full.accepted_red.as_ref()).is_some_and(|c| !on_line(c, record)) {
+        record.full.accepted_red = None;
+    }
 }
 
 fn rebaseline_heads(run: &mut Run, read: &Rebaseline) {

@@ -100,6 +100,10 @@ pub struct StageFull {
     pub green_at: Option<String>,
     #[serde(default)]
     pub red_at: Option<String>,
+    /// Milestone 9.9 decision 6: the commit whose red tier 3 the orchestrator accepted
+    /// (`accept_red`); it counts as passed only while it is the stage's head.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accepted_red: Option<String>,
     #[serde(default)]
     pub bisect_fixes: u8,
     #[serde(default)]

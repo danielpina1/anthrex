@@ -130,7 +130,10 @@ pub struct RunOrch {
     pub design: Option<crate::run::design::state::DesignState>,
     /// Milestone 9.9 decision 12: what the orchestrator resolved on its own (newest last,
     /// at most `handled::HANDLED_KEPT`) and how many in all.
+    /// Not written while empty, so a run that never used the ops keeps its old `run.json`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub handled: Vec<handled::HandledRecord>,
+    #[serde(skip_serializing_if = "is_zero")]
     pub handled_total: u32,
 }
 
@@ -540,4 +543,8 @@ impl OrchestratorRecord {
             first_turn_pending: false,
         }
     }
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }

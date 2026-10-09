@@ -23,6 +23,13 @@ pub struct HandledRecord {
 /// Records a resolved op at `now`: a [`HandledRecord`] (oldest dropped past
 /// [`HANDLED_KEPT`]), the count, and the log line `orchestrator: <verb> <target> — <reason>`.
 pub fn record(run: &mut Run, now: u64, (op, verb, target): (&str, &str, &str), reason: &str) {
+    let line = format!("{verb} {target}");
+    record_line(run, now, (op, target, &line), reason);
+}
+
+/// [`record`] with the log line's words (`orchestrator: <line> — <reason>`) apart from
+/// the handled record's `target`.
+pub fn record_line(run: &mut Run, now: u64, (op, target, line): (&str, &str, &str), reason: &str) {
     run.orch.handled.push(HandledRecord {
         at: now,
         op: op.into(),
@@ -34,7 +41,7 @@ pub fn record(run: &mut Run, now: u64, (op, verb, target): (&str, &str, &str), r
     run.orch.handled_total = run.orch.handled_total.saturating_add(1);
     run.log.push(LogEntry {
         at: now,
-        text: format!("orchestrator: {verb} {target} — {reason}"),
+        text: format!("orchestrator: {line} — {reason}"),
     });
     let excess = run.log.len().saturating_sub(LOG_MAX);
     run.log.drain(..excess);

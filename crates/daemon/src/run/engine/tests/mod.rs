@@ -165,6 +165,7 @@ mod merge_override;
 mod orch;
 mod orch_edit;
 mod orch_ops;
+mod orch_ops_resume;
 mod orch_restore;
 mod orch_routes;
 mod orch_window_events;

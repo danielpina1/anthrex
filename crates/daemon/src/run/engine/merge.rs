@@ -16,7 +16,7 @@ use super::dispatch::{block, history, salvage_ref};
 use super::requests::log;
 use super::signals::end_round;
 use super::stages::{self, Rebaseline};
-use super::{Effect, EngineState, OpId, OpKind, OpResult, ReplyId, complete, emit_op, next_op};
+use super::{Effect, EngineState, OpId, OpKind, OpResult, complete, emit_op, next_op};
 use crate::run::contract::sha7;
 use crate::run::env::profile_env;
 use crate::run::model::{BaseMoved, CheckRecord, Run, StageLayout, Task};
@@ -466,25 +466,20 @@ pub(super) fn base_advanced(
 /// `run resume` of a halted run (decision 21): refused with the reason unless it
 /// rebaselines, which records the refs the driver read — `base_sha` becomes the base
 /// head, `run_head` the run branch's — clears `base_moved`, and returns the run to
-/// `running`. A paused run's resume is `restore::resume`, which calls this for any
-/// other state.
-pub(super) fn resume(
-    state: &mut EngineState,
-    reply: ReplyId,
-    run_id: &str,
+/// `running`. A paused run's resume is `restore::resume_on`, which calls this for any
+/// other state. The answer is the reply's text; the effects are pushed to `fx`.
+pub(super) fn resume_on(
+    run: &mut Run,
     rebaseline: Option<Rebaseline>,
     now: u64,
     fx: &mut Vec<Effect>,
-) {
-    let mut answer = |result| fx.push(Effect::Reply { reply, result });
-    let Some(run) = state.runs.get_mut(run_id) else {
-        return answer(Err(format!("unknown run {run_id}")));
-    };
+) -> Result<String, String> {
     // Milestone 9.0.6 decision 8: the refusals are `rules::resume`'s.
     let refusal = |run: &Run| rules::refused(rules::resume(run, false));
     if run.state != RunState::Halted {
-        return answer(Err(refusal(run)));
+        return Err(refusal(run));
     }
+    let run_id = run.id.clone();
     // Review m1: a halt on refs that could not be read is retried as it is.
     if rebaseline.is_none() && run.halt_retryable {
         left_halt(run);
@@ -492,23 +487,18 @@ pub(super) fn resume(
         run.halted_reason = None;
         run.state = RunState::Running;
         log(run, now, "resumed; reading the refs again");
-        return answer(Ok(format!("run {run_id} resumed")));
+        return Ok(format!("run {run_id} resumed"));
     }
     let Some(read) = rebaseline else {
-        return answer(Err(refusal(run)));
+        return Err(refusal(run));
     };
-    let mut effects = Vec::new();
-    let text = format!(
-        "resumed{}",
-        stages::rebaseline(run, &read, now, &mut effects)
-    );
+    let text = format!("resumed{}", stages::rebaseline(run, &read, now, fx));
     left_halt(run);
     run.halted_reason = None;
     run.halt_retryable = false;
     run.state = RunState::Running;
     log(run, now, text.clone());
-    answer(Ok(format!("run {run_id} {text}")));
-    fx.extend(effects);
+    Ok(format!("run {run_id} {text}"))
 }
 
 /// Milestone 9.6 ruling T7-1: no resume leaves a phase budget's halt behind, so a later
