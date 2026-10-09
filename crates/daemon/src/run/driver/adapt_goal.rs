@@ -180,6 +180,10 @@ impl RunService {
         if let Some(problem) = orchestrator.as_ref().and_then(|c| c.model_problem().err()) {
             return refused(format!("orchestrator.model: {problem}"));
         }
+        // Final review M3: nor a bad effort name reach its `--effort`.
+        if let Some(problem) = orchestrator.as_ref().and_then(|c| c.effort_problem().err()) {
+            return refused(format!("orchestrator.effort: {problem}"));
+        }
         let flags = (trust_project, unconfined_checks);
         let ready = match self.goal_ready(&goal, &dir, flags, delivery).await {
             Ok(ready) => ready,

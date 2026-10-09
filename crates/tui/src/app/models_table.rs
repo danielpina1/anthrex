@@ -332,7 +332,15 @@ impl ModelsTable {
                 (b.first, b.effort)
             }
         };
-        let efforts = catalogs.efforts(&model);
+        let mut efforts = catalogs.efforts(&model);
+        // Final review M5: the pair shares one effort, so only what both offer cycles.
+        if self.selected_key() == RowKey::Brainstorm {
+            let second = self.brainstorm().second;
+            if catalogs.knows(&second) {
+                let theirs = catalogs.efforts(&second);
+                efforts.retain(|e| theirs.contains(e));
+            }
+        }
         if efforts.is_empty() {
             return false;
         }

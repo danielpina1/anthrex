@@ -622,3 +622,48 @@ fn the_global_fallback_is_validated() {
         Some("medium")
     );
 }
+
+/// Final review M2 (MR §4.4): a model the catalog lists with no efforts offers none, so a
+/// row's effort is replaced by the model's default (none) and logged.
+#[test]
+fn a_model_that_reports_no_efforts_loses_the_rows_effort() {
+    let mut models = small_at("low");
+    let live = catalog(&[("gpt-6-luna", &[], None)], CatalogSource::Live);
+    assert_eq!(
+        models.validate(&[live]),
+        ["effort 'low' not offered by gpt-6-luna; using the model's default"]
+    );
+    assert_eq!(models.choice(Role::ImplementerSmall).effort, None);
+}
+
+/// Final review M5: the brainstorm pair shares one effort, so a model of the pair that
+/// does not offer it sends the pair back to the models' defaults, logged once.
+#[test]
+fn a_brainstorm_effort_one_model_does_not_offer_is_dropped() {
+    let table = ModelTable {
+        rows: Default::default(),
+        brainstorm: Some(proto::models::BrainstormChoice {
+            first: ModelRef::parse("codex:gpt-6-sol").unwrap(),
+            second: ModelRef::parse("codex:gpt-6-luna").unwrap(),
+            effort: Some("max".into()),
+        }),
+    };
+    let mut models = RunModels::resolve(&table, None);
+    let live = catalog(
+        &[
+            (
+                "gpt-6-sol",
+                &["low", "medium", "high", "max"],
+                Some("medium"),
+            ),
+            ("gpt-6-luna", &["low", "medium", "high"], Some("low")),
+        ],
+        CatalogSource::Live,
+    );
+    assert_eq!(
+        models.validate(std::slice::from_ref(&live)),
+        ["effort 'max' not offered by gpt-6-luna; using the model's default"]
+    );
+    assert_eq!(models.brainstorm.effort, None);
+    assert!(models.validate(&[live]).is_empty());
+}

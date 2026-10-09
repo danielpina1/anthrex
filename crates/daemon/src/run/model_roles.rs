@@ -74,7 +74,8 @@ impl RunModels {
     /// runtime with neither, from its `Builtin` catalog or the built-in list (M9.8.8
     /// fix round 1; a `Builtin` list validates nothing), and replaces a row's effort its model does not offer
     /// with the model's default effort; the run-log lines, one per replaced row. A model
-    /// the catalog does not list, or lists without efforts, keeps its row as configured.
+    /// the catalog does not list keeps its row as configured; one it lists without efforts
+    /// (`supportsEffort: false`) offers none, so its row loses the effort (final review M2).
     pub fn validate(&mut self, catalogs: &[ModelCatalog]) -> Vec<String> {
         let discovered =
             |c: &&ModelCatalog| matches!(c.source, CatalogSource::Live | CatalogSource::Cached);
@@ -108,7 +109,7 @@ impl RunModels {
             let Some(effort) = choice.effort.as_deref() else {
                 continue;
             };
-            if found.efforts.is_empty() || found.efforts.iter().any(|e| e == effort) {
+            if found.efforts.iter().any(|e| e == effort) {
                 continue;
             }
             let using = found
@@ -120,6 +121,33 @@ impl RunModels {
                 found.id
             ));
             choice.effort = found.default_effort.clone();
+        }
+        // Final review M5: the pair shares one effort; a model of the pair that does not
+        // offer it sends the pair back to the models' own defaults.
+        let pair = [
+            self.brainstorm.first.clone(),
+            self.brainstorm.second.clone(),
+        ];
+        for m in &pair {
+            if let Some(found) = listed(m) {
+                let efforts = ModelEfforts {
+                    efforts: found.efforts.clone(),
+                    default: found.default_effort.clone(),
+                };
+                self.efforts.insert(m.clone(), efforts);
+            }
+        }
+        if let Some(effort) = self.brainstorm.effort.clone()
+            && let Some(refuses) = pair
+                .iter()
+                .filter_map(&known)
+                .find(|found| !found.efforts.contains(&effort))
+        {
+            lines.push(format!(
+                "effort '{effort}' not offered by {}; using the model's default",
+                refuses.id
+            ));
+            self.brainstorm.effort = None;
         }
         lines
     }

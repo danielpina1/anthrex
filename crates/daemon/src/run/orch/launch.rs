@@ -61,7 +61,10 @@ pub fn orchestrator_route(choice: Option<&OrchestratorChoice>, models: &RunModel
                 }
                 None => runtime_default(c.runtime, row),
             };
-            let effort = c.effort.clone().or(effort);
+            // Final review M3: an effort that is no effort name (a restored run's) is
+            // never put in argv.
+            let chosen = (c.effort.clone()).filter(|e| proto::models::valid_effort(e));
+            let effort = chosen.or(effort);
             let route = RunModels::route_of(&model, effort.as_deref());
             (route, super::roles::lists::EXPLICIT_SOURCE)
         }

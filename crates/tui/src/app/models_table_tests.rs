@@ -557,3 +557,23 @@ fn w_saves_the_scope() {
         other => panic!("{other:?}"),
     }
 }
+
+/// Final review M5: the brainstorm pair shares one effort, so `e` cycles only what both
+/// models offer.
+#[test]
+fn e_on_brainstorm_cycles_only_what_both_models_offer() {
+    let mut roles = spec_roles();
+    roles.brainstorm = Some(BrainstormChoice {
+        first: mref("codex:gpt-6.1-sol"),
+        second: mref("codex:gpt-6-luna"),
+        effort: Some("high".into()),
+    });
+    let mut app = opened_models(roles, fixture_catalogs());
+    select(&mut app, RowKey::Brainstorm);
+    let mut seen = Vec::new();
+    for _ in 0..4 {
+        tap(&mut app, KeyCode::Char('e'));
+        seen.push(rows(&app)[8].effort.clone());
+    }
+    assert_eq!(seen, ["—", "low", "medium", "high"]);
+}
