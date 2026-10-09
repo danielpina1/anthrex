@@ -3,8 +3,8 @@
 
 use proto::{AskInfo, HandledInfo, OrchestratorInfo};
 
-use super::run_block;
 use super::tests::example;
+use super::{printable, run_block};
 
 fn orchestrator() -> OrchestratorInfo {
     OrchestratorInfo {
@@ -73,4 +73,58 @@ fn status_prints_handled_and_the_pending_question() {
         ],
         "{out}"
     );
+}
+
+/// Task 9 M2: the ask's question and options are daemon-supplied text from a model; a
+/// line break, an escape sequence, a bidi override and a zero-width joiner each stay
+/// off the terminal, and the question and every option keep their one line, whether or
+/// not `printable` runs after. Mutant: `one_line` removed from either, red.
+#[test]
+fn status_ask_lines_are_sanitised() {
+    let mut run = example();
+    let mut o = orchestrator();
+    o.ask = Some(AskInfo {
+        id: 1,
+        question: "tabs\nor\x1b[2J spa\u{202E}ces\u{200D}?\x07".into(),
+        options: vec![
+            "ta\u{202E}bs\x1b]0;pwn\x07\nsecond".into(),
+            "sp\u{200D}aces\r\x1b[31m".into(),
+        ],
+        context: String::new(),
+        asked_at: 5,
+    });
+    run.orchestrator = Some(o);
+    let raw = run_block(&run, 0);
+    // The block alone: every control character a space, so the ask keeps its lines.
+    assert!(!raw.contains(['\x1b', '\x07', '\r']), "{raw:?}");
+    // What the terminal is given: the hidden format characters gone too.
+    let shown = printable(&raw);
+    assert!(
+        !shown.contains(['\x1b', '\x07', '\r', '\u{202E}', '\u{200D}']),
+        "{shown:?}"
+    );
+    for out in [raw, shown] {
+        let lines: Vec<&str> = out.lines().collect();
+        let at = lines
+            .iter()
+            .position(|l| l.starts_with("  orchestrator asks: "))
+            .unwrap_or_else(|| panic!("{out:?}"));
+        let plain = |l: &str| {
+            l.replace(['\u{202E}', '\u{200D}'], "")
+                .trim_end()
+                .to_owned()
+        };
+        assert_eq!(
+            plain(lines[at]),
+            "  orchestrator asks: tabs or [2J spaces?",
+            "{out:?}"
+        );
+        assert_eq!(
+            plain(lines[at + 1]),
+            "    1. tabs ]0;pwn  second",
+            "{out:?}"
+        );
+        assert_eq!(plain(lines[at + 2]), "    2. spaces  [31m", "{out:?}");
+        assert!(lines[at + 3].starts_with("  ID "), "{out:?}");
+    }
 }

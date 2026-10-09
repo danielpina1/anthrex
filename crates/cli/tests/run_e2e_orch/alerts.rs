@@ -2,8 +2,9 @@
 //! orchestrator no user alert appears, the orchestrator's retry runs, the task merges,
 //! and the run shows "orchestrator handled 1". And an ask_user answered from the TUI.
 
-use proto::{RunReply, RunState, TaskState};
+use proto::{AgentRole, DaemonMsg, RunReply, RunState, Status, TaskState};
 use serde_json::json;
+use std::time::{Duration, Instant};
 use tui::app::{AlertKey, App, alerts};
 use tui::settings::UiSettings;
 
@@ -12,6 +13,21 @@ use crate::support::orch_script::*;
 use crate::support::run_harness::{REQUEST_WAIT, RUN_WAIT};
 use crate::support::run_orch::ORCH_WAIT;
 use crate::support::run_plans::{approve, commit, done};
+
+/// The absence window for "no user alert appears": one `wake_quiet_secs` (`ORCH_LINES`),
+/// polled every `ABSENCE_POLL` as `run_e2e_basic.rs`'s approval-gate absence is. No
+/// shared constant names it; see `docs/timing-budgets.md`.
+const ABSENCE_WINDOW: Duration = Duration::from_secs(1);
+const ABSENCE_POLL: Duration = Duration::from_millis(100);
+
+fn blocked_keys(h: &crate::support::run_harness::RunHarness) -> Vec<AlertKey> {
+    let app = tui_now(h);
+    alerts(&app)
+        .into_iter()
+        .map(|a| a.key)
+        .filter(|k| matches!(k, AlertKey::Blocked { .. }))
+        .collect()
+}
 
 fn tui_now(h: &crate::support::run_harness::RunHarness) -> App {
     let mut app = App::new(h.windows(), "/tmp".into(), UiSettings::default());
@@ -66,12 +82,38 @@ fn e2e_an_environment_block_is_the_orchestrators_and_it_retries() {
     let block = task(&info, "t1").block.clone().unwrap();
     assert!(!block.user_only, "{block:?}");
     assert!(tui::app::orchestrator_lives(&info));
-    let app = tui_now(&h);
-    let keys: Vec<AlertKey> = alerts(&app).into_iter().map(|a| a.key).collect();
+    // Held across a window, not a point: a later-raised alert would be seen.
+    let deadline = Instant::now() + ABSENCE_WINDOW;
+    while Instant::now() < deadline {
+        let keys = blocked_keys(&h);
+        assert!(
+            keys.is_empty(),
+            "no user alert for an orchestrator-routed block: {keys:?}"
+        );
+        assert!(tui::app::orchestrator_lives(&h.run(&run).unwrap()));
+        std::thread::sleep(ABSENCE_POLL);
+    }
+    // Decision 26: the run's other agents are the orchestrator's to handle. The blocked
+    // task's worker window, with the daemon's real role, going to Attention neither
+    // rings nor toasts in the TUI (the harness has no TUI event loop, so this is the
+    // app level, fed the daemon's own window list).
+    let mut windows = h.windows();
+    let mut app = App::new(windows.clone(), "/tmp".into(), UiSettings::default());
+    let _ = app.set_terminal_size(120, 40);
+    let workers: Vec<u32> = (windows.iter())
+        .filter(|w| w.run.as_ref().is_some_and(|r| r.role == AgentRole::Worker))
+        .map(|w| w.id)
+        .collect();
+    assert!(!workers.is_empty(), "a worker window is live: {windows:#?}");
+    for w in windows.iter_mut().filter(|w| workers.contains(&w.id)) {
+        w.status = Status::Attention;
+    }
+    let effects = app.on_daemon(DaemonMsg::WindowsChanged { windows });
     assert!(
-        !keys.iter().any(|k| matches!(k, AlertKey::Blocked { .. })),
-        "no user alert for an orchestrator-routed block: {keys:?}"
+        !effects.iter().any(|e| matches!(e, tui::app::Effect::Bell)),
+        "a worker's attention rings no bell: {effects:?}"
     );
+    assert_eq!(app.toast_text(), None, "nor toasts");
     h.type_into(window, b"retry now\r");
     let info = h.wait_run(&run, |r| r.state == RunState::Complete, RUN_WAIT);
     wait_passed(&h, 1);
