@@ -37,8 +37,9 @@ fn row(model: &str, effort: Option<&str>, fallback: Option<&str>) -> RoleChoice 
     }
 }
 
-/// MR §6.1's table, with `research` corrected to today's scouts (decision 8). A helper
-/// kind's built-in is the `helpers` row's.
+/// MR §6.1's table, with `research` corrected to today's scouts (decision 8) and, by
+/// the gate fix's ruling B1, effortless on Haiku. A helper kind's built-in is the
+/// `helpers` row's.
 pub fn builtin_choice(role: Role) -> RoleChoice {
     match role {
         Role::Orchestrator | Role::Planner | Role::ImplementerHub => row(OPUS, Some("high"), None),
@@ -46,7 +47,9 @@ pub fn builtin_choice(role: Role) -> RoleChoice {
         Role::ImplementerMedium => row(SONNET, Some("medium"), None),
         Role::TestWriter => row(CODEX, Some("medium"), None),
         Role::Reviewer => row(CODEX, Some("high"), Some(OPUS)),
-        Role::Research => row(HAIKU, Some("low"), None),
+        // Gate fix B1: Haiku reports no effort levels; an effort here would only log
+        // "effort 'low' not offered by haiku" on every run.
+        Role::Research => row(HAIKU, None, None),
         Role::Helpers | Role::Helper(_) => row(HAIKU, None, None),
     }
 }

@@ -184,8 +184,10 @@ fn e2e_review_goal_reviews_a_range_without_merging() {
     let info = h.wait_run(&run, |r| r.state == RunState::Complete, RUN_WAIT);
     wait_passed(&h, 1);
 
-    // The reviewer was shown the range by both its shas (decision 36).
-    let prompt = h.io_lines("reviewer-r1-1", "stdin").join("\n");
+    // The reviewer was shown the range by both its shas (decision 36). Milestone 9.8
+    // (MR §3.1): a review task's reviewer takes the `reviewer` row, built in on Codex,
+    // so its prompt is the Codex turn message (argv), not Claude's stdin.
+    let prompt = h.codex_messages("reviewer-r1-1").join("\n");
     assert!(
         prompt.contains(&format!("Base: {}", &base[..7])),
         "{prompt}"

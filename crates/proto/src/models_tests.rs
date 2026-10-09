@@ -24,6 +24,7 @@ fn catalog() -> ModelCatalog {
         source: CatalogSource::Live,
         models: vec![CatalogModel {
             id: "gpt-6-sol".into(),
+            resolved: None,
             label: "gpt-6 sol".into(),
             description: "Balanced".into(),
             efforts: vec!["low".into(), "medium".into(), "high".into(), "max".into()],
@@ -245,4 +246,131 @@ fn a_model_name_never_starts_with_a_dash() {
         refused,
         "\"-m\" is not a model name (it may not start with -)"
     );
+}
+
+/// The real Claude 2.1.280 `initialize` catalog (`fake-agent/fixtures/claude-initialize.json`):
+/// entries by alias, each with its resolved model; Haiku offers no effort.
+fn real_claude() -> ModelCatalog {
+    let five = ["low", "medium", "high", "xhigh", "max"];
+    let entry = |id: &str, resolved: &str, efforts: &[&str]| CatalogModel {
+        id: id.into(),
+        resolved: Some(resolved.into()),
+        label: id.into(),
+        description: String::new(),
+        efforts: efforts.iter().map(|e| e.to_string()).collect(),
+        default_effort: None,
+        is_default: id == "default",
+    };
+    ModelCatalog {
+        runtime: Runtime::Claude,
+        cli_version: "2.1.280".into(),
+        fetched_at: 1,
+        source: CatalogSource::Live,
+        models: vec![
+            entry("default", "claude-opus-5-5[1m]", &five),
+            entry("opus[1m]", "claude-opus-5-5[1m]", &five),
+            entry("claude-fable-5-1[1m]", "claude-fable-5-1", &five),
+            entry("sonnet", "claude-sonnet-5", &five),
+            entry("haiku", "claude-haiku-4-5-20251001", &[]),
+        ],
+        problem: None,
+    }
+}
+
+/// Real-CLI manual check fix (decision 1): a built-in id finds the alias entry the CLI
+/// resolves to it, past a `[1m]` tag and a `-YYYYMMDD` date; the default entry only when
+/// nothing else matches.
+#[test]
+fn a_built_in_id_finds_the_alias_entry_by_its_resolved_model() {
+    let c = real_claude();
+    let found = |text: &str| {
+        c.find(&ModelRef::parse(text).unwrap())
+            .map(|m| m.id.as_str())
+    };
+    assert_eq!(found("claude:claude-opus-5-5"), Some("opus[1m]"));
+    assert_eq!(found("claude:claude-opus-5-5[1m]"), Some("opus[1m]"));
+    assert_eq!(found("claude:claude-sonnet-5"), Some("sonnet"));
+    assert_eq!(found("claude:claude-haiku-4-5"), Some("haiku"));
+    assert_eq!(found("claude:claude-haiku-4-5-20251001"), Some("haiku"));
+    assert_eq!(
+        found("claude:claude-fable-5-1"),
+        Some("claude-fable-5-1[1m]")
+    );
+    assert_eq!(found("claude:sonnet"), Some("sonnet"));
+    assert_eq!(found("claude:default"), Some("default"));
+    assert_eq!(found("claude:claude-opus-5"), None);
+    assert_eq!(found("codex:claude-opus-5-5"), None);
+}
+
+/// Decision 2: one model, however the row spells it.
+#[test]
+fn the_canonical_id_strips_the_context_tag_and_the_date() {
+    use crate::models::{base_model_id, canonical_id};
+    assert_eq!(base_model_id("claude-opus-5-5[1m]"), "claude-opus-5-5");
+    assert_eq!(
+        base_model_id("claude-haiku-4-5-20251001"),
+        "claude-haiku-4-5"
+    );
+    assert_eq!(base_model_id("gpt-6.1-sol"), "gpt-6.1-sol");
+    assert_eq!(base_model_id("model-2025"), "model-2025");
+    let c = [real_claude()];
+    let canon = |text: &str| canonical_id(&c, &ModelRef::parse(text).unwrap());
+    assert_eq!(canon("claude:opus[1m]"), "claude-opus-5-5");
+    assert_eq!(canon("claude:default"), "claude-opus-5-5");
+    assert_eq!(canon("claude:claude-opus-5-5"), "claude-opus-5-5");
+    assert_eq!(canon("claude:haiku"), "claude-haiku-4-5");
+    assert_eq!(canon("claude:claude-opus-5"), "claude-opus-5");
+    assert_eq!(canon("codex:gpt-6-sol"), "gpt-6-sol");
+}
+
+#[test]
+fn a_catalog_entry_keeps_its_resolved_model_on_the_wire() {
+    both(&real_claude());
+    let plain = catalog();
+    assert!(
+        serde_json::to_value(&plain).unwrap()["models"][0]
+            .get("resolved")
+            .is_none()
+    );
+}
+
+/// Decision 4: `xhigh` sits between `high` and `max`; escalation climbs only the
+/// ordered efforts, so Codex's `ultra` is off the ladder.
+#[test]
+fn xhigh_orders_between_high_and_max_and_ultra_is_off_the_ladder() {
+    let (xhigh, max, ultra) = (
+        Effort::new("xhigh"),
+        Effort::new("max"),
+        Effort::new("ultra"),
+    );
+    assert!(Effort::new("minimal") < Effort::LOW);
+    assert!(Effort::HIGH < xhigh && xhigh < max && max < ultra);
+    assert_eq!(Effort::ladder_rank("xhigh"), Some(4));
+    assert_eq!(Effort::ladder_rank("minimal"), Some(0));
+    assert_eq!(Effort::ladder_rank("max"), Some(5));
+    assert_eq!(Effort::ladder_rank("ultra"), None);
+}
+
+/// Gate fix C1: a multibyte id never panics (the old byte split did), and only a real
+/// `-YYYYMMDD` date (month 01–12, day 01–31) is stripped.
+#[test]
+fn base_model_id_handles_multibyte_ids_and_strips_only_real_dates() {
+    use crate::models::{base_model_id, valid_model_id};
+    for id in [
+        "éx1234567",
+        "modèle-éé",
+        "ab-日本語の模型",
+        "x-2025100é",
+        "é-20251001",
+    ] {
+        assert!(valid_model_id(id), "{id}");
+        let _ = base_model_id(id);
+    }
+    assert_eq!(base_model_id("é-20251001"), "é");
+    assert_eq!(base_model_id("model-12345678"), "model-12345678");
+    assert_eq!(base_model_id("model-20251301"), "model-20251301");
+    assert_eq!(base_model_id("model-20250132"), "model-20250132");
+    assert_eq!(base_model_id("model-20251000"), "model-20251000");
+    assert_eq!(base_model_id("model-20251231"), "model");
+    assert_eq!(base_model_id("-20251001"), "-20251001");
 }

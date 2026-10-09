@@ -42,6 +42,10 @@ fn promote(
     if let Some(problem) = choice.and_then(|c| c.model_problem().err()) {
         return Err(format!("orchestrator.model: {problem}"));
     }
+    // Final review M3: nor a bad effort name.
+    if let Some(problem) = choice.and_then(|c| c.effort_problem().err()) {
+        return Err(format!("orchestrator.effort: {problem}"));
+    }
     // M8c.1 review: the repeat reply carries no time (the user reads times locally).
     if run.promote_requested_at.is_some() && run.orch.orchestrator.is_some() {
         return Ok(format!("run {run_id} was already marked for promotion"));

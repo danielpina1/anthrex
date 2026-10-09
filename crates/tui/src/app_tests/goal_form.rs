@@ -509,9 +509,11 @@ fn promote_picks_from_the_catalogs() {
         labels,
         [
             "configured",
-            "cl claude-haiku-4-5",
-            "cl claude-sonnet-5",
-            "cl claude-opus-5-5",
+            "cl default",
+            "cl opus[1m]",
+            "cl claude-fable-5-1[1m]",
+            "cl sonnet",
+            "cl haiku",
             "cx gpt-6-luna",
             "cx gpt-6-sol",
             "cx gpt-6.1-sol"
@@ -529,7 +531,7 @@ fn promote_picks_from_the_catalogs() {
             run_id: crate::tree::run_fixtures::RUN_ID.into(),
             orchestrator: Some(OrchestratorChoice {
                 runtime: Runtime::Claude,
-                model: Some("claude-opus-5-5".into()),
+                model: Some("claude-fable-5-1[1m]".into()),
                 effort: None,
             }),
         }
@@ -578,5 +580,5 @@ fn promote_asks_for_the_catalogs_and_follows_them() {
     assert_eq!(options(&app), 1, "only configured");
     let catalogs = crate::app::model_picker::tests::fixture_catalogs().list;
     app.on_daemon(proto::DaemonMsg::Models { catalogs });
-    assert_eq!(options(&app), 7);
+    assert_eq!(options(&app), 9);
 }

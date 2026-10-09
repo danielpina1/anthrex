@@ -126,8 +126,8 @@ fn rows_follow_the_spec_order_with_catalog_labels() {
     let app = spec();
     let got: Vec<_> = rows(&app).iter().map(cells).collect();
     let want = [
-        ("orchestrator", "Claude · Opus 5.5", "high", "—"),
-        ("planner", "Claude · Opus 5.5", "high", "—"),
+        ("orchestrator", "Claude · claude-opus-5-5", "high", "—"),
+        ("planner", "Claude · claude-opus-5-5", "high", "—"),
         (
             "implementer · small",
             "Codex  · gpt-6 luna",
@@ -138,11 +138,11 @@ fn rows_follow_the_spec_order_with_catalog_labels() {
             "implementer · medium",
             "Codex  · gpt-6 sol",
             "medium",
-            "Claude · Opus 5.5",
+            "Claude · claude-opus-5-5",
         ),
         (
             "implementer · hub",
-            "Claude · Opus 5.5",
+            "Claude · claude-opus-5-5",
             "high",
             "Codex · gpt-6.1 sol",
         ),
@@ -151,16 +151,16 @@ fn rows_follow_the_spec_order_with_catalog_labels() {
             "reviewer",
             "Codex  · gpt-6.1 sol",
             "high",
-            "Claude · Opus 5.5",
+            "Claude · claude-opus-5-5",
         ),
-        ("research", "Claude · Sonnet 5", "medium", "—"),
+        ("research", "Claude · Sonnet", "medium", "—"),
         (
             "brainstorm",
-            "Claude · Opus 5.5  +  Codex · gpt-6.1 sol",
+            "Claude · claude-opus-5-5  +  Codex · gpt-6.1 sol",
             "high",
             "",
         ),
-        ("helpers ▸", "Claude · Haiku 4.5", "—", "—"),
+        ("helpers ▸", "Claude · claude-haiku-4-5", "—", "—"),
     ];
     let want: Vec<_> = want
         .iter()
@@ -248,16 +248,19 @@ fn helpers_expand_to_six_kinds_same_as_helpers_until_set() {
         picker.target,
         PickerFor::Row(Role::Helper(HelperKind::RunName))
     );
-    tap(&mut app, KeyCode::Char('j'));
+    // The current `claude-haiku-4-5` stands after Claude's entries; two up is Sonnet,
+    // stored as the CLI's own id (real-CLI manual check fix, decision 3).
+    tap(&mut app, KeyCode::Char('k'));
+    tap(&mut app, KeyCode::Char('k'));
     tap(&mut app, KeyCode::Enter);
     assert_eq!(table(&app).picker, None);
     let r = rows(&app);
-    assert_eq!(r[10].model, "Claude · Sonnet 5");
+    assert_eq!(r[10].model, "Claude · Sonnet");
     assert_eq!(r[11].model, "same as helpers");
     let doc = screen(&app).doc().expect("the doc saves");
     assert_eq!(
         doc.roles.rows[&Role::Helper(HelperKind::RunName)].model,
-        mref("claude:claude-sonnet-5")
+        mref("claude:sonnet")
     );
     assert!(screen(&app).dirty());
 
@@ -317,7 +320,7 @@ fn this_repo_scope_marks_overrides_and_dims_inherited() {
             .all(|r| r.inherited)
     );
     assert!(!r[6].inherited);
-    assert_eq!(r[6].model, "Claude · Sonnet 5");
+    assert_eq!(r[6].model, "Claude · Sonnet");
     assert_eq!(
         r[5].model, "Codex  · gpt-6 sol",
         "inherited from everywhere"
@@ -346,7 +349,7 @@ fn this_repo_scope_marks_overrides_and_dims_inherited() {
             small.effort.as_str(),
             small.fallback.as_str()
         ),
-        ("Claude · Sonnet 5", "low", "—"),
+        ("Claude · Sonnet", "low", "—"),
         "the built-in"
     );
     assert!(
@@ -461,6 +464,7 @@ fn enter_on_brainstorm_picks_its_first_then_its_second() {
         Some(PickerFor::Brainstorm(0))
     );
     tap(&mut app, KeyCode::Char('k'));
+    tap(&mut app, KeyCode::Char('k'));
     tap(&mut app, KeyCode::Enter);
     let p = table(&app).picker.clone().expect("the second pick");
     assert_eq!(p.target, PickerFor::Brainstorm(1));
@@ -471,10 +475,7 @@ fn enter_on_brainstorm_picks_its_first_then_its_second() {
     tap(&mut app, KeyCode::Char('k'));
     tap(&mut app, KeyCode::Enter);
     assert_eq!(table(&app).picker, None);
-    assert_eq!(
-        rows(&app)[8].model,
-        "Claude · Sonnet 5  +  Codex · gpt-6 sol"
-    );
+    assert_eq!(rows(&app)[8].model, "Claude · Sonnet  +  Codex · gpt-6 sol");
     // A model change keeps an effort the new model offers.
     assert_eq!(rows(&app)[8].effort, "high");
 }
@@ -556,4 +557,51 @@ fn w_saves_the_scope() {
         }
         other => panic!("{other:?}"),
     }
+}
+
+/// Final review M5: the brainstorm pair shares one effort, so `e` cycles only what both
+/// models offer.
+#[test]
+fn e_on_brainstorm_cycles_only_what_both_models_offer() {
+    let mut roles = spec_roles();
+    roles.brainstorm = Some(BrainstormChoice {
+        first: mref("codex:gpt-6.1-sol"),
+        second: mref("codex:gpt-6-luna"),
+        effort: Some("high".into()),
+    });
+    let mut app = opened_models(roles, fixture_catalogs());
+    select(&mut app, RowKey::Brainstorm);
+    let mut seen = Vec::new();
+    for _ in 0..4 {
+        tap(&mut app, KeyCode::Char('e'));
+        seen.push(rows(&app)[8].effort.clone());
+    }
+    assert_eq!(seen, ["—", "low", "medium", "high"]);
+}
+
+/// Real-CLI manual check fix (D1, D2): the stock built-in table names full Claude ids;
+/// the real Claude catalog lists aliases. No row is "not reported", and every Claude row
+/// but Haiku's has an effort ladder.
+#[test]
+fn the_stock_table_against_the_real_claude_catalog_warns_about_nothing() {
+    let app = opened_models(ModelTable::default(), fixture_catalogs());
+    let r = rows(&app);
+    let warned: Vec<_> = (r.iter())
+        .filter(|r| r.warnings.iter().any(|w| w.contains("not reported")))
+        .map(|r| r.role.clone())
+        .collect();
+    assert!(warned.is_empty(), "{warned:?}");
+    for id in ["claude:claude-opus-5-5", "claude:claude-sonnet-5"] {
+        assert_eq!(
+            app.catalogs.efforts(&mref(id)),
+            ["low", "medium", "high", "xhigh", "max"],
+            "{id}"
+        );
+    }
+    assert!(app.catalogs.knows(&mref("claude:claude-haiku-4-5")));
+    assert!(
+        app.catalogs
+            .efforts(&mref("claude:claude-haiku-4-5"))
+            .is_empty()
+    );
 }

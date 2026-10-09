@@ -167,7 +167,16 @@ impl RunService {
         let cancel = Arc::new(AtomicBool::new(false));
         let (path, flag, wanted) = (self.ctx.config_path.clone(), cancel.clone(), doc);
         let save = io.save.clone();
-        let mut task = tokio::task::spawn_blocking(move || save(&path, &wanted, &flag));
+        let live = self.ctx.settings.current();
+        let mut task = tokio::task::spawn_blocking(move || {
+            // Final review I1: the save writes the live table, so a file edited since
+            // the daemon read it is refused rather than reverted.
+            if let Some(problem) = config::settings::changed_since_loaded(&path, &live.orchestrator)
+            {
+                return Err(vec![problem]);
+            }
+            save(&path, &wanted, &flag)
+        });
         match tokio::time::timeout(io.timeout, &mut task).await {
             Ok(Ok(Ok(saved))) => {
                 self.ctx

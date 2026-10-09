@@ -453,7 +453,7 @@ fn continue_locks_the_model_and_its_effort() {
     tap(&mut app, KeyCode::Enter);
     assert!(form(&app).picker.is_some());
     tap(&mut app, KeyCode::Esc);
-    assert!(screen(&app).contains("model             ‹ role table (Claude · Opus 5.5) ›"));
+    assert!(screen(&app).contains("model             ‹ role table (Claude · claude-opus-5-5) ›"));
     assert!(screen(&app).contains("effort            ‹ role table ›"));
 }
 
@@ -463,7 +463,7 @@ fn continue_sends_continue_from_and_no_orchestrator() {
     app.catalogs = crate::app::model_picker::tests::fixture_catalogs();
     open_on(&mut app, "/p/a");
     typed(&mut app, "next goal");
-    // A model chosen under `new` (the picker's first, Haiku 4.5), then continue again:
+    // A model chosen under `new` (the picker's first, Claude's default), then continue again:
     // the chain's holds.
     focus(&mut app, GoalField::Orchestrator);
     tap(&mut app, KeyCode::Char(' '));
@@ -500,6 +500,8 @@ fn continue_sends_continue_from_and_no_orchestrator() {
     tap(&mut app, KeyCode::Right);
     focus(&mut app, GoalField::Model);
     tap(&mut app, KeyCode::Enter);
+    // The picker's second Claude entry: Opus by its alias (real claude 2.1.280).
+    tap(&mut app, KeyCode::Char('j'));
     tap(&mut app, KeyCode::Char('j'));
     tap(&mut app, KeyCode::Enter);
     let (_, request) = tagged(&ctrl(&mut app, 's'));
@@ -516,7 +518,7 @@ fn continue_sends_continue_from_and_no_orchestrator() {
         (
             Some(OrchestratorChoice {
                 runtime: Runtime::Claude,
-                model: Some("claude-haiku-4-5".into()),
+                model: Some("opus[1m]".into()),
                 effort: None
             }),
             None

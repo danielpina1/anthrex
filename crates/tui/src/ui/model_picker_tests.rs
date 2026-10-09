@@ -65,9 +65,11 @@ fn the_picker_draws_as_the_spec() {
         inner,
         [
             "  CLAUDE  (claude 2.1.290)",
-            "    Haiku 4.5        Fastest for quick tasks               effort —",
-            "    Sonnet 5         Best for everyday tasks               low … max",
-            "    Opus 5.5         Most capable for complex work         low … max",
+            "    Default (recomm… claude-opus-5-5[1m] · Opus 5.5 with … low … max",
+            "    Opus (1M contex… claude-opus-5-5[1m] · Opus 5.5 with … low … max",
+            "    Fable            claude-fable-5-1 · Fable 5.1 · Most … low … max",
+            "    Sonnet           claude-sonnet-5 · Sonnet 5 · Efficie… low … max",
+            "    Haiku            claude-haiku-4-5-20251001 · Haiku 4.… effort —",
             "  CODEX  (codex 0.160.1)",
             "    gpt-6 luna       Fast, low cost                        low … xhigh",
             "▸ ● gpt-6 sol        Balanced (Codex default)              low … max",
@@ -92,9 +94,11 @@ fn the_picker_draws_as_the_spec() {
         inner,
         [
             "  CLAUDE  (claude 2.1.290)",
-            "    Haiku 4.5        Fastest for quick tasks     effort —",
-            "    Sonnet 5         Best for everyday tasks     low … max",
-            "    Opus 5.5         Most capable for complex w… low … max",
+            "    Default (recomm… claude-opus-5-5[1m] · Opus… low … max",
+            "    Opus (1M contex… claude-opus-5-5[1m] · Opus… low … max",
+            "    Fable            claude-fable-5-1 · Fable 5… low … max",
+            "    Sonnet           claude-sonnet-5 · Sonnet 5… low … max",
+            "    Haiku            claude-haiku-4-5-20251001 … effort —",
             "  CODEX  (codex 0.160.1)",
             "    gpt-6 luna       Fast, low cost              low … xhigh",
             "▸ ● gpt-6 sol        Balanced (Codex default)    low … max",
@@ -129,7 +133,7 @@ fn the_age_and_the_catalogs_source() {
     // No catalog received: only the key.
     assert!(top.ends_with("─ r refresh ┐"), "{top}");
     assert_eq!(inner[0], "  CLAUDE  (cached)");
-    assert_eq!(inner[4], "  CODEX  (built-in list)");
+    assert_eq!(inner[6], "  CODEX  (built-in list)");
 }
 
 #[test]
@@ -143,15 +147,15 @@ fn an_unlisted_current_model_is_drawn_dimmed() {
     tap(&mut app, KeyCode::Enter);
     let (top, inner, y0) = dialog(&app, 120, 40);
     assert_eq!(
-        inner[4],
+        inner[6],
         "▸ ● claude-x         not reported                          effort —"
     );
     let buffer = draw(&app, 120, 40);
     // The border, the padding, the marks (4) and the label (17).
     let x = (120 - top.chars().count() as u16) / 2 + 2 + 4 + 17;
-    assert_eq!(buffer[(x, y0 + 5)].symbol(), "n");
+    assert_eq!(buffer[(x, y0 + 7)].symbol(), "n");
     assert_eq!(
-        buffer[(x, y0 + 5)].fg,
+        buffer[(x, y0 + 7)].fg,
         role(Look::Muted, app.palette()).fg.unwrap(),
         "dimmed"
     );
@@ -165,7 +169,7 @@ fn custom_draws_the_runtime_then_the_name() {
     }
     tap(&mut app, KeyCode::Enter);
     let (_, inner, _) = dialog(&app, 120, 40);
-    assert_eq!(inner[9], "    custom…   runtime claude / ‹ codex ›");
+    assert_eq!(inner[11], "    custom…   runtime claude / ‹ codex ›");
     assert_eq!(inner.last().unwrap(), " ←/→ runtime  ⏎ next  esc back");
     tap(&mut app, KeyCode::Enter);
     for c in "a b".chars() {
@@ -173,8 +177,8 @@ fn custom_draws_the_runtime_then_the_name() {
     }
     tap(&mut app, KeyCode::Enter);
     let (_, inner, _) = dialog(&app, 120, 40);
-    assert_eq!(inner[9], "    custom…   codex: a b█");
-    assert!(inner[10].starts_with("    ✗ "), "{inner:?}");
+    assert_eq!(inner[11], "    custom…   codex: a b█");
+    assert!(inner[12].starts_with("    ✗ "), "{inner:?}");
     assert_eq!(inner.last().unwrap(), " ⏎ select  esc back");
 }
 
@@ -185,6 +189,7 @@ fn a_hostile_label_draws_clean() {
     let mut app = picker_app();
     let long = format!("\u{202e}{}", "d".repeat(499));
     for m in &mut app.catalogs.list[0].models {
+        m.resolved = None;
         m.label = "\u{1b}[31mOK".into();
         m.description = long.clone();
     }

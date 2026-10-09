@@ -20,6 +20,7 @@ fn catalog(runtime: Runtime, id: &str, efforts: &[&str], source: CatalogSource) 
         source,
         problem: None,
         models: vec![CatalogModel {
+            resolved: None,
             id: id.into(),
             label: id.into(),
             description: String::new(),

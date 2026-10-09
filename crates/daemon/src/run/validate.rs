@@ -178,7 +178,7 @@ pub(super) fn resolve_task_lenient(
     // Route, milestone 9.8 decision 10: the task's row of the run's role table.
     let models = limits.models();
     let row = models.route(RunModels::role_of(spec.kind, hub, size));
-    let route = resolve_route(&spec, row, &mut errors);
+    let route = resolve_route(&spec, row, models, &mut errors);
 
     // Budget, decision 40.
     let budget = match spec.budget {
@@ -316,7 +316,12 @@ fn check_budget(id: &str, b: &Budget, errors: &mut Vec<PlanError>) {
 /// `Run.roster` went (task M9.8.13). Either way at the route's effort when it names one
 /// (the task edit form's effort over the row's model), else the row's for the row's own
 /// model, and the named model's default for another (M9.8.11 fix round 1).
-fn resolve_route(spec: &PlanTask, row: Route, errors: &mut Vec<PlanError>) -> Route {
+fn resolve_route(
+    spec: &PlanTask,
+    row: Route,
+    models: &RunModels,
+    errors: &mut Vec<PlanError>,
+) -> Route {
     let id = spec.id.as_str();
     let e = |field: &str, message: String| PlanError::new(Some(id), field, "route", message);
     let given = &spec.route;
@@ -340,7 +345,14 @@ fn resolve_route(spec: &PlanTask, row: Route, errors: &mut Vec<PlanError>) -> Ro
     // M9.8.11 fix round 1 (controller ruling): another model than the row's, with no
     // effort, runs at its own default, never at the row's (it may not offer it); the
     // row's own model keeps the row's, as the goal form's choice does.
-    let own = runtime == row.runtime && *model == row.model;
+    // Gate fix B2: the row's own model by the run's canonical identity (`opus[1m]` for
+    // a `claude-opus-5-5` row), as the TUI's forms decide it.
+    let named = Route {
+        runtime,
+        model: model.clone(),
+        effort: proto::Effort::DEFAULT,
+    };
+    let own = models.same_model(&named, &row);
     let effort = given.effort.clone().unwrap_or(if own {
         row.effort.clone()
     } else {

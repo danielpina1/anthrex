@@ -12,7 +12,17 @@ fn script(dir: &std::path::Path, name: &str, body: &str) -> String {
     path.to_str().unwrap().to_string()
 }
 
-const CLAUDE_REPLY: &str = r#"{"type":"control_response","response":{"subtype":"success","request_id":"anthrex-models-1","response":{"commands":[],"models":[{"value":"claude-opus-5-5","displayName":"Opus 5.5","description":"Most capable","supportsEffort":true,"supportedEffortLevels":["low","medium","high","max"]},{"value":"claude-haiku-4-5","displayName":"Haiku 4.5","description":"Fastest","supportsEffort":false}]}}}"#;
+/// Real-CLI manual check fix: the real Claude 2.1.280 `initialize` reply's models
+/// (`fake-agent/fixtures/claude-initialize.json`), on one line.
+fn claude_reply() -> String {
+    let response: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../fake-agent/fixtures/claude-initialize.json"
+    ))
+    .unwrap();
+    serde_json::json!({"type": "control_response", "response": {"subtype": "success",
+        "request_id": "anthrex-models-1", "response": response}})
+    .to_string()
+}
 
 #[test]
 fn claude_probe_reads_the_initialize_reply_and_sends_no_prompt() {
@@ -22,8 +32,9 @@ fn claude_probe_reads_the_initialize_reply_and_sends_no_prompt() {
         dir.path(),
         "claude",
         &format!(
-            "IFS= read -r line; printf '%s\\n' \"$line\" > '{}'\necho 'Warning: a banner that is not JSON'\necho '{CLAUDE_REPLY}'\ncat >> '{}'",
+            "IFS= read -r line; printf '%s\\n' \"$line\" > '{}'\necho 'Warning: a banner that is not JSON'\necho '{}'\ncat >> '{}'",
             seen.display(),
+            claude_reply(),
             seen.display()
         ),
     );
@@ -32,10 +43,36 @@ fn claude_probe_reads_the_initialize_reply_and_sends_no_prompt() {
         claude_probe::probe(&program, deadline, &CancellationToken::new(), &[]).unwrap();
     assert_eq!(
         models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
-        ["claude-opus-5-5", "claude-haiku-4-5"]
+        [
+            "default",
+            "opus[1m]",
+            "claude-fable-5-1[1m]",
+            "sonnet",
+            "haiku"
+        ]
     );
-    assert_eq!(models[0].efforts, ["low", "medium", "high", "max"]);
-    assert!(models[1].efforts.is_empty());
+    assert_eq!(
+        (models.iter())
+            .map(|m| m.resolved.as_deref().unwrap_or("?"))
+            .collect::<Vec<_>>(),
+        [
+            "claude-opus-5-5[1m]",
+            "claude-opus-5-5[1m]",
+            "claude-fable-5-1",
+            "claude-sonnet-5",
+            "claude-haiku-4-5-20251001"
+        ]
+    );
+    assert!(models[0].is_default && !models[1].is_default);
+    assert_eq!(models[1].efforts, ["low", "medium", "high", "xhigh", "max"]);
+    assert_eq!(
+        models[1].default_effort, None,
+        "Claude reports no default effort"
+    );
+    assert!(
+        models[4].efforts.is_empty(),
+        "haiku reports no supportsEffort"
+    );
     assert_eq!(raw.len(), 2, "{raw:?}");
     let lines: Vec<String> = std::fs::read_to_string(&seen)
         .unwrap()

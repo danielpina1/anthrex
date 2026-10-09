@@ -4,7 +4,7 @@
 
 use super::{ROLE_TABLE, TaskEditForm, clean};
 use crate::app::form_picker::route_model;
-use crate::app::model_picker::runtime_name;
+use crate::app::model_picker::{is_row_model, runtime_name};
 use proto::Size;
 use proto::models::ModelRef;
 
@@ -71,13 +71,20 @@ impl TaskEditForm {
     /// own model, which the daemon runs at the row's effort, else `default`.
     pub(super) fn picked_default(&self) -> String {
         match self.row.as_ref().filter(|_| !self.size_moved_row()) {
-            Some(row)
-                if self.current_model() == route_model(Some(row.runtime), Some(&row.model)) =>
-            {
+            Some(row) if self.picked_is_row(row) => {
                 let effort = Some(row.effort.as_str()).filter(|e| !e.is_empty());
                 format!("{} ({ROLE_TABLE})", clean(effort.unwrap_or("default")))
             }
             _ => "default".to_string(),
+        }
+    }
+
+    /// Gate fix B2: the route's model is the row's own (by the catalogs' identity).
+    fn picked_is_row(&self, row: &proto::Route) -> bool {
+        let row_model = route_model(Some(row.runtime), Some(&row.model));
+        match (self.current_model(), row_model) {
+            (Some(m), Some(r)) => is_row_model(&r, &self.row_aliases, &m),
+            (m, r) => m == r,
         }
     }
 

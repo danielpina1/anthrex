@@ -35,6 +35,12 @@ pub struct RunModels {
     /// The efforts the catalog reported for each row's model and fallback.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub efforts: BTreeMap<ModelRef, ModelEfforts>,
+    /// Real-CLI manual check fix, decision 2: the one id each model the catalogs list
+    /// (and each row's model) runs as (`proto::models::canonical_id`): `claude:opus[1m]`,
+    /// `claude:default` and `claude:claude-opus-5-5` are all `claude-opus-5-5`. A model
+    /// not here is its own id without a context tag or a date.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub canonical: BTreeMap<ModelRef, String>,
 }
 
 /// Decision 27's run-log line when the reviewer row has nothing but the author's model.
@@ -43,17 +49,6 @@ fn same_model_line(model: &ModelRef) -> String {
         "reviewer: {} reviews work by the same model; set an \"if it struggles\" model for the reviewer in C-b S",
         model.label()
     )
-}
-
-/// Whether `model` is exactly `route`'s model: the same runtime and id (`default` equal
-/// only to `default`).
-fn is_model(model: &ModelRef, route: &Route) -> bool {
-    model.runtime == route.runtime && model.route_model() == route.model
-}
-
-/// Whether `a` and `b` are the same model (runtime and id).
-fn is_model_route(a: &Route, b: &Route) -> bool {
-    a.runtime == b.runtime && a.model == b.model
 }
 
 impl RunModels {
@@ -67,6 +62,64 @@ impl RunModels {
             rows,
             brainstorm: config::models::resolve_brainstorm(repo, global),
             efforts: BTreeMap::new(),
+            canonical: BTreeMap::new(),
+        }
+    }
+
+    /// Decision 2 of the real-CLI manual check fix: the one id `m` runs as
+    /// ([`RunModels::canonical`]'s entry, else its id without a context tag or a date).
+    pub fn canonical_of(&self, m: &ModelRef) -> String {
+        match self.canonical.get(m) {
+            Some(id) => id.clone(),
+            None => proto::models::base_model_id(m.route_model()).to_string(),
+        }
+    }
+
+    /// Whether `a` and `b` are one model: the same runtime and canonical id. The one
+    /// same-model rule (the reviewer, the racer, escalation's fallback).
+    pub fn same_model_ref(&self, a: &ModelRef, b: &ModelRef) -> bool {
+        a.runtime == b.runtime && self.canonical_of(a) == self.canonical_of(b)
+    }
+
+    /// The efforts the catalogs reported for `m`: its own entry, else that of a model it
+    /// is the same as ([`RunModels::same_model_ref`]).
+    pub fn efforts_of(&self, m: &ModelRef) -> Option<&ModelEfforts> {
+        self.efforts.get(m).or_else(|| {
+            (self.efforts.iter())
+                .find(|(k, _)| self.same_model_ref(k, m))
+                .map(|(_, e)| e)
+        })
+    }
+
+    /// Fills [`RunModels::canonical`] from `used` (discovered catalogs first): every
+    /// entry by its id (the default entry also as `<runtime>:default`), and every model
+    /// the table names.
+    fn learn_canonical(&mut self, used: &[ModelCatalog]) {
+        for c in used {
+            for entry in &c.models {
+                let key = |id| ModelRef {
+                    runtime: c.runtime,
+                    id,
+                };
+                let canonical = entry.canonical().to_string();
+                if entry.is_default {
+                    self.canonical.entry(key(None)).or_insert(canonical.clone());
+                }
+                self.canonical
+                    .entry(key(Some(entry.id.clone())))
+                    .or_insert(canonical);
+            }
+        }
+        let named: Vec<ModelRef> = (self.rows.values())
+            .flat_map(|c| std::iter::once(c.model.clone()).chain(c.fallback.clone()))
+            .chain([
+                self.brainstorm.first.clone(),
+                self.brainstorm.second.clone(),
+            ])
+            .collect();
+        for m in named {
+            let canonical = proto::models::canonical_id(used, &m);
+            self.canonical.entry(m).or_insert(canonical);
         }
     }
 
@@ -74,7 +127,8 @@ impl RunModels {
     /// runtime with neither, from its `Builtin` catalog or the built-in list (M9.8.8
     /// fix round 1; a `Builtin` list validates nothing), and replaces a row's effort its model does not offer
     /// with the model's default effort; the run-log lines, one per replaced row. A model
-    /// the catalog does not list, or lists without efforts, keeps its row as configured.
+    /// the catalog does not list keeps its row as configured; one it lists without efforts
+    /// (`supportsEffort: false`) offers none, so its row loses the effort (final review M2).
     pub fn validate(&mut self, catalogs: &[ModelCatalog]) -> Vec<String> {
         let discovered =
             |c: &&ModelCatalog| matches!(c.source, CatalogSource::Live | CatalogSource::Cached);
@@ -91,6 +145,9 @@ impl RunModels {
             })
             .collect();
         let listed = |m: &ModelRef| known(m).or_else(|| builtin.iter().find_map(|c| c.find(m)));
+        let used: Vec<ModelCatalog> = (catalogs.iter().filter(discovered).cloned())
+            .chain(builtin.iter().cloned())
+            .collect();
         let mut lines = Vec::new();
         for choice in self.rows.values_mut() {
             for m in std::iter::once(&choice.model).chain(&choice.fallback) {
@@ -108,7 +165,7 @@ impl RunModels {
             let Some(effort) = choice.effort.as_deref() else {
                 continue;
             };
-            if found.efforts.is_empty() || found.efforts.iter().any(|e| e == effort) {
+            if found.efforts.iter().any(|e| e == effort) {
                 continue;
             }
             let using = found
@@ -121,6 +178,34 @@ impl RunModels {
             ));
             choice.effort = found.default_effort.clone();
         }
+        // Final review M5: the pair shares one effort; a model of the pair that does not
+        // offer it sends the pair back to the models' own defaults.
+        let pair = [
+            self.brainstorm.first.clone(),
+            self.brainstorm.second.clone(),
+        ];
+        for m in &pair {
+            if let Some(found) = listed(m) {
+                let efforts = ModelEfforts {
+                    efforts: found.efforts.clone(),
+                    default: found.default_effort.clone(),
+                };
+                self.efforts.insert(m.clone(), efforts);
+            }
+        }
+        if let Some(effort) = self.brainstorm.effort.clone()
+            && let Some(refuses) = pair
+                .iter()
+                .filter_map(&known)
+                .find(|found| !found.efforts.contains(&effort))
+        {
+            lines.push(format!(
+                "effort '{effort}' not offered by {}; using the model's default",
+                refuses.id
+            ));
+            self.brainstorm.effort = None;
+        }
+        self.learn_canonical(&used);
         lines
     }
 
@@ -164,15 +249,18 @@ impl RunModels {
         }
     }
 
-    /// Decision 27 (D3): the reviewer row's model, unless it is exactly the author's;
+    /// Decision 27 (D3): the reviewer row's model, unless it is the author's (the same
+    /// canonical model, [`RunModels::same_model_ref`]);
     /// then the row's fallback at its default effort; with no fallback other than the
     /// author's model, the row's model and the run-log line saying so.
     pub fn reviewer_route(&self, author: &Route) -> (Route, Option<String>) {
         let choice = self.choice(Role::Reviewer);
-        if !is_model(&choice.model, author) {
+        let author_model = RunModels::model_of(author);
+        let is_author = |m: &ModelRef| self.same_model_ref(m, &author_model);
+        if !is_author(&choice.model) {
             return (self.route(Role::Reviewer), None);
         }
-        match choice.fallback.as_ref().filter(|f| !is_model(f, author)) {
+        match choice.fallback.as_ref().filter(|f| !is_author(f)) {
             Some(fallback) => (RunModels::route_of(fallback, None), None),
             None => (
                 self.route(Role::Reviewer),
@@ -195,9 +283,9 @@ impl RunModels {
         RunModels::model_of(route).label()
     }
 
-    /// Whether routes `a` and `b` run the same model (runtime and id).
-    pub fn same_model(a: &Route, b: &Route) -> bool {
-        is_model_route(a, b)
+    /// Whether routes `a` and `b` run the same model ([`RunModels::same_model_ref`]).
+    pub fn same_model(&self, a: &Route, b: &Route) -> bool {
+        self.same_model_ref(&RunModels::model_of(a), &RunModels::model_of(b))
     }
 
     /// Decision 27's run-log line for a reviewer on `author`'s own model.
@@ -268,9 +356,11 @@ pub fn failed_routes(task: &Task) -> Vec<Route> {
 }
 
 /// Whether `route` is, by runtime and model, one of `failed` (an effort changes nothing
-/// about a model that cannot run).
-pub fn failed_in(failed: &[Route], route: &Route) -> bool {
-    (failed.iter()).any(|f| f.runtime == route.runtime && f.model == route.model)
+/// about a model that cannot run). Gate fix B2: one model by the run's canonical
+/// identity ([`RunModels::same_model`]), so `opus[1m]` failing rules out
+/// `claude-opus-5-5` too.
+pub fn failed_in(models: &RunModels, failed: &[Route], route: &Route) -> bool {
+    (failed.iter()).any(|f| models.same_model(f, route))
 }
 
 pub(crate) fn overlap(a: &Task, b: &Task) -> bool {
@@ -331,14 +421,14 @@ pub fn reviewer_at_launch(
     failed: &[Route],
 ) -> (Route, Option<String>) {
     let (route, line) = models.reviewer_route(author);
-    if !failed_in(failed, &route) {
+    if !failed_in(models, failed, &route) {
         return (route, line);
     }
     let choice = models.choice(Role::Reviewer);
     let own = models.route(Role::Reviewer);
     let fallback = (choice.fallback.as_ref()).map(|f| RunModels::route_of(f, None));
     let other = (std::iter::once(own).chain(fallback))
-        .find(|r| !(failed_in(failed, r) || is_model_route(r, author)));
+        .find(|r| !(failed_in(models, failed, r) || models.same_model(r, author)));
     other.map_or((route, line), |r| (r, None))
 }
 
@@ -390,3 +480,11 @@ mod tests_efforts;
 #[cfg(test)]
 #[path = "model_roles_tests_user.rs"]
 mod tests_user;
+
+#[cfg(test)]
+#[path = "model_roles_tests_real.rs"]
+mod tests_real;
+
+#[cfg(test)]
+#[path = "model_roles_tests_canon.rs"]
+mod tests_canon;

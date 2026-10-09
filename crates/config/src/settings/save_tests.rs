@@ -255,3 +255,69 @@ fn a_hand_edited_design_default_still_saves() {
         );
     }
 }
+
+/// Final review I2: with a `config.toml.bak` already there (a hand-made backup, say), the
+/// save that removes old keys still keeps the file as it was, as `config.toml.bak.1`,
+/// and never replaces the existing backup; the next one takes `.bak.2`.
+#[test]
+fn an_existing_bak_does_not_stop_the_backup_of_the_old_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    let text =
+        "[orchestrator]\nmax_writers = 2\n\n[orchestrator.planners]\nstrength = \"frontier\"\n";
+    std::fs::write(&path, text).unwrap();
+    std::fs::write(dir.path().join("config.toml.bak"), "mine").unwrap();
+    let doc = doc_of(&crate::load(&path).0.orchestrator);
+    save(&path, &doc, &AtomicBool::new(false)).expect("the save goes through");
+    let now = std::fs::read_to_string(&path).unwrap();
+    assert!(!now.contains("planners"), "{now}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("config.toml.bak")).unwrap(),
+        "mine"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("config.toml.bak.1")).unwrap(),
+        text
+    );
+    // A second removing save (old keys again) takes the next free name.
+    let again = format!(
+        "{}\n[orchestrator.scouts]\nstrength = \"standard\"\n",
+        std::fs::read_to_string(&path).unwrap()
+    );
+    std::fs::write(&path, &again).unwrap();
+    let doc = doc_of(&crate::load(&path).0.orchestrator);
+    save(&path, &doc, &AtomicBool::new(false)).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("config.toml.bak.2")).unwrap(),
+        again
+    );
+    assert_eq!(
+        entries(dir.path()),
+        [
+            "config.toml",
+            "config.toml.bak",
+            "config.toml.bak.1",
+            "config.toml.bak.2"
+        ]
+    );
+}
+
+/// Final review I1: `changed_since_loaded` is silent for the file the settings were read
+/// from, and names the change once a `[models]` row is hand-edited.
+#[test]
+fn a_file_edited_after_it_was_read_is_noticed() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, "[models.reviewer]\nmodel = \"codex:gpt-6-sol\"\n").unwrap();
+    let live = crate::load(&path).0.orchestrator;
+    assert_eq!(changed_since_loaded(&path, &live), None);
+    std::fs::write(
+        &path,
+        "[models.reviewer]\nmodel = \"claude:claude-opus-5-5\"\n",
+    )
+    .unwrap();
+    assert_eq!(
+        changed_since_loaded(&path, &live).as_deref(),
+        Some(CHANGED_SINCE_LOADED)
+    );
+}

@@ -128,6 +128,9 @@ async fn a_refused_put_writes_nothing_and_swaps_nothing() {
     // M9.8.12: an old key the save must remove, written as an inline table.
     std::fs::write(&path, "[orchestrator]\nagent = { model = \"\" }\n").unwrap();
     let inline = std::fs::read(&path).unwrap();
+    // The daemon read this file at start (a later edit is refused first, final review I1).
+    let s = service(&path, None);
+    let before = live_doc(&s);
     let mut doc = before.clone();
     doc.limits.max_bounces = 4;
     let SettingsReply::Refused { problems } = put(&s, doc).await else {
@@ -570,4 +573,31 @@ async fn unreadable_repository_rows_are_reported_and_never_erased() {
         );
         assert_eq!(std::fs::read_to_string(&file).unwrap(), text);
     }
+}
+
+/// Final review I1: a `[models]` row hand-edited after the daemon read the file is never
+/// reverted by a save of something else: the save is refused and the file is untouched.
+#[tokio::test]
+async fn a_put_over_a_hand_edited_models_row_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, "[models.reviewer]\nmodel = \"codex:gpt-6-sol\"\n").unwrap();
+    let s = service(&path, None);
+    let mut doc = live_doc(&s);
+    doc.limits.max_writers = 1;
+    let edited = "[models.reviewer]\nmodel = \"claude:claude-opus-5-5\"\n";
+    std::fs::write(&path, edited).unwrap();
+    let SettingsReply::Refused { problems } = put(&s, doc.clone()).await else {
+        panic!("not refused")
+    };
+    assert_eq!(problems, [config::settings::CHANGED_SINCE_LOADED]);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), edited);
+    assert!(
+        entries(dir.path())
+            .iter()
+            .all(|n| n == "config.toml" || n == "data"),
+        "no backup or temporary file: {:?}",
+        entries(dir.path())
+    );
+    assert_eq!(live_doc(&s).limits.max_writers, 3, "nothing was swapped in");
 }

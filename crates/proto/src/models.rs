@@ -307,6 +307,10 @@ pub enum CatalogSource {
 pub struct CatalogModel {
     /// The id a route passes (`--model`), `default` for Claude's default entry.
     pub id: String,
+    /// The model the CLI resolves `id` to (Claude's `resolvedModel`: `opus[1m]` is
+    /// `claude-opus-5-5[1m]`), when it says. Real-CLI manual check fix (2026-10-09).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved: Option<String>,
     pub label: String,
     pub description: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -331,16 +335,91 @@ pub struct ModelCatalog {
     pub problem: Option<String>,
 }
 
+impl CatalogModel {
+    /// Decision 2 of the real-CLI manual check fix: the model this entry runs, as one
+    /// id: its resolved model, else its id, without a context tag or a date
+    /// ([`base_model_id`]).
+    pub fn canonical(&self) -> &str {
+        base_model_id(self.resolved.as_deref().unwrap_or(&self.id))
+    }
+
+    /// Whether a row's `id` names this entry: it is the entry's id or its resolved
+    /// model, both sides compared without a context tag or a date.
+    pub fn answers_to(&self, id: &str) -> bool {
+        let id = base_model_id(id);
+        base_model_id(&self.id) == id || self.resolved.as_deref().map(base_model_id) == Some(id)
+    }
+}
+
+/// `id` without a trailing bracketed context tag (`[1m]`), then without a trailing
+/// `-YYYYMMDD` date: `claude-opus-5-5[1m]` and `claude-haiku-4-5-20251001` are
+/// `claude-opus-5-5` and `claude-haiku-4-5`.
+pub fn base_model_id(id: &str) -> &str {
+    let id = match id
+        .strip_suffix(']')
+        .and_then(|s| s.rfind('[').map(|at| &id[..at]))
+    {
+        Some(bare) if !bare.is_empty() => bare,
+        _ => id,
+    };
+    // Gate fix C1: split only on a char boundary (a multibyte id never panics), and
+    // strip only a real date: `-`, then 8 ASCII digits, month 01–12, day 01–31.
+    let at = id.len().saturating_sub(9);
+    if at == 0 || !id.is_char_boundary(at) {
+        return id;
+    }
+    let (bare, date) = id.split_at(at);
+    match date.strip_prefix('-') {
+        Some(digits) if is_date(digits) => bare,
+        _ => id,
+    }
+}
+
+/// `YYYYMMDD` with a month of 01–12 and a day of 01–31.
+fn is_date(digits: &str) -> bool {
+    if digits.len() != 8 || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return false;
+    }
+    let month: u8 = digits[4..6].parse().unwrap_or(0);
+    let day: u8 = digits[6..8].parse().unwrap_or(0);
+    (1..=12).contains(&month) && (1..=31).contains(&day)
+}
+
+/// Decision 2: the one id `m` runs as, for every same-model rule: the entry a catalog
+/// of `catalogs` finds for it ([`ModelCatalog::find`]), canonical; else `m`'s own id
+/// without a context tag or a date (`""` for a CLI default no catalog names).
+pub fn canonical_id(catalogs: &[ModelCatalog], m: &ModelRef) -> String {
+    (catalogs.iter())
+        .find_map(|c| c.find(m))
+        .map(CatalogModel::canonical)
+        .unwrap_or_else(|| base_model_id(m.route_model()))
+        .to_string()
+}
+
+/// Gate fix B2: whether `a` and `b` are one model: the same runtime and the same
+/// [`canonical_id`]. The TUI's forms decide "the row's own model" with it, as the
+/// daemon's `RunModels::same_model_ref` does from the catalogs a run learned.
+pub fn same_model(catalogs: &[ModelCatalog], a: &ModelRef, b: &ModelRef) -> bool {
+    a.runtime == b.runtime && canonical_id(catalogs, a) == canonical_id(catalogs, b)
+}
+
 impl ModelCatalog {
     /// The model `m` names, if the catalog lists it (`id: None` is the entry with
-    /// `is_default`, else none).
+    /// `is_default`, else none). An id finds the entry of that id; else (the real-CLI
+    /// manual check fix, decision 1) the entry that answers to it
+    /// ([`CatalogModel::answers_to`]: Claude lists `opus[1m]` resolving to
+    /// `claude-opus-5-5[1m]` for the built-in `claude-opus-5-5`), the default entry
+    /// last.
     pub fn find(&self, m: &ModelRef) -> Option<&CatalogModel> {
         if m.runtime != self.runtime {
             return None;
         }
-        match &m.id {
-            Some(id) => self.models.iter().find(|c| &c.id == id),
-            None => self.models.iter().find(|c| c.is_default),
-        }
+        let Some(id) = &m.id else {
+            return self.models.iter().find(|c| c.is_default);
+        };
+        let answers = |c: &&CatalogModel| c.answers_to(id);
+        (self.models.iter().find(|c| &c.id == id))
+            .or_else(|| self.models.iter().filter(|c| !c.is_default).find(answers))
+            .or_else(|| self.models.iter().find(answers))
     }
 }

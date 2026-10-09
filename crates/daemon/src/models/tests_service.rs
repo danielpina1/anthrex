@@ -20,6 +20,7 @@ struct CountingProbes {
 
 fn model(id: &str) -> CatalogModel {
     CatalogModel {
+        resolved: None,
         id: id.to_string(),
         label: id.to_string(),
         description: String::new(),

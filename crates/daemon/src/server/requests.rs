@@ -170,17 +170,6 @@ pub(super) fn remove_with_worktree(
     });
 }
 
-/// `Restart` (design decision 20): relaunch the window's agent, resuming its last known
-/// session, killing whatever was running first if the window was live.
-///
-/// Detached like `create` and `remove_with_worktree`, and for the closest of the three
-/// reasons: `WindowManager::restart`'s own phase B can sit in a kill wait for several
-/// seconds, and its phase C spawns a real PTY, neither of which this connection's request
-/// loop may be blocked on (design decision 20 — a live window's restart must not stop a
-/// `ListWindows` on the same connection from being answered). Not aborting when the
-/// client disconnects mid-restart matters here too: an aborted restart could leave the
-/// window's `restarting` flag set with nothing left to clear it, or worse, leave the kill
-/// half-delivered and the old process neither confirmed dead nor replaced.
 /// Milestone 9.8 (MR §4.3): the catalogs asked for, answered from a task of its own so
 /// a probe never holds this connection's loop.
 pub(super) fn list_models(
@@ -196,6 +185,17 @@ pub(super) fn list_models(
     });
 }
 
+/// `Restart` (design decision 20): relaunch the window's agent, resuming its last known
+/// session, killing whatever was running first if the window was live.
+///
+/// Detached like `create` and `remove_with_worktree`, and for the closest of the three
+/// reasons: `WindowManager::restart`'s own phase B can sit in a kill wait for several
+/// seconds, and its phase C spawns a real PTY, neither of which this connection's request
+/// loop may be blocked on (design decision 20 — a live window's restart must not stop a
+/// `ListWindows` on the same connection from being answered). Not aborting when the
+/// client disconnects mid-restart matters here too: an aborted restart could leave the
+/// window's `restarting` flag set with nothing left to clear it, or worse, leave the kill
+/// half-delivered and the old process neither confirmed dead nor replaced.
 pub(super) fn restart(manager: Arc<WindowManager>, out: mpsc::Sender<DaemonMsg>, window_id: u32) {
     // Whole-branch-review Minor m13: this label appeared twice as an independent bare
     // literal (the `Ack` below and the `error` call), unlike `request::CREATE` /

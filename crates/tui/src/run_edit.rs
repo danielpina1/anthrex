@@ -83,6 +83,8 @@ pub struct TaskEditForm {
     pub efforts: Vec<String>,
     /// `TaskInfo.row`: the task's role table row, as the run resolves it (fix round 1).
     pub row: Option<Route>,
+    /// Gate fix B2: the models the catalogs say run as the row's, set by the app.
+    pub row_aliases: Vec<ModelRef>,
     /// The table's model as the catalogs label it (`Claude · Sonnet 5`), set by the app;
     /// `None` reads the resolved id.
     pub role_label: Option<String>,
@@ -203,6 +205,7 @@ impl TaskEditForm {
             efforts: Vec::new(),
             role_label: None,
             row: task.row.clone(),
+            row_aliases: Vec::new(),
             picker: None,
             size: task.size,
             test_mode: task.test_mode,

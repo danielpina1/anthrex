@@ -23,7 +23,7 @@ mod write_models;
 mod write_old;
 
 pub use origin::{load_with_origin, origin_of};
-pub use save::{Saved, save};
+pub use save::{CHANGED_SINCE_LOADED, Saved, changed_since_loaded, save};
 pub(crate) use save::{file_mode, temp_path, write_temp};
 pub use validate::{cleaned, strip_hidden, validate};
 // Milestone 9.2 (M9.2.6 fix round 2's deferral, closed by M9.2.15): the writer takes a
@@ -77,6 +77,8 @@ pub fn apply_owned(live: &mut Orchestrator, from: &Orchestrator) {
     live.max_bounces = from.max_bounces;
     // Milestone 9.8 decision 42 (preflight ruling F14): helpers read the live table.
     live.roles = from.roles.clone();
+    // Final review I1: the notes belong to the file this table came from.
+    live.roles_notes = from.roles_notes.clone();
 }
 
 #[cfg(test)]

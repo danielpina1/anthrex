@@ -257,12 +257,9 @@ fn the_builtin_table_is_the_specs_with_research_corrected() {
             Some("high"),
             Some("claude:claude-opus-5-5"),
         ),
-        (
-            Role::Research,
-            "claude:claude-haiku-4-5".into(),
-            Some("low"),
-            None,
-        ),
+        // Gate fix B1: Haiku reports no effort levels, so the built-in research row
+        // sets none (a stock install logs no "effort not offered" line).
+        (Role::Research, "claude:claude-haiku-4-5".into(), None, None),
         (Role::Helpers, "claude:claude-haiku-4-5".into(), None, None),
     ];
     for (role, model, effort, fallback) in rows {
