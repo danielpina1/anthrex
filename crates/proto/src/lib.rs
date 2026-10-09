@@ -274,6 +274,10 @@ mod delivery_actions_tests;
 mod adapt_tests;
 
 #[cfg(test)]
+#[path = "profile_tests.rs"]
+mod profile_tests;
+
+#[cfg(test)]
 #[path = "orch_tests.rs"]
 mod orch_tests;
 
