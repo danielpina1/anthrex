@@ -66,6 +66,71 @@ pub fn groups() -> &'static [(&'static str, &'static [&'static str])] {
     &GROUPS
 }
 
+/// Decision 24: the sections of the one-page Profile screen, in order: the title,
+/// whether it sits inside Advanced, and its keys (`env` is the environment section's
+/// add row; each `env.<NAME>` row joins it).
+pub const SECTIONS: [(&str, bool, &[&str]); 11] = [
+    (
+        "How anthrex checks your work",
+        false,
+        &["setup", "check", "single_test"],
+    ),
+    (
+        "Your repo",
+        false,
+        &["source", "test_paths", "generated", "protected"],
+    ),
+    ("Delivery", false, &["delivery.mode"]),
+    (
+        "testing tiers",
+        true,
+        &[
+            "build_check",
+            "module_test",
+            "module_tests",
+            "module_graph",
+            "module_names",
+            "full_triggers",
+            "slow_tests",
+            "timing_tests",
+            "skip_markers",
+            "full_shards",
+            "toolchain_id",
+        ],
+    ),
+    ("output filter", true, &["output_filter", "filter_prefixes"]),
+    ("environment", true, &["env"]),
+    ("timeouts", true, &["check_timeout_secs"]),
+    ("test result pattern", true, &["test_passed", "sample_test"]),
+    ("shared code area", true, &["hub"]),
+    (
+        "repo details",
+        true,
+        &["languages", "modules", "manifests", "conventions"],
+    ),
+    ("delivery remote", true, &["delivery.remote"]),
+];
+
+/// Decision 24: [`SECTIONS`].
+pub fn sections() -> &'static [(&'static str, bool, &'static [&'static str])] {
+    &SECTIONS
+}
+
+/// The section of `key` and whether it sits inside Advanced (`env.<NAME>` is the
+/// environment section's).
+fn section_of(key: &str) -> (&'static str, bool) {
+    let key = if key.starts_with("env.") {
+        ENV_ADD
+    } else {
+        key
+    };
+    SECTIONS
+        .iter()
+        .find(|(_, _, keys)| keys.contains(&key))
+        .map(|(title, advanced, _)| (*title, *advanced))
+        .unwrap_or(("", false))
+}
+
 /// The key of the environment group's last row, which adds a variable.
 pub const ENV_ADD: &str = "env";
 
@@ -135,7 +200,16 @@ pub fn kind_of(key: &str) -> Kind {
 /// One row of the Profile tab.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Row {
+    /// The old four-way grouping; removed with its last reader (M9.10.9).
     pub group: &'static str,
+    /// Decision 24: the section's title.
+    pub section: &'static str,
+    /// Decision 24: the plain label.
+    pub label: String,
+    /// Whether the row sits inside Advanced.
+    pub advanced: bool,
+    /// The stored value this row is shown against (with `against`), as displayed.
+    pub old: Option<String>,
     /// The `RepoProfile` key, `env.<NAME>`, or [`ENV_ADD`].
     pub key: String,
     /// The value as shown (a list's items joined with `, `); `None` when unset.
@@ -233,12 +307,21 @@ pub fn rows(
                     _ => None,
                 });
             let shown = value.as_ref().map(display);
+            let old = other
+                .as_ref()
+                .and_then(|other| value_in(other, &key))
+                .map(|v| display(&v));
+            let (section, advanced) = section_of(&key);
             let check = verification
                 .and_then(|v| check_of(v, &key))
                 .filter(|c| Some(&c.command) == shown.as_ref())
                 .cloned();
             out.push(Row {
                 group,
+                section,
+                label: crate::profile_words::label(&key),
+                advanced,
+                old,
                 key,
                 value: shown,
                 mark,
@@ -246,8 +329,13 @@ pub fn rows(
             });
         }
         if *group == "environment" {
+            let (section, advanced) = section_of(ENV_ADD);
             out.push(Row {
                 group,
+                section,
+                label: crate::profile_words::label(ENV_ADD),
+                advanced,
+                old: None,
                 key: ENV_ADD.to_string(),
                 value: None,
                 mark: None,
@@ -269,6 +357,17 @@ pub fn check_cell(c: &CommandCheck, ascii: bool) -> String {
         (false, None) => "no exit code".to_string(),
     };
     format!("{mark} {how} {dot} {}s", c.secs)
+}
+
+/// Decision 28: the card's check cell, `✓ 12s` / `✗ 3m10s` (ASCII `+` / `x`).
+pub fn card_cell(c: &CommandCheck, ascii: bool) -> String {
+    let mark = glyph(if c.ok { Glyph::Passed } else { Glyph::Failed }, ascii);
+    format!("{mark} {}", crate::profile_words::took(c.secs))
+}
+
+/// The changes card's rows: only those marked against the stored profile.
+pub fn changed(rows: Vec<Row>) -> Vec<Row> {
+    rows.into_iter().filter(|r| r.mark.is_some()).collect()
 }
 
 /// The text an editor of `key` starts from: a list one item per line.

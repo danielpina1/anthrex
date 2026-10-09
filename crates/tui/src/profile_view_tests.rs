@@ -86,19 +86,30 @@ fn full_profile() -> RepoProfile {
     }
 }
 
-/// Interfaces "Profile groups": every key once, in the four groups, in their order;
-/// preflight F28: `EDIT_KEYS`' `env` is the environment group's (one row per
-/// `env.<NAME>`).
+/// Decision 24: every key once across the eleven sections, `env` as the environment
+/// section's add row; the Advanced sections are marked.
 #[test]
-fn profile_groups_cover_every_key() {
-    let names: Vec<&str> = groups().iter().map(|(name, _)| *name).collect();
+fn sections_cover_every_key_once() {
+    let titles: Vec<&str> = sections().iter().map(|(t, _, _)| *t).collect();
     assert_eq!(
-        names,
-        ["commands", "tiers", "paths", "delivery", "environment"]
+        titles,
+        [
+            "How anthrex checks your work",
+            "Your repo",
+            "Delivery",
+            "testing tiers",
+            "output filter",
+            "environment",
+            "timeouts",
+            "test result pattern",
+            "shared code area",
+            "repo details",
+            "delivery remote",
+        ]
     );
-    let grouped: Vec<(&str, &str)> = groups()
+    let listed: Vec<&str> = sections()
         .iter()
-        .flat_map(|(name, keys)| keys.iter().map(move |key| (*name, *key)))
+        .flat_map(|(_, _, keys)| keys.iter().copied())
         .collect();
     let wanted: Vec<&str> = EDIT_KEYS
         .iter()
@@ -106,63 +117,130 @@ fn profile_groups_cover_every_key() {
         .filter(|key| *key != "env.<NAME>")
         .collect();
     for key in &wanted {
-        let count = grouped.iter().filter(|(_, k)| k == key).count();
-        assert_eq!(count, 1, "{key} is grouped {count} times");
+        let count = listed.iter().filter(|k| *k == key).count();
+        assert_eq!(count, 1, "{key} is in {count} sections");
     }
-    assert_eq!(grouped.len(), wanted.len(), "{grouped:?}");
-    assert!(grouped.contains(&("environment", "env")));
-    // The commands group keeps the Interfaces order.
-    assert_eq!(
-        groups()[0].1,
-        [
-            "setup",
-            "check",
-            "check_timeout_secs",
-            "single_test",
-            "test_passed",
-            "sample_test",
-            "output_filter",
-            "filter_prefixes",
-        ]
-    );
-    // And every key a real profile carries is a row.
+    assert_eq!(listed.len(), wanted.len(), "{listed:?}");
+    assert!(sections()[5].2.contains(&"env"));
+    // And every key a real profile carries is a row, with its section.
+    let all = rows(&full_profile(), None, None);
     let Ok(toml::Value::Table(table)) = toml::Value::try_from(full_profile()) else {
         panic!("a profile is a table");
     };
     for key in table.keys() {
-        let sub = |k: &&str| k.split_once('.').is_some_and(|(t, _)| t == key);
-        let grouped_here = if TABLES.contains(&key.as_str()) {
-            grouped.iter().any(|(_, k)| sub(k))
-        } else {
-            grouped.iter().any(|(_, k)| k == key)
+        let has = |r: &Row| {
+            r.key == *key
+                || (TABLES.contains(&key.as_str()) && r.key.starts_with(&format!("{key}.")))
         };
-        assert!(grouped_here, "{key} has no group");
+        assert!(all.iter().any(has), "{key} has no row");
     }
-    let keys: Vec<String> = rows(&full_profile(), None, None)
-        .into_iter()
-        .map(|row| row.key)
-        .collect();
-    assert!(keys.contains(&"env.RUST_LOG".to_string()), "{keys:?}");
-    // The delivery group's rows read the `[delivery]` table.
-    let shown: Vec<(String, Option<String>)> = rows(&full_profile(), None, None)
-        .into_iter()
-        .filter(|row| row.group == "delivery")
-        .map(|row| (row.key, row.value))
+    let find = |key: &str| all.iter().find(|r| r.key == key).unwrap().clone();
+    assert!(all.iter().all(|r| !r.section.is_empty()));
+    assert_eq!(find("check").section, "How anthrex checks your work");
+    assert_eq!(find("check").label, "check");
+    assert_eq!(find("env.RUST_LOG").section, "environment");
+    assert_eq!(find("env.RUST_LOG").label, "RUST_LOG");
+    assert_eq!(find("env").label, "add a variable");
+    assert_eq!(find("delivery.mode").label, "Delivery");
+    assert_eq!(find("delivery.remote").section, "delivery remote");
+    assert_eq!(find("delivery.mode").value.as_deref(), Some("pr"));
+    assert_eq!(find("delivery.remote").value.as_deref(), Some("origin"));
+}
+
+/// Decision 24: a row is Advanced when its section is.
+#[test]
+fn advanced_rows_are_marked() {
+    let all = rows(&full_profile(), None, None);
+    let find = |key: &str| all.iter().find(|r| r.key == key).unwrap().advanced;
+    for key in ["setup", "check", "single_test", "source", "delivery.mode"] {
+        assert!(!find(key), "{key} is a main row");
+    }
+    for key in [
+        "build_check",
+        "module_graph",
+        "output_filter",
+        "env.RUST_LOG",
+        "env",
+        "check_timeout_secs",
+        "test_passed",
+        "hub",
+        "languages",
+        "delivery.remote",
+    ] {
+        assert!(find(key), "{key} is Advanced");
+    }
+    let main: Vec<&str> = sections()
+        .iter()
+        .filter(|(_, advanced, _)| !advanced)
+        .map(|(t, _, _)| *t)
         .collect();
     assert_eq!(
-        shown,
-        [
-            ("delivery.mode".to_string(), Some("pr".to_string())),
-            ("delivery.remote".to_string(), Some("origin".to_string())),
-        ]
+        main,
+        ["How anthrex checks your work", "Your repo", "Delivery"]
     );
-    // No `[delivery]` table: both rows unset (the mode then reads `local`).
-    let unset: Vec<Option<String>> = rows(&RepoProfile::default(), None, None)
+}
+
+/// A row against the stored profile carries the stored value as `old`.
+#[test]
+fn a_proposal_row_carries_its_old_value() {
+    let stored = RepoProfile {
+        check: Some("cargo test".into()),
+        setup: Some("make".into()),
+        modules: vec!["a".into(), "b".into()],
+        ..RepoProfile::default()
+    };
+    let proposal = RepoProfile {
+        check: Some("cargo test --workspace".into()),
+        build_check: Some("cargo build".into()),
+        modules: vec!["a".into(), "b".into()],
+        ..RepoProfile::default()
+    };
+    let all = rows(&proposal, None, Some(&stored));
+    let find = |key: &str| all.iter().find(|r| r.key == key).unwrap().clone();
+    assert_eq!(find("check").old.as_deref(), Some("cargo test"));
+    assert_eq!(
+        find("check").value.as_deref(),
+        Some("cargo test --workspace")
+    );
+    assert_eq!(find("setup").old.as_deref(), Some("make"), "removed");
+    assert_eq!(find("build_check").old, None, "added");
+    assert_eq!(find("modules").old.as_deref(), Some("a, b"), "unchanged");
+    // Without `against` nothing is old.
+    assert!(rows(&proposal, None, None).iter().all(|r| r.old.is_none()));
+}
+
+/// The changes card lists only the marked rows, in order.
+#[test]
+fn changed_keeps_only_marked_rows() {
+    let stored = RepoProfile {
+        check: Some("cargo test".into()),
+        setup: Some("make".into()),
+        modules: vec!["a".into()],
+        ..RepoProfile::default()
+    };
+    let proposal = RepoProfile {
+        check: Some("cargo test --workspace".into()),
+        build_check: Some("cargo build".into()),
+        modules: vec!["a".into()],
+        ..RepoProfile::default()
+    };
+    let kept: Vec<String> = changed(rows(&proposal, None, Some(&stored)))
         .into_iter()
-        .filter(|row| row.group == "delivery")
-        .map(|row| row.value)
+        .map(|r| r.key)
         .collect();
-    assert_eq!(unset, [None, None]);
+    assert_eq!(kept, ["setup", "check", "build_check"]);
+    assert!(changed(rows(&proposal, None, None)).is_empty());
+}
+
+/// The card's check cell: the glyph and how long the command took.
+#[test]
+fn card_cells() {
+    let pass = check(Some(0), false, 12);
+    let fail = check(Some(1), false, 190);
+    assert_eq!(card_cell(&pass, false), "✓ 12s");
+    assert_eq!(card_cell(&fail, false), "✗ 3m10s");
+    assert_eq!(card_cell(&pass, true), "+ 12s");
+    assert_eq!(card_cell(&fail, true), "x 3m10s");
 }
 
 /// Milestone 9.2 decision 3 (ruling, M9.2.15): a delivery edit sends the bare text
