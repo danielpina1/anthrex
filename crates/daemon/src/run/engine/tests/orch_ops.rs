@@ -155,6 +155,39 @@ fn an_override_that_counts_commits_records_when_it_lands() {
     );
     assert!(replies(&effects)[0].is_ok(), "{effects:#?}");
     assert_eq!(fx.run().orch.handled[0].target, "t1");
+    // Final review M-1: the plan-edit log entry is written when the count lands.
+    let record = fx.run().plan_edits.last().unwrap();
+    assert_eq!(
+        (record.text.as_str(), record.source.as_str(), record.accepted),
+        ("override t1", "orchestrator", true)
+    );
+}
+
+/// Final review M-1: a count that fails refuses the override, and the plan-edit log
+/// records the rejected entry with the refusal.
+#[test]
+fn an_override_whose_count_fails_records_a_rejected_entry() {
+    let mut fx = blocked_t1("environment", "locked");
+    fx.task_mut("t1").start_commit = Some(BASE.into());
+    op(
+        &mut fx,
+        json!({"op": "override", "task_id": "t1", "reason": "work is done"}),
+    );
+    let edits = fx.run().plan_edits.len();
+    let (count, _) = fx.op("CountCommits");
+    let failed = crate::run::engine::OpResult::Failed {
+        message: "git broke".into(),
+    };
+    let effects = fx.done(count, failed);
+    let refusal = "could not count task t1's commits: git broke";
+    assert_eq!(replies(&effects), vec![Err(refusal.to_string())]);
+    assert!(fx.run().orch.handled.is_empty());
+    assert_eq!(fx.run().plan_edits.len(), edits + 1);
+    let record = fx.run().plan_edits.last().unwrap();
+    assert_eq!(
+        (record.source.as_str(), record.accepted, record.error.as_deref()),
+        ("orchestrator", false, Some(refusal))
+    );
 }
 
 #[test]

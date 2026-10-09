@@ -174,9 +174,7 @@ fn resume_run(
             if let Some(refusal) = rules::resume_stage(run, n) {
                 return Err(refusal);
             }
-            let held = (usize::from(n).checked_sub(1))
-                .and_then(|i| run.delivery.stages.get(i))
-                .and_then(|s| s.held.as_deref());
+            let held = run.delivery.stage(n).and_then(|s| s.held.as_deref());
             if let Some(held) = held.filter(|h| user_only::marked(h)) {
                 return Err(user_only::refusal(&format!("stage {n}"), held));
             }

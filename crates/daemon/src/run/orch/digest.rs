@@ -157,6 +157,9 @@ fn build(run: &Run, now: u64, for_fingerprint: bool) -> Value {
         "delivery": delivery::block(run, delivery::Shape::digest(for_fingerprint)),
         "attention": crate::run::snapshot::attention(run, now).iter().map(|l| cut(l, LINE_MAX)).collect::<Vec<_>>(),
         "notes": orch.map(|o| o.notes.iter().map(|n| cut(n, LINE_MAX)).collect::<Vec<_>>()).unwrap_or_default(),
+        // Milestone 9.9 final review M-4: the pending `ask_user` question, so a
+        // relaunched orchestrator sees what the user is answering (at most 500 chars).
+        "ask": run.orch.ask.as_ref().map(|a| json!({"id": a.id, "question": a.question})),
         "task_notes": task_notes(run),
         "edits": run.plan_edits.iter().rev().take(EDITS_SHOWN).map(edit_entry).collect::<Vec<_>>(),
         "spend": spend(run),
