@@ -158,6 +158,7 @@ pub mod messages;
 pub mod models;
 pub mod orch;
 pub mod paths;
+mod plan_edit;
 pub mod planner;
 pub mod profile;
 pub mod rounds;
