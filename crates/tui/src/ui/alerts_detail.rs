@@ -224,6 +224,8 @@ fn facts(app: &App, alert: &Alert) -> Vec<(String, String)> {
         }
         (AlertKey::OrchestratorAsks(_), Some(_)) => {
             push(&mut rows, "phase", "asks you".to_owned());
+            // The context, then the numbered options the `1`-`9` keys answer.
+            text_rows(&mut rows, "detail", &alert.detail);
         }
         (AlertKey::OrchestratorStuck(_), Some(_)) => {
             push(&mut rows, "phase", "stuck".to_owned());
