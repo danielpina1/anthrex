@@ -44,7 +44,7 @@ fn verify_then_jobs(fx: &mut Fixture) -> usize {
 }
 
 /// Gives the run an orchestrator (so wake notes are kept), its notes empty.
-fn with_orchestrator(fx: &mut Fixture) {
+pub(super) fn with_orchestrator(fx: &mut Fixture) {
     let orch = super::orch::launched(false).run().orch.orchestrator.clone();
     assert!(orch.is_some());
     fx.run_mut().orch.orchestrator = orch;
@@ -124,7 +124,7 @@ fn three_failures_hold_the_run_and_resume_retries() {
 }
 
 #[test]
-fn a_failed_tier3_sends_the_orchestrator_no_note() {
+fn a_failed_tier3_notes_the_orchestrator_only_when_it_is_held() {
     let (mut fx, windows) = start_on(&profile(), &[doc_task("t1", ""), doc_task("t2", "")]);
     block(&mut fx, "t2", window_of(&windows, "t2"));
     merge_tiered(&mut fx, "t1", window_of(&windows, "t1"), &commit(1));
@@ -133,11 +133,14 @@ fn a_failed_tier3_sends_the_orchestrator_no_note() {
     with_orchestrator(&mut fx);
     fx.done(op, failed());
     assert_eq!(notes(&fx), Vec::<String>::new());
-    // Nor when it is held after the third.
+    // Nor after the second; the third holds it, and that is noted.
     for wait in [30, 120] {
         fx.send(fx.now + wait, EventKind::Tick);
         let (op, _) = full_job(&fx);
         fx.done(op, failed());
+        if wait == 30 {
+            assert_eq!(notes(&fx), Vec::<String>::new());
+        }
     }
     assert_eq!(
         fx.run()
@@ -149,7 +152,10 @@ fn a_failed_tier3_sends_the_orchestrator_no_note() {
             .map(|i| i.count),
         Some(3)
     );
-    assert_eq!(notes(&fx), Vec::<String>::new());
+    assert_eq!(
+        notes(&fx),
+        ["stage 1 tier 3 held after 3 executor failures; resume_run with stage 1 retries it"]
+    );
 }
 
 #[test]

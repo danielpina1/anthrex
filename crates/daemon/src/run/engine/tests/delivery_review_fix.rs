@@ -287,7 +287,7 @@ fn review_fix_max_hands_threads_to_the_user() {
     assert!(super::delivery_review::logged(&fx, line));
     let kind = proto::DeliveryAlertKind::ReviewRoundsOverCap;
     assert!(delivery_alerts(&fx).contains(&(kind, Some(1), line.to_string())));
-    // `review_fix_max = 0` sends every comment to the user, and wakes no orchestrator.
+    // `review_fix_max = 0` sends every comment to the user, and wakes the orchestrator.
     let mut fx = by_alice();
     super::bisect::with_orchestrator(&mut fx);
     fx.run_mut().delivery.limits.review_fix_max = 0;
@@ -298,9 +298,11 @@ fn review_fix_max_hands_threads_to_the_user() {
     let line = "PR #7: review round 1 is over the cap; thread 7:c5 by @alice is yours";
     assert!(attention(&fx).contains(&line.to_string()));
     let notes = &fx.run().orch.orchestrator.as_ref().unwrap().notes;
-    assert!(
-        !notes.iter().any(|n| n.contains("review thread")),
-        "{notes:#?}"
+    assert_eq!(
+        notes,
+        &[format!(
+            "{line}; decide: a fix task, a reply_comment, or ask_user"
+        )]
     );
 }
 

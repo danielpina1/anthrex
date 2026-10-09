@@ -468,6 +468,11 @@ fn red(
                 first(failing, WAKE_TESTS)
             ),
         );
+        let note = format!(
+            "stage {n} tier 3 red again on {}; fix task {fix} is still open",
+            sha7(commit)
+        );
+        wake_on_head(run, n, commit, note);
         if let Some(s) = stage_mut(run, n) {
             s.full.red_at = Some(commit.to_string());
             s.full.note = None;
@@ -570,6 +575,10 @@ fn infra_failed(run: &mut Run, n: u16, commit: &str, message: &str, now: u64) {
     if count >= INFRA_MAX {
         let text = format!("stage {n}: tier 3 held after {count} failures; run resume retries");
         log(run, now, text);
+        let note = format!(
+            "stage {n} tier 3 held after {count} executor failures; resume_run with stage {n} retries it"
+        );
+        wake_on_head(run, n, commit, note);
     }
 }
 

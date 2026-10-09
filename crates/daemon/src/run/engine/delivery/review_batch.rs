@@ -108,7 +108,13 @@ fn over_cap(run: &mut Run, n: u16, pr: &PrRecord, keys: &[String], round: u32, n
             pr.number, pr.number
         );
         log(run, now, line.clone());
-        run.delivery.alerts.insert(format!("{n}/cap/{key}"), line);
+        run.delivery
+            .alerts
+            .insert(format!("{n}/cap/{key}"), line.clone());
+        wake::note(
+            run,
+            format!("{line}; decide: a fix task, a reply_comment, or ask_user"),
+        );
     }
 }
 

@@ -513,7 +513,10 @@ pub(super) fn keeps_failing(run: &mut Run, op: &HostOp, name: &str, error: &str)
     };
     // The final fix wave's B m-10: the host's text, in quotes.
     let line = format!("{what}: {name} keeps failing: {}", quote::host_text(error));
-    run.delivery.alerts.insert(key, line);
+    // The line is noted once: a repeat of the same key is the same alert.
+    if run.delivery.alerts.insert(key, line.clone()).is_none() {
+        wake::note(run, line);
+    }
 }
 
 /// A view failed: polling goes on at the backed-off interval (a rate limit has already

@@ -220,6 +220,7 @@ mod wake_fixes;
 mod wake_held;
 mod wake_note_ids;
 mod wake_notes;
+mod wake_routed;
 mod weakening;
 mod worker_messages;
 mod worker_messages_pause;
