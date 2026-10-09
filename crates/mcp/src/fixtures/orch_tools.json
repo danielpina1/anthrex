@@ -854,7 +854,7 @@
     },
     {
       "name": "ask_user",
-      "description": "Ask the user one question when only they can decide, with up to nine short options and the context they need. Returns at once; their choice arrives as a message. Never ask in chat instead.",
+      "description": "Ask the user one question when only they can decide, with up to nine short options and the context they need. Returns at once; their choice arrives as a message. Once the plan is approved, never ask in chat instead.",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,

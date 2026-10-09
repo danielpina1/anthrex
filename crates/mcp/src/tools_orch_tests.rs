@@ -60,7 +60,7 @@ const DESIGN: [&str; 3] = [
 /// Milestone 9.9 decision 15 (task M9.9.7).
 const ASK_USER: &str = "Ask the user one question when only they can decide, with up to nine \
     short options and the context they need. Returns at once; their choice arrives as a \
-    message. Never ask in chat instead.";
+    message. Once the plan is approved, never ask in chat instead.";
 
 /// Milestone 9.3 decision 29.
 const START_GOAL: &str = "Start a new goal on this orchestrator when the user gives you one; \

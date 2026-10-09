@@ -71,7 +71,7 @@ fn ask_user() -> Tool {
         ASK_USER,
         "Ask the user one question when only they can decide, with up to nine short options \
          and the context they need. Returns at once; their choice arrives as a message. \
-         Never ask in chat instead.",
+         Once the plan is approved, never ask in chat instead.",
         closed(
             json!({
                 "question": text(500),
