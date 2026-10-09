@@ -155,7 +155,7 @@ fn resume_run(
             if let Some(refusal) = rules::resume(run, false) {
                 return Err(refusal);
             }
-            if user_only::marked(run.halted_reason.as_deref().unwrap_or_default()) {
+            if user_only::halt(run) {
                 let reason = run.halted_reason.clone().unwrap_or_default();
                 return Err(user_only::refusal(&format!("run {}", run.id), &reason));
             }

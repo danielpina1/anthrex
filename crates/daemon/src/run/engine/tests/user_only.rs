@@ -194,3 +194,23 @@ fn the_orchestrator_may_not_resume_a_halt_that_names_a_user_only_cause() {
         )
     );
 }
+
+#[test]
+fn the_orchestrator_may_not_release_a_stage_held_on_a_user_only_cause() {
+    let mut fx = watched();
+    let orch = super::orch::launched(false).run().orch.orchestrator.clone();
+    fx.run_mut().orch.orchestrator = orch;
+    let held = "remote: Permission denied (publickey).";
+    fx.run_mut().delivery.stages[0].held = Some(held.into());
+    let effects = edit_plan(
+        &mut fx,
+        json!({"edits": [{"op": "resume_run", "stage": 1, "reason": "push again"}]}),
+    );
+    assert_eq!(
+        error(&effects),
+        format!(
+            "stage 1 waits on something only the user can fix, and they have been alerted: {held}"
+        )
+    );
+    assert!(fx.run().delivery.stages[0].held.is_some());
+}
