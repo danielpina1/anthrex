@@ -134,6 +134,9 @@ mod form_brief;
 #[path = "../app_tests/profile_screen_views.rs"]
 mod profile_screen_views;
 
+#[path = "../app_tests/profile_card.rs"]
+mod profile_card;
+
 #[path = "../app_tests/polish/mod.rs"]
 mod polish;
 

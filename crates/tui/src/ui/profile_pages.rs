@@ -1,8 +1,8 @@
 //! The Profile screen's pages, drawn as kit dialogs over it (decision 5): the Detect
-//! toggles, the Reject, Unset and Confirm pages (the TOML shown exactly, scrolled), and
-//! the editors. Split from `ui/profile.rs` by responsibility (`AGENTS.md` hard rule 8).
+//! toggles, the Discard and Unset pages, the raw-text page (the file shown exactly,
+//! scrolled), a row's page, and the editors. Split from `ui/profile.rs` by responsibility (`AGENTS.md` hard rule 8).
 
-use super::{hint, pad, store_line};
+use super::{hint, pad, tail_lines};
 use crate::app::profile_screen::{EditorField, ProfilePage, ProfileScreen};
 use crate::safe_text::{multi_line, one_line};
 use crate::theme::{Glyph, Palette, Role, glyph, role};
@@ -75,7 +75,6 @@ fn page_parts(
         let list: Vec<Hint> = list.iter().map(|(k, v)| hint(k, v, 5)).collect();
         kit::hints_joined(width, &list, crate::theme::dot_sep(p), p)
     };
-    let dir = s.dir.display().to_string();
     match page {
         ProfilePage::Detect {
             trust_project,
@@ -105,21 +104,23 @@ fn page_parts(
                     .map(|l| l.style(role(Role::Attention, p))),
             );
             let h = hints(&[
-                ("y", "detect"),
+                ("y", "start"),
                 ("space", "toggle"),
                 ("tab", "next"),
                 ("esc", "cancel"),
             ]);
-            ("detect".into(), false, body, h)
+            (s.detect_title().into(), false, body, h)
         }
-        ProfilePage::Reject => {
+        ProfilePage::Discard => {
             // Decision 37 (principle 9): a destructive page's key and word in `Failed`,
             // as `ui/action_menu.rs::verb_hints` and the Settings discard page draw them.
-            let h = kit::destructive(hints(&[("y", "reject"), ("esc", "back")]), "y", "reject", p);
-            let body = wrap(&format!(
-                "the proposal for {dir} is deleted; a running scout or verification stops"
-            ));
-            ("reject proposal".into(), true, body, h)
+            let h = kit::destructive(
+                hints(&[("y", "discard"), ("esc", "back")]),
+                "y",
+                "discard",
+                p,
+            );
+            ("discard proposal".into(), true, wrap(&s.discard_text()), h)
         }
         ProfilePage::Unset { key } => (
             format!("unset {key}"),
@@ -130,14 +131,42 @@ fn page_parts(
             )),
             hints(&[("⏎", "unset"), ("esc", "back")]),
         ),
-        ProfilePage::Confirm { toml, .. } => {
-            let body = multi_line(toml)
+        ProfilePage::RawText { text, .. } => {
+            let body = multi_line(text)
                 .split('\n')
                 .flat_map(|line| hard_wrap(&one_line(line), w))
                 .map(Line::raw)
                 .collect();
-            let h = hints(&[("y", "store"), ("j/k", "scroll"), ("esc", "back")]);
-            ("confirm profile".into(), false, body, h)
+            let h = hints(&[("j/k", "scroll"), ("esc", "back")]);
+            ("profile file".into(), false, body, h)
+        }
+        ProfilePage::Row { key, .. } => {
+            let row = s.rows().into_iter().find(|r| r.key == *key);
+            let value = row.as_ref().and_then(|r| r.value.clone());
+            let mut body = vec![Line::styled(one_line(key), role(Role::Muted, p))];
+            body.extend(wrap(&value.unwrap_or_else(|| "unset".into())));
+            body.extend(
+                wrap(crate::profile_words::hint(key))
+                    .into_iter()
+                    .map(|l| l.style(role(Role::Muted, p))),
+            );
+            let check = row.and_then(|r| r.check);
+            let tail = match (s.edit_of(key), &check) {
+                (Some(proto::RowEditState::Failed { reason, tail, .. }), _) => {
+                    body.extend(wrap(&format!("couldn't verify: {reason}")));
+                    tail.clone()
+                }
+                (_, Some(c)) => {
+                    body.push(Line::raw(crate::profile_view::check_cell(c, p.ascii)));
+                    c.tail.clone()
+                }
+                _ => String::new(),
+            };
+            if !tail.is_empty() {
+                body.extend(tail_lines(&tail, 2, w, p));
+            }
+            let h = hints(&[("j/k", "scroll"), ("esc", "back")]);
+            (one_line(&crate::profile_words::label(key)), false, body, h)
         }
         ProfilePage::Edit(editor) => {
             let label = |text: &str| Span::styled(pad(text, 7), role(Role::Muted, p));
@@ -181,16 +210,8 @@ fn page_parts(
                     }
                 }
             }
-            body.push(Line::default());
-            if editor.from_proposal {
-                body.extend(
-                    wrap("starts from the stored profile; saving replaces the current proposal")
-                        .into_iter()
-                        .map(|l| l.style(role(Role::Attention, p))),
-                );
-            }
-            body.push(store_line(s, p));
             if let Some(error) = &editor.error {
+                body.push(Line::default());
                 body.extend(
                     wrap(error)
                         .into_iter()
@@ -238,7 +259,9 @@ pub(super) fn render_page(
     // The page fits the area: a long TOML scrolls inside it.
     let room = usize::from(area.height.saturating_sub(4));
     let body = match page {
-        ProfilePage::Confirm { scroll, .. } => scrolled(body, *scroll, room, p),
+        ProfilePage::RawText { scroll, .. } | ProfilePage::Row { scroll, .. } => {
+            scrolled(body, *scroll, room, p)
+        }
         _ => body.into_iter().take(room).collect(),
     };
     let mut lines = body;

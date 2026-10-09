@@ -1,21 +1,22 @@
-//! Milestone 9.0.6 decisions 33-35: the Profile screen's state, keys, requests and
-//! replies. `C-b P` opens it on `goal_project()`; it asks the daemon three tagged
-//! things (the status, the stored profile, the proposal), polls the status once a second
-//! while a detection runs, and sends `Detect`, `Edit`, `Confirm` and `Reject` from its
-//! pages. Replies come back by `request_id` through `app/replies.rs::route_reply`.
+//! Milestone 9.0.6 decisions 33-35 and milestone 9.10 decisions 27-31: the Profile
+//! screen's state, requests and replies. `C-b P` opens it on `goal_project()`; it asks
+//! the daemon three tagged things (the status, the stored profile, the proposal), polls
+//! the status once a second while a detection or a row edit's check runs, and sends
+//! `Detect`, `Edit`, `Confirm`, `Reject` and `RevertEdit` from its keys and pages. It
+//! is one page: the review card while a review proposal is ready, else the profile.
+//! Replies come back by `request_id` through `app/replies.rs::route_reply`.
 //! The view of a profile is `crate::profile_view`; drawing is `ui/profile.rs`. Pure:
 //! every request leaves as an `Effect`, and the poll's clock is `screens_tick`'s `now`.
 
 use super::plan_review::LEAVE_REVIEW_FIRST;
 use super::replies::{PendingWhat, reply_timeout};
-use super::runs::{capped, first_line_and_more};
 use super::screens::Screen;
-use super::{App, Effect, ToastLevel};
-use crate::profile_view::{self, Row};
+use super::{App, Effect};
+use crate::profile_view::{self, ENV_ADD, Row};
 use crate::text_area::TextArea;
 use proto::{
-    DroppedCommand, ProfileReply, ProfileRequest, ProfileStatus, ProfileVerification,
-    ProposalState, RepoProfile, RunReply, RunRequest,
+    DroppedCommand, ProfileRequest, ProfileSource, ProfileStatus, ProfileVerification,
+    ProposalOrigin, ProposalRecord, ProposalState, RepoProfile, RowEdit, RowEditState, RunRequest,
 };
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -25,11 +26,8 @@ pub const NO_PROJECT: &str = "select a Git project to see its profile";
 /// Decision 34: one `Status` a second while a detection runs.
 pub const POLL_EVERY: Duration = Duration::from_secs(1);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ProfileTab {
-    Status,
-    Profile,
-}
+/// The key of the `Advanced ▸` line among the rows (decision 29: Enter toggles it).
+pub const ADVANCED_ROW: &str = "advanced";
 
 /// A `ProfileReply::Shown`, with its TOML read back into a profile (`None` when the text
 /// does not parse: the rows are then empty, and `c` still shows the text).
@@ -75,9 +73,6 @@ pub struct Editor {
     pub key: String,
     pub field: EditorField,
     pub error: Option<String>,
-    /// Opened from the proposal view: the page says the edit starts from the stored
-    /// profile and replaces the proposal (progress ruling).
-    pub from_proposal: bool,
 }
 
 /// A dialog over the screen.
@@ -88,12 +83,19 @@ pub enum ProfilePage {
         unconfined_checks: bool,
         focus: usize,
     },
-    Reject,
+    /// Decision 30: discard the review proposal (and its queued goals).
+    Discard,
     Unset {
         key: String,
     },
-    Confirm {
-        toml: String,
+    /// Decisions 30 and 32: the unreadable profile file's text, exactly.
+    RawText {
+        text: String,
+        scroll: usize,
+    },
+    /// Decision 30: one row's detail.
+    Row {
+        key: String,
         scroll: usize,
     },
     Edit(Box<Editor>),
@@ -107,23 +109,31 @@ pub enum ProfileAsk {
     Detect,
     Edit,
     Confirm,
-    Reject,
+    Discard,
+    RevertEdit,
+}
+
+/// An edit sent from the screen whose outcome is not known yet: once its check passes
+/// (no row edit left) and its side's value moved from `before`, the message row says
+/// `saved <label>` (decision 31).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Saving {
+    pub key: String,
+    pub on_proposal: bool,
+    pub before: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProfileScreen {
     pub dir: PathBuf,
-    pub tab: ProfileTab,
-    /// The Profile tab shows the proposal (`p`).
-    pub proposed: bool,
     pub status: Option<ProfileStatus>,
     pub stored: Side,
     pub proposal: Side,
     pub selected: usize,
-    /// The row whose check output tail is expanded (Enter).
+    /// Decision 29: Advanced is open (`a`).
+    pub advanced: bool,
+    /// The row whose output is shown (`o`).
     pub expanded: Option<String>,
-    /// `s`: "store once verification passes", the CLI's `--yes`.
-    pub store_on_pass: bool,
     pub page: Option<ProfilePage>,
     /// The daemon's last refusal, in the screen's error row (decision 37's among them).
     pub error: Option<String>,
@@ -138,27 +148,22 @@ pub struct ProfileScreen {
     /// The id of the last `Show` of each side: only its reply fills the side (9.0.7
     /// decision 37), so one sent before a detection never draws the old proposal.
     pub(crate) show_id: [Option<u64>; 2],
+    pub(crate) saving: Option<Saving>,
 }
 
 /// Interfaces-style refusal of `C-b a`, `C-b m` and `C-b t` over a full screen.
 pub const LEAVE_SCREEN_FIRST: &str = "leave the profile first (esc)";
 
 impl ProfileScreen {
-    fn new(dir: PathBuf, proposal: bool) -> Self {
+    fn new(dir: PathBuf) -> Self {
         Self {
             dir,
-            tab: if proposal {
-                ProfileTab::Profile
-            } else {
-                ProfileTab::Status
-            },
-            proposed: proposal,
             status: None,
             stored: Side::Loading,
             proposal: Side::Loading,
             selected: 0,
+            advanced: false,
             expanded: None,
-            store_on_pass: false,
             page: None,
             error: None,
             message: None,
@@ -167,6 +172,7 @@ impl ProfileScreen {
             status_failed: None,
             show_sent_at: [None; 2],
             show_id: [None; 2],
+            saving: None,
         }
     }
 
@@ -178,42 +184,142 @@ impl ProfileScreen {
         }
     }
 
-    /// The side the Profile tab shows.
-    pub fn viewed(&self) -> &Side {
-        if self.proposed {
-            &self.proposal
-        } else {
-            &self.stored
-        }
-    }
-
-    fn profile_of(side: &Side) -> Option<&RepoProfile> {
+    pub(super) fn profile_of(side: &Side) -> Option<&RepoProfile> {
         match side {
             Side::Ready(shown) => shown.profile.as_ref(),
             _ => None,
         }
     }
 
-    /// The Profile tab's rows; on the proposal view marked against the stored profile
-    /// (an absent stored profile marks every set key added).
-    pub fn rows(&self) -> Vec<Row> {
-        // A detection under way replaces the proposal: the old one is not shown.
-        if self.proposed && self.in_progress() {
-            return vec![];
+    /// The status's proposal when it is a review proposal (decision 3: its origin is
+    /// not `Edit`).
+    fn review(&self) -> Option<&ProposalRecord> {
+        let p = self.status.as_ref()?.proposal.as_ref()?;
+        (!matches!(p.origin, ProposalOrigin::Edit { .. })).then_some(p)
+    }
+
+    /// Decision 29: `x` is offered (a review proposal exists, in any state).
+    pub fn review_proposal(&self) -> bool {
+        self.review().is_some()
+    }
+
+    /// Decision 27: the card shows while the review proposal is `Ready`.
+    pub fn showing_card(&self) -> bool {
+        self.review()
+            .is_some_and(|p| p.state == ProposalState::Ready)
+    }
+
+    /// Decision 15: the row edit of the status's proposal (on the stored profile, or on
+    /// the review proposal).
+    pub fn row_edit(&self) -> Option<&RowEdit> {
+        self.status.as_ref()?.proposal.as_ref()?.edit.as_ref()
+    }
+
+    /// Decision 31: the state of `key`'s row edit, when it has one.
+    pub fn edit_of(&self, key: &str) -> Option<&RowEditState> {
+        self.row_edit().filter(|e| e.key == key).map(|e| &e.state)
+    }
+
+    /// A row edit's check is running (the screen polls meanwhile).
+    pub fn row_checking(&self) -> bool {
+        self.row_edit()
+            .is_some_and(|e| e.state == RowEditState::Verifying)
+    }
+
+    /// Whether the repository has a stored profile (assumed while nothing says).
+    pub fn has_stored(&self) -> bool {
+        match &self.status {
+            Some(status) => status.source == ProfileSource::Stored,
+            None => !matches!(self.stored, Side::Absent(_)),
         }
-        let Side::Ready(shown) = self.viewed() else {
+    }
+
+    /// Decision 30: the detect page's title.
+    pub fn detect_title(&self) -> &'static str {
+        if self.has_stored() {
+            "detect again"
+        } else {
+            "set up"
+        }
+    }
+
+    /// Decisions 8 and 30: what the discard page says.
+    pub fn discard_text(&self) -> String {
+        let mut text = format!(
+            "the proposal for {} is deleted; a running scout or verification stops",
+            self.dir.display()
+        );
+        match self.status.as_ref().map_or(0, |s| s.queued.len()) {
+            0 => {}
+            1 => text.push_str("; 1 queued goal is dropped"),
+            n => text.push_str(&format!("; {n} queued goals are dropped")),
+        }
+        text
+    }
+
+    /// What is listed now (decisions 27-29): the card's rows while it shows, else the
+    /// stored profile's; in section order, the main sections, then the `Advanced` line
+    /// and, open, what it holds. The changes card lists only changed rows, unfolded.
+    pub fn rows(&self) -> Vec<Row> {
+        let (side, against) = if self.showing_card() {
+            let against = match &self.stored {
+                Side::Ready(shown) => shown.profile.clone(),
+                _ if self.status.as_ref().is_some_and(|s| {
+                    s.source == ProfileSource::Stored && s.unparseable.is_none()
+                }) =>
+                {
+                    return vec![];
+                }
+                _ => None,
+            };
+            (&self.proposal, Some(against))
+        } else {
+            (&self.stored, None)
+        };
+        let Side::Ready(shown) = side else {
             return vec![];
         };
         let Some(profile) = &shown.profile else {
             return vec![];
         };
-        let none = RepoProfile::default();
-        let against = match (&self.proposed, &self.stored) {
-            (false, _) | (true, Side::Loading) => None,
-            (true, Side::Absent(_)) => Some(&none),
-            (true, side) => Self::profile_of(side),
+        let verification = shown.verification.as_ref();
+        let rows = match &against {
+            Some(Some(stored)) => {
+                let rows = profile_view::rows(profile, verification, Some(stored));
+                return in_section_order(profile_view::changed(rows));
+            }
+            Some(None) => profile_view::rows(profile, verification, None)
+                .into_iter()
+                .filter(|r| r.value.is_some() && r.key != ENV_ADD)
+                .collect(),
+            None => profile_view::rows(profile, verification, None),
         };
-        profile_view::rows(profile, shown.verification.as_ref(), against)
+        let rows = in_section_order(rows);
+        let (main, advanced): (Vec<Row>, Vec<Row>) = rows.into_iter().partition(|r| !r.advanced);
+        let mut out = main;
+        out.push(advanced_row());
+        if self.advanced {
+            out.extend(advanced);
+        }
+        out
+    }
+
+    /// `key`'s value as a row shows it, on the proposal or on the stored profile.
+    pub(super) fn value_on(&self, on_proposal: bool, key: &str) -> Option<String> {
+        let side = if on_proposal {
+            &self.proposal
+        } else {
+            &self.stored
+        };
+        profile_view::rows(Self::profile_of(side)?, None, None)
+            .into_iter()
+            .find(|r| r.key == key)
+            .and_then(|r| r.value)
+    }
+
+    /// The index of `key` among the rows, when listed.
+    pub(super) fn index_of(&self, key: &str) -> Option<usize> {
+        self.rows().iter().position(|r| r.key == key)
     }
 
     /// The proposal's state, when there is one.
@@ -228,6 +334,70 @@ impl ProfileScreen {
             Some(ProposalState::Preparing | ProposalState::Scouting | ProposalState::Verifying)
         )
     }
+
+    /// Decision 31: an edit sent from here passed: no row edit is left for it and its
+    /// side's value moved. Says `saved <label>` once.
+    fn note_saved(&mut self) {
+        let Some(saving) = &self.saving else {
+            return;
+        };
+        if self.status.is_none() || self.row_edit().is_some_and(|e| e.key == saving.key) {
+            return;
+        }
+        let side = if saving.on_proposal {
+            &self.proposal
+        } else {
+            &self.stored
+        };
+        if Self::profile_of(side).is_none() {
+            return;
+        }
+        if self.value_on(saving.on_proposal, &saving.key) != saving.before {
+            self.message = Some(format!(
+                "saved {}",
+                crate::profile_words::label(&saving.key)
+            ));
+            self.error = None;
+            self.saving = None;
+        }
+    }
+}
+
+/// The `Advanced ▸` line (decision 29), listed among the rows so it can be selected.
+fn advanced_row() -> Row {
+    Row {
+        group: "",
+        section: "",
+        label: "Advanced".into(),
+        advanced: false,
+        old: None,
+        key: ADVANCED_ROW.into(),
+        value: None,
+        mark: None,
+        check: None,
+    }
+}
+
+/// `rows` in decision 24's section order: by section, then by the key's place in it,
+/// each `env.<NAME>` at `env`'s place and the add row last in its section.
+fn in_section_order(mut rows: Vec<Row>) -> Vec<Row> {
+    let place = |row: &Row| {
+        let key = if row.key.starts_with("env.") {
+            ENV_ADD
+        } else {
+            row.key.as_str()
+        };
+        let sections = profile_view::sections();
+        let section = sections.iter().position(|(_, _, keys)| keys.contains(&key));
+        let at = section.and_then(|i| sections[i].2.iter().position(|k| *k == key));
+        (
+            section.unwrap_or(usize::MAX),
+            at.unwrap_or(0),
+            row.key == ENV_ADD,
+        )
+    };
+    rows.sort_by_key(place);
+    rows
 }
 
 impl App {
@@ -239,7 +409,7 @@ impl App {
             return vec![];
         }
         match self.goal_project() {
-            Some(dir) => self.open_profile_on(dir, false),
+            Some(dir) => self.open_profile_on(dir),
             None => {
                 self.toast(NO_PROJECT);
                 vec![]
@@ -247,10 +417,10 @@ impl App {
         }
     }
 
-    /// Opens the screen on `dir` (replacing any open screen), on the proposal when
-    /// `proposal` (the proposal alert, preflight F26), and asks the three things.
-    pub(crate) fn open_profile_on(&mut self, dir: PathBuf, proposal: bool) -> Vec<Effect> {
-        let screen = ProfileScreen::new(dir, proposal);
+    /// Opens the screen on `dir` (replacing any open screen) and asks the three things;
+    /// a ready review proposal shows as the card (decision 27).
+    pub(crate) fn open_profile_on(&mut self, dir: PathBuf) -> Vec<Effect> {
+        let screen = ProfileScreen::new(dir);
         self.set_screen(Some(Screen::Profile(Box::new(screen))));
         self.profile_fetch_all(Instant::now())
     }
@@ -318,129 +488,6 @@ impl App {
         effects.extend(self.profile_show(false, now));
         effects.extend(self.profile_show(true, now));
         effects
-    }
-
-    /// `route_reply`'s profile arm. A reply to a profile request of ours applies to the
-    /// screen still open on its project; one whose screen closed, or a late one, is
-    /// shown as a toast when it reports an outcome (decision 16), and dropped when it is
-    /// a view.
-    pub(super) fn route_profile_reply(&mut self, reply: &RunReply) -> Option<Vec<Effect>> {
-        let RunReply::Profile { reply, request_id } = reply else {
-            return None;
-        };
-        let pending = request_id.and_then(|id| self.replies.peek(id).cloned());
-        let (dir, ask) = match pending {
-            Some(PendingWhat::Profile { dir, ask }) => (dir, ask),
-            Some(_) => return None,
-            None => {
-                // A late view (its entry expired) fills the open screen still loading
-                // on it, else is dropped (decision 16, minor 2); a late outcome shown.
-                let late = request_id.and_then(|id| self.replies.expired_view(id).cloned());
-                match late.zip(*request_id) {
-                    Some((PendingWhat::Profile { dir, ask }, id))
-                        if self.profile_awaits(&dir, ask, id) =>
-                    {
-                        return Some(self.apply_profile_reply(ask, reply));
-                    }
-                    Some(_) => {}
-                    None if request_id.is_some() => self.toast_profile_outcome(reply),
-                    None => {}
-                }
-                return Some(vec![]);
-            }
-        };
-        self.replies.take(*request_id);
-        // Decision 37: a `Show` that is no longer its side's latest (a re-fetch went
-        // out after it) describes an older state; the re-fetch's reply fills the side.
-        if let ProfileAsk::Show { proposed } = ask
-            && !self.profile_latest_show(proposed, *request_id)
-        {
-            return Some(vec![]);
-        }
-        if self.profile_dir().as_ref() != Some(&dir) {
-            if !matches!(ask, ProfileAsk::Status | ProfileAsk::Show { .. }) {
-                self.toast_profile_outcome(reply);
-            }
-            return Some(vec![]);
-        }
-        Some(self.apply_profile_reply(ask, reply))
-    }
-
-    fn toast_profile_outcome(&mut self, reply: &ProfileReply) {
-        match reply {
-            ProfileReply::Done { message } => self.toast_at(ToastLevel::Info, capped(message)),
-            ProfileReply::Refused { message } => {
-                let text = first_line_and_more(message).unwrap_or_else(|| "profile refused".into());
-                self.toast_at(ToastLevel::Error, text);
-            }
-            _ => {}
-        }
-    }
-
-    fn apply_profile_reply(&mut self, ask: ProfileAsk, reply: &ProfileReply) -> Vec<Effect> {
-        let Some(s) = self.profile_screen_mut() else {
-            return vec![];
-        };
-        match (ask, reply) {
-            (ProfileAsk::Status, ProfileReply::Status(status)) => {
-                let was_running = s.in_progress();
-                s.status = Some(status.clone());
-                s.status_failed = None;
-                if status.proposal.is_none() {
-                    s.proposal = Side::Absent("no proposal".into());
-                }
-                // Decision 34: leaving the running states (for `Ready`, or `Failed`:
-                // minor 1) fetches the proposal once; the old one is not shown meanwhile.
-                if was_running && !s.in_progress() && status.proposal.is_some() {
-                    s.proposal = Side::Loading;
-                    return self.profile_show(true, Instant::now());
-                }
-                vec![]
-            }
-            (
-                ProfileAsk::Show { proposed },
-                ProfileReply::Shown {
-                    toml,
-                    verification,
-                    dropped,
-                    ..
-                },
-            ) => {
-                let shown = Shown {
-                    toml: toml.clone(),
-                    profile: toml::from_str(toml).ok(),
-                    verification: verification.clone(),
-                    dropped: dropped.clone(),
-                };
-                *s.side_mut(proposed) = Side::Ready(Box::new(shown));
-                vec![]
-            }
-            (ProfileAsk::Show { proposed }, ProfileReply::Refused { message }) => {
-                *s.side_mut(proposed) = Side::Absent(message.clone());
-                vec![]
-            }
-            (_, ProfileReply::Refused { message }) => {
-                // A refused `Status` is not asked again (minor 2's retry is for silence).
-                s.status_failed = None;
-                s.error = Some(message.clone());
-                s.message = None;
-                vec![]
-            }
-            (ProfileAsk::Detect, ProfileReply::Done { message }) => {
-                s.message = Some(message.clone());
-                s.error = None;
-                self.profile_status(Instant::now())
-            }
-            (_, ProfileReply::Done { message }) => {
-                s.message = Some(message.clone());
-                s.error = None;
-                if ask == ProfileAsk::Confirm {
-                    s.proposed = false;
-                }
-                self.profile_fetch_all(Instant::now())
-            }
-            _ => vec![],
-        }
     }
 }
 

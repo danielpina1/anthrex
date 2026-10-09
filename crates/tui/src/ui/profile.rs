@@ -1,11 +1,12 @@
 //! Milestone 9.0.6 decisions 33-35: the Profile screen, drawn over the body. A frame
-//! titled `profile · <project>`, the tab row, the tab's lines (scrolled to keep the
-//! selected row in view, cuts marked), then the daemon's last text: its refusal in
-//! `Failed` (decision 37's among them). A page draws as a kit dialog over it, and the
+//! titled `profile · <project>`, its one page's lines (the status, then the card's or
+//! the profile's rows; scrolled to keep the selected row in view, cuts marked), then the
+//! daemon's last text: its refusal in `Failed` (decision 37's among them). Milestone
+//! 9.10.9 redraws it in plain words. A page draws as a kit dialog over it, and the
 //! screen's border is then muted (decision 5). Every string a profile, a check, the
 //! scout or the daemon wrote passes `safe_text` here or in the kit. Pure: `&App` in.
 
-use crate::app::profile_screen::{ProfileScreen, ProfileTab, Shown, Side};
+use crate::app::profile_screen::{ADVANCED_ROW, ProfileScreen, Shown, Side};
 use crate::app::{App, region::KeyRegion};
 use crate::inspector::run_format::format_duration;
 use crate::profile_view::{ENV_ADD, Row, check_cell};
@@ -39,31 +40,41 @@ fn project_name(s: &ProfileScreen) -> String {
         .unwrap_or_else(|| s.dir.display().to_string())
 }
 
-/// The status bar's hints while the screen has the keys (decision 6).
+/// The status bar's hints while the screen has the keys (decision 6), in milestone
+/// 9.10 decision 29's order; the lowest priority drops first.
 pub(crate) fn hints(s: &ProfileScreen) -> Vec<Hint> {
     if s.page.is_some() {
         return vec![hint("esc", "back", 9)];
     }
-    let ready = matches!(s.proposal, Side::Ready(_));
-    let mut out = match s.tab {
-        ProfileTab::Status => vec![
-            hint("d", "detect", 7),
-            hint("x", "reject", 4),
-            hint("s", "store", 3),
-            hint("tab", "profile", 5),
-        ],
-        ProfileTab::Profile => vec![
-            hint("j/k", "move", 5),
-            hint("e", "edit", 7),
-            hint("u", "unset", 6),
-            hint("p", if s.proposed { "stored" } else { "proposal" }, 6),
-            hint("⏎", "output", 3),
-            hint("d", "detect", 2),
-            hint("tab", "status", 4),
-        ],
-    };
-    if ready {
-        out.insert(1, hint("c", "confirm", 6));
+    if s.showing_card() {
+        return vec![
+            hint("⏎", "use this", 8),
+            hint("e", "edit", 6),
+            hint("a", "advanced", 4),
+            hint("o", "output", 3),
+            hint("x", "discard", 5),
+            hint("esc", "later", 9),
+        ];
+    }
+    let mut out = vec![
+        hint("⏎", "open", 6),
+        hint("e", "edit", 7),
+        hint("u", "unset", 4),
+        hint("a", "advanced", 3),
+        hint("d", s.detect_title(), 7),
+        hint("o", "output", 2),
+    ];
+    if s.review_proposal() {
+        out.push(hint("x", "discard proposal", 5));
+    }
+    let failed = s
+        .rows()
+        .get(s.selected)
+        .and_then(|r| s.edit_of(&r.key))
+        .is_some_and(|e| matches!(e, proto::RowEditState::Failed { .. }));
+    if failed {
+        out.push(hint("s", "save anyway", 8));
+        out.push(hint("r", "revert", 8));
     }
     out.push(hint("esc", "back", 9));
     out
@@ -98,10 +109,7 @@ fn status_rows(app: &App, s: &ProfileScreen, width: u16, p: Palette) -> Vec<Line
         rows.push(("unparseable".to_string(), text.clone()));
     }
     rows.push(("proposal".to_string(), proposal_text(app, status)));
-    let mut out = kit::labelled_rows(&rows, width, p);
-    out.push(Line::default());
-    out.push(store_line(s, p));
-    out
+    kit::labelled_rows(&rows, width, p)
 }
 
 /// Interfaces "Profile status rows": the proposal's state.
@@ -115,16 +123,6 @@ fn proposal_text(app: &App, status: &proto::ProfileStatus) -> String {
         Some((ProposalState::Ready, _)) => "ready".to_string(),
         Some((ProposalState::Failed { reason }, _)) => format!("failed: {reason}"),
     }
-}
-
-/// `s  store once verification passes  ‹ off ›`.
-fn store_line(s: &ProfileScreen, p: Palette) -> Line<'static> {
-    let value = if s.store_on_pass { "on" } else { "off" };
-    Line::from(vec![
-        Span::styled("s ", role(Role::Accent, p)),
-        Span::styled("store once verification passes  ", role(Role::Muted, p)),
-        Span::raw(kit::choice_in(value, p)),
-    ])
 }
 
 /// `text` padded with spaces to `width` columns.
@@ -192,7 +190,7 @@ fn tail_lines(text: &str, indent: usize, width: usize, p: Palette) -> Vec<Line<'
         .collect()
 }
 
-/// The Profile tab's lines, and the index of the selected row's line.
+/// The card's or the profile's lines, and the index of the selected row's line.
 fn profile_rows(
     app: &App,
     s: &ProfileScreen,
@@ -201,32 +199,15 @@ fn profile_rows(
 ) -> (Vec<Line<'static>>, usize) {
     let w = usize::from(width);
     let bold = ratatui::style::Style::default().add_modifier(Modifier::BOLD);
-    let mut out = vec![if s.proposed {
-        Line::from(vec![
-            Span::styled("proposal  ", bold),
-            Span::styled(
-                format!(
-                    "+ added  {} removed  ~ changed",
-                    crate::profile_view::Mark::Removed.glyph(p.ascii)
-                ),
-                role(Role::Muted, p),
-            ),
-        ])
-    } else {
-        Line::styled("stored profile", bold)
-    }];
-    // A detection under way: its state, not the proposal it replaces.
-    if s.proposed
-        && s.in_progress()
-        && let Some(status) = &s.status
-    {
-        out.push(Line::styled(
-            one_line(&proposal_text(app, status)),
-            role(Role::Working, p),
-        ));
-        return (out, 0);
-    }
-    let shown: &Shown = match s.viewed() {
+    let card = s.showing_card();
+    let head = match (card, s.has_stored()) {
+        (true, true) => "anthrex found changes in how to work in this repo",
+        (true, false) => "anthrex learned how to work in this repo",
+        (false, _) => "stored profile",
+    };
+    let mut out = vec![Line::styled(head, bold)];
+    let side = if card { &s.proposal } else { &s.stored };
+    let shown: &Shown = match side {
         Side::Loading => {
             out.push(Line::styled(
                 format!("loading{}", ellipsis(p)),
@@ -240,34 +221,37 @@ fn profile_rows(
             return (out, 0);
         }
         Side::Absent(_) => {
-            let text = if s.proposed {
-                "no proposal"
-            } else {
-                "no stored profile"
-            };
-            out.push(Line::styled(text, role(Role::Muted, p)));
+            out.push(Line::styled("no stored profile", role(Role::Muted, p)));
             return (out, 0);
         }
         Side::Ready(shown) => shown,
     };
     if shown.profile.is_none() {
         out.push(Line::styled(
-            "this profile does not read back; c shows its text",
+            "this profile does not read back",
             role(Role::Failed, p),
         ));
     }
     let mut at = 0;
-    let mut group = "";
+    let mut section = "";
     let rows = s.rows();
+    let keys = app.key_region() == KeyRegion::Screen;
     for (i, row) in rows.iter().enumerate() {
-        if row.group != group {
-            group = row.group;
-            out.push(Line::styled(group.to_string(), bold));
-        }
         if i == s.selected {
             at = out.len();
         }
-        let keys = app.key_region() == KeyRegion::Screen;
+        if row.key == ADVANCED_ROW {
+            out.push(advanced_line(s, i == s.selected, keys, p));
+            section = "";
+            continue;
+        }
+        if row.section != section {
+            section = row.section;
+            out.push(Line::styled(section.to_string(), bold));
+            if i == s.selected {
+                at = out.len();
+            }
+        }
         out.push(key_row(row, i == s.selected, keys, w, p));
         if s.expanded.as_deref() == Some(row.key.as_str())
             && let Some(check) = &row.check
@@ -299,19 +283,23 @@ fn profile_rows(
     (out, at)
 }
 
-/// The tab row: the current tab in bold, the other muted.
-fn tab_row(s: &ProfileScreen, p: Palette) -> Line<'static> {
-    let style = |on: bool| {
-        if on {
-            ratatui::style::Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
-        } else {
-            role(Role::Muted, p)
-        }
+/// `Advanced ▸     <summary>` folded, `Advanced ▾` open (decision 29).
+fn advanced_line(s: &ProfileScreen, selected: bool, keys: bool, p: Palette) -> Line<'static> {
+    let sel = if selected {
+        glyph(Glyph::Selection, p.ascii)
+    } else {
+        " "
+    };
+    let (mark, summary) = match (s.advanced, p.ascii) {
+        (true, false) => ("▾", ""),
+        (true, true) => ("v", ""),
+        (false, false) => ("▸", crate::profile_words::ADVANCED_SUMMARY),
+        (false, true) => (">", crate::profile_words::ADVANCED_SUMMARY),
     };
     Line::from(vec![
-        Span::styled("status", style(s.tab == ProfileTab::Status)),
-        Span::raw("  "),
-        Span::styled("profile", style(s.tab == ProfileTab::Profile)),
+        Span::styled(sel.to_string(), role(kit::bar_role(keys), p)),
+        Span::raw(format!("  Advanced {mark}     ")),
+        Span::styled(summary, role(Role::Muted, p)),
     ])
 }
 
@@ -336,30 +324,28 @@ fn footer(s: &ProfileScreen, width: u16, p: Palette) -> Vec<Line<'static>> {
         .collect()
 }
 
-/// The tab's fixed head (the Profile tab's view line), its lines, and the selected
-/// line's index (0 on the Status tab).
-fn tab_lines(
+/// The page's fixed head (the card's title, or `stored profile`), its lines (the status
+/// rows, then the rows), and the selected line's index.
+fn page_body(
     app: &App,
     s: &ProfileScreen,
     width: u16,
 ) -> (Vec<Line<'static>>, Vec<Line<'static>>, usize) {
     let p = app.palette();
-    match s.tab {
-        ProfileTab::Status => (vec![], status_rows(app, s, width, p), 0),
-        ProfileTab::Profile => {
-            let (mut lines, at) = profile_rows(app, s, width, p);
-            let head = lines.remove(0);
-            (vec![head], lines, at.saturating_sub(1))
-        }
-    }
+    let mut lines = status_rows(app, s, width, p);
+    lines.push(Line::default());
+    let offset = lines.len();
+    let (mut rows, at) = profile_rows(app, s, width, p);
+    let head = rows.remove(0);
+    lines.extend(rows);
+    (vec![head], lines, (offset + at).saturating_sub(1))
 }
 
-/// Everything the screen shows, unscrolled: the tab row, the tab's lines, the footer.
+/// Everything the screen shows, unscrolled: the head, the lines, the footer.
 #[cfg(test)]
 pub(crate) fn body_lines(app: &App, s: &ProfileScreen, width: u16) -> Vec<Line<'static>> {
-    let (head, lines, _) = tab_lines(app, s, width);
-    let mut out = vec![tab_row(s, app.palette())];
-    out.extend(head);
+    let (head, lines, _) = page_body(app, s, width);
+    let mut out = head;
     out.extend(lines);
     out.extend(footer(s, width, app.palette()));
     out
@@ -379,12 +365,11 @@ pub fn render(frame: &mut Frame, app: &App, s: &ProfileScreen, area: Rect) {
         return;
     }
     let foot = footer(s, inner.width, p);
-    let (head, lines, at) = tab_lines(app, s, inner.width);
+    let (head, lines, at) = page_body(app, s, inner.width);
     let rows = usize::from(inner.height)
-        .saturating_sub(1 + head.len())
+        .saturating_sub(head.len())
         .saturating_sub(foot.len());
-    let mut all = vec![tab_row(s, p)];
-    all.extend(head);
+    let mut all = head;
     all.extend(kit::window(lines, at, rows, p));
     all.extend(foot);
     frame.render_widget(Paragraph::new(all), inner);

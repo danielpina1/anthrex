@@ -5,7 +5,7 @@
 
 use super::profile_screen::{
     dir, open, open_app, profile_requests, ready_app, reply, screen, select, shown, status,
-    stored_profile, tagged, tap, typed,
+    stored_app, stored_profile, tagged, tap, typed,
 };
 use super::*;
 use crate::app::profile_screen::{EditorField, ProfilePage, Side};
@@ -35,7 +35,7 @@ fn expire(app: &mut App, id: u64) {
 /// proposal again, and the old proposal's rows are not shown meanwhile.
 #[test]
 fn a_failed_detection_fetches_the_proposal_again() {
-    let (mut app, _) = ready_app();
+    let (mut app, _) = stored_app();
     tap(&mut app, KeyCode::Char('d'));
     let id = tagged(&tap(&mut app, KeyCode::Char('y')))[0].0;
     let done = ProfileReply::Done {
@@ -51,9 +51,7 @@ fn a_failed_detection_fetches_the_proposal_again() {
     let effects = reply(&mut app, poll_id, status(Some(failed)));
     assert_eq!(shows(&effects, true), 1, "{effects:?}");
     assert_eq!(screen(&app).proposal, Side::Loading);
-    tap(&mut app, KeyCode::Tab);
-    tap(&mut app, KeyCode::Char('p'));
-    assert!(screen(&app).rows().is_empty(), "not the old proposal");
+    assert!(!screen(&app).showing_card(), "not the old proposal");
 }
 
 /// Minor 2: an expired `Show` is the screen's: no toast, its side says so, and the
@@ -99,7 +97,6 @@ fn an_unsent_show_fails_its_side_and_is_asked_again() {
         screen(&app).stored,
         Side::Failed("not sent: daemon is not responding".into())
     );
-    tap(&mut app, KeyCode::Tab);
     let text = render(&app);
     assert!(
         text.contains("not sent: daemon is not responding"),
@@ -174,16 +171,17 @@ fn a_disconnected_page_keeps_its_edit() {
     assert_eq!(app.toast_level(), Some(ToastLevel::Warn));
     match &screen(&app).page {
         Some(ProfilePage::Edit(e)) => match &e.field {
-            EditorField::Line(area) => assert_eq!(area.text(), "cargo test --all"),
+            // The card edits the proposal, from its value.
+            EditorField::Line(area) => assert_eq!(area.text(), "cargo test --workspace --all"),
             other => panic!("{other:?}"),
         },
         other => panic!("the page closed: {other:?}"),
     }
-    // A confirm page, too.
+    // A discard page, too.
     tap(&mut app, KeyCode::Esc);
     tap(&mut app, KeyCode::Char('x'));
     assert!(tap(&mut app, KeyCode::Char('y')).is_empty());
-    assert_eq!(screen(&app).page, Some(ProfilePage::Reject));
+    assert_eq!(screen(&app).page, Some(ProfilePage::Discard));
 }
 
 /// Decision 37: a proposal `Show` sent before a detection and answered after the
@@ -234,6 +232,80 @@ fn a_late_pre_detection_show_is_dropped() {
             other => panic!("expired {expired}: {other:?}"),
         }
     }
+}
+
+/// Decision 34: one `Status` a second while the detection runs, never two in flight;
+/// none after `Esc`; none once `Ready`, which fetches the proposal once.
+#[test]
+fn a_running_detection_polls_once_a_second() {
+    let mut app = open_app();
+    let ids = open(&mut app);
+    let t0 = Instant::now();
+    let at = |tenths: u64| t0 + Duration::from_millis(100 * tenths);
+    // Nothing runs yet: no poll.
+    assert_eq!(
+        super::profile_screen::statuses(&app.screens_tick(at(30))),
+        0
+    );
+    reply(&mut app, ids[0], status(Some(ProposalState::Scouting)));
+    let mut sent = Vec::new();
+    for tick in 1..=10 {
+        let effects = app.screens_tick(at(tick));
+        if super::profile_screen::statuses(&effects) > 0 {
+            sent.push((tick, tagged(&effects)[0].0));
+        }
+    }
+    assert_eq!(sent.len(), 1, "one per second: {sent:?}");
+    assert_eq!(sent[0].0, 10);
+    // Unanswered: three more seconds send nothing.
+    for tick in 11..=40 {
+        assert_eq!(
+            super::profile_screen::statuses(&app.screens_tick(at(tick))),
+            0,
+            "in flight at {tick}"
+        );
+    }
+    // Answered, still running: the next one goes.
+    reply(&mut app, sent[0].1, status(Some(ProposalState::Verifying)));
+    let effects = app.screens_tick(at(41));
+    assert_eq!(super::profile_screen::statuses(&effects), 1);
+    let id = tagged(&effects)[0].0;
+    // Ready: the proposal is fetched once, and the polling stops.
+    let effects = reply(&mut app, id, status(Some(ProposalState::Ready)));
+    assert_eq!(
+        profile_requests(&effects),
+        vec![ProfileRequest::Show {
+            dir: dir(),
+            proposed: true
+        }]
+    );
+    for tick in 42..=80 {
+        assert_eq!(
+            super::profile_screen::statuses(&app.screens_tick(at(tick))),
+            0,
+            "ready at {tick}"
+        );
+    }
+    // A proposal already ready at open was asked for by the open: nothing more.
+    let mut app = open_app();
+    let ids = open(&mut app);
+    assert!(reply(&mut app, ids[0], status(Some(ProposalState::Ready))).is_empty());
+    // Esc stops it too.
+    let mut app = open_app();
+    let ids = open(&mut app);
+    reply(&mut app, ids[0], status(Some(ProposalState::Preparing)));
+    tap(&mut app, KeyCode::Esc);
+    for tick in 1..=30 {
+        assert!(app.screens_tick(at(tick)).is_empty());
+    }
+    // `on_tick` drives it: a Status once a second has passed since the last.
+    let mut app = open_app();
+    let ids = open(&mut app);
+    reply(&mut app, ids[0], status(Some(ProposalState::Scouting)));
+    assert_eq!(super::profile_screen::statuses(&app.on_tick()), 0);
+    super::profile_screen::screen_mut(&mut app).status_sent_at =
+        Some(Instant::now() - Duration::from_secs(2));
+    assert_eq!(super::profile_screen::statuses(&app.on_tick()), 1);
 }
 
 fn render(app: &App) -> String {

@@ -1,7 +1,8 @@
-//! Milestone 9.0.6 task 13: the Profile screen, drawn.
+//! Milestone 9.0.6 task 13: the Profile screen, drawn (one page since milestone 9.10.8;
+//! milestone 9.10.9 rewrites these for the plain screen).
 
 use crate::app::App;
-use crate::app::profile_screen::{ProfilePage, ProfileScreen, ProfileTab, Shown, Side};
+use crate::app::profile_screen::{ProfilePage, ProfileScreen, Shown, Side};
 use crate::app::screens::Screen;
 use crate::settings::UiSettings;
 use proto::{
@@ -109,7 +110,7 @@ fn base_app(ascii: bool) -> App {
     app.set_terminal_size(80, 24);
     let snap = crate::tree::run_fixtures::snapshot(3_460, vec![]);
     app.on_daemon(proto::DaemonMsg::Run(proto::RunReply::Snapshot(snap)));
-    let _ = app.open_profile_on("/p/shop".into(), false);
+    let _ = app.open_profile_on("/p/shop".into());
     app
 }
 
@@ -128,7 +129,7 @@ pub(crate) fn app_with_profile(
     let s = screen_mut(&mut app);
     s.status = Some(status(Some(ProposalState::Scouting)));
     s.stored = shown(p, v, vec![]);
-    s.tab = ProfileTab::Profile;
+    s.advanced = true;
     s.expanded = Some("check".into());
     app
 }
@@ -168,7 +169,7 @@ fn screen_text(app: &App, w: u16, h: u16) -> String {
 }
 
 #[test]
-fn status_tab_renders_at_80x24_and_120x40() {
+fn status_rows_render_at_80x24_and_120x40() {
     for ascii in [false, true] {
         let mut app = base_app(ascii);
         let s = screen_mut(&mut app);
@@ -178,7 +179,6 @@ fn status_tab_renders_at_80x24_and_120x40() {
             let dot = if ascii { "-" } else { "·" };
             for want in [
                 format!("profile {dot} shop"),
-                "status".into(),
                 "stored    confirmed 40m ago".into(),
                 "stale     check".into(),
                 "proposal  scout running 1m".into(),
@@ -195,10 +195,8 @@ fn status_tab_renders_at_80x24_and_120x40() {
         s.status = Some(status(Some(ProposalState::Failed {
             reason: "scout timed out".into(),
         })));
-        s.store_on_pass = true;
         let text = screen_text(&app, 120, 40);
         assert!(text.contains("proposal  failed: scout timed out"), "{text}");
-        assert!(text.contains("store once verification passes"), "{text}");
         let s = screen_mut(&mut app);
         s.status = None;
         assert!(screen_text(&app, 80, 24).contains("loading"));
@@ -206,10 +204,17 @@ fn status_tab_renders_at_80x24_and_120x40() {
 }
 
 #[test]
-fn profile_tab_renders_groups_checks_and_dropped() {
+fn the_page_renders_sections_checks_and_dropped() {
     for ascii in [false, true] {
         let mut app = app_with_profile(|_, _| {});
         app.settings.badges.ascii = ascii;
+        // The failed `build_check` row selected, so it is in view at 80x24.
+        let s = screen_mut(&mut app);
+        s.selected = s
+            .rows()
+            .iter()
+            .position(|r| r.key == "build_check")
+            .unwrap();
         for (w, h) in SIZES {
             let text = screen_text(&app, w, h);
             let (pass, fail) = if ascii {
@@ -218,8 +223,8 @@ fn profile_tab_renders_groups_checks_and_dropped() {
                 ("✓ 0 · 4s", "✗ 101 · 12s")
             };
             for want in [
-                "commands",
-                "tiers",
+                "How anthrex checks your work",
+                "testing tiers",
                 "cargo test --workspace",
                 pass,
                 fail,
@@ -231,14 +236,19 @@ fn profile_tab_renders_groups_checks_and_dropped() {
                 assert!(text.is_ascii(), "{w}x{h}\n{text}");
             }
         }
-        // The full height shows every group and the environment's rows (44 rows since
-        // milestone 9.2's delivery group took three more).
+        // The full height shows every section and the environment's rows.
         screen_mut(&mut app).expanded = None;
-        let text = screen_text(&app, 120, 44);
-        for want in ["paths", "delivery", "environment", "env.RUST_LOG", "debug"] {
+        let text = screen_text(&app, 120, 60);
+        for want in [
+            "Your repo",
+            "Delivery",
+            "environment",
+            "env.RUST_LOG",
+            "debug",
+        ] {
             assert!(text.contains(want), "{want}\n{text}");
         }
-        // The proposal view: its marks and its dropped commands with their reasons.
+        // The changes card: its marks and its dropped commands with their reasons.
         let mut proposal = profile();
         proposal.check = Some("cargo test".into());
         proposal.setup = None;
@@ -251,13 +261,12 @@ fn profile_tab_renders_groups_checks_and_dropped() {
         let s = screen_mut(&mut app);
         s.proposal = shown(proposal, verification(), dropped);
         s.status = Some(status(Some(ProposalState::Ready)));
-        s.proposed = true;
         s.expanded = None;
         s.selected = s.rows().len() - 1;
         let text = screen_text(&app, 120, 60);
         let (removed, changed) = if ascii { ("-", "~") } else { ("−", "~") };
         for want in [
-            "proposal".to_string(),
+            "anthrex found changes in how to work in this repo".to_string(),
             format!("{changed} check"),
             format!("{removed} setup"),
             "dropped".into(),
@@ -270,21 +279,21 @@ fn profile_tab_renders_groups_checks_and_dropped() {
 }
 
 #[test]
-fn the_confirm_page_shows_the_toml() {
+fn the_raw_text_page_shows_the_file() {
     let mut app = app_with_profile(|_, _| {});
     let toml = "check = \"cargo test\"\nsource = [\"src/**\"]\n\n# protected: built-in";
-    screen_mut(&mut app).page = Some(ProfilePage::Confirm {
-        toml: toml.into(),
+    screen_mut(&mut app).page = Some(ProfilePage::RawText {
+        text: toml.into(),
         scroll: 0,
     });
     for (w, h) in SIZES {
         let text = screen_text(&app, w, h);
         for want in [
-            "confirm profile",
+            "profile file",
             "check = \"cargo test\"",
             "source = [\"src/**\"]",
             "# protected: built-in",
-            "y store",
+            "j/k scroll",
         ] {
             assert!(text.contains(want), "{w}x{h}: {want}\n{text}");
         }
@@ -336,7 +345,6 @@ fn profile_screen_pages_are_sanitised() {
     }];
     let s = screen_mut(&mut app);
     s.proposal = shown(p, verification(), dropped);
-    s.proposed = true;
     s.error = Some(hostile.clone());
     s.message = Some(hostile.clone());
     let mut st = status(Some(ProposalState::Failed {
@@ -347,30 +355,39 @@ fn profile_screen_pages_are_sanitised() {
     s.status = Some(st);
     let pages = [
         None,
-        Some(ProfilePage::Confirm {
-            toml: hostile.clone(),
+        Some(ProfilePage::RawText {
+            text: hostile.clone(),
             scroll: 0,
         }),
         Some(ProfilePage::Unset {
             key: hostile.clone(),
         }),
-        Some(ProfilePage::Reject),
+        Some(ProfilePage::Discard),
         Some(ProfilePage::Detect {
             trust_project: true,
             unconfined_checks: false,
             focus: 1,
         }),
+        Some(ProfilePage::Row {
+            key: format!("env.{hostile}"),
+            scroll: 0,
+        }),
     ];
-    for tab in [ProfileTab::Status, ProfileTab::Profile] {
+    // The profile, then the card.
+    for card in [false, true] {
+        if card {
+            let mut st = status(Some(ProposalState::Ready));
+            st.queued = vec![];
+            screen_mut(&mut app).status = Some(st);
+        }
         for page in &pages {
             let s = screen_mut(&mut app);
-            s.tab = tab;
             s.page = page.clone();
             for (w, h) in SIZES {
                 assert_eq!(
                     crate::safe_text::tests::first_hostile(&render_text(&app, w, h)),
                     None,
-                    "{tab:?} {page:?} {w}x{h}"
+                    "{card} {page:?} {w}x{h}"
                 );
             }
         }
@@ -378,8 +395,7 @@ fn profile_screen_pages_are_sanitised() {
     // An editor over a hostile value.
     let s = screen_mut(&mut app);
     s.page = None;
-    s.tab = ProfileTab::Profile;
-    s.proposed = false;
+    s.status = Some(status(None));
     let rows = s.rows();
     for (i, row) in rows.iter().enumerate() {
         let s = screen_mut(&mut app);
@@ -405,22 +421,26 @@ fn no_panic_at_tiny_sizes() {
     let mut app = app_with_profile(|_, _| {});
     let pages = [
         None,
-        Some(ProfilePage::Confirm {
-            toml: "a = 1\n".repeat(50),
+        Some(ProfilePage::RawText {
+            text: "a = 1\n".repeat(50),
             scroll: 3,
         }),
-        Some(ProfilePage::Reject),
+        Some(ProfilePage::Discard),
         Some(ProfilePage::Detect {
             trust_project: false,
             unconfined_checks: false,
             focus: 0,
         }),
+        Some(ProfilePage::Row {
+            key: "check".into(),
+            scroll: 1,
+        }),
     ];
     for page in pages {
-        for tab in [ProfileTab::Status, ProfileTab::Profile] {
+        for ready in [false, true] {
             let s = screen_mut(&mut app);
             s.page = page.clone();
-            s.tab = tab;
+            s.status = Some(status(ready.then_some(ProposalState::Ready)));
             for (w, h) in [(1, 1), (2, 2), (10, 3), (20, 5), (30, 8), (79, 23)] {
                 screen_text(&app, w, h);
             }
@@ -445,7 +465,7 @@ fn a_page_mutes_the_screens_border() {
         terminal.backend().buffer()[(0, 0)].fg
     };
     assert_eq!(Some(corner(&app)), accent);
-    screen_mut(&mut app).page = Some(ProfilePage::Reject);
+    screen_mut(&mut app).page = Some(ProfilePage::Discard);
     assert_ne!(Some(corner(&app)), accent);
     // Final review minor 3: a modal over the screen (a late `ConfirmNeeded`'s menu can
     // open over any screen) mutes it too.
@@ -468,11 +488,11 @@ fn a_cut_refusal_is_marked() {
     assert!(!screen_text(&app, 80, 24).contains('…'));
 }
 
-/// Decision 37 (principle 9): the Reject page is destructive, so its `y reject` is drawn
-/// key and word in `Failed`, as the action menu's and the Settings discard page's are;
-/// the Confirm page's `y store` keeps the plain grammar (key in the accent).
+/// Decision 37 (principle 9): the Discard page is destructive, so its `y discard` is
+/// drawn key and word in `Failed`, as the action menu's and the Settings discard page's
+/// are; the raw-text page's `j/k scroll` keeps the plain grammar (key in the accent).
 #[test]
-fn the_reject_page_is_destructive() {
+fn the_discard_page_is_destructive() {
     use crate::theme::{Role, role};
     use crate::ui::audit;
     let mut app = app_with_profile(|_, _| {});
@@ -481,31 +501,31 @@ fn the_reject_page_is_destructive() {
         role(Role::Accent, app.palette()).fg.expect("a colour"),
     );
     for (w, h) in SIZES {
-        screen_mut(&mut app).page = Some(ProfilePage::Reject);
+        screen_mut(&mut app).page = Some(ProfilePage::Discard);
         let buffer = audit::draw(&app, w, h);
-        let &(x, y) = audit::find(&buffer, "y reject · esc back")
+        let &(x, y) = audit::find(&buffer, "y discard · esc back")
             .first()
             .unwrap_or_else(|| panic!("{w}x{h}:\n{}", audit::rows(&buffer).join("\n")));
-        for dx in 0..8 {
+        for dx in 0..9 {
             if dx != 1 {
-                assert_eq!(buffer[(x + dx, y)].fg, failed, "{w}x{h} y reject +{dx}");
+                assert_eq!(buffer[(x + dx, y)].fg, failed, "{w}x{h} y discard +{dx}");
             }
         }
         assert_ne!(
-            buffer[(x + 11, y)].fg,
+            buffer[(x + 12, y)].fg,
             failed,
             "{w}x{h}: esc is not destructive"
         );
-        let &(tx, ty) = audit::find(&buffer, "reject proposal").first().unwrap();
+        let &(tx, ty) = audit::find(&buffer, "discard proposal").first().unwrap();
         assert_eq!(buffer[(tx, ty)].fg, failed, "{w}x{h}: the title");
 
-        screen_mut(&mut app).page = Some(ProfilePage::Confirm {
-            toml: "check = \"cargo test\"".into(),
+        screen_mut(&mut app).page = Some(ProfilePage::RawText {
+            text: "check = \"cargo test\"".into(),
             scroll: 0,
         });
         let buffer = audit::draw(&app, w, h);
-        let &(x, y) = audit::find(&buffer, "y store").first().unwrap();
-        assert_eq!(buffer[(x, y)].fg, accent, "{w}x{h}: confirm's key");
-        assert_ne!(buffer[(x + 2, y)].fg, failed, "{w}x{h}: confirm's word");
+        let &(x, y) = audit::find(&buffer, "j/k scroll").first().unwrap();
+        assert_eq!(buffer[(x, y)].fg, accent, "{w}x{h}: the page's key");
+        assert_ne!(buffer[(x + 4, y)].fg, failed, "{w}x{h}: its word");
     }
 }

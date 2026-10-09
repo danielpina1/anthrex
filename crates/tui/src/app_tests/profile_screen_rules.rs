@@ -2,7 +2,8 @@
 //! keys it refuses, and the rules of its proposal view.
 
 use super::profile_screen::{
-    dir, open, open_app, profile_requests, ready_app, reply, screen, status, tagged, tap,
+    dir, open, open_app, profile_requests, ready_app, reply, screen, screen_mut, set_status,
+    status, stored_app, tagged, tap,
 };
 use super::*;
 use crate::app::profile_screen::{ProfilePage, Side};
@@ -117,43 +118,34 @@ fn prefix_keys_that_act_under_the_screen_are_refused() {
 /// Progress ruling: the Detect page starts a real agent, so only `y` sends it.
 #[test]
 fn the_detect_page_takes_only_y() {
-    let (mut app, _) = ready_app();
+    let (mut app, _) = stored_app();
     tap(&mut app, KeyCode::Char('d'));
     assert!(tap(&mut app, KeyCode::Enter).is_empty());
-    assert_eq!(app.toast_text(), Some("press y to detect"));
+    assert_eq!(app.toast_text(), Some("press y to start"));
     assert!(matches!(
         screen(&app).page,
         Some(ProfilePage::Detect { .. })
     ));
 }
 
-/// `c` needs the proposal's state to be `Ready`; while a new detection runs, the
-/// proposal view shows that detection, not the proposal it replaces.
+/// Decision 27: while a new detection runs there is no card: the screen shows the
+/// stored profile, never the proposal the detection replaces, and `c` is gone.
 #[test]
 fn a_running_detection_hides_the_old_proposal() {
+    // A ready proposal on the card, then a detection started elsewhere (the CLI's
+    // `profile detect`), as the next poll brings it.
     let (mut app, _) = ready_app();
-    tap(&mut app, KeyCode::Char('d'));
-    let effects = tap(&mut app, KeyCode::Char('y'));
-    let id = tagged(&effects)[0].0;
-    let effects = reply(
-        &mut app,
-        id,
-        ProfileReply::Done {
-            message: "detection started".into(),
-        },
-    );
-    let status_id = tagged(&effects)[0].0;
-    reply(&mut app, status_id, status(Some(ProposalState::Scouting)));
+    assert!(screen(&app).showing_card());
+    set_status(&mut app, status(Some(ProposalState::Scouting)));
     assert!(
         matches!(screen(&app).proposal, Side::Ready(_)),
         "the old one"
     );
-    tap(&mut app, KeyCode::Char('c'));
+    assert!(!screen(&app).showing_card());
+    assert!(tap(&mut app, KeyCode::Char('c')).is_empty());
     assert_eq!(screen(&app).page, None);
-    assert_eq!(app.toast_text(), Some("no proposal is ready to confirm"));
-    tap(&mut app, KeyCode::Tab);
-    tap(&mut app, KeyCode::Char('p'));
-    assert!(screen(&app).rows().is_empty());
+    let check = screen(&app).rows().into_iter().find(|r| r.key == "check");
+    assert_eq!(check.and_then(|r| r.value).as_deref(), Some("cargo test"));
     let text = render(&app);
     assert!(text.contains("scout running"), "{text}");
     assert!(!text.contains("cargo test --workspace"), "{text}");
@@ -177,24 +169,31 @@ fn render(app: &App) -> String {
         .collect()
 }
 
-/// The Confirm page's scroll stops at the TOML's last line.
+/// Decision 30: the raw-text page's scroll stops at the text's last line.
 #[test]
-fn the_confirm_scroll_is_bounded() {
+fn the_raw_text_scroll_is_bounded() {
     let (mut app, _) = ready_app();
-    tap(&mut app, KeyCode::Char('c'));
+    let text = "a = 1\n".repeat(30);
+    screen_mut(&mut app).page = Some(ProfilePage::RawText {
+        text: text.clone(),
+        scroll: 0,
+    });
     for _ in 0..50 {
         tap(&mut app, KeyCode::PageDown);
     }
-    let Some(ProfilePage::Confirm { toml, scroll }) = &screen(&app).page else {
-        panic!("no confirm page");
+    let Some(ProfilePage::RawText { scroll, .. }) = &screen(&app).page else {
+        panic!("no raw-text page");
     };
-    let last = toml.lines().count() - 1;
+    let last = text.lines().count() - 1;
     assert_eq!(*scroll, last);
     tap(&mut app, KeyCode::Char('k'));
-    let Some(ProfilePage::Confirm { scroll: after, .. }) = &screen(&app).page else {
-        panic!("no confirm page");
+    let Some(ProfilePage::RawText { scroll: after, .. }) = &screen(&app).page else {
+        panic!("no raw-text page");
     };
     assert_eq!(*after, last - 1);
+    // Nothing on it sends.
+    assert!(tap(&mut app, KeyCode::Char('y')).is_empty());
+    assert!(tap(&mut app, KeyCode::Enter).is_empty());
 }
 
 /// Decision 34: a selected stage's run gives the project.

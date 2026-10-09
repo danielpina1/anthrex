@@ -243,7 +243,7 @@ pub(crate) fn shows(name: &str) -> Shows {
         | "help over the alerts view" => row("keys", Some("esc close"), &["j/k scroll"]),
         "confirm over the overview" => row("Kill 'shell'?", Some("esc back"), &["y kill"]),
         "action menu over the run view" => row("review plan", Some("esc close"), &["j/k move"]),
-        "profile with a page" => row("reject proposal", Some("esc back"), &["y reject"]),
+        "profile with a page" => row("discard proposal", Some("esc back"), &["y discard"]),
         "settings" | "settings limits with a refit" => {
             row("SETTINGS", Some("esc back"), &["w save"])
         }
@@ -290,7 +290,7 @@ pub(crate) fn shows(name: &str) -> Shows {
         ),
         "action menu on its message form" => row("message", Some("esc back"), &["⏎ continue"]),
         "settings discard page" => row("discard changes", Some("esc back"), &["y discard"]),
-        "profile confirm page" => row("confirm profile", Some("esc back"), &["y store"]),
+        "profile raw-text page" => row("profile file", Some("esc back"), &["j/k scroll"]),
         "alerts view, empty" => row("no alerts", Some("esc back"), &[]),
         other => panic!("the audit fixture {other:?} names nothing it shows"),
     }

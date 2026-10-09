@@ -254,7 +254,7 @@ impl App {
             | AlertKey::OrchestratorAsks(run_id)
             | AlertKey::OrchestratorStuck(run_id) => self.enter_orchestrator(run_id),
             // Preflight F26: the Profile screen on that project's proposal.
-            AlertKey::Proposal(project) => self.open_profile_on(project.clone(), true),
+            AlertKey::Proposal(project) => self.open_profile_on(project.clone()),
             _ => match alert_node(&key) {
                 Some(node) => {
                     let kind = preselected(self, &key);
@@ -288,7 +288,7 @@ impl App {
     /// closes, so the run view is what the main pane shows.
     pub(crate) fn open_alert_node(&mut self, key: AlertKey) -> Vec<Effect> {
         let (run, task) = match key {
-            AlertKey::Proposal(project) => return self.open_profile_on(project, true),
+            AlertKey::Proposal(project) => return self.open_profile_on(project),
             AlertKey::Blocked { run, task } => (run, Some(task)),
             other => match alert_node(&other) {
                 Some((run, _)) => (run, None),
