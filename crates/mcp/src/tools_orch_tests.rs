@@ -42,7 +42,8 @@ const GET_CONTEXT: &str = "Read the run's context: the repository profile, the r
 /// schema cannot say so). `edits` may be left out in every call (fix round 1).
 const EDIT_PLAN: &str = "Apply plan edits as one batch. Set submit to open the plan gate. Add \
     a summary for the user when the run is complete. Set iterate, with no edits and nothing \
-    else, to start a round the user asked for. Returns at once.";
+    else, to start a round the user asked for. retry, override, resume_run, approve_hold and \
+    accept_red each come alone, with a reason. Returns at once.";
 
 /// Milestone 9.6: the orchestrator's design tools' descriptions, as listed.
 const DESIGN: [&str; 3] = [
@@ -347,7 +348,26 @@ fn mcp_schema_has_reply_comment_and_addresses() {
         let ops: Vec<&str> = (edit["op"]["enum"].as_array().unwrap().iter())
             .map(|v| v.as_str().unwrap())
             .collect();
-        assert_eq!(ops.last(), Some(&"reply_comment"), "{tool}: {ops:?}");
+        assert_eq!(
+            ops[ops.len() - 6..],
+            [
+                "reply_comment",
+                "retry",
+                "override",
+                "resume_run",
+                "approve_hold",
+                "accept_red"
+            ],
+            "{tool}: {ops:?}"
+        );
+        assert_eq!(
+            edit["reason"],
+            json!({"type": "string", "minLength": 1, "maxLength": 500})
+        );
+        assert_eq!(
+            edit["hold"],
+            json!({"type": "string", "minLength": 1, "maxLength": 64})
+        );
         assert_eq!(edit["pr"], json!({"type": "integer", "minimum": 1}));
         assert_eq!(
             edit["thread"],
