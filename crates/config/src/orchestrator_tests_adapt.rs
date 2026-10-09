@@ -289,7 +289,12 @@ auto = "yes"
     // Milestone 9.8 decision 14: the scout keys are present, so they still feed the
     // research row (at their defaults, today's research route) and give a note each.
     let o = config.orchestrator;
-    let research = crate::models::builtin_choice(crate::Role::Research);
+    // Gate fix B1: the built-in research row is now effortless; the migrated scout
+    // keys still give today's route, Haiku at `low`.
+    let research = crate::models::RoleChoice {
+        effort: Some("low".into()),
+        ..crate::models::builtin_choice(crate::Role::Research)
+    };
     assert_eq!(o.roles.rows, [(crate::Role::Research, research)].into());
     assert_eq!(o.roles_notes.len(), 2, "{:?}", o.roles_notes);
     let unmigrated = Orchestrator {

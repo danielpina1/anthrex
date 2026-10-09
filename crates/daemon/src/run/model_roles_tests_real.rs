@@ -71,12 +71,9 @@ fn one_row(role: Role, model: &str, effort: Option<&str>, fallback: Option<&str>
 fn the_stock_table_finds_every_claude_row_in_the_real_catalog() {
     let mut models = RunModels::resolve(&ModelTable::default(), None);
     let lines = models.validate(&real_catalogs());
-    // The one line: the research row's `low` on Haiku, which reports no effort (final
-    // review M2 drops it). No row is "not reported".
-    assert_eq!(
-        lines,
-        ["effort 'low' not offered by haiku; using the model's default"]
-    );
+    // Gate fix B1: the built-in research row is effortless on Haiku, which reports no
+    // effort, so a stock install logs nothing. No row is "not reported".
+    assert_eq!(lines, Vec::<String>::new());
     let five = ["low", "medium", "high", "xhigh", "max"];
     assert_eq!(models.efforts[&m("claude:claude-opus-5-5")].efforts, five);
     assert_eq!(models.efforts[&m("claude:claude-sonnet-5")].efforts, five);
