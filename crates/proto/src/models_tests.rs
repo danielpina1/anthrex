@@ -350,3 +350,21 @@ fn xhigh_orders_between_high_and_max_and_ultra_is_off_the_ladder() {
     assert_eq!(Effort::ladder_rank("max"), Some(5));
     assert_eq!(Effort::ladder_rank("ultra"), None);
 }
+
+/// Gate fix C1: a multibyte id never panics (the old byte split did), and only a real
+/// `-YYYYMMDD` date (month 01–12, day 01–31) is stripped.
+#[test]
+fn base_model_id_handles_multibyte_ids_and_strips_only_real_dates() {
+    use crate::models::{base_model_id, valid_model_id};
+    for id in ["éx1234567", "modèle-éé", "ab-日本語の模型", "x-2025100é", "é-20251001"] {
+        assert!(valid_model_id(id), "{id}");
+        let _ = base_model_id(id);
+    }
+    assert_eq!(base_model_id("é-20251001"), "é");
+    assert_eq!(base_model_id("model-12345678"), "model-12345678");
+    assert_eq!(base_model_id("model-20251301"), "model-20251301");
+    assert_eq!(base_model_id("model-20250132"), "model-20250132");
+    assert_eq!(base_model_id("model-20251000"), "model-20251000");
+    assert_eq!(base_model_id("model-20251231"), "model");
+    assert_eq!(base_model_id("-20251001"), "-20251001");
+}

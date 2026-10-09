@@ -362,16 +362,27 @@ pub fn base_model_id(id: &str) -> &str {
         Some(bare) if !bare.is_empty() => bare,
         _ => id,
     };
-    match id.len().checked_sub(9).map(|at| id.split_at(at)) {
-        Some((bare, date))
-            if !bare.is_empty()
-                && date.starts_with('-')
-                && date[1..].bytes().all(|b| b.is_ascii_digit()) =>
-        {
-            bare
-        }
+    // Gate fix C1: split only on a char boundary (a multibyte id never panics), and
+    // strip only a real date: `-`, then 8 ASCII digits, month 01–12, day 01–31.
+    let at = id.len().saturating_sub(9);
+    if at == 0 || !id.is_char_boundary(at) {
+        return id;
+    }
+    let (bare, date) = id.split_at(at);
+    match date.strip_prefix('-') {
+        Some(digits) if is_date(digits) => bare,
         _ => id,
     }
+}
+
+/// `YYYYMMDD` with a month of 01–12 and a day of 01–31.
+fn is_date(digits: &str) -> bool {
+    if digits.len() != 8 || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return false;
+    }
+    let month: u8 = digits[4..6].parse().unwrap_or(0);
+    let day: u8 = digits[6..8].parse().unwrap_or(0);
+    (1..=12).contains(&month) && (1..=31).contains(&day)
 }
 
 /// Decision 2: the one id `m` runs as, for every same-model rule: the entry a catalog
