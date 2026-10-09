@@ -148,7 +148,7 @@ fn models_section_renders_at_80x24_and_120x40() {
         );
         assert!(all[0].ends_with("tab: limits"), "{w}x{h}");
         assert!(
-            all[3].starts_with("▸orchestrator          Claude · claude-opus-5-5 high     —"),
+            all[3].starts_with("▸orchestrator          Claude · claude-opus-5… high     —"),
             "{w}x{h}: {all:?}"
         );
         // Only what blocks `w` shows here (M9.8.12 removed the roster's warnings).
@@ -234,9 +234,10 @@ fn ascii_mode_draws_only_ascii() {
     for want in [
         "+ settings - /cfg/config.toml -",
         " models - scope < everywhere > / this repo (tmp)",
-        ">orchestrator          Claude - claude-opus-5-5 high     -",
+        // Gate fix B3: a model wider than its column is cut (`...` in ASCII).
+        ">orchestrator          Claude - claude-opus... high     -",
         " implementer - small   Claude - Sonnet         low      -",
-        " helpers >             Claude - claude-haiku-4-5 -        -",
+        " helpers >             Claude - claude-haik... -        -",
         " enter choose model   e effort",
         "enter choose model",
     ] {
