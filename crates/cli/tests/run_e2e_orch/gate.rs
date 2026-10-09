@@ -157,7 +157,9 @@ fn e2e_orchestrator_cannot_approve_merge_or_write() {
             "edit_plan",
             json!({"edits": [{"op": "override", "task_id": "t1", "reason": "trust me"}]}),
         ),
-        expect_error("unknown variant `override`"),
+        // Milestone 9.9 (D2) made `override` an orchestrator op; it still cannot get
+        // past the user's plan gate: the run is refused while it awaits approval.
+        expect_error("is awaiting_approval"),
         call_err("task_done", json!({"summary": "merged it myself"})),
         expect_error("tool task_done is not available to the orchestrator role"),
         marker(),
