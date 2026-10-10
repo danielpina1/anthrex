@@ -270,3 +270,34 @@ fn a_nested_repositorys_linked_worktree_head_counts() {
         vec!["clone".to_string()]
     );
 }
+
+#[test]
+fn a_head_naming_a_path_outside_refs_is_work() {
+    // Fix round 2 (N1): a worker-written `HEAD` whose `ref:` escapes the nested git
+    // directory (a `..` climb or an absolute path, here to a device) is refused, never
+    // opened, and the repository counts as work, so the checkout is kept. Each is an
+    // otherwise empty repository, which would be clean. Git itself takes a directory
+    // with such a `HEAD` for no repository, so each is a candidate through the gitlink
+    // the worker records for it in the checkout's index.
+    let repo = repo();
+    let (_keep, task) = task_worktree(&repo, "r", "t1");
+    let id = head(&repo.root);
+    for (name, target) in [
+        ("climb", "../../../../../../../../../../dev/null"),
+        ("absolute", "/dev/null"),
+        ("outside", "logs/HEAD"),
+    ] {
+        let sub = nested(&task, name);
+        std::fs::write(sub.join(".git/HEAD"), format!("ref: {target}\n")).unwrap();
+        let entry = format!("160000,{id},{name}");
+        out(&task, &["update-index", "--add", "--cacheinfo", &entry]);
+    }
+    assert_eq!(
+        nested_work(real_git(), &task, T).unwrap(),
+        vec![
+            "absolute".to_string(),
+            "climb".to_string(),
+            "outside".to_string()
+        ]
+    );
+}

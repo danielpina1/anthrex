@@ -85,7 +85,10 @@ fn walk(
         ));
     }
     let mode = fstat_mode(dir.as_raw_fd()).map_err(|err| failed(shown, err))?;
-    if mode & 0o7777 != OWNER_ONLY {
+    // Fix round 2 (n4): changed only when the owner lacks a permission, so a directory
+    // the owner can already use (one owned by root, or on a read-only mount) is left
+    // alone; a changed one is set to exactly owner-only.
+    if mode & OWNER_ONLY != OWNER_ONLY {
         // SAFETY: `dir` is an open descriptor for the duration of the call.
         let changed = unsafe { libc::fchmod(dir.as_raw_fd(), OWNER_ONLY as libc::mode_t) };
         if changed != 0 {
@@ -97,7 +100,10 @@ fn walk(
         let child = shown.join(std::ffi::OsStr::from_bytes(name.to_bytes()));
         let opened = match open_dir(dir.as_raw_fd(), &name) {
             Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
-                // Locked: changed relative to its opened parent, never followed.
+                // Locked: changed relative to its opened parent, never followed. Fix
+                // round 2 (n5): `name` can still be swapped between the `fstatat` and
+                // the change for an entry that is not a link (a hard link to a file the
+                // user owns); it then becomes exactly owner-only, which is harmless.
                 match fstatat_dir_mode(dir.as_raw_fd(), &name) {
                     Some(_) => {
                         chmod_at(dir.as_raw_fd(), &name, OWNER_ONLY)
