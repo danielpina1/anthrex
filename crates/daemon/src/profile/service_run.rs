@@ -3,8 +3,10 @@
 //! edit --yes`, the confirmation). Every state change goes through
 //! [`ProfileService::save_if_current`], so a rejected proposal is never written back.
 //!
-//! No lock is held here across an `.await`: the table is only read through
-//! `current`/`register`/`unregister`, each of which takes and drops it at once.
+//! The table lock is never held across an `.await`: it is only read through
+//! `current`/`register`/`unregister`, each of which takes and drops it at once. The
+//! project's async `writes` lock is held across `save_if_current`'s note, write and
+//! rollback, and across the auto-confirm's store.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -117,9 +119,14 @@ impl ProfileService {
         }
         self.note_proposal(&record.project, Some(record));
         self.ready_gap().await;
-        let (dir, written) = (self.repo_dir(&record.project), record.clone());
-        let saved =
-            blocking(move || store::save_proposal(&dir, &written).map_err(|e| e.to_string())).await;
+        let (dir, written, fail) = (self.repo_dir(&record.project), record.clone(), self.fails());
+        let saved = blocking(move || {
+            if fail {
+                return Err("the test failed this save".to_string());
+            }
+            store::save_proposal(&dir, &written).map_err(|e| e.to_string())
+        })
+        .await;
         if let Err(error) = saved {
             tracing::warn!(%error, "could not save a profile proposal");
             let dir = self.repo_dir(&record.project);
@@ -144,6 +151,17 @@ impl ProfileService {
 
     #[cfg(not(test))]
     async fn ready_gap(&self) {}
+
+    /// The rollback's seam: whether the test made this save fail.
+    #[cfg(test)]
+    fn fails(&self) -> bool {
+        self.fail_save.load(Ordering::SeqCst)
+    }
+
+    #[cfg(not(test))]
+    fn fails(&self) -> bool {
+        false
+    }
 
     /// Saves `job.record` with `state` (while current). `false`: rejected meanwhile.
     async fn advance(&self, job: &mut Job, state: ProposalState) -> bool {

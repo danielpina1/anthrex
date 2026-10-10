@@ -152,7 +152,8 @@ impl ProfileService {
         self.adopt_for_status(&project).await;
         let (mut queued, dropped_goals) = self.queued_for(&project);
         // M9.10.5: the goals' set-up reads the proposal this reply shows; memory's copy
-        // (`Table.states`) is noted just after each write, so it can trail the file.
+        // (`Table.states`) can differ from the file for one write: a detection's save
+        // notes it just before writing (M9.11.33b), other writes just after.
         let setup = super::queue::setup_state(proposal.as_ref().map(|r| &r.state), checking);
         for goal in &mut queued {
             goal.setup = setup.clone();

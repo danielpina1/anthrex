@@ -106,8 +106,8 @@ pub(super) struct Table {
     /// Stored profiles `restore` found, checked for staleness by `spawn` (re-review r1).
     pub(super) auto_at_start: Vec<(PathBuf, ProfileMeta)>,
     /// Milestone 9.0.5 decision 10: each project whose `proposal.json` is `Ready`, with
-    /// its `updated_at`, as the last successful write or delete left it. Memory only:
-    /// `restore` rebuilds it from disk.
+    /// its `updated_at`, as the last write or delete left it (a detection's save notes it
+    /// just before its write, M9.11.33b). Memory only: `restore` rebuilds it from disk.
     pub(super) ready: BTreeMap<PathBuf, u64>,
     /// Moves on every change to `ready`, so the run service publishes it once.
     pub(super) ready_generation: u64,
@@ -144,6 +144,9 @@ pub struct ProfileService {
     /// M9.11.33b's seam: when set, `save_if_current` stops between its two steps.
     #[cfg(test)]
     pub(super) ready_gap: Mutex<Option<super::service_run::GapHook>>,
+    /// The rollback's seam: when set, `save_if_current`'s write fails.
+    #[cfg(test)]
+    pub(super) fail_save: std::sync::atomic::AtomicBool,
     /// Decision 6: starts a drained goal (`set_goal_starter`).
     pub(super) starter: Mutex<Option<super::service_queue::GoalStarter>>,
 }
@@ -227,6 +230,8 @@ impl ProfileService {
             progress_ticks: Arc::new(AtomicU64::new(0)),
             #[cfg(test)]
             ready_gap: Mutex::new(None),
+            #[cfg(test)]
+            fail_save: std::sync::atomic::AtomicBool::new(false),
             starter: Mutex::new(None),
         })
     }
@@ -426,8 +431,9 @@ impl ProfileService {
         (table.ready_generation, list)
     }
 
-    /// Records what `project`'s `proposal.json` now holds, called only after the write
-    /// (`Some`) or the delete (`None`) succeeded, and by `restore` for what it loaded.
+    /// Records what `project`'s `proposal.json` holds: after a write (`Some`) or delete
+    /// (`None`), just before a detection's save writes it (M9.11.33b, which notes the file
+    /// back if the write fails), and by `restore` for what it loaded.
     /// Memory only, never across an `.await`. Every call moves `setup_generation` and
     /// records the state (milestone 9.10 decision 10).
     pub(super) fn note_proposal(&self, project: &Path, record: Option<&ProposalRecord>) {

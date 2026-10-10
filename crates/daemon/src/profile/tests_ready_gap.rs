@@ -5,6 +5,10 @@
 //! already behaves as `Ready`. Before the fix the file was written first, so a status
 //! could show `Ready` while the snapshot still said "checking" (the flake of
 //! `profile_queue.rs::e2e_a_goal_with_yes_waits_for_review_when_a_command_was_dropped`).
+//! The gap is now the reverse one, on purpose: for one write the snapshot already says
+//! `Ready` while `profile status` (the file) still says `Verifying`. Nothing acts on memory
+//! alone (`store_ready`, `confirm` and a new goal take `writes` and read the file), so
+//! do not "fix" it back to write-first.
 //! A real service on a scratch data directory and a real git repository; no agent runs.
 
 use std::sync::Arc;
@@ -14,7 +18,7 @@ use proto::{ProposalState, SetupState};
 
 use super::store;
 use super::tests_queue::goal;
-use super::tests_queue_service::status;
+use super::tests_queue_service::{recorder, status};
 use super::tests_ready::{Rig, record, repo};
 
 /// One step of the service: a few small file writes on `spawn_blocking` and no git;
@@ -84,4 +88,61 @@ async fn a_status_in_the_ready_gap_never_sees_ready_before_the_snapshot() {
     let after = status(&rig.profiles, &project).await;
     assert_eq!(after.proposal.map(|r| r.state), Some(ProposalState::Ready));
     assert_eq!(after.queued[0].setup, SetupState::NeedsReview);
+}
+
+/// Stream X 33b review I1: a failed write puts memory back to what the file still holds.
+/// The note went first, so without the rollback the snapshot would keep a `Ready` the
+/// file never showed. A queued `--yes` goal is waiting; the next step of a detection
+/// (`after_ready`) then reads the file, finds `Verifying`, and starts nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_ready_write_rolls_memory_back_to_the_file() {
+    let rig = Rig::new();
+    let started = recorder(&rig.profiles, Ok("run-1"));
+    let project = repo(rig.dir.path(), "app");
+    let verifying = record(&project, ProposalState::Verifying, 1_790_000_000);
+    let dir = rig.repo_dir(&project);
+    std::fs::create_dir_all(&dir).unwrap();
+    store::save_proposal(&dir, &verifying).unwrap();
+    rig.profiles.note_proposal(&project, Some(&verifying));
+    let (generation, _token) = rig.profiles.register(&project).expect("registered");
+    rig.profiles
+        .queue_goal(goal(&project, "add a flag", true))
+        .await
+        .unwrap()
+        .expect("queued");
+
+    rig.profiles
+        .fail_save
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let ready = record(&project, ProposalState::Ready, 1_790_000_077);
+    let saved = tokio::time::timeout(
+        REQUEST_WAIT,
+        rig.profiles.save_if_current(generation, &ready),
+    )
+    .await
+    .expect("the save ends");
+    assert!(saved, "a failed write still reports the proposal current");
+
+    // The file still holds `Verifying`; memory says exactly that.
+    let on_disk = store::load_proposal(&dir).unwrap().expect("the file");
+    assert_eq!(on_disk, verifying);
+    let (_, listed) = rig.profiles.ready_proposals();
+    assert!(
+        listed.is_empty(),
+        "a ready proposal the file never showed: {listed:?}"
+    );
+    let goals = rig.profiles.queued_goals();
+    assert_eq!(goals.len(), 1, "{goals:?}");
+    assert_eq!(
+        goals[0].setup,
+        SetupState::Checking { progress: None },
+        "memory's set-up is not the file's"
+    );
+
+    // What a detection does next: nothing is stored and no goal starts.
+    rig.profiles.after_ready(&project).await;
+    assert!(crate::lock(&started).is_empty(), "a goal started");
+    assert_eq!(store::load_proposal(&dir).unwrap(), Some(verifying));
+    let (_, listed) = rig.profiles.ready_proposals();
+    assert!(listed.is_empty(), "{listed:?}");
 }
