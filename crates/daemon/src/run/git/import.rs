@@ -29,6 +29,11 @@ use super::merge::read;
 use super::{Git, failure, nul_fields, os};
 use crate::worktree::pinned::{self, Pin};
 
+#[path = "salvage_gone.rs"]
+mod salvage_gone;
+pub use salvage_gone::salvage_gone;
+pub(crate) use salvage_gone::salvage_gone_keeping;
+
 /// Git configuration for the one engine git command that reads the private object
 /// directory (`pack-objects`): no commit-graph, bitmap or multi-pack index, which the
 /// worker could write there to make the walk lie (a lie can only drop objects, which
@@ -258,7 +263,7 @@ fn missing_refs(g: Git<'_>, dir: &Path, ids: &[String]) -> Result<Vec<String>, S
 }
 
 /// Those of `ids` the repository does not have (`cat-file --batch-check`).
-fn missing(g: Git<'_>, dir: &Path, ids: &[&str]) -> Result<Vec<String>, String> {
+pub(super) fn missing(g: Git<'_>, dir: &Path, ids: &[&str]) -> Result<Vec<String>, String> {
     if ids.is_empty() {
         return Ok(Vec::new());
     }

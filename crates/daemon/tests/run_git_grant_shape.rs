@@ -358,16 +358,18 @@ fn a_config_worktree_with_content_is_still_refused() {
     daemon::worktree::pinned::unpin(&linked);
 }
 
-/// F1c's sweep, for the Linux shape: a link a worker left at a denied path is removed
-/// before the next grant and replaced by its placeholder, so the sandbox denies the
-/// path itself, never the link's target; nothing at the target is touched. The
-/// reflog removal stays.
+/// Milestone 9.11 decision 16 (D8), which replaced F1c's sweep for the Linux shape: a
+/// link a worker left at a denied path refuses the grant and is left in place (the
+/// sweep removed it and made a placeholder, a window in which the path could be
+/// planted again); nothing at the target is touched. Once the links are gone the grant
+/// makes its placeholders as before. The reflog removal stays.
 #[test]
-fn links_left_at_denied_paths_are_replaced_by_placeholders() {
+fn links_left_at_denied_paths_refuse_the_grant() {
     let c = checkout("gs03");
     let elsewhere = tempfile::tempdir().unwrap();
     let target_file = elsewhere.path().join("file");
     std::fs::write(&target_file, "theirs\n").unwrap();
+    let roots = worker_git_roots(c.data.path(), "t1");
     for name in ["locked", "config.worktree", "packed-refs"] {
         let _ = std::fs::remove_file(c.admin.join(name));
         std::os::unix::fs::symlink(&target_file, c.admin.join(name)).unwrap();
@@ -376,15 +378,36 @@ fn links_left_at_denied_paths_are_replaced_by_placeholders() {
         let _ = std::fs::remove_dir_all(c.admin.join(name));
         std::os::unix::fs::symlink(elsewhere.path(), c.admin.join(name)).unwrap();
     }
+    // In the order the grant checks them, so each refusal names the next one.
+    for name in [
+        "config.worktree",
+        "locked",
+        "packed-refs",
+        "logs",
+        "hooks",
+        "modules",
+    ] {
+        let refused = worker_git_grant(&c.common, &c.task, &roots, GrantShape::WholeDir)
+            .expect_err("a link at a denied path was granted");
+        assert_eq!(
+            refused,
+            format!("the checkout's git directory has a link at {name}; anthrex will not grant it")
+        );
+        let path = c.admin.join(name);
+        let meta = std::fs::symlink_metadata(&path).unwrap();
+        assert!(meta.file_type().is_symlink(), "{name}'s link was removed");
+        // The user removes it; the next grant names the next link, or succeeds.
+        std::fs::remove_file(&path).unwrap();
+    }
+    assert_eq!(std::fs::read_to_string(&target_file).unwrap(), "theirs\n");
+    assert!(elsewhere.path().is_dir());
     let granted = grant(&c, GrantShape::WholeDir);
     for name in ["locked", "config.worktree", "packed-refs", "logs", "hooks"] {
         let path = c.admin.join(name);
         assert!(granted.deny.contains(&path), "{name} not denied");
         let meta = std::fs::symlink_metadata(&path).unwrap();
-        assert!(!meta.file_type().is_symlink(), "{name} is still a link");
+        assert!(!meta.file_type().is_symlink(), "{name} is a link");
     }
-    assert_eq!(std::fs::read_to_string(&target_file).unwrap(), "theirs\n");
-    assert!(elsewhere.path().is_dir());
 
     // A reflog from before is removed, and `logs` is left an empty directory.
     std::fs::write(c.admin.join("logs/HEAD"), "old\n").unwrap();

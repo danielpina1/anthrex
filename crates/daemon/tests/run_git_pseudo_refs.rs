@@ -202,12 +202,10 @@ fi"#,
     )
 }
 
-/// The class, not the route: pseudo-refs planted after every check, while the
-/// hand-back's last git command before its own writes runs, steer nothing. The clean
-/// hand-back writes no pseudo-ref at all; the conflicted one replaces the planted links
-/// with its own plain `MERGE_HEAD`, `MERGE_MSG` and `MERGE_MODE`, never writing through
-/// them. (A conflicted hand-back also meeting a planted `ORIG_HEAD` is refused at its
-/// next git call, by the pseudo-ref check; that is `a_symbolic_orig_head_…`'s case.)
+/// The class, not the route: pseudo-refs planted after every check before a call,
+/// while the hand-back's last git command before its own writes runs, steer nothing:
+/// the check after that call (milestone 9.11 decision 16) refuses it, and nothing is
+/// written through a planted link.
 #[test]
 fn pseudo_refs_planted_after_the_checks_steer_nothing() {
     for (run, conflict) in [("pr21", false), ("pr22", true)] {
@@ -232,43 +230,24 @@ fn pseudo_refs_planted_after_the_checks_steer_nothing() {
             "victim\n",
             "an engine write went through a link"
         );
-        let back = result.unwrap();
+        // Milestone 9.11 decision 16 (D8): the pin is checked after each call too, so
+        // the hand-back's command during which the pseudo-refs were planted is refused
+        // and its result discarded. (Before, the clean hand-back returned, the plant
+        // having steered nothing, and the conflicted one replaced the planted links
+        // with its own merge state.) Nothing outside the checkout moved (above), and
+        // nothing was written through a planted link.
+        let refused = result.expect_err("a call that met planted pseudo-refs was kept");
+        assert!(refused.contains("tampered"), "{refused}");
         let admin = w.admin();
-        if conflict {
-            assert_eq!(back.files, vec!["f.txt".to_string()]);
-            for name in ["MERGE_HEAD", "MERGE_MSG", "MERGE_MODE"] {
-                let meta = std::fs::symlink_metadata(admin.join(name)).unwrap();
-                assert!(meta.is_file(), "{name} is still a link");
-            }
-            assert_eq!(
-                std::fs::read_to_string(admin.join("MERGE_HEAD")).unwrap(),
-                format!("{run_head}\n")
-            );
-            assert_eq!(out(&w.task, &["ls-files", "-u"]).lines().count(), 3);
-            // What `git merge --no-ff` of a commit writes.
-            assert_eq!(
-                std::fs::read_to_string(admin.join("MERGE_MSG")).unwrap(),
-                format!(
-                    "Merge commit '{run_head}' into anthrex/{}/t1\n\n# Conflicts:\n#\tf.txt\n",
-                    w.run
-                )
-            );
-            assert_eq!(
-                std::fs::read_to_string(admin.join("MERGE_MODE")).unwrap(),
-                "no-ff"
-            );
-        } else {
-            assert!(back.files.is_empty());
-            assert_eq!(out(&w.task, &["rev-parse", "HEAD^2"]), run_head);
-            // Never written: still what was planted.
+        for name in ["MERGE_HEAD", "MERGE_MSG", "MERGE_MODE"] {
+            let meta = std::fs::symlink_metadata(admin.join(name)).unwrap();
+            assert!(meta.file_type().is_symlink(), "{name} was replaced");
+        }
+        if !conflict {
             assert_eq!(
                 std::fs::read_to_string(admin.join("ORIG_HEAD")).unwrap(),
                 SYMREF_MAIN
             );
-            for name in ["MERGE_HEAD", "MERGE_MSG", "MERGE_MODE"] {
-                let meta = std::fs::symlink_metadata(admin.join(name)).unwrap();
-                assert!(meta.file_type().is_symlink(), "{name} was written");
-            }
         }
     }
 }

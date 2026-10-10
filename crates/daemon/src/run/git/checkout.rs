@@ -34,8 +34,22 @@ use super::sandbox::{engine_child, put_beneath};
 use super::{Git, os};
 use crate::worktree::pinned::{self, PinAs};
 
+#[path = "checkout_access.rs"]
+mod access;
+pub(crate) use access::restore_owner_access;
+pub use access::restore_owner_access_with;
+
 /// The marker, in [`Repo::engine`], that the checkout's files are in place.
 const READY: &str = "ready";
+
+/// Milestone 9.11 decision 15 (A15): the file, in [`Repo::engine`], holding the
+/// identity the user's repository resolves; the checkout's config includes it after
+/// the repository config ([`config`]), by a path relative to the git directory.
+///
+/// Review m2: git treats an *unreadable* include target as fatal, so every git command
+/// in the checkout, the worker's included, needs this file readable: no session's
+/// `deny_read` may cover the run's data directory.
+const IDENTITY: &str = "identity";
 
 /// Where a checkout's repository and the engine's own files live.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -102,10 +116,13 @@ pub(crate) enum Kind<'a> {
 }
 
 /// The repository's config for the checkout at `path`. The user's repository config is
-/// included (after a default hooks path, which it may override), and then what the
-/// engine needs: not bare, the checkout as the work tree, no reflogs, no automatic gc.
-/// The format settings come first: git reads a repository's format from its own file
-/// only, never from an include.
+/// included (after a default hooks path, which it may override), then the identity the
+/// user's repository resolves (`../engine/identity`, [`identity`]: an `includeIf
+/// "gitdir:…"` in their config is evaluated against this git directory, where it never
+/// matches, milestone 9.11 decision 15), and then what the engine needs: not bare, the
+/// checkout as the work tree, no reflogs, no automatic gc. The format settings come
+/// first: git reads a repository's format from its own file only, never from an
+/// include.
 pub(crate) fn config(common: &Path, path: &Path, sha256: bool) -> String {
     let mut text = String::from("[core]\n");
     if sha256 {
@@ -114,7 +131,7 @@ pub(crate) fn config(common: &Path, path: &Path, sha256: bool) -> String {
         text.push_str("\trepositoryformatversion = 0\n");
     }
     text.push_str(&format!(
-        "\thooksPath = {}\n[include]\n\tpath = {}\n[core]\n\tbare = false\n\tworktree = {}\n\tlogAllRefUpdates = false\n[gc]\n\tauto = 0\n",
+        "\thooksPath = {}\n[include]\n\tpath = {}\n\tpath = ../engine/{IDENTITY}\n[core]\n\tbare = false\n\tworktree = {}\n\tlogAllRefUpdates = false\n[gc]\n\tauto = 0\n",
         quoted(&common.join("hooks")),
         quoted(&common.join("config")),
         quoted(path),
@@ -125,10 +142,65 @@ pub(crate) fn config(common: &Path, path: &Path, sha256: bool) -> String {
     text
 }
 
+/// Milestone 9.11 fix round 1 (I1): the config text anthrex 0.1.0 to 0.1.2 wrote, frozen
+/// here, for both object formats. A checkout made by those releases still holds it;
+/// the pin check accepts it by exact equality, so an upgrade does not mark every
+/// in-flight checkout as tampered with, and the next [`ensure`] rewrites it to
+/// [`config`]. It differs from [`config`] only in lacking the identity include. Never
+/// derive it from [`config`]: a later change there must not widen what is accepted.
+pub(crate) fn config_v0_1(common: &Path, path: &Path, sha256: bool) -> String {
+    let format = if sha256 { "1" } else { "0" };
+    let mut text = format!(
+        "[core]\n\trepositoryformatversion = {format}\n\thooksPath = {}\n[include]\n\tpath = {}\n[core]\n\tbare = false\n\tworktree = {}\n\tlogAllRefUpdates = false\n[gc]\n\tauto = 0\n",
+        quoted(&common.join("hooks")),
+        quoted(&common.join("config")),
+        quoted(path),
+    );
+    if sha256 {
+        text.push_str("[extensions]\n\tobjectformat = sha256\n");
+    }
+    text
+}
+
 /// `path` as a git config value: quoted, with `"` and `\` escaped.
 fn quoted(path: &Path) -> String {
     let text = path.display().to_string();
     format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+/// Milestone 9.11 decision 15 (A15): `user.name` and `user.email` as the user's
+/// repository resolves them (`git config --get` in its git directory `common`, where
+/// their `includeIf "gitdir:…"` matches), as a config file; a key git cannot resolve
+/// is left out, so the checkout falls back to what its include gives, as before.
+fn identity(g: Git<'_>, common: &Path) -> String {
+    let mut text = String::new();
+    for key in ["name", "email"] {
+        let name = format!("user.{key}");
+        let args = [os("config"), os("--get"), os(&name)];
+        let value = match g.read(common, &args) {
+            Ok(output) if output.success => {
+                output.stdout.trim_end_matches(['\n', '\r']).to_string()
+            }
+            _ => continue,
+        };
+        if !value.is_empty() {
+            text.push_str(&format!("\t{key} = {}\n", value_quoted(&value)));
+        }
+    }
+    match text.is_empty() {
+        true => text,
+        false => format!("[user]\n{text}"),
+    }
+}
+
+/// A config value quoted, with `\`, `"`, newline and tab escaped.
+fn value_quoted(value: &str) -> String {
+    let escaped = value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\t', "\\t");
+    format!("\"{escaped}\"")
 }
 
 /// The checkout at `path` and its repository `repo`, made or repaired, and pinned:
@@ -187,6 +259,7 @@ pub(crate) fn ensure(
         "config",
         config(common, &path, sha256).as_bytes(),
     )?;
+    put(&engine, &engine, IDENTITY, identity(g, common).as_bytes())?;
     let alternates = format!("{}\n", common.join("objects").display());
     put_beneath(
         &git_dir,
@@ -294,65 +367,4 @@ pub(crate) fn remove(path: &Path, repo: &Repo) -> Result<(), String> {
     super::tmp::remove(&repo.dir)?;
     pinned::unpin(path);
     Ok(())
-}
-
-/// M8b.10 review (I2): gives the owner read, write and search access back on `path` and
-/// on every real directory beneath it, so `remove_dir_all` cannot be stopped by a
-/// directory a worker or a confined command locked (`chmod 555`). Nothing is followed:
-/// each entry is examined with `symlink_metadata`, a link is left alone (the removal
-/// unlinks it), and each mode change is `fchmodat(AT_SYMLINK_NOFOLLOW)`, so nothing
-/// outside `path` is touched. A missing `path` is not an error.
-pub(crate) fn restore_owner_access(path: &Path) -> Result<(), String> {
-    let failed = |what: &Path, err: std::io::Error| {
-        format!("cannot restore access to {}: {err}", what.display())
-    };
-    let meta = match std::fs::symlink_metadata(path) {
-        Ok(meta) => meta,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(err) => return Err(failed(path, err)),
-    };
-    if !meta.file_type().is_dir() {
-        return Ok(());
-    }
-    use std::os::unix::fs::PermissionsExt;
-    let mode = meta.permissions().mode();
-    if mode & 0o700 != 0o700 {
-        chmod_nofollow(path, (mode | 0o700) & 0o7777).map_err(|err| failed(path, err))?;
-    }
-    for entry in std::fs::read_dir(path).map_err(|err| failed(path, err))? {
-        let entry = entry.map_err(|err| failed(path, err))?;
-        restore_owner_access(&entry.path())?;
-    }
-    Ok(())
-}
-
-/// `chmod` on `path` itself, never on what it names if it became a link.
-fn chmod_nofollow(path: &Path, mode: u32) -> std::io::Result<()> {
-    use std::os::unix::ffi::OsStrExt;
-    let c_path = std::ffi::CString::new(path.as_os_str().as_bytes())
-        .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
-    // SAFETY: `c_path` is a valid NUL-terminated string that outlives the call.
-    let result = unsafe {
-        libc::fchmodat(
-            libc::AT_FDCWD,
-            c_path.as_ptr(),
-            mode as libc::mode_t,
-            libc::AT_SYMLINK_NOFOLLOW,
-        )
-    };
-    if result == 0 {
-        return Ok(());
-    }
-    let err = std::io::Error::last_os_error();
-    // Linux's `fchmodat` may not support the flag; only a real directory, checked
-    // again just now, is then changed through its path.
-    // (`ENOTSUP` and `EOPNOTSUPP` are one value on Linux, two on macOS.)
-    let unsupported = err
-        .raw_os_error()
-        .is_some_and(|code| code == libc::ENOTSUP || code == libc::EOPNOTSUPP);
-    if unsupported && std::fs::symlink_metadata(path)?.file_type().is_dir() {
-        use std::os::unix::fs::PermissionsExt;
-        return std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode));
-    }
-    Err(err)
 }
