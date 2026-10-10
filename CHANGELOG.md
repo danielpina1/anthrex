@@ -23,10 +23,10 @@ the old daemon (`anthrex daemon stop`) after upgrading.
   the profile itself as soon as every command checks out (a dropped command still waits
   for your review). A set-up that fails keeps the queue and offers **Retry**;
   discarding the proposal drops the waiting goals, and `anthrex profile status` and the
-  Profile screen list what waits and what was dropped. `anthrex run start --goal` in such a repository
-  exits with status 3 and prints nothing on stdout (on stderr: `queued: <goal> waits
-  for the repository profile (anthrex profile); no run started yet`), so a script that
-  expects a run id stops.
+  Profile screen list what waits and what was dropped. `anthrex run start --goal` in
+  such a repository exits with status 3 and prints nothing on stdout (on stderr:
+  `queued: <goal> waits for the repository profile (anthrex profile); no run started
+  yet`), so a script that expects a run id stops.
 - **The review card.** `anthrex learned how to work in this repo` lists what anthrex
   will use, in plain words, each command with its check (`✓ 12s`, `✗ 3m10s`) and a
   `couldn't verify:` line for each command that did not pass; a later re-detection
@@ -37,9 +37,9 @@ the old daemon (`anthrex daemon stop`) after upgrading.
   (`old → tried ✗`) and why, with `o` for its output, `s` to save it anyway and `r` to
   revert. The same works on the review card, where the edit changes only the proposal
   until **Use this**; a failed one is named under the card, since **Use this** leaves
-  it out. `anthrex profile status` prints the edit, its state and its reason. Edits stay refused while a run is
-  live in the repository (`finish or cancel the run in this repo to change its
-  profile`).
+  it out. `anthrex profile status` prints the edit, its state and its reason. Edits
+  stay refused while a run is live in the repository (`finish or cancel the run in this
+  repo to change its profile`).
 - **`anthrex profile use`** stores the ready proposal and starts any waiting goals;
   `anthrex profile confirm` still works as its alias.
 - **`anthrex profile edit --anyway`** stores the edit once verification has run, even
