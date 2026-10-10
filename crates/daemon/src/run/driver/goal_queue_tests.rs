@@ -300,7 +300,10 @@ async fn a_goal_set_up_does_not_start_beside_a_stored_profile() {
     let repo_dir = crate::profile::repo_dir(&w.data, &pre.project);
     assert!(!repo_dir.join("proposal.json").exists());
 
-    // Through the goal's own path: it starts at once, and no proposal is written.
+    // Through the goal's own path: it starts at once, with no set-up registered, no
+    // goal queued and no proposal written. On its own this half also fails without
+    // the stored check (final re-review residuals): the set-up then writes its
+    // `Preparing` proposal before the goal starts.
     let start = super::NoProfileStart {
         pre: pre.clone(),
         proposal: None,
@@ -319,6 +322,11 @@ async fn a_goal_set_up_does_not_start_beside_a_stored_profile() {
         "{message}"
     );
     assert!(!repo_dir.join("proposal.json").exists());
+    assert!(
+        !w.profiles.registered(&pre.project),
+        "a set-up was registered"
+    );
+    assert!(w.profiles.queued_goals().is_empty());
     w.shutdown.cancel();
     w.runs.stop().await;
 }

@@ -7,10 +7,12 @@
 //! The starter runs with no lock of this service held.
 
 use std::future::Future;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::task::Poll;
 
 use proto::{ProposalOrigin, QueuedGoalInfo, RowEditState};
 
@@ -36,6 +38,32 @@ pub const GONE: &str = "the repository is gone";
 /// It may have started (decision 6 starts a goal at most once), so it is never started
 /// again; the user looks and starts it again.
 pub const INTERRUPTED: &str = "the daemon stopped while the goal was starting; if anthrex run status shows no run for it, start it again";
+
+/// `start(goal)` with a panic in the starter, or in the future it returns, caught and
+/// answered as a refusal (final re-review): the drain records the goal as dropped and
+/// goes on, instead of dying with its claim on the project still held.
+async fn start_caught(start: &GoalStarter, goal: QueuedGoal) -> Result<String, String> {
+    let mut started = match catch_unwind(AssertUnwindSafe(|| start(goal))) {
+        Ok(started) => started,
+        Err(payload) => return Err(panicked(payload.as_ref())),
+    };
+    std::future::poll_fn(move |cx| {
+        catch_unwind(AssertUnwindSafe(|| started.as_mut().poll(cx)))
+            .unwrap_or_else(|payload| Poll::Ready(Err(panicked(payload.as_ref()))))
+    })
+    .await
+}
+
+/// The reason recorded for a goal whose start panicked.
+fn panicked(payload: &(dyn std::any::Any + Send)) -> String {
+    let what = payload
+        .downcast_ref::<&str>()
+        .map(|s| (*s).to_string())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "a panic".to_string());
+    tracing::error!(%what, "a queued goal's start panicked");
+    format!("the start failed unexpectedly ({what}); start it again")
+}
 
 /// The project's short name in messages: its directory's name.
 pub(super) fn name_of(project: &Path) -> String {
@@ -282,12 +310,26 @@ impl ProfileService {
     }
 
     /// Decision 6, after a store: spawns the drain and says how many goals it starts.
+    /// The caller holds `writes`. Final re-review N1: the drain is claimed here, under
+    /// the store's hold, so from the answer on the goals wait their turn in the drain
+    /// (a `reject` leaves them); when a drain already runs, it takes them.
     pub(super) fn drain_after_store(self: &Arc<Self>, project: &Path) -> String {
         let n = self.queue_of(project).goals.len();
-        if n > 0 {
-            tokio::spawn(self.clone().start_queued(project.to_path_buf()));
+        if n > 0 && self.claim_drain(project) {
+            tokio::spawn(self.clone().run_drain(project.to_path_buf()));
         }
         starting(n)
+    }
+
+    /// `project`'s drain marked as running; `false` when one already runs. The caller
+    /// holds `writes`, as `end_drain`'s caller does.
+    fn claim_drain(&self, project: &Path) -> bool {
+        let mut table = crate::lock(&self.table);
+        if !table.draining.insert(project.to_path_buf()) {
+            return false;
+        }
+        table.setup_generation += 1;
+        true
     }
 
     /// Decision 6: starts `project`'s queued goals in queue order, one drain per
@@ -297,20 +339,25 @@ impl ProfileService {
     /// `starting` when its start returns. A daemon stop then loses no goal: those not
     /// yet taken wait in `goals` for the restart's drain, and the one being started is
     /// a dropped goal at restore, never started twice. The starter runs with no lock of
-    /// this service held. A refused start is recorded as a drop.
+    /// this service held. A refused start is recorded as a drop, and so is a start that
+    /// panicked (final re-review), so the drain still ends and clears its claim.
     pub(super) async fn start_queued(self: Arc<Self>, project: PathBuf) {
         {
             let _writes = self.writes.lock().await;
-            let mut table = crate::lock(&self.table);
-            if !table.draining.insert(project.clone()) {
+            if !self.claim_drain(&project) {
                 return;
             }
-            table.setup_generation += 1;
         }
+        self.run_drain(project).await;
+    }
+
+    /// The claimed drain of `project`: every goal taken out and started in turn, until
+    /// `take_next` finds none and ends the drain.
+    async fn run_drain(self: Arc<Self>, project: PathBuf) {
         let starter = crate::lock(&self.starter).clone();
         while let Some(goal) = self.take_next(&project).await {
             let started = match &starter {
-                Some(start) => start(goal.clone()).await,
+                Some(start) => start_caught(start, goal.clone()).await,
                 None => Err("the daemon cannot start goals yet".to_string()),
             };
             self.start_returned(&project, &goal, started).await;
@@ -412,6 +459,11 @@ impl ProfileService {
         project: &Path,
         reason: &str,
     ) -> Result<usize, String> {
+        // Final re-review N1: a drain's goals wait on the stored profile, not on any
+        // proposal; they stay for their turn.
+        if crate::lock(&self.table).draining.contains(project) {
+            return Ok(0);
+        }
         let mut queue = self.queue_of(project);
         let goals = std::mem::take(&mut queue.goals);
         if goals.is_empty() {
