@@ -31,6 +31,7 @@ mod design_io;
 mod design_ops;
 mod design_restore;
 mod effects;
+mod effects_ops;
 mod event_loop;
 // Milestone 9.1.7: read by the tier executor (M9.1.9); until then only its tests call it.
 #[cfg_attr(not(test), allow(dead_code))]
