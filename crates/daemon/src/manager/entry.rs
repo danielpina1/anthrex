@@ -277,6 +277,16 @@ impl Entry {
         }
     }
 
+    /// [`Entry::resize`] for an attach (decision 29): a live window already at the
+    /// requested size is nudged so its program repaints; anything else is resized as
+    /// usual, and a dormant or headless window is never nudged.
+    fn resize_for_attach(&mut self, cols: u16, rows: u16) -> anyhow::Result<()> {
+        match &self.process {
+            Process::Live(window) if window.size() == (cols, rows) => window.nudge(),
+            _ => self.resize(cols, rows),
+        }
+    }
+
     pub(super) fn size(&self) -> (u16, u16) {
         match &self.process {
             Process::Live(window) => window.size(),
@@ -439,5 +449,16 @@ impl Inner {
         if let Some(done) = self.cleanups.remove(&id) {
             self.orphaned_cleanups.push(done);
         }
+    }
+}
+
+impl super::WindowManager {
+    /// The `Subscribe` path's resize (decision 29, pre-flight P2): as
+    /// [`super::WindowManager::resize`], except that a live window already at this size
+    /// gets a [`Window::nudge`] so a full-screen app repaints the screen the attaching
+    /// client is about to be sent a snapshot of. Every other caller of `resize` (the
+    /// client's debounced `Resize`, the run driver) never nudges.
+    pub fn resize_for_attach(&self, id: u32, cols: u16, rows: u16) -> anyhow::Result<()> {
+        self.with_entry(id, |e| e.resize_for_attach(cols.max(1), rows.max(1)))?
     }
 }

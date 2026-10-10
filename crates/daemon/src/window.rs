@@ -327,6 +327,27 @@ impl Window {
         Ok(())
     }
 
+    /// Asks the program to repaint (decision 29): sets the PTY one row taller, then back,
+    /// through `master.resize` (two kernel `SIGWINCH`es, no signal code of ours). The
+    /// parser's size is never touched, so the screen a client is about to be sent keeps
+    /// its size and rows throughout.
+    pub fn nudge(&self) -> anyhow::Result<()> {
+        let (cols, rows) = self.size();
+        let other = if rows < u16::MAX { rows + 1 } else { rows - 1 };
+        let size = |rows| PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+        self.master.resize(size(other))?;
+        // The PTY must not stay a row off the parser: the restore is tried twice.
+        if self.master.resize(size(rows)).is_err() {
+            self.master.resize(size(rows))?;
+        }
+        Ok(())
+    }
+
     /// Current size as `(cols, rows)`.
     pub fn size(&self) -> (u16, u16) {
         let (rows, cols) = crate::lock(&self.parser).screen().size();
