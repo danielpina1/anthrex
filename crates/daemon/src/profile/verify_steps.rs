@@ -109,7 +109,8 @@ impl Steps {
     fn count(&self) {
         if let Some(counter) = &self.counter {
             counter.done.fetch_add(1, Ordering::Relaxed);
-            counter.ticks.fetch_add(1, Ordering::Relaxed);
+            // Release: `snapshot_generation`'s Acquire load then sees `done`.
+            counter.ticks.fetch_add(1, Ordering::Release);
         }
     }
 

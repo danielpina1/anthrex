@@ -12,7 +12,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use proto::{ProposalOrigin, ProposalState, QueuedGoalInfo};
+use proto::{ProposalOrigin, QueuedGoalInfo};
 
 use super::queue::{self, GoalQueue, MAX_QUEUED, QueuedGoal};
 use super::service::{ProfileService, blocking};
@@ -158,7 +158,9 @@ impl ProfileService {
             let table = crate::lock(&self.table);
             (table.ready_generation, table.setup_generation)
         };
-        ready + setup + self.progress_ticks.load(Ordering::Relaxed)
+        // Acquire pairs with `Steps::count`'s Release: a reader that sees a tick sees
+        // its `done` too.
+        ready + setup + self.progress_ticks.load(Ordering::Acquire)
     }
 
     /// Decision 9: when a detection's proposal first turns `Ready`, a queued `yes` goal
@@ -168,40 +170,44 @@ impl ProfileService {
         if !self.queue_of(project).goals.iter().any(|goal| goal.yes) {
             return;
         }
-        let dir = self.repo_dir(project);
-        let record = blocking(move || store::load_proposal(&dir)).await;
-        let storable = record.ok().flatten().is_some_and(|record| {
-            record.state == ProposalState::Ready
-                && !matches!(record.origin, ProposalOrigin::Edit { .. })
-                && record.edit.is_none()
-                && record.dropped.is_empty()
-        });
-        if !storable {
-            return;
-        }
-        match self.use_ready(project).await {
+        match self.store_ready(project, true).await {
             Ok(message) => tracing::info!(%message, "stored a proposal for a queued --yes goal"),
-            Err(error) => tracing::info!(%error, "could not store a proposal for a queued goal"),
+            Err(error) => tracing::info!(%error, "a queued --yes goal waits for the review"),
         }
     }
 
     /// Decision 9: `confirm` with no `shown` (no `writes` held by the caller): the ready
     /// proposal stored, then the queue drained.
     pub async fn use_ready(self: &Arc<Self>, project: &Path) -> Result<String, String> {
-        let message = {
-            let _writes = self.writes.lock().await;
-            let dir = self.repo_dir(project);
-            let p = project.to_path_buf();
-            let message = blocking(move || {
-                let record = store::load_proposal(&dir)?
-                    .ok_or_else(|| format!("no proposal to use for {}", p.display()))?;
-                ready_profile(&record)?;
-                confirm_record(&dir, &p, &record)
-            })
-            .await?;
-            self.note_proposal(project, None);
-            message
-        };
+        self.store_ready(project, false).await
+    }
+
+    /// The ready proposal stored and the queue drained, the proposal read, checked and
+    /// stored under one hold of `writes`. `unattended` (`after_ready`): only a review
+    /// proposal with no row edit and nothing dropped is stored.
+    async fn store_ready(
+        self: &Arc<Self>,
+        project: &Path,
+        unattended: bool,
+    ) -> Result<String, String> {
+        let _writes = self.writes.lock().await;
+        let dir = self.repo_dir(project);
+        let p = project.to_path_buf();
+        let message = blocking(move || {
+            let record = store::load_proposal(&dir)?
+                .ok_or_else(|| format!("no proposal to use for {}", p.display()))?;
+            let review = !matches!(record.origin, ProposalOrigin::Edit { .. })
+                && record.edit.is_none()
+                && record.dropped.is_empty();
+            if unattended && !review {
+                return Err(format!("the proposal for {} needs a review", p.display()));
+            }
+            ready_profile(&record)?;
+            confirm_record(&dir, &p, &record)
+        })
+        .await?;
+        self.note_proposal(project, None);
+        // Counted under `writes`, so no other drain takes these goals meanwhile.
         Ok(format!("{message}{}", self.drain_after_store(project)))
     }
 
@@ -256,20 +262,42 @@ impl ProfileService {
     }
 
     /// Decision 8: every goal queued for `project` dropped with `reason`; how many.
+    /// Production code holds `writes` already (`reject`) and calls
+    /// [`Self::drop_queued_locked`]; this takes the hold itself, for the tests.
+    #[cfg(test)]
     pub(super) async fn drop_queued(&self, project: &Path, reason: &str) -> usize {
-        let _writes = self.writes.lock().await;
+        let writes = self.writes.lock().await;
+        self.drop_queued_locked(&writes, project, reason)
+            .await
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, "could not drop the queued goals");
+                0
+            })
+    }
+
+    /// [`Self::drop_queued`] under the caller's hold of `writes` (`reject`, before it
+    /// deletes the proposal, so no goal queued after it is dropped and a crash never
+    /// leaves goals waiting on a proposal that is gone). `Err`: the file could not be
+    /// written, and nothing changed.
+    pub(super) async fn drop_queued_locked(
+        &self,
+        _writes: &tokio::sync::MutexGuard<'_, ()>,
+        project: &Path,
+        reason: &str,
+    ) -> Result<usize, String> {
         let mut queue = self.queue_of(project);
         let goals = std::mem::take(&mut queue.goals);
+        if goals.is_empty() {
+            return Ok(0);
+        }
         for goal in &goals {
-            tracing::info!("{}", queue::drop_line(&goal.goal, reason));
             queue.record_drop(&goal.goal, reason, unix_now());
         }
-        if !goals.is_empty()
-            && let Err(error) = self.put_queue(project, queue).await
-        {
-            tracing::warn!(%error, "could not drop the queued goals");
+        self.put_queue(project, queue).await?;
+        for goal in &goals {
+            tracing::info!("{}", queue::drop_line(&goal.goal, reason));
         }
-        goals.len()
+        Ok(goals.len())
     }
 
     /// Decision 11, at start: drops `project`'s goals whose directory is gone, then

@@ -642,11 +642,11 @@ milestone's bounds:
 
 ### Recorded, from M9.10.4 (2026-10-10)
 
-The goal queue's service tests (`crates/daemon/src/profile/tests_queue_service.rs`). Measured: the sixteen `profile::tests_queue*` tests together 0.5 s.
+The goal queue's service tests (`crates/daemon/src/profile/tests_queue_service.rs`). Measured: the sixteen `profile::tests_queue*` tests together 0.5 s; after fix round 1, the 23 together 0.75 to 1.3 s. Each `until` waits on the in-memory state it asserts (memory is updated after the file), so no assert races a later step; `a_detections_ready_stores_for_a_queued_yes_goal` awaits a real verification with no wall-clock bound of its own.
 
 | Test | Site | Bound | The code's own legal worst case | Status |
 |---|---|---|---|---|
-| The drain waits (`a_queued_goal_waits_and_a_confirm_starts_it`, `a_failed_start_is_dropped_with_its_reason`, `after_ready_stores_…`, `restore_keeps_the_queue_and_drains_…`, `restore_drops_a_goal_whose_directory_is_gone`) | `daemon/src/profile/tests_queue_service.rs` (`REQUEST_WAIT`) | 75 s, a deadline loop every 20 ms | A spawned drain: the `writes` mutex (held by nothing else once the request has answered), the queue file written on `spawn_blocking`, a test starter that answers at once, and at restore one `is_dir` per goal and one `store::load`. No git, no agent, no scheduler slot. The bound is the CLI harness's `REQUEST_WAIT`; a hang guard. | **Recorded.** |
+| The drain waits (`a_queued_goal_waits_and_a_confirm_starts_it`, `a_failed_start_is_dropped_with_its_reason`, `after_ready_stores_…`, `restore_keeps_the_queue_and_drains_…`, `restore_drops_a_goal_whose_directory_is_gone`; fix round 1: `tests_queue_order.rs`'s `until` calls, including the wait for the reject's hold of `writes`) | `daemon/src/profile/tests_queue_service.rs` (`REQUEST_WAIT`, shared by `tests_queue_order.rs`) | 75 s, a deadline loop every 20 ms | A spawned drain: the `writes` mutex (held by nothing else once the request has answered), the queue file written on `spawn_blocking`, a test starter that answers at once, and at restore one `is_dir` per goal and one `store::load`. No git, no agent, no scheduler slot. The bound is the CLI harness's `REQUEST_WAIT`; a hang guard. | **Recorded.** |
 
 ### Recorded, from M9.10.5 (2026-10-10)
 

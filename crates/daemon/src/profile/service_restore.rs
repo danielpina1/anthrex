@@ -8,7 +8,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use proto::{AgentRole, ProposalOrigin, ProposalState};
+use proto::{AgentRole, ProposalOrigin, ProposalRecord, ProposalState};
 
 use super::queue::{self, GoalQueue};
 use super::service::{ProfileService, RESTART_REASON, auto_allowed, blocking, in_progress};
@@ -31,6 +31,37 @@ fn names_in(dir: &Path) -> Result<Vec<OsString>, String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
         Err(error) => Err(error.to_string()),
     }
+}
+
+/// The goal shown for a queue file that could not be read (fix round 1, I2).
+pub const UNREADABLE_QUEUE: &str = "(unreadable queue)";
+
+/// Decision 11's queue, loaded at start. A file that does not read is renamed aside
+/// (`queued_goals.json.unreadable-<unix secs>`, never swept), so no later write
+/// replaces the goals it may hold, and the loss is recorded as one dropped goal that
+/// names the kept file. Blocking.
+fn load_queue(dir: &Path) -> GoalQueue {
+    let error = match queue::load(dir) {
+        Ok(queue) => return queue,
+        Err(error) => error,
+    };
+    let now = unix_now();
+    let aside = dir.join(format!("{}.unreadable-{now}", queue::QUEUE_FILE));
+    if let Err(rename) = std::fs::rename(dir.join(queue::QUEUE_FILE), &aside) {
+        tracing::warn!(%error, %rename, "a goal queue that does not read is ignored");
+        return GoalQueue::default();
+    }
+    tracing::warn!(%error, aside = %aside.display(), "a goal queue that does not read is kept aside");
+    let mut kept = GoalQueue::default();
+    let reason = format!(
+        "the queue file could not be read ({error}); it is kept as {}",
+        aside.display()
+    );
+    kept.record_drop(UNREADABLE_QUEUE, &reason, now);
+    if let Err(error) = queue::save(dir, &kept) {
+        tracing::warn!(%error, "could not record the unreadable goal queue");
+    }
+    kept
 }
 
 /// What the start found in one repository's data directory.
@@ -125,10 +156,7 @@ impl ProfileService {
             store::sweep_leftovers(&dir).map_err(|e| e.to_string())?;
             let proposal = store::load_proposal(&dir).ok().flatten();
             // Milestone 9.10 decision 11: the goals waiting for this profile.
-            let queue = queue::load(&dir).unwrap_or_else(|error| {
-                tracing::warn!(%error, "a goal queue that does not read is ignored");
-                GoalQueue::default()
-            });
+            let queue = load_queue(&dir);
             let loaded = (store::load(&dir), store::load_detection(&dir));
             Ok((proposal, loaded.0, loaded.1, queue))
         })
@@ -145,6 +173,7 @@ impl ProfileService {
         let ours = |project: &PathBuf| {
             super::repo_dir(&self.ctx.data_dir, project).file_name() == Some(name.as_os_str())
         };
+        let has_stored = matches!(stored, Stored::Found { .. });
         let stored = match stored {
             Stored::Found { meta, .. } => meta
                 .project
@@ -154,7 +183,9 @@ impl ProfileService {
             _ => None,
         };
         let mut project = stored.as_ref().map(|(project, _)| project.clone());
-        if let Some(record) = proposal.filter(|record| ours(&record.project)) {
+        let proposal = proposal.filter(|record| ours(&record.project));
+        let has_proposal = proposal.is_some();
+        if let Some(record) = proposal {
             project = Some(record.project.clone());
             // Decision 10 (M9.0.5): the ready list is rebuilt from disk, loaded off the
             // table's lock above; an interrupted proposal fails below, so is not ready.
@@ -182,12 +213,50 @@ impl ProfileService {
         let queued = queue.goals.first().map(|goal| goal.project.clone());
         let queued = queued.filter(|project| ours(project)).or(project.clone());
         if let Some(queued) = queued.filter(|_| !queue.is_empty()) {
+            // Goals with no proposal and no stored profile wait on a set-up nothing
+            // runs (a crash before their set-up's first write): failed, so it can be
+            // retried, never shown reading the repo forever.
+            if !queue.goals.is_empty() && !has_proposal && !has_stored {
+                self.fail_orphan_set_up(repo_dir, &queued).await;
+            }
             self.remember_queue(&queued, queue);
         }
         Found {
             project: marker.filter(|project| ours(project)).or(project),
             name,
             stored,
+        }
+    }
+
+    /// A `Failed` goal set-up for `project`, written and noted (fix round 1, I1).
+    async fn fail_orphan_set_up(&self, repo_dir: &Path, project: &Path) {
+        let now = unix_now();
+        let failed = ProposalRecord {
+            project: project.to_path_buf(),
+            state: ProposalState::Failed {
+                reason: RESTART_REASON.to_string(),
+            },
+            origin: ProposalOrigin::Goal,
+            started_at: now,
+            updated_at: now,
+            base_sha: String::new(),
+            scout_id: None,
+            window_id: None,
+            profile: None,
+            verification: None,
+            dropped: Vec::new(),
+            proposed: None,
+            trusted_project: Vec::new(),
+            unconfined_checks: false,
+            auto_confirm: false,
+            edit: None,
+        };
+        let (dir, written) = (repo_dir.to_path_buf(), failed.clone());
+        match blocking(move || store::save_proposal(&dir, &written).map_err(|e| e.to_string()))
+            .await
+        {
+            Ok(()) => self.note_proposal(project, Some(&failed)),
+            Err(error) => tracing::warn!(%error, "could not fail an interrupted goal set-up"),
         }
     }
 

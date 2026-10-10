@@ -280,6 +280,13 @@ impl ProfileService {
     pub(super) async fn reject(&self, dir: PathBuf) -> Result<ProfileReply, String> {
         let project = self.project_of(dir).await?;
         let writes = self.writes.lock().await;
+        // Milestone 9.10 decision 8: a goal cannot start without the proposal. Dropped
+        // first, under this hold: a crash then leaves a proposal with no queue, never
+        // goals waiting on a proposal that is gone.
+        let dropped = self
+            .drop_queued_locked(&writes, &project, DISCARDED)
+            .await
+            .map_err(|error| format!("could not drop the queued goals: {error}"))?;
         let running = {
             let mut table = crate::lock(&self.table);
             table.active.get_mut(&project).map(|active| {
@@ -305,9 +312,6 @@ impl ProfileService {
             let dir = self.repo_dir(&project);
             blocking(move || store::delete_detection(&dir).map_err(|e| e.to_string())).await?;
         }
-        drop(writes);
-        // Milestone 9.10 decision 8: a goal cannot start without the proposal.
-        let dropped = self.drop_queued(&project, DISCARDED).await;
         if running.is_none() && !existed && dropped == 0 {
             return Err(format!("no proposal for {}", project.display()));
         }

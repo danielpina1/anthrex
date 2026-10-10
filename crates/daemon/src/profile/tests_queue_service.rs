@@ -30,10 +30,13 @@ const REQUEST_WAIT: Duration = Duration::from_secs(75);
 /// Between two looks.
 const POLL: Duration = Duration::from_millis(20);
 
-type Seen = Arc<Mutex<Vec<QueuedGoal>>>;
+pub(super) type Seen = Arc<Mutex<Vec<QueuedGoal>>>;
 
 /// A starter that records each goal it is given and answers `answer`.
-fn recorder(profiles: &ProfileService, answer: Result<&'static str, &'static str>) -> Seen {
+pub(super) fn recorder(
+    profiles: &ProfileService,
+    answer: Result<&'static str, &'static str>,
+) -> Seen {
     let seen: Seen = Arc::default();
     let inner = seen.clone();
     let starter: GoalStarter = Arc::new(move |goal: QueuedGoal| {
@@ -45,7 +48,7 @@ fn recorder(profiles: &ProfileService, answer: Result<&'static str, &'static str
 }
 
 /// Polls `check` every `POLL` until it holds, at most `REQUEST_WAIT`.
-async fn until(what: &str, mut check: impl FnMut() -> bool) {
+pub(super) async fn until(what: &str, mut check: impl FnMut() -> bool) {
     let deadline = Instant::now() + REQUEST_WAIT;
     while !check() {
         assert!(Instant::now() < deadline, "timed out waiting for {what}");
@@ -54,7 +57,11 @@ async fn until(what: &str, mut check: impl FnMut() -> bool) {
 }
 
 /// A `Ready` detection proposal on disk and in the table, as `verify_phase` leaves it.
-fn ready_proposal(rig: &Rig, project: &Path, dropped: Vec<DroppedCommand>) -> ProposalRecord {
+pub(super) fn ready_proposal(
+    rig: &Rig,
+    project: &Path,
+    dropped: Vec<DroppedCommand>,
+) -> ProposalRecord {
     let mut ready = record(project, ProposalState::Ready, 1_790_000_000);
     ready.dropped = dropped;
     let dir = rig.repo_dir(project);
@@ -64,7 +71,7 @@ fn ready_proposal(rig: &Rig, project: &Path, dropped: Vec<DroppedCommand>) -> Pr
     ready
 }
 
-async fn status(profiles: &Arc<ProfileService>, project: &Path) -> ProfileStatus {
+pub(super) async fn status(profiles: &Arc<ProfileService>, project: &Path) -> ProfileStatus {
     match profiles
         .request(ProfileRequest::Status {
             dir: project.to_path_buf(),
@@ -76,7 +83,7 @@ async fn status(profiles: &Arc<ProfileService>, project: &Path) -> ProfileStatus
     }
 }
 
-fn done(reply: ProfileReply) -> String {
+pub(super) fn done(reply: ProfileReply) -> String {
     match reply {
         ProfileReply::Done { message } => message,
         other => panic!("{other:?}"),
@@ -207,9 +214,10 @@ async fn a_failed_start_is_dropped_with_its_reason() {
             })
             .await,
     );
-    let repo_dir = rig.repo_dir(&project);
+    // Memory is updated after the file (`put_queue`), so waiting on memory leaves
+    // nothing for the asserts below to race.
     until("the refused start to be recorded", || {
-        queue::load(&repo_dir).is_ok_and(|queue| !queue.dropped.is_empty())
+        !rig.profiles.queued_for(&project).1.is_empty()
     })
     .await;
     assert_eq!(crate::lock(&seen).len(), 1);
@@ -277,7 +285,7 @@ async fn after_ready_raises_the_review_when_something_was_dropped() {
 }
 
 /// A queue file and a stored profile from before a restart.
-fn write_queue(rig: &Rig, project: &Path, goals: Vec<QueuedGoal>) {
+pub(super) fn write_queue(rig: &Rig, project: &Path, goals: Vec<QueuedGoal>) {
     let dir = rig.repo_dir(project);
     std::fs::create_dir_all(&dir).unwrap();
     queue::save(
@@ -325,9 +333,9 @@ async fn restore_drops_a_goal_whose_directory_is_gone() {
     let token = CancellationToken::new();
     fresh.spawn(token.clone());
     let repo_dir = rig.repo_dir(&project);
+    // Memory, which `put_queue` updates after the file.
     until("the gone goal to be dropped", || {
-        queue::load(&repo_dir)
-            .is_ok_and(|queue| queue.goals.is_empty() && !queue.dropped.is_empty())
+        fresh.queued_goals().is_empty() && !fresh.queued_for(&project).1.is_empty()
     })
     .await;
     let queue = queue::load(&repo_dir).unwrap();
