@@ -205,9 +205,14 @@ async fn a_goal_queued_after_a_store_and_its_drain_starts_at_once() {
     // Meanwhile the proposal is stored and its (empty) queue drained.
     store_profile(&w.data, &pre.project);
     let reply = w.runs.queue_goal_start(start).await;
+    // Task 5 re-review minor: a start was attempted. The orchestrator's runtime check
+    // runs only once `goal_ready` has found the stored profile (`start_ready`).
+    let RunReply::Refused { message, .. } = &reply else {
+        panic!("not a start: {reply:?}");
+    };
     assert!(
-        !matches!(reply, RunReply::Queued { .. }),
-        "queued behind a stored profile: {reply:?}"
+        message.starts_with("the orchestrator's runtime claude is not installed"),
+        "{message}"
     );
     assert!(w.profiles.queued_goals().is_empty());
     let repo_dir = crate::profile::repo_dir(&w.data, &pre.project);
@@ -243,6 +248,77 @@ async fn a_drained_goal_with_no_profile_is_a_failed_start() {
     assert!(w.profiles.queued_goals().is_empty());
     let repo_dir = crate::profile::repo_dir(&w.data, &pre.project);
     assert!(!repo_dir.join("proposal.json").exists(), "a set-up started");
+    w.shutdown.cancel();
+    w.runs.stop().await;
+}
+
+/// Final review M3: another goal's set-up is registered but has not written its first
+/// record yet. This goal waits for that set-up; it is not refused with `detection is
+/// already running` (D1: never refused for want of a profile).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_goal_waits_for_a_set_up_registered_before_its_first_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = repo(dir.path());
+    let w = wired(dir.path(), config::Orchestrator::default());
+    let pre = crate::run::git::preflight("git".as_ref(), &root, ANSWER).unwrap();
+    // The other goal's `start_detection`, between its `register` and its first write.
+    let (generation, _token) = w.profiles.register_for_tests(&pre.project).unwrap();
+    let start = super::NoProfileStart {
+        pre: pre.clone(),
+        proposal: None,
+        goal: "add b".into(),
+        dir: root.clone(),
+        flags: (false, true),
+        yes: false,
+        choices: (None, None, None),
+    };
+    let reply = w.runs.queue_goal_start(start).await;
+    assert!(
+        matches!(reply, RunReply::Queued { .. }),
+        "not queued: {reply:?}"
+    );
+    assert_eq!(w.profiles.queued_goals().len(), 1);
+    w.profiles.unregister_for_tests(&pre.project, generation);
+    w.shutdown.cancel();
+    w.runs.stop().await;
+}
+
+/// Task 5 re-review minor: a goal's set-up does not start for a repository whose
+/// profile was stored since the goal found none; no stray proposal or scout.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_goal_set_up_does_not_start_beside_a_stored_profile() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = repo(dir.path());
+    let w = wired(dir.path(), config::Orchestrator::default());
+    let pre = crate::run::git::preflight("git".as_ref(), &root, ANSWER).unwrap();
+    store_profile(&w.data, &pre.project);
+    let started = w
+        .profiles
+        .start_detection(&pre, ProposalOrigin::Goal, false, true)
+        .await;
+    assert!(started.is_err(), "a set-up started beside a stored profile");
+    let repo_dir = crate::profile::repo_dir(&w.data, &pre.project);
+    assert!(!repo_dir.join("proposal.json").exists());
+
+    // Through the goal's own path: it starts at once, and no proposal is written.
+    let start = super::NoProfileStart {
+        pre: pre.clone(),
+        proposal: None,
+        goal: "add a".into(),
+        dir: root.clone(),
+        flags: (false, true),
+        yes: false,
+        choices: (None, None, None),
+    };
+    let reply = w.runs.queue_goal_start(start).await;
+    let RunReply::Refused { message, .. } = &reply else {
+        panic!("not a start: {reply:?}");
+    };
+    assert!(
+        message.starts_with("the orchestrator's runtime claude is not installed"),
+        "{message}"
+    );
+    assert!(!repo_dir.join("proposal.json").exists());
     w.shutdown.cancel();
     w.runs.stop().await;
 }
