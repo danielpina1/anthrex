@@ -63,7 +63,9 @@ const UNREADABLE_CUT: &str = "\n… (cut at 64 KiB)";
 
 /// Decision 32: the text of the file `path` (the one [`Stored::Unparseable`] names),
 /// at most [`UNREADABLE_TEXT_MAX`] bytes cut at a character boundary and then marked;
-/// `None` when it cannot be read. Blocking; called only for an unparseable profile.
+/// `None` when it cannot be read. The cap holds after invalid bytes are replaced (each
+/// grows to three; task 3 review minor 2). Blocking; called only for an unparseable
+/// profile.
 pub fn load_text(path: &Path) -> Option<String> {
     let mut bytes = Vec::new();
     std::fs::File::open(path)
@@ -72,17 +74,14 @@ pub fn load_text(path: &Path) -> Option<String> {
                 .read_to_end(&mut bytes)
         })
         .ok()?;
-    let cut = bytes.len() > UNREADABLE_TEXT_MAX;
-    if cut {
-        bytes.truncate(UNREADABLE_TEXT_MAX);
-        if let Err(error) = std::str::from_utf8(&bytes)
-            && error.error_len().is_none()
-        {
-            bytes.truncate(error.valid_up_to());
-        }
-    }
     let mut text = String::from_utf8_lossy(&bytes).into_owned();
+    let cut = text.len() > UNREADABLE_TEXT_MAX;
     if cut {
+        let mut end = UNREADABLE_TEXT_MAX;
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        text.truncate(end);
         text.push_str(UNREADABLE_CUT);
     }
     Some(text)
