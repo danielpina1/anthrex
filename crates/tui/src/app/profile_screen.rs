@@ -164,6 +164,10 @@ pub struct ProfileScreen {
     pub(crate) acting: Option<u64>,
     /// Until when the status is polled after **Use this** started queued goals.
     pub(crate) drain_until: Option<Instant>,
+    /// Final re-review N2: the footer draws only the dropped goals recorded since this
+    /// time (the daemon's clock, unix seconds): the screen's opening, or the last
+    /// **Use this**. Older ones stay in `anthrex profile status`.
+    pub(crate) drops_since: u64,
 }
 
 /// Interfaces-style refusal of `C-b a`, `C-b m` and `C-b t` over a full screen.
@@ -190,6 +194,7 @@ impl ProfileScreen {
             saving: None,
             acting: None,
             drain_until: None,
+            drops_since: 0,
         }
     }
 
@@ -424,7 +429,9 @@ impl App {
     /// Opens the screen on `dir` (replacing any open screen) and asks the three things;
     /// a ready review proposal shows as the card (decision 27).
     pub(crate) fn open_profile_on(&mut self, dir: PathBuf) -> Vec<Effect> {
-        let screen = ProfileScreen::new(dir);
+        let mut screen = ProfileScreen::new(dir);
+        // Final re-review N2: drops older than the screen are not drawn.
+        screen.drops_since = self.run_now();
         self.set_screen(Some(Screen::Profile(Box::new(screen))));
         self.profile_fetch_all(Instant::now())
     }

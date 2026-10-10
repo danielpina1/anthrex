@@ -59,13 +59,13 @@ pub fn sections() -> &'static [(&'static str, bool, &'static [&'static str])] {
     &SECTIONS
 }
 
-/// The section of `key` and whether it sits inside Advanced (`env.<NAME>` is the
-/// environment section's).
 /// Whether `key`'s row sits inside Advanced.
 pub fn in_advanced(key: &str) -> bool {
     section_of(key).1
 }
 
+/// The section of `key` and whether it sits inside Advanced (`env.<NAME>` is the
+/// environment section's).
 fn section_of(key: &str) -> (&'static str, bool) {
     let key = if key.starts_with("env.") {
         ENV_ADD
@@ -165,6 +165,18 @@ pub struct Row {
     /// The verification record of this row's command, when it ran this command.
     pub check: Option<CommandCheck>,
 }
+
+/// The verified command keys, in the screen's order: [`check_of`] answers for each.
+pub const VERIFIED_KEYS: [&str; 8] = [
+    "setup",
+    "check",
+    "single_test",
+    "build_check",
+    "module_test",
+    "module_tests",
+    "module_graph",
+    "toolchain_id",
+];
 
 /// The verification record of a verified command key (`ProfileVerification`'s eight).
 pub fn check_of<'a>(v: &'a ProfileVerification, key: &str) -> Option<&'a CommandCheck> {

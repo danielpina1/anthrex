@@ -227,3 +227,29 @@ fn use_this_with_queued_goals_watches_them_start() {
         assert_eq!(statuses(&app.screens_tick(past)), 0, "{queued}");
     }
 }
+
+/// Final re-review N2: the screen counts dropped goals from its opening, and again
+/// from each **Use this**, on the daemon's clock.
+#[test]
+fn opening_and_use_this_mark_where_the_drops_start() {
+    let mut app = open_app();
+    app.runs.now = 5_000;
+    let ids = open(&mut app);
+    assert!(
+        screen(&app).drops_since >= 5_000,
+        "{}",
+        screen(&app).drops_since
+    );
+    reply(&mut app, ids[0], status(Some(ProposalState::Ready)));
+    reply(&mut app, ids[1], shown(&stored_profile(), vec![]));
+    let mut proposal = stored_profile();
+    proposal.check = Some("cargo test --workspace".into());
+    reply(&mut app, ids[2], shown(&proposal, vec![]));
+    app.runs.now = 6_000;
+    assert_eq!(profile_requests(&tap(&mut app, KeyCode::Enter)).len(), 1);
+    assert!(
+        screen(&app).drops_since >= 6_000,
+        "{}",
+        screen(&app).drops_since
+    );
+}

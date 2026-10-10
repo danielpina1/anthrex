@@ -3,7 +3,8 @@
 //! `profile_tests.rs` (`AGENTS.md` rule 8).
 
 use super::tests::{
-    SIZES, app_with_profile, interior, record, screen_mut, screen_text, select, sp_app, status_of,
+    SIZES, app_with_profile, check, interior, record, screen_mut, screen_text, select, shown,
+    sp_app, sp_profile, sp_verification, status_of,
 };
 use crate::app::App;
 use crate::app::profile_screen::ProfileScreen;
@@ -368,7 +369,7 @@ fn dropped_goals_are_drawn_with_their_reasons() {
         .map(|goal| proto::DroppedGoal {
             goal: goal.to_string(),
             reason: format!("{goal}: HEAD is detached"),
-            at: 1,
+            at: super::tests::NOW,
         })
         .collect();
     screen_mut(&mut app).status = Some(st);
@@ -381,6 +382,60 @@ fn dropped_goals_are_drawn_with_their_reasons() {
     assert_eq!(buffer[(x, y)].fg, failed);
     let cut = format!("dropped the queued goal \"{}…\":", "g".repeat(59));
     assert!(text.contains(&cut), "{text}");
+}
+
+/// Final re-review N2: the footer draws only the goals dropped since the screen opened
+/// or since the last **Use this** (`drops_since`); an older one is left to `anthrex
+/// profile status`.
+#[test]
+fn only_goals_dropped_since_the_screen_opened_are_drawn() {
+    let mut app = sp_app(false);
+    let mut st = status_of(true, None);
+    st.dropped_goals = [("old", 99), ("new", 100)]
+        .iter()
+        .map(|&(goal, at)| proto::DroppedGoal {
+            goal: goal.to_string(),
+            reason: "HEAD is detached".into(),
+            at,
+        })
+        .collect();
+    let s = screen_mut(&mut app);
+    s.status = Some(st);
+    s.drops_since = 100;
+    let text = audit::rows(&audit::draw(&app, 120, 40)).join("\n");
+    assert!(
+        text.contains("dropped the queued goal \"new\": HEAD is detached"),
+        "{text}"
+    );
+    assert!(!text.contains("\"old\""), "an old drop is drawn\n{text}");
+}
+
+/// Final re-review N3: a stored profile kept by **Save anyway** with a failing check is
+/// not a plain green Ready: the line names the command and takes the attention tone.
+/// An out-of-date profile still says so first.
+#[test]
+fn a_profile_saved_failing_its_check_is_not_plain_ready() {
+    let mut app = sp_app(false);
+    let attention = role(Role::Attention, app.palette()).fg.unwrap();
+    let mut v = sp_verification();
+    v.check = Some(check("cargo nextest run", Some(101), 3));
+    screen_mut(&mut app).stored = shown(sp_profile(), v, vec![]);
+    let buffer = audit::draw(&app, 120, 40);
+    let rows = interior(&buffer, false).rows;
+    let line = "Ready · check saved failing its check · verified 2 days ago";
+    assert!(rows[0].ends_with(line), "{}", rows.join("\n"));
+    let &(x, y) = audit::find(&buffer, line).first().unwrap();
+    assert_eq!(buffer[(x, y)].fg, attention);
+
+    let mut st = status_of(true, None);
+    st.stale = vec!["Cargo.toml".into()];
+    screen_mut(&mut app).status = Some(st);
+    let rows = interior(&audit::draw(&app, 120, 40), false).rows;
+    assert!(
+        rows[0].ends_with("Out of date — Cargo.toml changed · press d to check again"),
+        "{}",
+        rows[0]
+    );
 }
 
 /// Final review M1: with no stored profile and nothing listed, only `d` (and `x` with a

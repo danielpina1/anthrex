@@ -4,10 +4,12 @@
 
 use super::{ProfileScreen, plain};
 use crate::app::App;
+use crate::app::profile_screen::Side;
+use crate::profile_view::{VERIFIED_KEYS, check_of};
 use crate::profile_words::{self, StatusTone};
 use crate::theme::{Palette, Role, ellipsis, role};
 use crate::ui::kit::{cut, wrap_words};
-use proto::{ProposalOrigin, ProposalState};
+use proto::{ProfileStatus, ProposalOrigin, ProposalState};
 use ratatui::text::{Line, Span};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
@@ -61,7 +63,13 @@ pub(super) fn status_line(app: &App, s: &ProfileScreen, width: usize, p: Palette
         ),
         (Some(status), _) => {
             let (line, tone) = profile_words::status_line_tone(status, app.run_now());
-            (plain(&line, p), status_role(tone))
+            match saved_failing(s).filter(|_| tone == StatusTone::Ready) {
+                Some(key) => {
+                    let line = saved_failing_line(status, key, app.run_now());
+                    (plain(&line, p), status_role(StatusTone::Attention))
+                }
+                None => (plain(&line, p), status_role(tone)),
+            }
         }
         // No reply will come for the last `Status` (minor 2): why, until one does.
         (None, Some(why)) => (plain(why, p), Role::Failed),
@@ -70,6 +78,34 @@ pub(super) fn status_line(app: &App, s: &ProfileScreen, width: usize, p: Palette
     let text = cut_left(&text, width, ellipsis(p));
     let lead = " ".repeat(width.saturating_sub(text.width()));
     Line::from(vec![Span::raw(lead), Span::styled(text, role(r, p))])
+}
+
+/// Final re-review N3: the first command the stored profile keeps although its check
+/// failed (**Save anyway**); never on the card.
+fn saved_failing(s: &ProfileScreen) -> Option<&'static str> {
+    let Side::Ready(shown) = &s.stored else {
+        return None;
+    };
+    let v = shown.verification.as_ref().filter(|_| !s.showing_card())?;
+    VERIFIED_KEYS
+        .into_iter()
+        .find(|key| check_of(v, key).is_some_and(|c| !c.ok))
+}
+
+/// `Ready · <label> saved failing its check · verified <age> ago`. The age is the
+/// daemon's `verified_at` (the last verification of the commands that passed).
+fn saved_failing_line(status: &ProfileStatus, key: &str, now: u64) -> String {
+    let line = format!(
+        "Ready · {} saved failing its check",
+        profile_words::label(key)
+    );
+    match status.verified_at.or(status.confirmed_at) {
+        Some(at) => format!(
+            "{line} · verified {} ago",
+            profile_words::age(now.saturating_sub(at))
+        ),
+        None => line,
+    }
 }
 
 /// Decision 23: a failed set-up's reason, the screen's error row.
@@ -107,12 +143,17 @@ const DROPPED_SHOWN: usize = 3;
 const GOAL_CHARS: usize = 60;
 
 /// Final review D-I2: the last queued goals that could not start, as `profile status`
-/// lists them: `dropped the queued goal "<goal>": <reason>`.
+/// lists them: `dropped the queued goal "<goal>": <reason>`. Final re-review N2: only
+/// those recorded since the screen opened or since the last **Use this**.
 fn dropped_goals(s: &ProfileScreen) -> Vec<String> {
     let Some(status) = &s.status else {
         return vec![];
     };
-    let list = &status.dropped_goals;
+    let list: Vec<_> = status
+        .dropped_goals
+        .iter()
+        .filter(|d| d.at >= s.drops_since)
+        .collect();
     list[list.len().saturating_sub(DROPPED_SHOWN)..]
         .iter()
         .map(|d| {

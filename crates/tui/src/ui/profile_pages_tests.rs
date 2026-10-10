@@ -244,7 +244,7 @@ fn hostile_text_never_reaches_a_drawn_row() {
             st.dropped_goals = vec![proto::DroppedGoal {
                 goal: evil.into(),
                 reason: evil.into(),
-                at: 1,
+                at: super::tests::NOW,
             }];
             s.selected = 1;
             s.expanded = Some("check".into());

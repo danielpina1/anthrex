@@ -137,6 +137,7 @@ impl App {
     /// Decision 29: **Use this**: `Confirm` with the proposal's `Shown.toml`, so only
     /// what was shown is stored.
     fn profile_use_this(&mut self) -> Vec<Effect> {
+        let since = self.run_now();
         let Some(s) = self.profile_screen_mut() else {
             return vec![];
         };
@@ -148,7 +149,12 @@ impl App {
             dir: s.dir.clone(),
             shown: Some(shown.toml.clone()),
         };
-        self.profile_act(ProfileAsk::Confirm, request)
+        let effects = self.profile_act(ProfileAsk::Confirm, request);
+        // Final re-review N2: the footer's drops count from this Use this.
+        if let (Some(s), false) = (self.profile_screen_mut(), effects.is_empty()) {
+            s.drops_since = since;
+        }
+        effects
     }
 
     /// Decisions 18 and 19: `s` stores (or applies) the failed edit anyway; `r` reverts.
