@@ -88,3 +88,24 @@ fn engine_env_is_applied_to_the_command() {
     assert!(confined_envs.contains(&(OsStr::new("ANTHREX_SOCKET"), None)));
     assert!(confined_envs.contains(&(OsStr::new("ANTHREX_DATA_DIR"), None)));
 }
+
+/// Decision 32 (D3): a check, proof, `setup` or tier step runs worker-written code, so it
+/// loses the user's cloud and registry tokens unless `ANTHREX_CHECK_ENV_PASS` names one
+/// (this test process sets no such variable).
+#[test]
+fn checks_do_not_inherit_known_secrets() {
+    use config::reserved_env::CHECK_SECRET_NAMES;
+    for (confined, mut command) in [(false, Command::new("env")), (true, Command::new("env"))] {
+        engine_env(&mut command, (&[], &[]), confined);
+        let envs: Vec<(&OsStr, Option<&OsStr>)> = command.get_envs().collect();
+        for name in CHECK_SECRET_NAMES
+            .iter()
+            .chain(&["GITHUB_TOKEN", "GH_TOKEN", "NPM_TOKEN"])
+        {
+            assert!(
+                envs.contains(&(OsStr::new(name), None)),
+                "confined {confined}: {name} is not removed: {envs:?}"
+            );
+        }
+    }
+}

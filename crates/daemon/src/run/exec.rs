@@ -148,6 +148,7 @@ fn engine_env(command: &mut Command, (env, extra): Env<'_>, confined: bool) {
     for name in SCRUBBED_NAMES.iter().chain(credentials) {
         command.env_remove(name);
     }
+    scrub_check_secrets(command);
     command.env_remove("ANTHREX_WINDOW_ID");
     if confined {
         command
@@ -161,6 +162,34 @@ fn engine_env(command: &mut Command, (env, extra): Env<'_>, confined: bool) {
     }
     for (key, value) in env.iter().chain(extra) {
         command.env(key, value);
+    }
+}
+
+/// Milestone 9.11 decision 32 (D3): removes the user's cloud and registry tokens
+/// (`CHECK_SECRET_NAMES`, and inherited names under `CHECK_SECRET_PREFIXES`), keeping
+/// only the exact names the daemon's own `ANTHREX_CHECK_ENV_PASS` lists.
+fn scrub_check_secrets(command: &mut Command) {
+    use config::reserved_env::{CHECK_ENV_PASS, CHECK_SECRET_NAMES, CHECK_SECRET_PREFIXES};
+    let pass = std::env::var(CHECK_ENV_PASS).unwrap_or_default();
+    let passed = |name: &[u8]| {
+        pass.split(',')
+            .map(str::trim)
+            .any(|kept| !kept.is_empty() && kept.as_bytes() == name)
+    };
+    for name in CHECK_SECRET_NAMES {
+        if !passed(name.as_bytes()) {
+            command.env_remove(name);
+        }
+    }
+    for (key, _) in std::env::vars_os() {
+        let bytes = key.as_bytes();
+        if CHECK_SECRET_PREFIXES
+            .iter()
+            .any(|prefix| bytes.starts_with(prefix.as_bytes()))
+            && !passed(bytes)
+        {
+            command.env_remove(&key);
+        }
     }
 }
 
