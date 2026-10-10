@@ -298,6 +298,7 @@ fn e2e_the_queue_survives_a_daemon_restart() {
         |s| s.proposal.as_ref().is_some_and(|r| r.window_id.is_some()),
         PROFILE_WAIT,
     );
+    wait_claimed(&h, "scout-onboarding-1", CLAIM_WAIT);
     h.restart_daemon(&[]);
     let status = h.profile_status();
     assert_eq!(
@@ -313,6 +314,93 @@ fn e2e_the_queue_survives_a_daemon_restart() {
     let used = ok(h.profile_input(&["use", "--yes"], ""));
     assert!(used.contains("; starting 1 queued goal"), "{used}");
     completes(&h, RUN_WAIT);
+}
+
+/// M9.11.38a (C14): the restart above must wait until the first scout has claimed its
+/// script, not only until its window exists. `fake-agent` takes the role's script with
+/// the smallest unclaimed `n` (`fake-agent/src/roles.rs`), after its own exec and a
+/// `git rev-parse`; a scout stopped before it claims leaves `scout-onboarding-1` (the
+/// hang) to the scout `detect` starts after the restart, which then fails "the scout
+/// ran longer than 60 s". Here the first scout's `claude` stalls 5 s before it execs
+/// `fake-agent`, so it is still unclaimed whenever the window is first seen.
+#[test]
+fn the_restart_waits_for_the_first_scout_to_claim_its_script() {
+    let stall = tempfile::tempdir().unwrap();
+    let wrapper = stall.path().join("claude");
+    testexec::write_executable(
+        &wrapper,
+        format!(
+            "#!/bin/sh\ncase \"$*\" in *scout*) mkdir '{first}' 2>/dev/null && sleep {secs} ;; esac\nexec '{fake}' \"$@\"\n",
+            first = stall.path().join("first").display(),
+            secs = SCOUT_STALL.as_secs(),
+            fake = support::fake_agent_bin().display(),
+        ),
+    );
+    // The warm-up (`docs/timing-budgets.md`, the codex-probe ordering row): the
+    // wrapper's first exec is paid here, before any daemon budget can time it.
+    let warm = std::process::Command::new(&wrapper)
+        .arg("--version")
+        .output()
+        .unwrap();
+    assert!(warm.status.success(), "{warm:?}");
+    let wrapper = wrapper.display().to_string();
+    let mut h = RunHarness::adapt(
+        "claude",
+        PROFILE_LINES,
+        &[("ANTHREX_CLAUDE_BIN", wrapper.as_str())],
+        ADAPT_FILES,
+    );
+    h.onboarding_script(1, &[hang()]);
+    h.onboarding_report(2, json!({"check": "sh check.sh"}));
+    h.decider("triage", 1, triage_single(&["a.txt"]));
+    green_scripts(&h.repo);
+    queued(&h.start_goal("add a", &[]));
+    h.wait_profile(
+        "the scout to run",
+        |s| s.proposal.as_ref().is_some_and(|r| r.window_id.is_some()),
+        PROFILE_WAIT,
+    );
+    wait_claimed(&h, "scout-onboarding-1", CLAIM_WAIT + SCOUT_STALL);
+    assert!(
+        claimed(&h, "scout-onboarding-1"),
+        "the first scout claimed its script before the restart"
+    );
+    h.restart_daemon(&[]);
+    ok(h.profile(&["detect"]));
+    wait_claimed(&h, "scout-onboarding-2", CLAIM_WAIT);
+    h.wait_profile("the new proposal", ready, PROFILE_WAIT);
+}
+
+/// The injected stall of the first scout's start in the test above.
+const SCOUT_STALL: Duration = Duration::from_secs(5);
+
+/// From a scout's window being up to its script claimed: `fake-agent`'s exec (a first
+/// exec on macOS, ~0.44 s, serialised with the first execs of this file's parallel
+/// tests: eight at once finish by 3.5 s, `docs/timing-budgets.md`, "Measured primitive
+/// costs"), then its `git rev-parse` under `GIT_TIMEOUT` (5 s, `fake-agent/src/roles.rs`),
+/// then one `create_new`; plus 10 s of wall-clock slack.
+const CLAIM_WAIT: Duration = Duration::from_secs(4 + 5 + 10);
+
+/// Whether `fake-agent` has claimed the script `<name>.jsonl`.
+fn claimed(h: &RunHarness, name: &str) -> bool {
+    h.repo
+        .join(".git/fake-agent")
+        .join(format!("{name}.jsonl.claimed"))
+        .exists()
+}
+
+/// Waits until `fake-agent` has claimed `<name>.jsonl` (its `.claimed` file, next to
+/// the scripts `script_in` writes), for at most `within`.
+fn wait_claimed(h: &RunHarness, name: &str, within: Duration) {
+    let deadline = Instant::now() + within;
+    while !claimed(h, name) {
+        assert!(
+            Instant::now() < deadline,
+            "{name} was not claimed within {within:?}\n{}",
+            h.log_tail()
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 
 /// Decision 12: a set-up that cannot start refuses the goal with its reason and queues
