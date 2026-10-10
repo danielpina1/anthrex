@@ -8,10 +8,11 @@
 //! keeps, so the graph command's stdout goes to a file in the command's own `TMPDIR`
 //! (the confinement's, or this process's when unconfined), never into the checkout.
 
-use std::fs::OpenOptions;
-use std::io::Read;
+use std::fs::{File, OpenOptions};
+use std::io::{self, Read};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use proto::{ModuleNames, ProfileVerification, RepoProfile};
@@ -55,16 +56,10 @@ pub(crate) fn capture(
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos());
-    let file: PathBuf = tmp.join(format!("anthrex-graph-{}-{nanos}.json", std::process::id()));
-    if let Err(error) = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&file)
-    {
-        let reason = format!("cannot create {}: {error}", file.display());
-        return (ShellOutcome::refused(reason), None);
-    }
+    let file = match graph_file(&tmp, nanos) {
+        Ok((file, _)) => file,
+        Err(error) => return (ShellOutcome::refused(error.to_string()), None),
+    };
     let shell = format!(
         "{{ {command}\n}} > {}",
         shell_quote(&file.to_string_lossy())
@@ -75,6 +70,42 @@ pub(crate) fn capture(
         std::fs::File::open(&file).and_then(|f| f.take(GRAPH_BYTES_MAX).read_to_string(&mut text));
     let _ = std::fs::remove_file(&file);
     (outcome, read.ok().map(|_| text))
+}
+
+/// How many sequence numbers [`graph_file`] tries before it refuses (decision 37).
+const GRAPH_FILE_TRIES: u32 = 16;
+/// This process's capture sequence: two captures in one process at the same `nanos`
+/// (the clock's resolution, or two threads at once) still get two names (C1, E1).
+static GRAPH_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// A new, empty capture file in `tmp`, created `create_new` with mode `0o600`, named
+/// `anthrex-graph-<pid>-<nanos>-<seq>.json`. A name that exists already (a leftover, or
+/// another process with a recycled pid) takes the next sequence number, up to
+/// [`GRAPH_FILE_TRIES`] tries. The error names the last path tried.
+fn graph_file(tmp: &Path, nanos: u128) -> io::Result<(PathBuf, File)> {
+    let pid = std::process::id();
+    let mut tries = 0;
+    loop {
+        let seq = GRAPH_SEQ.fetch_add(1, Ordering::Relaxed);
+        let file = tmp.join(format!("anthrex-graph-{pid}-{nanos}-{seq}.json"));
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&file)
+        {
+            Ok(handle) => return Ok((file, handle)),
+            Err(error) => {
+                tries += 1;
+                if error.kind() != io::ErrorKind::AlreadyExists || tries >= GRAPH_FILE_TRIES {
+                    return Err(io::Error::new(
+                        error.kind(),
+                        format!("cannot create {}: {error}", file.display()),
+                    ));
+                }
+            }
+        }
+    }
 }
 
 /// The directories under `dir` that match a `modules` pattern, relative, sorted.
@@ -233,3 +264,7 @@ pub fn run_commands(
         record(command, outcome, ok)
     });
 }
+
+#[cfg(test)]
+#[path = "verify_tiers_tests.rs"]
+mod tests;
