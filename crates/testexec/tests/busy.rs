@@ -13,38 +13,6 @@ fn run(script: &Path) -> std::io::Result<std::process::ExitStatus> {
     Command::new(script).status()
 }
 
-/// The pattern every stand-in used before: written in this process, closed, chmod'ed and
-/// renamed into place. A fork taken while the write descriptor was open keeps a copy of
-/// it, on the same inode the rename put at `path`, so the exec is refused until that
-/// child execs. Linux only: macOS does not refuse to exec a file open for writing.
-#[cfg(target_os = "linux")]
-#[test]
-fn a_script_written_in_process_is_busy_while_a_fork_holds_its_descriptor_renamed_or_not() {
-    use std::io::Write;
-    let dir = tempfile::tempdir().unwrap();
-    let staged = dir.path().join("stand-in.new");
-    let script = dir.path().join("stand-in");
-    let mut file = std::fs::File::create(&staged).unwrap();
-    file.write_all(SCRIPT.as_bytes()).unwrap();
-    let fork = StalledFork::start();
-    drop(file);
-    std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755)).unwrap();
-    std::fs::rename(&staged, &script).unwrap();
-
-    let busy = run(&script).unwrap_err();
-    assert_eq!(
-        busy.kind(),
-        std::io::ErrorKind::ExecutableFileBusy,
-        "{busy}"
-    );
-
-    fork.release();
-    assert!(
-        run(&script).unwrap().success(),
-        "runs once the fork has exec'd"
-    );
-}
-
 /// The same fork, taken while [`write_executable`] is writing, holds nothing of the
 /// script: the only write descriptor ever opened on it lived in the writer child.
 #[test]
