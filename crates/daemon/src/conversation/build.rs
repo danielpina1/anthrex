@@ -28,9 +28,14 @@ pub(super) fn apply(
     // before its first hook is known to be for this runtime, so this is the one place
     // that is guaranteed to see every runtime this draft's hooks actually arrive on.
     draft.runtime = runtime;
-
-    match hook.kind {
-        HookKind::SessionStart => session_start(draft, hook),
+    // Milestone 9.11 decision 34 (A16): after a missed `SessionStart`, the first hook with a
+    // transcript teaches it, as a `SessionStart` of unknown source would (read at its end).
+    let learned = !matches!(hook.kind, HookKind::SessionStart)
+        && draft.transcript_path.is_none()
+        && hook.transcript_path.is_some()
+        && session_start(draft, hook, None);
+    let handled = match hook.kind {
+        HookKind::SessionStart => session_start(draft, hook, hook.session_source.as_deref()),
         HookKind::UserPromptSubmit => user_prompt_submit(draft, hook, now_unix_secs),
         HookKind::PreToolUse => pre_tool_use(draft, hook, now_unix_secs, now, caps),
         HookKind::PostToolUse => post_tool_use(draft, hook, now, caps),
@@ -41,10 +46,11 @@ pub(super) fn apply(
         }
         HookKind::SubagentStart => subagent_start(draft, hook, spawn, now_unix_secs),
         HookKind::SubagentStop => draft.close_open_turn(),
-    }
+    };
+    learned | handled
 }
 
-fn session_start(draft: &mut Draft, hook: &ParsedHook) -> bool {
+fn session_start(draft: &mut Draft, hook: &ParsedHook, source: Option<&str>) -> bool {
     let mut changed = false;
     // A new session writing a new file (Claude's `/clear`): its prompts count from 0
     // again, starting after every `User` turn the window has so far (review F2). A new
@@ -59,7 +65,7 @@ fn session_start(draft: &mut Draft, hook: &ParsedHook) -> bool {
     // sets the base then; the base set here is the count the open compares against.
     let switching =
         draft.session_id != hook.session_id || draft.transcript_path != hook.transcript_path;
-    let fresh = matches!(hook.session_source.as_deref(), Some("startup" | "clear"));
+    let fresh = matches!(source, Some("startup" | "clear"));
     let at_end = hook.transcript_path.is_some() && switching && !fresh;
     if hook.transcript_path.is_some() && switching {
         draft.at_end_pending = at_end;

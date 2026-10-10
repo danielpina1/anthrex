@@ -285,3 +285,39 @@ fn an_ambiguous_at_end_open_degrades_instead_of_enriching() {
         Some(proto::DegradeReason::Misaligned)
     );
 }
+
+/// Milestone 9.11 decision 34 (A16): a window whose `SessionStart` was missed (the hook
+/// failed, or the daemon came up mid-session) learns its transcript from the first later
+/// hook that carries one, and opens it at its end as for a `resume`, since the file
+/// already holds earlier turns. A later hook with the same path changes nothing.
+#[test]
+fn a_hook_after_a_missed_session_start_teaches_the_transcript_path() {
+    let mut set = ConversationSet::new(1, proto::Runtime::Claude);
+    apply(&mut set, &[prompt("first"), stop()]);
+    assert_eq!(set.transcript_path(), None);
+    assert!(!set.take_at_end());
+
+    let mut submit = prompt("second");
+    submit.session_id = Some("sess-A".into());
+    submit.transcript_path = Some("/t/a.jsonl".into());
+    apply(&mut set, &[submit.clone()]);
+    assert_eq!(set.transcript_path(), Some("/t/a.jsonl"));
+    assert!(set.take_at_end(), "the learned file is opened at its end");
+    assert!(!set.take_at_end(), "once");
+    assert!(
+        set.take_new_session(),
+        "as a resumed first SessionStart does"
+    );
+
+    apply(&mut set, &[stop()]);
+    let mut again = prompt("third");
+    again.session_id = Some("sess-A".into());
+    again.transcript_path = Some("/t/a.jsonl".into());
+    apply(&mut set, &[again]);
+    assert_eq!(set.transcript_path(), Some("/t/a.jsonl"));
+    assert!(!set.take_at_end(), "the same path again asks for nothing");
+    assert!(
+        !set.take_new_session(),
+        "the same path again is no new session"
+    );
+}
