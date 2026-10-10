@@ -23,11 +23,13 @@ impl RunService {
         rx: Option<mpsc::UnboundedReceiver<Msg>>,
     ) {
         let service = self;
-        let _gate = gate;
+        // Shared with each event's own task, so the gate opens only once both the loop
+        // and the event it was carrying out are gone (`stop`'s fallback waits on it).
+        let gate = gate.map(Arc::new);
         let Some(mut rx) = rx else { return };
         while let Some(msg) = rx.recv().await {
             match msg {
-                Msg::Event(kind) => service.handle(kind).await,
+                Msg::Event(kind) => service.handle_isolated(kind, &gate).await,
                 Msg::Usage => service.drain_usage().await,
                 Msg::Stop(ack) => {
                     service.stop_now().await;
@@ -35,6 +37,38 @@ impl RunService {
                     return;
                 }
             }
+        }
+    }
+
+    /// Decision 8 (M9.11.8, B1): one event's handling on a task of its own, awaited before
+    /// the next message is received, so events stay strictly sequential. A panic anywhere
+    /// in it (its effects, the tick's work) costs that event: it is logged with the
+    /// event's kind, and a caller still waiting is told [`guard::EFFECTS_PANICKED`] (its
+    /// step had been committed; a panic in the step itself is answered inside `handle`).
+    /// The spawn is the unwind boundary: no `catch_unwind` around an `.await`.
+    async fn handle_isolated(
+        self: &Arc<Self>,
+        kind: EventKind,
+        gate: &Option<Arc<tokio::sync::OwnedMutexGuard<()>>>,
+    ) {
+        let reply = guard::reply_of(&kind);
+        let event = guard::kind_name(&kind);
+        let (service, gate) = (self.clone(), gate.clone());
+        let mut task = AbortOnDrop(tokio::spawn(async move {
+            let _gate = gate;
+            service.handle(kind).await;
+        }));
+        let Err(error) = (&mut task.0).await else {
+            return;
+        };
+        if !error.is_panic() {
+            return;
+        }
+        let panic = guard::panic_text(error.into_panic().as_ref());
+        tracing::error!(event, %panic, "the run engine panicked carrying out an event; the event is dropped");
+        let waiting = reply.and_then(|id| crate::lock(&self.replies).remove(&id));
+        if let Some(tx) = waiting {
+            let _ = tx.send(Err(guard::EFFECTS_PANICKED.to_string()));
         }
     }
 
@@ -46,11 +80,13 @@ impl RunService {
         let reply = guard::reply_of(&kind);
         let prepared = {
             let mut state = crate::lock(&self.state);
-            match guard::guarded_step(&mut state, Event { now, kind }) {
-                Ok(fx) => {
+            // Decision 8 (B3): a step whose effects could not be prepared at all is put
+            // back with them, so memory never holds a step whose saves did not run.
+            match guard::step_prepared(&mut state, Event { now, kind }, now) {
+                Ok(ready) => {
                     self.metered.refresh_live(&state);
                     self.release_ended_orchestrators(&state);
-                    Some(self.mark_writes(guard::prepare_guarded(&state, fx, now)))
+                    Some(self.mark_writes(ready))
                 }
                 Err(panic) => {
                     tracing::error!(%panic, "the run engine panicked on an event; the event is dropped");
@@ -101,3 +137,16 @@ impl RunService {
         }
     }
 }
+
+/// An event's task, aborted if the loop awaiting it is (`stop`'s fallback aborts the loop).
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+#[cfg(test)]
+#[path = "event_loop_tests.rs"]
+mod tests;

@@ -60,6 +60,10 @@ impl DoneHolds {
     }
 }
 
+/// Tests only (M9.11.8): what `execute` runs on each effect before carrying it out.
+#[cfg(test)]
+pub(super) type ExecuteHook = Box<dyn Fn(&Ready) + Send>;
+
 /// One effect, with what it needs from the state of the step that emitted it.
 pub(super) enum Ready {
     Effect(Effect),
@@ -182,6 +186,10 @@ impl RunService {
     pub(super) async fn execute(self: &Arc<Self>, ready: Vec<Ready>, now: u64) {
         let mut unsaved = std::collections::HashSet::new();
         for item in ready {
+            #[cfg(test)]
+            if let Some(hook) = crate::lock(&self.execute_hook).as_ref() {
+                hook(&item);
+            }
             match item {
                 Ready::Save(run) => {
                     crate::lock(&self.book).dirty.remove(&run.id);

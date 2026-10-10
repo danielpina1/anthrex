@@ -156,6 +156,9 @@ pub struct RunService {
     /// probes when the service stops.
     models: Arc<crate::models::ModelService>,
     models_cancel: tokio_util::sync::CancellationToken,
+    /// Tests only (M9.11.8): run on each effect `execute` takes, before it is carried out.
+    #[cfg(test)]
+    execute_hook: Mutex<Option<effects::ExecuteHook>>,
 }
 
 /// Unix seconds, the reducer's clock.
@@ -252,6 +255,8 @@ impl RunService {
             tuning: Default::default(),
             models,
             models_cancel,
+            #[cfg(test)]
+            execute_hook: Mutex::new(None),
         })
     }
 
