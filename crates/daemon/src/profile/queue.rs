@@ -108,14 +108,34 @@ pub fn info(goal: &QueuedGoal, setup: &SetupState) -> QueuedGoalInfo {
     }
 }
 
+/// Why [`load`] found no queue (task 4 re-review minor 1): a file that does not parse
+/// is set aside at restore; one that could not be read is left where it is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoadError {
+    Unparseable(String),
+    Unreadable(String),
+}
+
+impl std::fmt::Display for LoadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LoadError::Unparseable(text) | LoadError::Unreadable(text) => f.write_str(text),
+        }
+    }
+}
+
 /// The queue in `repo_dir`; an absent file is an empty queue. Blocking.
-pub fn load(repo_dir: &Path) -> Result<GoalQueue, String> {
+pub fn load(repo_dir: &Path) -> Result<GoalQueue, LoadError> {
     let path = repo_dir.join(QUEUE_FILE);
     match std::fs::read(&path) {
-        Ok(bytes) => serde_json::from_slice(&bytes)
-            .map_err(|error| format!("{} does not parse: {error}", path.display())),
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| {
+            LoadError::Unparseable(format!("{} does not parse: {error}", path.display()))
+        }),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(GoalQueue::default()),
-        Err(error) => Err(format!("could not read {}: {error}", path.display())),
+        Err(error) => Err(LoadError::Unreadable(format!(
+            "could not read {}: {error}",
+            path.display()
+        ))),
     }
 }
 

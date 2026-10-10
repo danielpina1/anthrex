@@ -126,6 +126,8 @@ mod tests_queue_drain;
 #[cfg(test)]
 mod tests_queue_order;
 #[cfg(test)]
+mod tests_queue_restore;
+#[cfg(test)]
 mod tests_queue_service;
 #[cfg(test)]
 mod tests_ready;

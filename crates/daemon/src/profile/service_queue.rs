@@ -123,6 +123,7 @@ impl ProfileService {
             if !absent {
                 return Ok(None);
             }
+            self.adopt_queue(&project).await?;
             let mut queue = self.queue_of(&project);
             if queue.goals.len() >= MAX_QUEUED {
                 return Err(queue_full(&project));
@@ -137,6 +138,41 @@ impl ProfileService {
                 .find(|info| info.id == goal.id)
                 .unwrap_or_else(|| queue::info(&goal, &proto::SetupState::Reading)),
         ))
+    }
+
+    /// Task 4 re-review minors 1 and 2: memory's copy of `project`'s queue, loaded from
+    /// its file when memory has none (restore could not tie an unreadable queue's
+    /// record to a project, or could not read the file). `Err`: the file is there and
+    /// cannot be read, so nothing may write over it. The caller holds `writes`.
+    async fn adopt_queue(&self, project: &Path) -> Result<(), String> {
+        if crate::lock(&self.table).queued.contains_key(project) {
+            return Ok(());
+        }
+        let dir = self.repo_dir(project);
+        let loaded = blocking(move || queue::load(&dir).map_err(|e| e.to_string())).await?;
+        if !loaded.is_empty() {
+            self.remember_queue(project, loaded);
+        }
+        Ok(())
+    }
+
+    /// [`Self::adopt_queue`] for `profile status`, which takes `writes` only when memory
+    /// has no queue for `project` and a file is there.
+    pub(super) async fn adopt_for_status(&self, project: &Path) {
+        if crate::lock(&self.table).queued.contains_key(project) {
+            return;
+        }
+        let path = self.repo_dir(project).join(queue::QUEUE_FILE);
+        let present = blocking(move || Ok(std::fs::symlink_metadata(&path).is_ok()))
+            .await
+            .unwrap_or(false);
+        if !present {
+            return;
+        }
+        let _writes = self.writes.lock().await;
+        if let Err(error) = self.adopt_queue(project).await {
+            tracing::warn!(%error, project = %project.display(), "profile status: the goal queue");
+        }
     }
 
     /// The snapshot's list; memory only, one short hold of the table.

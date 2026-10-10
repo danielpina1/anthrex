@@ -39,21 +39,31 @@ fn names_in(dir: &Path) -> Result<Vec<OsString>, String> {
 /// The goal shown for a queue file that could not be read (fix round 1, I2).
 pub const UNREADABLE_QUEUE: &str = "(unreadable queue)";
 
-/// Decision 11's queue, loaded at start. A file that does not read is renamed aside
+/// Decision 11's queue, loaded at start. A file that does not parse is renamed aside
 /// (`queued_goals.json.unreadable-<unix secs>`, never swept), so no later write
 /// replaces the goals it may hold, and the loss is recorded as one dropped goal that
-/// names the kept file. Blocking.
+/// names the kept file. One that could not be read (task 4 re-review minor 1: an I/O
+/// error, perhaps passing) is left in place and not loaded; the first write of that
+/// queue loads it again and refuses while it still cannot be read
+/// (`ProfileService::adopt_queue`). Blocking.
 fn load_queue(dir: &Path) -> GoalQueue {
     let error = match queue::load(dir) {
         Ok(queue) => return settle_starting(dir, queue),
-        Err(error) => error,
+        Err(queue::LoadError::Unreadable(error)) => {
+            tracing::warn!(%error, "a goal queue that cannot be read is left in place");
+            return GoalQueue::default();
+        }
+        Err(queue::LoadError::Unparseable(error)) => error,
     };
     let now = unix_now();
-    let aside = dir.join(format!("{}.unreadable-{now}", queue::QUEUE_FILE));
-    if let Err(rename) = std::fs::rename(dir.join(queue::QUEUE_FILE), &aside) {
-        tracing::warn!(%error, %rename, "a goal queue that does not read is ignored");
-        return GoalQueue::default();
-    }
+    let aside = set_aside(dir, queue::QUEUE_FILE, now);
+    let aside = match aside {
+        Ok(aside) => aside,
+        Err(rename) => {
+            tracing::warn!(%error, %rename, "a goal queue that does not read is ignored");
+            return GoalQueue::default();
+        }
+    };
     tracing::warn!(%error, aside = %aside.display(), "a goal queue that does not read is kept aside");
     let mut kept = GoalQueue::default();
     let reason = format!(
@@ -65,6 +75,14 @@ fn load_queue(dir: &Path) -> GoalQueue {
         tracing::warn!(%error, "could not record the unreadable goal queue");
     }
     kept
+}
+
+/// `dir/<name>` renamed to `dir/<name>.unreadable-<now>`, which nothing sweeps; the new
+/// path. Blocking.
+fn set_aside(dir: &Path, name: &str, now: u64) -> Result<PathBuf, String> {
+    let aside = dir.join(format!("{name}.unreadable-{now}"));
+    std::fs::rename(dir.join(name), &aside).map_err(|e| e.to_string())?;
+    Ok(aside)
 }
 
 /// Final review I1: each goal a stop caught in `starting` becomes a dropped goal with
@@ -174,7 +192,8 @@ impl ProfileService {
         let dir = repo_dir.to_path_buf();
         let loaded = blocking(move || {
             store::sweep_leftovers(&dir).map_err(|e| e.to_string())?;
-            let proposal = store::load_proposal(&dir).ok().flatten();
+            // Final review M2: `Err` is a file there that does not read.
+            let proposal = store::load_proposal(&dir);
             // Milestone 9.10 decision 11: the goals waiting for this profile.
             let queue = load_queue(&dir);
             let loaded = (store::load(&dir), store::load_detection(&dir));
@@ -185,9 +204,12 @@ impl ProfileService {
             Ok(loaded) => loaded,
             Err(error) => {
                 tracing::warn!(repo_dir = %repo_dir.display(), %error, "profile restore");
-                (None, Stored::Absent, None, GoalQueue::default())
+                (Ok(None), Stored::Absent, None, GoalQueue::default())
             }
         };
+        let unreadable = proposal.as_ref().err().cloned();
+        let proposal = proposal.ok().flatten();
+        let proposal_file = unreadable.is_some() || proposal.is_some();
         // A record counts only for the data directory its own project keys to, so one
         // repository's record cannot name another.
         let ours = |project: &PathBuf| {
@@ -247,8 +269,17 @@ impl ProfileService {
             // Goals with no proposal and no stored profile wait on a set-up nothing
             // runs (a crash before their set-up's first write): failed, so it can be
             // retried, never shown reading the repo forever.
+            // Final review M2: only where no `proposal.json` is, after one that does not
+            // read is set aside; a readable one of another project is left alone.
             if !queue.goals.is_empty() && !has_proposal && !has_stored {
-                self.fail_orphan_set_up(repo_dir, &queued).await;
+                match unreadable {
+                    Some(error) => self.set_proposal_aside(repo_dir, &queued, &error).await,
+                    None if !proposal_file => {
+                        self.fail_orphan_set_up(repo_dir, &queued, RESTART_REASON)
+                            .await;
+                    }
+                    None => {}
+                }
             }
             self.remember_queue(&queued, queue);
         }
@@ -259,13 +290,31 @@ impl ProfileService {
         }
     }
 
+    /// Final review M2: a `proposal.json` that does not read, beside queued goals and
+    /// no stored profile, renamed aside; then the goals' set-up is failed, naming it.
+    async fn set_proposal_aside(&self, repo_dir: &Path, project: &Path, error: &str) {
+        let dir = repo_dir.to_path_buf();
+        match blocking(move || set_aside(&dir, store::PROPOSAL_FILE, unix_now())).await {
+            Ok(aside) => {
+                let reason = format!(
+                    "the proposal could not be read ({error}); it is kept as {}",
+                    aside.display()
+                );
+                self.fail_orphan_set_up(repo_dir, project, &reason).await;
+            }
+            Err(rename) => {
+                tracing::warn!(%error, %rename, "a proposal that does not read is left in place");
+            }
+        }
+    }
+
     /// A `Failed` goal set-up for `project`, written and noted (fix round 1, I1).
-    async fn fail_orphan_set_up(&self, repo_dir: &Path, project: &Path) {
+    async fn fail_orphan_set_up(&self, repo_dir: &Path, project: &Path, reason: &str) {
         let now = unix_now();
         let failed = ProposalRecord {
             project: project.to_path_buf(),
             state: ProposalState::Failed {
-                reason: RESTART_REASON.to_string(),
+                reason: reason.to_string(),
             },
             origin: ProposalOrigin::Goal,
             started_at: now,
