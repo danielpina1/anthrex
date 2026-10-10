@@ -32,6 +32,7 @@ use crate::worktree::pinned::{self, Pin};
 #[path = "salvage_gone.rs"]
 mod salvage_gone;
 pub use salvage_gone::salvage_gone;
+pub(crate) use salvage_gone::salvage_gone_keeping;
 
 /// Git configuration for the one engine git command that reads the private object
 /// directory (`pack-objects`): no commit-graph, bitmap or multi-pack index, which the

@@ -86,6 +86,62 @@ pub fn salvage_gone(
     Ok(Some(reference.to_string()))
 }
 
+/// Fix round 1 (I2): [`salvage_gone`] with milestone 9.5 decision 22's `keep_head` (a
+/// race lane's): when there was nothing new to import, `reference` is still created at
+/// the repository's `HEAD` (already in the user's repository: reachable), so a lane's
+/// commits outlive its lane branch. A `reference` already there is the op replayed; one
+/// elsewhere is an error, as `keep_at_head` gives for a live checkout.
+pub(crate) fn salvage_gone_keeping(
+    git: &OsStr,
+    root: &Path,
+    repo: &Path,
+    reference: &str,
+    message: &str,
+    timeout: Duration,
+) -> Result<Option<String>, String> {
+    if let Some(saved) = salvage_gone(git, root, repo, reference, message, timeout)? {
+        return Ok(Some(saved));
+    }
+    let g = Git::new(git, timeout);
+    let repo = Repo::at(repo);
+    if std::fs::symlink_metadata(repo.git_dir().join("HEAD")).is_err() {
+        return Ok(None);
+    }
+    let pin = Pin {
+        git_dir: repo.git_dir(),
+        common_dir: common_dir(g, root)?,
+        head: None,
+        own: None,
+        objects: Some(repo.objects()),
+        engine: Some(repo.engine()),
+        standalone: true,
+        broken: None,
+    };
+    let HeadFile::Commit(head) = head_file(&pin)? else {
+        return Ok(None);
+    };
+    if !has_commit(g, root, &head)? {
+        return Ok(None);
+    }
+    match read(g, root, reference)? {
+        Some(saved) if saved == head => Ok(Some(reference.to_string())),
+        Some(_) => Err(format!("salvage ref {reference} holds other work")),
+        None => {
+            let args = [
+                os("update-ref"),
+                os("-m"),
+                os(message),
+                os("--no-deref"),
+                os(reference),
+                os(&head),
+                os(""),
+            ];
+            g.write(root, &args)?;
+            Ok(Some(reference.to_string()))
+        }
+    }
+}
+
 /// Whether `head` is reachable from any ref of the repository at `root`.
 fn reachable(g: Git<'_>, root: &Path, head: &str) -> Result<bool, String> {
     let args = [

@@ -73,7 +73,7 @@ pub use tiers::{changed_paths, checkout_tree, show_stat, sync_read, tree_of, tre
 
 /// Reads reconcile (M8a.21) shares with the ops it checks.
 pub(crate) use handback::{finish_clean, interrupted_conflict};
-pub(crate) use import::{is_id, sync_in};
+pub(crate) use import::{is_id, salvage_gone_keeping, sync_in};
 pub(crate) use merge::{read, reattach_in, short};
 pub(crate) use merge_state::{
     Leftover, clear as clear_merge_state, leftover, undo_clean_merge, unmerged,

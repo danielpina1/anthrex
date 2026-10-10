@@ -129,9 +129,12 @@ async fn salvage_at(
     let message = salvage_message(&ctx.run_id, &reference);
     if !path.exists() {
         let repo = git::checkout_repo_dir(&ctx.data_dir, &path);
+        // Fix round 1 (I2): `keep_head` as for a live checkout (a race lane's commits
+        // must outlive its lane branch, which `delete_branches` removes).
         return service
-            .write(ctx, move |g, t| {
-                git::salvage_gone(g, &root, &repo, &reference, &message, t)
+            .write(ctx, move |g, t| match keep_head {
+                true => git::salvage_gone_keeping(g, &root, &repo, &reference, &message, t),
+                false => git::salvage_gone(g, &root, &repo, &reference, &message, t),
             })
             .await;
     }
@@ -331,6 +334,11 @@ mod tests {
 
         /// `remove_keeping` of the task's checkout, salvaging to `<run>/t1/1`.
         fn remove(&self) -> Result<Option<String>, String> {
+            self.remove_with(false)
+        }
+
+        /// [`Rig::remove`] with `keep_head` (a race lane's removal).
+        fn remove_with(&self, keep_head: bool) -> Result<Option<String>, String> {
             let rt = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()
@@ -341,7 +349,7 @@ mod tests {
                 self.root.clone(),
                 self.task.clone(),
                 "refs/anthrex/salvage/r1/t1/1".into(),
-                false,
+                keep_head,
             ))
         }
     }
@@ -365,6 +373,31 @@ mod tests {
             "work"
         );
         assert!(!rig.repo.exists(), "the checkout's repository was kept");
+    }
+
+    /// Fix round 1 (I2): a deleted race-lane checkout whose head the engine already
+    /// recorded on its lane branch still gets its salvage ref there (`keep_head`, as a
+    /// live lane's clean checkout does), so the commits outlive the branch.
+    #[test]
+    fn a_deleted_lane_checkout_keeps_its_head() {
+        let rig = Rig::new();
+        std::fs::write(rig.task.join("w.txt"), "lane\n").unwrap();
+        git(&rig.task, &["add", "-A"]);
+        git(&rig.task, &["commit", "-q", "-m", "lane work"]);
+        let worker = git(&rig.task, &["rev-parse", "HEAD"]);
+        assert_eq!(
+            git::sync(std::ffi::OsStr::new("git"), &rig.task, T).unwrap(),
+            worker
+        );
+        std::fs::remove_dir_all(&rig.task).unwrap();
+
+        let reference = "refs/anthrex/salvage/r1/t1/1";
+        assert_eq!(rig.remove_with(true), Ok(Some(reference.to_string())));
+        assert_eq!(git(&rig.root, &["rev-parse", reference]), worker);
+        // Then the run's branches go; the commits do not.
+        git::delete_branches(std::ffi::OsStr::new("git"), &rig.root, "anthrex/r1", T).unwrap();
+        assert_eq!(git(&rig.root, &["rev-parse", reference]), worker);
+        assert!(!rig.repo.exists());
     }
 
     /// `git init` of `<task>/nested`, with its own identity.
