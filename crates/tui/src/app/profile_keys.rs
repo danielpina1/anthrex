@@ -39,6 +39,16 @@ impl App {
             KeyCode::PageUp => s.selected = s.selected.saturating_sub(10),
             KeyCode::Char('a') => toggle_advanced(s),
             KeyCode::Enter if card && acting => {}
+            // M9.10.6 fix round: **Use this** waits for a row edit's check, as the daemon
+            // does; the screen says so in the daemon's words.
+            KeyCode::Enter if card && s.row_checking() => {
+                if let Some(edit) = s.row_edit() {
+                    s.error = Some(format!(
+                        "the edit of {} is still being checked; wait for it",
+                        edit.key
+                    ));
+                }
+            }
             KeyCode::Enter if card => return self.profile_use_this(),
             KeyCode::Enter => match &row {
                 Some(r) if r.key == ADVANCED_ROW => toggle_advanced(s),

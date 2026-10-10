@@ -11,7 +11,7 @@ use crate::app::AlertKey;
 use crate::app::profile_screen::{ADVANCED_ROW, EditorField, ProfilePage};
 use proto::{
     ProfileReply, ProfileRequest, ProfileSource, ProposalOrigin, ProposalState, QueuedGoalInfo,
-    RepoProfile, SetupState,
+    RepoProfile, RowEdit, RowEditState, SetupState,
 };
 use std::path::PathBuf;
 
@@ -93,6 +93,33 @@ fn enter_on_the_card_uses_this() {
         }]
     );
     assert_eq!(screen(&app).page, None);
+}
+
+/// M9.10.6 fix round (M2): Enter on the card does not send **Use this** while a row edit
+/// of the proposal is checked; the screen says why, in the daemon's words.
+#[test]
+fn enter_on_the_card_waits_for_a_row_edit_being_checked() {
+    let mut app = open_app();
+    let ids = open(&mut app);
+    let checking = status_with(Some(ProposalState::Ready), |st| {
+        if let Some(proposal) = st.proposal.as_mut() {
+            proposal.edit = Some(RowEdit {
+                key: "check".into(),
+                value: Some("cargo test".into()),
+                state: RowEditState::Verifying,
+            });
+        }
+    });
+    reply(&mut app, ids[0], checking);
+    reply(&mut app, ids[1], shown(&stored_profile(), vec![]));
+    reply(&mut app, ids[2], shown(&stored_profile(), vec![]));
+    assert!(screen(&app).showing_card());
+    let effects = tap(&mut app, KeyCode::Enter);
+    assert!(profile_requests(&effects).is_empty(), "{effects:?}");
+    assert_eq!(
+        screen(&app).error.as_deref(),
+        Some("the edit of check is still being checked; wait for it")
+    );
 }
 
 /// Decision 29: Esc on the card is **Later**: the screen closes and nothing is sent.
