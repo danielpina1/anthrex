@@ -63,6 +63,9 @@ impl DoneHolds {
 /// Tests only (M9.11.8): what `execute` runs on each effect before carrying it out.
 #[cfg(test)]
 pub(super) type ExecuteHook = Box<dyn Fn(&Ready) + Send>;
+/// Tests only (M9.11.13): what an op's task runs when the op returns (`effects_ops.rs`).
+#[cfg(test)]
+pub(super) type AfterOpHook = Box<dyn Fn(&RunService, &'static str) + Send>;
 
 /// One effect, with what it needs from the state of the step that emitted it.
 pub(super) enum Ready {
@@ -460,3 +463,7 @@ impl RunService {
         .await;
     }
 }
+
+#[cfg(test)]
+#[path = "launch_journal_tests.rs"]
+mod launch_journal_tests;

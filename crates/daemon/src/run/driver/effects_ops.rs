@@ -7,7 +7,7 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use super::{OpCtx, RunService};
-use crate::run::engine::{EventKind, OpKind};
+use crate::run::engine::{EventKind, OpKind, OpResult};
 use crate::run::journal::{self, JournalLine};
 use crate::run::model::OpId;
 
@@ -45,7 +45,15 @@ impl RunService {
             // run.json keeps before it is journaled and handed to the engine.
             let result =
                 crate::run::delivery::view_trim::journaled(service.run_op(&ctx, op, kind).await);
-            if service.stopped.load(Ordering::SeqCst) {
+            #[cfg(test)]
+            if let Some(hook) = crate::lock(&service.after_op).as_ref() {
+                hook(&service, name);
+            }
+            // Milestone 9.11 decision 19 (B6): a session process now exists, so its pid
+            // goes to the journal even while the daemon stops, where restore finds it
+            // (`reconcile::sessions`); only the engine send is skipped then.
+            let spawned = matches!(result, OpResult::Window { pid: Some(_), .. });
+            if service.stopped.load(Ordering::SeqCst) && !spawned {
                 return;
             }
             // The final fix wave's A4: a CI log's text stays out of the journal.
@@ -54,6 +62,9 @@ impl RunService {
                 result: crate::run::delivery::view_trim::journal_line(&result),
             };
             service.append_done(&ctx, line, hold).await;
+            if service.stopped.load(Ordering::SeqCst) {
+                return;
+            }
             service.send(EventKind::OpDone {
                 run_id: ctx.run_id,
                 op,

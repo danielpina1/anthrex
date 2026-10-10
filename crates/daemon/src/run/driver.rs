@@ -160,6 +160,10 @@ pub struct RunService {
     /// Tests only (M9.11.8): run on each effect `execute` takes, before it is carried out.
     #[cfg(test)]
     execute_hook: Mutex<Option<effects::ExecuteHook>>,
+    /// Tests only (M9.11.13): run when an op returns, with its kind's name, before its
+    /// result is journaled.
+    #[cfg(test)]
+    after_op: Mutex<Option<effects::AfterOpHook>>,
 }
 
 /// Unix seconds, the reducer's clock.
@@ -258,6 +262,8 @@ impl RunService {
             models_cancel,
             #[cfg(test)]
             execute_hook: Mutex::new(None),
+            #[cfg(test)]
+            after_op: Mutex::new(None),
         })
     }
 
