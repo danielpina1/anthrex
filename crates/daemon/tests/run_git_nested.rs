@@ -105,3 +105,23 @@ fn a_nested_repositorys_own_config_is_never_read() {
         vec!["nested".to_string()]
     );
 }
+
+/// Fix round 1 (I4): a `packed-refs` the probe cannot read as a plain file under its
+/// cap (a FIFO, an oversized file) counts as work, and nothing blocks on it.
+#[test]
+fn an_unreadable_packed_refs_is_work_and_never_blocks() {
+    use std::os::unix::ffi::OsStrExt;
+    let repo = repo();
+    let (_keep, task) = task_worktree(&repo, "r", "t1");
+    let fifo = nested(&task, "fifo");
+    let path =
+        std::ffi::CString::new(fifo.join(".git/packed-refs").as_os_str().as_bytes()).unwrap();
+    // SAFETY: `path` is a valid NUL-terminated path.
+    assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+    let big = nested(&task, "big");
+    std::fs::write(big.join(".git/packed-refs"), "# filler\n".repeat(10_000)).unwrap();
+    assert_eq!(
+        nested_work(real_git(), &task, T).unwrap(),
+        vec!["big".to_string(), "fifo".to_string()]
+    );
+}
