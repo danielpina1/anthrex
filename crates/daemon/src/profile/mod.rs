@@ -29,6 +29,7 @@ mod proposal_tiers;
 pub mod queue;
 pub mod resolve;
 pub mod service;
+mod service_edit;
 pub mod service_queue;
 mod service_requests;
 mod service_restore;
