@@ -172,6 +172,15 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     if std::env::var_os("ANTHREX_TEST_STDERR_PROBE").is_some() {
         let _ = std::io::Write::write_all(&mut std::io::stderr(), b"anthrex-test-stderr-probe\n");
     }
+    // Test-only (decision 30, `crates/cli/tests/daemon_stop_stuck.rs`): one blocking task
+    // that never finishes in a test's lifetime, standing in for a stuck git or file call,
+    // so the test can prove the stopped daemon's process still exits. Inert in every real
+    // deployment, as the probe above.
+    if std::env::var_os("ANTHREX_TEST_STALL_BLOCKING").is_some() {
+        drop(tokio::task::spawn_blocking(|| {
+            std::thread::sleep(std::time::Duration::from_secs(3600))
+        }));
+    }
     std::fs::create_dir_all(&opts.data_dir)?;
     // Whole-branch-review Minor m5: `acquire_or_yield` runs its retry loop
     // synchronously on whatever thread calls it (`std::thread::sleep`, not

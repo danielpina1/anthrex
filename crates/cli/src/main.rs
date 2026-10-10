@@ -162,12 +162,19 @@ enum DaemonAction {
 
 fn main() -> anyhow::Result<()> {
     pre_clap::dispatch(std::time::Instant::now());
-    run_cli()
+    let cli = Cli::parse();
+    // Decision 30: the foreground daemon runs on a runtime of its own, never this one.
+    if let Some(Command::Daemon {
+        action: DaemonAction::Start { foreground: true },
+    }) = &cli.command
+    {
+        return daemon_cmd::foreground(proto::paths::socket_path());
+    }
+    run_cli(cli)
 }
 
 #[tokio::main]
-async fn run_cli() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+async fn run_cli(cli: Cli) -> anyhow::Result<()> {
     let socket: PathBuf = proto::paths::socket_path();
     match cli.command {
         // Pitfall 17: nothing but JSON-RPC may reach stdout from here on, so this arm
