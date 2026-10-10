@@ -311,7 +311,7 @@ async fn handle_client(
                     previous.stop().await;
                 }
                 match manager
-                    .resize(window_id, cols, rows)
+                    .resize_for_attach(window_id, cols, rows)
                     .and_then(|_| manager.attach(window_id))
                 {
                     Ok(att) => {
