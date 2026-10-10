@@ -17,11 +17,11 @@ use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::style::Modifier;
 
-fn press(app: &mut App, code: KeyCode, mods: KeyModifiers) {
+pub(super) fn press(app: &mut App, code: KeyCode, mods: KeyModifiers) {
     let _ = app.on_key(KeyEvent::new(code, mods));
 }
 
-fn chord(app: &mut App, c: char) {
+pub(super) fn chord(app: &mut App, c: char) {
     press(app, KeyCode::Char('b'), KeyModifiers::CONTROL);
     press(app, KeyCode::Char(c), KeyModifiers::NONE);
 }
@@ -35,7 +35,7 @@ fn view_on_blocked() -> App {
     app
 }
 
-fn draw_at(app: &App, w: u16, h: u16) -> (Buffer, Layout) {
+pub(super) fn draw_at(app: &App, w: u16, h: u16) -> (Buffer, Layout) {
     let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
     let mut layout = None;
     terminal
@@ -45,7 +45,7 @@ fn draw_at(app: &App, w: u16, h: u16) -> (Buffer, Layout) {
 }
 
 /// The main pane's interior rows, trailing spaces trimmed.
-fn rows_of(app: &App, w: u16, h: u16) -> Vec<String> {
+pub(super) fn rows_of(app: &App, w: u16, h: u16) -> Vec<String> {
     let (buffer, layout) = draw_at(app, w, h);
     let inner = layout.main_inner;
     (inner.y..inner.y + inner.height)

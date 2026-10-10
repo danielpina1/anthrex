@@ -81,6 +81,7 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
         state: run.state,
         paused_from: run.paused_from,
         halted_reason: run.halted_reason.clone(),
+        halt_user_only: super::engine::user_only::halt(run),
         approved_by: run.approved_by.clone(),
         base_branch: run.base_branch.clone(),
         base_sha: run.base_sha.clone(),

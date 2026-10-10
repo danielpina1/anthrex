@@ -28,6 +28,10 @@ pub(crate) fn orchestrator_info(window: Option<u32>) -> OrchestratorInfo {
         notes: vec![],
         wakes: 0,
         wake_held: false,
+        stuck: None,
+        ask: None,
+        handled: vec![],
+        handled_total: 0,
     }
 }
 
@@ -64,10 +68,10 @@ pub(crate) fn held_fixture() -> (RunsSnapshot, Vec<WindowInfo>) {
     let run = &mut snapshot.runs[0];
     let t1 = &mut run.tasks[1];
     t1.state = TaskState::Blocked;
-    t1.block = Some(BlockInfo {
-        reason: BlockReason::MessagePause,
-        text: "asked to stop and wait: hold on".into(),
-    });
+    t1.block = Some(BlockInfo::new(
+        BlockReason::MessagePause,
+        "asked to stop and wait: hold on",
+    ));
     run.tasks[2].hold = Some("epic:ui".into());
     let mut t3 = task("t3", "findings", Size::S, TaskState::Reported);
     t3.kind = TaskKind::Research;

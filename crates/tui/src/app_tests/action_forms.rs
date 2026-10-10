@@ -32,10 +32,10 @@ pub(super) fn forms_app(base_moved: bool) -> App {
     }
     let t1 = &mut run.tasks[1];
     t1.state = TaskState::Blocked;
-    t1.block = Some(BlockInfo {
-        reason: BlockReason::Question,
-        text: "which db?\nsecond line".into(),
-    });
+    t1.block = Some(BlockInfo::new(
+        BlockReason::Question,
+        "which db?\nsecond line",
+    ));
     t1.actions = vec![
         action(ActionKind::Answer, "answer", None),
         action(ActionKind::Message, "message", None),

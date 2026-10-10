@@ -6,7 +6,7 @@
 //! the ladder then applies to the task the action that took it out. A cancel stops
 //! every lane. A stopped lane's salvage is `race_salvage.rs`. Pure (design decision 1).
 
-use proto::{AgentRole, BlockInfo, BlockReason, LaneState, RaceLane, TaskState};
+use proto::{AgentRole, BlockReason, LaneState, RaceLane, TaskState};
 
 use super::dispatch::{block, history};
 use super::race_view::{address_lane, live};
@@ -336,11 +336,12 @@ pub(super) fn on_crowned(run: &mut Run, i: usize, head: &str, now: u64, fx: &mut
 /// (`task_blocked`: a question waits for its answer in the same session).
 fn after_adoption(run: &mut Run, i: usize, lane: &Lane, now: u64, fx: &mut Vec<Effect>) {
     let reason = lane.reason.clone().unwrap_or_default();
-    match (lane.gates.rung, lane.gates.block.clone()) {
+    let lane_block = lane.gates.block.clone().map(|b| (b.reason, b.text));
+    match (lane.gates.rung, lane_block) {
         (4.., _) => ladder::rung4(run, i, reason, now, fx),
         (3, _) => ladder::rung3(run, i, reason, now, fx),
         (2, _) => ladder::rung2(run, i, reason, now, fx),
-        (_, Some(BlockInfo { reason, text })) => {
+        (_, Some((reason, text))) => {
             // The final fix wave's m8: a block the race left unclassified (a
             // `task_blocked` with no kind) is classified now, as any task's is.
             let classify = lane.gates.unclassified && reason == BlockReason::Question;

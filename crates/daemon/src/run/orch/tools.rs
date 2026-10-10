@@ -83,9 +83,16 @@ pub enum OrchCall {
     SubmitFindings {
         findings: Vec<DocFinding>,
     },
+    /// Milestone 9.9 decision 15 (`tools_ask.rs`): the orchestrator's one question to the
+    /// user.
+    AskUser {
+        question: String,
+        options: Vec<String>,
+        context: String,
+    },
 }
 
-/// Parses `tool`'s `args` for `role`: the orchestrator's ten tools, a planner's
+/// Parses `tool`'s `args` for `role`: the orchestrator's eleven tools, a planner's
 /// `get_context` and `submit_epic`, a worker's `task_note`, a brainstormer's
 /// `submit_doc`, a document reviewer's `get_doc` and `submit_findings`. Any other
 /// pairing is `tool <tool> is not available to the <role> role`.
@@ -103,6 +110,7 @@ pub fn parse_call(role: AgentRole, tool: &str, args: &Value) -> Result<OrchCall,
                 | "start_brainstorm"
                 | "submit_doc"
                 | "get_doc"
+                | "ask_user"
         ),
         AgentRole::Planner => matches!(tool, "get_context" | "submit_epic"),
         // Milestone 9.5: a racer and a test writer have the worker's tools.
@@ -125,6 +133,7 @@ fn parse(role: AgentRole, tool: &str, args: &Value) -> Result<OrchCall, String> 
         "start_brainstorm" | "submit_doc" | "get_doc" | "submit_findings" => {
             design::parse(role, tool, args)
         }
+        "ask_user" => ask::parse(args),
         "get_context" => {
             let map = object(args, &["scouts"])?;
             Ok(OrchCall::GetContext {
@@ -358,6 +367,9 @@ mod bounds;
 
 #[path = "tools_design.rs"]
 mod design;
+
+#[path = "tools_ask.rs"]
+mod ask;
 
 #[cfg(test)]
 #[path = "tools_tests.rs"]

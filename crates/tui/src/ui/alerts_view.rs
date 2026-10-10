@@ -9,7 +9,7 @@
 use super::alerts::{age_text, fitted, who_text};
 use super::kit;
 use crate::app::region::KeyRegion;
-use crate::app::{Alert, App, alerts};
+use crate::app::{Alert, App, alerts, handled_line};
 use crate::safe_text::one_line;
 use crate::theme::{self, Glyph, Palette, Role, fold, glyph};
 use crate::ui::tree_view::truncate_in;
@@ -160,7 +160,7 @@ fn list_line(app: &App, alert: &Alert, selected: bool, width: u16) -> Line<'stat
 pub(crate) fn detail_scroll(app: &App, main: Rect) -> Option<(u16, u16)> {
     let all = alerts(app);
     let alert = &all[selected_index(app, &all)?];
-    let detail = areas(main, all.len()).detail;
+    let detail = areas(body_of(main, footer_rows(app, main)), all.len()).detail;
     let n = detail_lines(app, alert, detail.width).len();
     let rows = usize::from(detail.height);
     let max = if n <= rows || rows == 0 {
@@ -207,6 +207,40 @@ fn detail_window(
     out
 }
 
+/// Milestone 9.9 (OFA §4.6): the quiet lines below the list, one per run whose
+/// orchestrator handled something. Never alerts, never selectable.
+fn footer(app: &App) -> Vec<String> {
+    crate::tree::shown_runs(&app.runs.runs)
+        .filter_map(handled_line)
+        .map(|line| one_line(&line))
+        .collect()
+}
+
+/// `lines` cut to `rows`, the last row `+N more` for the N lines it displaced.
+fn fitted_footer(mut lines: Vec<String>, rows: usize) -> Vec<String> {
+    if lines.len() > rows && rows > 0 {
+        let hidden = lines.len() - (rows - 1);
+        lines.truncate(rows - 1);
+        lines.push(format!("+{hidden} more"));
+    }
+    lines.truncate(rows);
+    lines
+}
+
+/// How many footer rows fit in `main`'s interior, leaving the list and detail three.
+fn footer_rows(app: &App, main: Rect) -> u16 {
+    let room = inset(main).height.saturating_sub(3);
+    u16::try_from(footer(app).len()).map_or(room, |n| n.min(room))
+}
+
+/// `main` without its footer rows (the frame's bottom border stays drawn on `main`).
+fn body_of(main: Rect, rows: u16) -> Rect {
+    Rect {
+        height: main.height.saturating_sub(rows),
+        ..main
+    }
+}
+
 /// ` ⚑ Alerts ` (the glyph in `Attention`), or ` Alerts ` with none.
 fn title(n: usize, p: Palette) -> Line<'static> {
     if n == 0 {
@@ -241,8 +275,24 @@ pub(crate) fn render_with(frame: &mut Frame, app: &App, area: Rect, all: &[Alert
         block = block.title_top(Line::from(Span::styled(at, muted)).right_aligned());
     }
     frame.render_widget(block, area);
-    let inner = inset(area);
     let muted = theme::role(Role::Muted, p);
+    let rows = footer_rows(app, area);
+    let whole = inset(area);
+    let lines: Vec<Line<'static>> = fitted_footer(footer(app), usize::from(rows))
+        .into_iter()
+        .map(|line| {
+            let text = truncate_in(&line, usize::from(whole.width), p.ascii);
+            Line::styled(text, muted)
+        })
+        .collect();
+    let foot = Rect {
+        y: whole.y + whole.height - rows,
+        height: rows,
+        ..whole
+    };
+    frame.render_widget(Paragraph::new(lines), foot);
+    let area = body_of(area, rows);
+    let inner = inset(area);
     let (Some(i), false) = (index, inner.width == 0 || inner.height == 0) else {
         let text = truncate_in("no alerts", usize::from(inner.width), p.ascii);
         frame.render_widget(Paragraph::new(Line::styled(text, muted)), inner);
@@ -280,3 +330,7 @@ pub(crate) use detail::detail_lines;
 #[cfg(test)]
 #[path = "alerts_view_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "alerts_footer_tests.rs"]
+mod footer_tests;

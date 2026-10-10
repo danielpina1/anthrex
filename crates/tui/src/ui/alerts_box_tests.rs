@@ -480,6 +480,7 @@ fn a_raw_alert_is_sanitised_when_drawn() {
         text: format!("x{bad}"),
         detail: bad.clone(),
         age: Some(5),
+        you: false,
     };
     let project = Alert {
         who: AlertWho::Project(format!("p{bad}")),

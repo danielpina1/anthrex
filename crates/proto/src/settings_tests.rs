@@ -162,7 +162,7 @@ fn settings_variants_are_appended_last() {
     // `tuning_tests.rs`), and milestone 9.6 `DocGate` and `ShowDoc` after it (protocol
     // 17, `design_tests.rs`); `Settings` keeps its index right after `TaskDetail`.
     assert_eq!(
-        requests[requests.len() - 8..requests.len() - 2],
+        requests[requests.len() - 9..requests.len() - 3],
         [
             "TaskDetail",
             "Settings",

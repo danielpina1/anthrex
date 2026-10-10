@@ -63,6 +63,13 @@ pub(super) fn on_orch_event(
             run_id,
             hold,
         } => gate_holds::verdict(state, reply, (&run_id, &hold), false, now, fx),
+        // Milestone 9.9 decision 16: the user's answer to `ask_user`.
+        OrchEvent::AnswerAsk {
+            reply,
+            run_id,
+            ask,
+            choice,
+        } => super::asks::answer(state, reply, (&run_id, ask, choice), now, fx),
         OrchEvent::ScoutEnded {
             run_id,
             scout_id,
@@ -248,9 +255,15 @@ pub(super) fn tool(
         // Ruling WB-A-W1: a design agent's one write is held, not refused.
         RunState::Halted | RunState::Paused
             if super::design_agents::held::takes(run, call.role) => {}
+        // Milestone 9.9 decision 6: a halted run takes the orchestrator's lone `resume_run`
+        // (and `ask_user`, here and on a paused run).
+        RunState::Halted | RunState::Paused if super::orch_ops::admitted(run.state, call) => {}
         RunState::Paused => {
             let text = format!("run {} is paused; the user must resume it", run.id);
             return refuse(fx, reply, text);
+        }
+        RunState::Halted if call.role == Orchestrator => {
+            return refuse(fx, reply, super::orch_ops::halted_refusal(&run.id));
         }
         other => return refuse(fx, reply, format!("run {} is {}", run.id, other.label())),
     }
@@ -271,6 +284,10 @@ pub(super) fn tool(
     if window != Some(call.window_id) {
         let text = format!("this window is not the orchestrator of run {}", run.id);
         return refuse(fx, reply, text);
+    }
+    // Milestone 9.9 decision 19: the orchestrator's own window called a tool: it acts.
+    if call.role == Orchestrator {
+        super::orch_stall::acted(run, now);
     }
     let parsed = match parse_call(call.role, &call.tool, &call.args) {
         Ok(parsed) => parsed,
@@ -311,6 +328,12 @@ pub(super) fn tool(
             let call = (&edits[..], submit, summary, &responses[..]);
             edit_plan(run, reply, call, refusals, (now, quiet_base), fx)
         }
+        // Milestone 9.9 ruling R9: a complete run may still ask (decision 15).
+        OrchCall::AskUser {
+            question,
+            options,
+            context,
+        } => super::asks::ask(run, reply, (question, options, context), now, fx),
         _ if run.state == RunState::Complete => {
             let text = format!("run {} is {}", run.id, run.state.label());
             refuse(fx, reply, text)
@@ -362,6 +385,11 @@ fn edit_plan(
         };
         write_summary(run, summary, now, fx);
         return accepted(run, reply, (Vec::new(), None, None), (now, base), fx);
+    }
+    // Milestone 9.9 decision 11: an op is alone in its call and answered there.
+    let others = summary.is_some() || !responses.is_empty();
+    if super::orch_ops::intercept(run, reply, (edits, submit, others), (now, base), fx) {
+        return;
     }
     // Decision 42: a `message` or `refresh` is alone in its call, before any effect.
     if let Err(error) = one_edit_rule(edits, submit, summary.is_some()) {

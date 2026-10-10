@@ -52,6 +52,7 @@ fn a_full_info() -> FullInfo {
         bisect_fixes: 1,
         note: Some("no single culprit: two merges".into()),
         held: false,
+        accepted: false,
     }
 }
 

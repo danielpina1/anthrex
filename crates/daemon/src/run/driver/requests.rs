@@ -238,6 +238,12 @@ impl RunService {
                 };
                 self.show_doc(run, query).await
             }
+            // Milestone 9.9 decision 16 (OFA §4.3): the user's answer to `ask_user`.
+            RunRequest::AnswerAsk {
+                run_id,
+                ask,
+                choice,
+            } => self.answer_ask(run_id, ask, choice).await,
             RunRequest::Subscribe | RunRequest::Unsubscribe => {
                 RunReply::refused("run", "subscriptions are answered by the connection")
             }

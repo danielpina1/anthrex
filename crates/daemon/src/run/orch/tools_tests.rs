@@ -312,17 +312,49 @@ fn planner_cannot_call_edit_plan() {
     }
 }
 
+/// Milestone 9.9 decision 11: `override` and `approve_hold` are the orchestrator's own
+/// ops now and parse into `PlanEdit`s (each needs its reason); the plan's `approve` and
+/// `accept` stay unknown ops, so a model still cannot approve a plan.
 #[test]
-fn override_op_fails_to_parse_with_the_documented_message() {
+fn override_and_approve_hold_parse_but_approve_and_accept_do_not() {
+    let call = orch(
+        "edit_plan",
+        json!({"edits": [{"op": "override", "task_id": "t1", "reason": "fine"}]}),
+    )
+    .unwrap();
+    let OrchCall::EditPlan { edits, .. } = call else {
+        panic!("{call:?}");
+    };
+    assert_eq!(
+        edits,
+        vec![proto::PlanEdit::Override {
+            task_id: "t1".into(),
+            reason: "fine".into()
+        }]
+    );
+    let call = orch(
+        "edit_plan",
+        json!({"edits": [{"op": "approve_hold", "hold": "promotion", "reason": "ok"}]}),
+    )
+    .unwrap();
+    let OrchCall::EditPlan { edits, .. } = call else {
+        panic!("{call:?}");
+    };
+    assert_eq!(
+        edits,
+        vec![proto::PlanEdit::ApproveHold {
+            hold: "promotion".into(),
+            reason: "ok".into()
+        }]
+    );
+    // The reason is not optional.
     let error = orch(
         "edit_plan",
         json!({"edits": [{"op": "override", "task_id": "t1"}]}),
     )
     .unwrap_err();
-    assert!(
-        error.starts_with("invalid arguments: edits[0]: unknown variant `override`"),
-        "{error}"
-    );
+    assert!(error.starts_with("invalid arguments: edits[0]:"), "{error}");
+    assert!(error.contains("reason"), "{error}");
     for op in ["approve", "accept"] {
         let error = orch("edit_plan", json!({"edits": [{"op": op}]})).unwrap_err();
         assert!(
@@ -371,6 +403,65 @@ fn start_goal_is_the_orchestrators_alone() {
                 crate::run::orch::json::label(&role)
             )),
             "{role:?}"
+        );
+    }
+}
+
+/// Milestone 9.9 decision 15: `ask_user` takes a question, up to nine options and a
+/// context; the last two default to empty.
+#[test]
+fn ask_user_parses() {
+    assert_eq!(
+        orch(
+            "ask_user",
+            json!({"question": "tabs or spaces?", "options": ["tabs", "spaces"], "context": "no guide"})
+        ),
+        Ok(OrchCall::AskUser {
+            question: "tabs or spaces?".into(),
+            options: vec!["tabs".into(), "spaces".into()],
+            context: "no guide".into(),
+        })
+    );
+    assert_eq!(
+        orch("ask_user", json!({"question": "go?"})),
+        Ok(OrchCall::AskUser {
+            question: "go?".into(),
+            options: Vec::new(),
+            context: String::new(),
+        })
+    );
+    let bad = |args: Value| orch("ask_user", args).unwrap_err();
+    assert_eq!(bad(json!({})), "invalid arguments: question: required");
+    assert_eq!(
+        bad(json!({"question": "q", "extra": 1})),
+        "invalid arguments: extra: unknown field"
+    );
+    assert_eq!(
+        bad(json!({"question": "q".repeat(501)})),
+        "invalid arguments: question: at most 500 characters"
+    );
+    assert_eq!(
+        bad(json!({"question": "q", "options": [""]})),
+        "invalid arguments: options[0]: empty"
+    );
+    assert_eq!(
+        bad(json!({"question": "q", "options": ["x".repeat(201)]})),
+        "invalid arguments: options[0]: at most 200 characters"
+    );
+    assert_eq!(
+        bad(json!({"question": "q", "context": "c".repeat(4001)})),
+        "invalid arguments: context: at most 4000 characters"
+    );
+    // Only the orchestrator has it.
+    for role in [
+        AgentRole::Planner,
+        AgentRole::Worker,
+        AgentRole::Brainstormer,
+    ] {
+        let refused = parse_call(role, "ask_user", &json!({"question": "q"})).unwrap_err();
+        assert!(
+            refused.starts_with("tool ask_user is not available"),
+            "{refused}"
         );
     }
 }

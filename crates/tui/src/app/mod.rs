@@ -5,6 +5,8 @@ use crate::keymap::{Command, KeyAction, Keymap};
 use crate::settings::UiSettings;
 use crate::tree::{self, TreeState};
 pub use alerts::{Alert, AlertKey, AlertWho, AlertsFocus, StageAlert, alerts};
+pub use alerts_route::{Route, RouteKind, alert_route, orchestrator_lives, route_kind};
+pub use asks::{answer_request, handled_line};
 pub use confirm::PendingAction;
 use crossterm::event::KeyEvent;
 pub use link::Link;
@@ -428,10 +430,7 @@ impl App {
                 }
                 self.scroll_to_live();
                 match self.focused_pty() {
-                    Some(id) => vec![Effect::Send(ClientMsg::Input {
-                        window_id: id,
-                        bytes,
-                    })],
+                    Some(id) => self.forward(id, bytes),
                     None => vec![],
                 }
             }
@@ -556,8 +555,10 @@ impl App {
 
 pub(crate) mod actions;
 pub(crate) mod alerts;
+mod alerts_route;
 mod alerts_stage;
 pub(crate) mod alerts_view;
+mod asks;
 mod confirm;
 mod conversation;
 mod daemon;

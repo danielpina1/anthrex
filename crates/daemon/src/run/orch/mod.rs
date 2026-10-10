@@ -31,6 +31,7 @@ pub mod contract_design;
 pub mod contract_rounds;
 pub mod digest;
 pub mod extract;
+pub mod handled;
 pub mod installed;
 pub(crate) mod json;
 pub mod launch;
@@ -127,6 +128,42 @@ pub struct RunOrch {
     /// run without the design flow, which behaves as 9.5's.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub design: Option<crate::run::design::state::DesignState>,
+    /// Milestone 9.9 decision 12: what the orchestrator resolved on its own (newest last,
+    /// at most `handled::HANDLED_KEPT`) and how many in all.
+    /// Not written while empty, so a run that never used the ops keeps its old `run.json`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub handled: Vec<handled::HandledRecord>,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub handled_total: u32,
+    /// Milestone 9.9 decision 19: the highest wake-note seq the orchestrator had seen
+    /// when it last called a tool or read the digest; since when a note beyond it has
+    /// waited; and when that wait passed `stall_after_secs`.
+    #[serde(skip_serializing_if = "is_zero_u64")]
+    pub acted_seq: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub waiting_since: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stalled_at: Option<u64>,
+    /// Milestone 9.9 decision 15: the orchestrator's pending `ask_user`, and the last
+    /// id handed out. Neither is written while empty.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ask: Option<AskRecord>,
+    #[serde(skip_serializing_if = "is_zero_u64")]
+    pub ask_seq: u64,
+}
+
+/// Milestone 9.9 decision 15: a question the orchestrator put to the user. The text is
+/// the orchestrator's, kept as given (bounded by the tool's parse); every client
+/// sanitises where it draws.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AskRecord {
+    pub id: u64,
+    pub question: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub context: String,
+    pub asked_at: u64,
 }
 
 /// `Task.orch`: a task's milestone 9 state. Absent from an older run: empty.
@@ -535,4 +572,12 @@ impl OrchestratorRecord {
             first_turn_pending: false,
         }
     }
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
+}
+
+fn is_zero_u64(n: &u64) -> bool {
+    *n == 0
 }

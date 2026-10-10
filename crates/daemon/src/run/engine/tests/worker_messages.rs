@@ -538,10 +538,10 @@ fn a_message_to_a_blocked_human_task_is_refused_with_its_label() {
     let (mut fx, _) = working();
     let task = fx.task_mut("t1");
     task.state = TaskState::Blocked;
-    task.block = Some(proto::BlockInfo {
-        reason: BlockReason::Human,
-        text: "needs a decision".into(),
-    });
+    task.block = Some(proto::BlockInfo::new(
+        BlockReason::Human,
+        "needs a decision",
+    ));
     let effects = edit(&mut fx, vec![msg(&["t1"], MessageKind::Info, "hi")]);
     assert_eq!(
         replies(&effects),

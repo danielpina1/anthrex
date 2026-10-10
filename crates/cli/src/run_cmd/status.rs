@@ -360,7 +360,7 @@ pub(super) mod tests;
 
 /// Whole-branch re-review N4: a model-written reason on one status line, with every
 /// control character (a newline, an escape) shown as a space.
-fn one_line(text: &str) -> String {
+pub(super) fn one_line(text: &str) -> String {
     text.chars()
         .map(|c| if c.is_control() { ' ' } else { c })
         .collect()
@@ -382,3 +382,7 @@ mod tests_stages;
 #[cfg(test)]
 #[path = "status_tests_patterns.rs"]
 mod tests_patterns;
+
+#[cfg(test)]
+#[path = "status_tests_orch.rs"]
+mod tests_orch;

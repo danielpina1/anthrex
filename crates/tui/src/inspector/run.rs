@@ -10,7 +10,7 @@ use super::run_format::{
     billable, clean, format_duration, format_tokens, kind_glyph, local_hhmm, progress_text,
     reason_text, rows, session_text,
 };
-use super::run_orch::orchestrator_text;
+use super::run_orch::{handled_rows, orchestrator_text};
 use super::{Field, Inspection, field};
 use crate::app::{App, state_text};
 use crate::tree::RowKind;
@@ -58,6 +58,9 @@ pub(crate) fn run_inspection(
         fields.push(field("orchestrator", orchestrator_text(orchestrator)));
         if let Some(summary) = &orchestrator.summary {
             fields.push(field("summary", clean(summary)));
+        }
+        for (label, text) in handled_rows(orchestrator, app) {
+            fields.push(field(if label.is_empty() { "" } else { "handled" }, text));
         }
     }
     if let Some(attention) = attention_text(run) {

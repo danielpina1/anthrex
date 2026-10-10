@@ -86,21 +86,41 @@ pub(crate) fn held(run: &Run) -> bool {
 
 /// `run resume` (ruling R-11): every held stage pushes again; the stages released.
 pub(crate) fn release(run: &mut Run, now: u64) -> Vec<u16> {
-    let mut released = Vec::new();
-    for (n, s) in (1u16..).zip(run.delivery.stages.iter_mut()) {
-        if s.held.take().is_some() {
-            s.retry_at = None;
-            released.push(n);
-        }
+    let held: Vec<u16> = (1u16..)
+        .zip(run.delivery.stages.iter())
+        .filter(|(_, s)| s.held.is_some())
+        .map(|(n, _)| n)
+        .collect();
+    held.into_iter()
+        .filter(|n| release_stage(run, *n, now))
+        .collect()
+}
+
+/// Milestone 9.9 decision 6: [`release`] for stage `n` alone. `true` when it was held.
+pub(crate) fn release_stage(run: &mut Run, n: u16, now: u64) -> bool {
+    let Some(s) = (usize::from(n).checked_sub(1)).and_then(|i| run.delivery.stages.get_mut(i))
+    else {
+        return false;
+    };
+    if s.held.take().is_none() {
+        return false;
     }
-    for n in &released {
-        log(
-            run,
-            now,
-            format!("stage {n}: the push retries (run resume)"),
-        );
-    }
-    released
+    s.retry_at = None;
+    log(
+        run,
+        now,
+        format!("stage {n}: the push retries (run resume)"),
+    );
+    true
+}
+
+/// Milestone 9.9 decision 6: stage `n`'s push is held by the remote's refusal (ruling
+/// R-11); only a `pr`-mode run has one.
+pub(crate) fn stage_held(run: &Run, n: u16) -> bool {
+    pr(run)
+        && (usize::from(n).checked_sub(1))
+            .and_then(|i| run.delivery.stages.get(i))
+            .is_some_and(|s| s.held.is_some())
 }
 
 /// Ruling R-11's attention line for a held stage; the remote's reason is host text, in
@@ -493,7 +513,10 @@ pub(super) fn keeps_failing(run: &mut Run, op: &HostOp, name: &str, error: &str)
     };
     // The final fix wave's B m-10: the host's text, in quotes.
     let line = format!("{what}: {name} keeps failing: {}", quote::host_text(error));
-    run.delivery.alerts.insert(key, line);
+    // The line is noted once: a repeat of the same key is the same alert.
+    if run.delivery.alerts.insert(key, line.clone()).is_none() {
+        wake::note(run, line);
+    }
 }
 
 /// A view failed: polling goes on at the backed-off interval (a rate limit has already

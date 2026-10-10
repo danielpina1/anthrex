@@ -295,10 +295,11 @@ fn restart_rewritten(
             continue;
         }
         // M9.9 review fixes, M2: past MAX_REWRITE_RESTARTS the rewrite stands and
-        // the user decides.
+        // the user decides. Final review C-1: the block is user-only, so it reaches
+        // the user and the orchestrator may not retry it.
         if counted && task.orch.rewrite_restarts >= MAX_REWRITE_RESTARTS {
             let text = format!("rewritten {MAX_REWRITE_RESTARTS} times; the user decides");
-            super::dispatch::block(run, i, BlockReason::Environment, text, now);
+            super::dispatch::block_user_only(run, i, text, now);
             continue;
         }
         if counted {

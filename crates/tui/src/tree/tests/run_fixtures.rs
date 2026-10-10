@@ -486,10 +486,10 @@ pub(crate) fn gemini_fixture() -> (RunsSnapshot, Vec<WindowInfo>) {
     t3.on_critical_path = true;
     t3.rounds = vec![worker(1, Some(10), Runtime::Claude, now - 600)];
     let mut t5 = gemini_task("t5", TaskState::Blocked, 40);
-    t5.block = Some(BlockInfo {
-        reason: BlockReason::Question,
-        text: "Gemini has no subagent-stop event".into(),
-    });
+    t5.block = Some(BlockInfo::new(
+        BlockReason::Question,
+        "Gemini has no subagent-stop event",
+    ));
     let mut t7 = gemini_task("t7", TaskState::Working, 58);
     t7.deps = vec!["t2".into()];
     t7.route = routed(Runtime::Codex, proto::Effort::MEDIUM);

@@ -262,10 +262,7 @@ fn run_fields_on_the_fast_path() {
 fn attention_counts_each_thing_once() {
     let app = gemini_with(|run| {
         run.tasks[6].state = TaskState::Blocked;
-        run.tasks[6].block = Some(BlockInfo {
-            reason: BlockReason::Human,
-            text: "needs a key".into(),
-        });
+        run.tasks[6].block = Some(BlockInfo::new(BlockReason::Human, "needs a key"));
         run.attention = vec![
             "t5 blocked (question): Gemini has no subagent-stop event".into(),
             "t6 blocked (human): needs a key".into(),
@@ -472,10 +469,10 @@ fn hostile_run_values_never_panic_and_stay_one_line() {
         run.bound_ratio_permille = Some(u32::MAX);
         run.approved_at = Some(GEMINI_NOW + 86_400 * 400);
         run.created_at = u64::MAX;
-        run.tasks[5].block = Some(BlockInfo {
-            reason: BlockReason::Question,
-            text: format!("line one\nline\ttwo\u{1b}[31m{}", "x".repeat(10_000)),
-        });
+        run.tasks[5].block = Some(BlockInfo::new(
+            BlockReason::Question,
+            format!("line one\nline\ttwo\u{1b}[31m{}", "x".repeat(10_000)),
+        ));
         for task in &mut run.tasks {
             task.spent_total.tool_calls = u32::MAX;
         }

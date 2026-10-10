@@ -303,10 +303,10 @@ fn outcome_text_is_sanitised() {
         .find(|t| t.id == "t2")
         .unwrap();
     task.state = TaskState::Blocked;
-    task.block = Some(proto::BlockInfo {
-        reason: proto::BlockReason::Question,
-        text: format!("BLOCK {hostile}\n{hostile}"),
-    });
+    task.block = Some(proto::BlockInfo::new(
+        proto::BlockReason::Question,
+        format!("BLOCK {hostile}\n{hostile}"),
+    ));
     let mut blocked = app_of((snapshot, windows));
     land_detail(&mut blocked, None);
     plant(&mut blocked);

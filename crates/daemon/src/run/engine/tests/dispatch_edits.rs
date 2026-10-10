@@ -67,10 +67,10 @@ fn cancel_of_a_rung3_blocked_task_salvages_its_worktree() {
     );
     let task = fx.task_mut("t1");
     task.state = TaskState::Blocked;
-    task.block = Some(proto::BlockInfo {
-        reason: BlockReason::MisSized,
-        text: "changed files outside owns: x.rs".into(),
-    });
+    task.block = Some(proto::BlockInfo::new(
+        BlockReason::MisSized,
+        "changed files outside owns: x.rs",
+    ));
     for round in &mut task.rounds {
         round.ended = true;
     }
@@ -134,10 +134,7 @@ fn add_dep_then_answer_waits_for_the_dependency_then_hands_back() {
     // t1 is started and blocked on a question (M8a.12's task_blocked).
     let task = fx.task_mut("t1");
     task.state = TaskState::Blocked;
-    task.block = Some(proto::BlockInfo {
-        reason: BlockReason::Question,
-        text: "which table?".into(),
-    });
+    task.block = Some(proto::BlockInfo::new(BlockReason::Question, "which table?"));
     let effects = edit(
         &mut fx,
         vec![

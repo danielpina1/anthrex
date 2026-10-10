@@ -52,6 +52,9 @@ pub struct FullInfo {
     /// while false.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub held: bool,
+    /// Milestone 9.9: the orchestrator accepted this red on the stage's head.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub accepted: bool,
 }
 
 /// One stage of a run (decision 55; TT §7 without `pr`, which milestone 9.2 adds).

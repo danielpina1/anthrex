@@ -93,6 +93,14 @@ fn fixed_run() -> Run {
         error: None,
         recipients: vec!["t1".into()],
     }];
+    // Final review M-4: the pending question, its id and text only.
+    run.orch.ask = Some(crate::run::orch::AskRecord {
+        id: 2,
+        question: "tabs or spaces?".into(),
+        options: vec!["tabs".into(), "spaces".into()],
+        context: "the style guide is silent".into(),
+        asked_at: at(12, 40),
+    });
     run
 }
 

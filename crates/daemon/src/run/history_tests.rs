@@ -500,10 +500,7 @@ fn unfinished_tasks_get_records_when_the_run_ends() {
         task.state = state;
     }
     run.tasks[5].history_written = true;
-    run.tasks[2].block = Some(proto::BlockInfo {
-        reason: BlockReason::Question,
-        text: "?".into(),
-    });
+    run.tasks[2].block = Some(proto::BlockInfo::new(BlockReason::Question, "?"));
     run.state = RunState::Running;
     assert_eq!(run_outcome(&run), None);
     let ids = |run: &Run| -> Vec<(String, TaskOutcome)> {

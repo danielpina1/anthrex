@@ -27,7 +27,7 @@ anthrex fixes both:
 | | |
 |---|---|
 | **Agents side by side** | Real `claude`, `codex` and shell sessions, each in its own PTY, owned by a daemon so they survive closing the UI. |
-| **Live status** | Working, waiting for you, done or idle, from each agent's hooks, with the tool it is running and a bell when one needs you. |
+| **Live status** | Working, waiting for you, done or idle, from each agent's hooks, with the tool it is running and a bell when one of your own agents or a run's orchestrator needs you (a run's workers report to their orchestrator, not to you). |
 | **Project tree** | Agents grouped by repository, each with its sub-agents and theirs, drawn with tree connectors to any depth. |
 | **Graph overview and inspector** | The same tree as a drawn graph, with a panel that spells out the selected node: model, status, branch, checkout, who spawned it. |
 | **Conversation view** | A readable timeline of an agent's turns, built from its hooks and transcript: prose, folded tool calls with diffs, links to sub-agents. |
@@ -130,7 +130,7 @@ Every command starts with the prefix, `C-b` by default (`prefix` in the config).
 | `C-b t` | tree mode: move, fold and filter the sidebar |
 | `C-b T` | overview: the tree as a graph, or an open run's run view |
 | `C-b g` | start a goal |
-| `C-b a` | alerts: gates and runs that need you |
+| `C-b a` | alerts: gates, the orchestrator's questions and problems only you can fix; `1`-`9` answers a question |
 | `C-b P` / `C-b S` | Profile screen / Settings screen |
 | `C-b s` | toggle the sidebar |
 | `C-b <` / `C-b >` | narrow / widen the sidebar |
@@ -174,7 +174,7 @@ flowchart LR
 4. **Merge and test.** A merge queue merges each approved task into the run's integration branch and runs the tests the change affects, cached by content. Flaky tests are retried and proposed for quarantine; a red full suite is bisected to the merge that broke it.
 5. **Deliver.** In `local` mode, `anthrex run accept` merges the finished run into your base branch. In `pr` mode, each stage of the plan becomes a stacked pull request; CI failures and review comments from people with write access become fix tasks. anthrex never merges, approves or enables auto-merge: you do.
 
-You watch it all in the **run view** (`C-b T`, then a run): the plan as a graph of tasks by stage, each task's rounds, and an inspector for the selected task. **Alerts** (`C-b a`) collect everything waiting for you, such as a gate, a held task or a failed check, and Enter takes you to it.
+You watch it all in the **run view** (`C-b T`, then a run): the plan as a graph of tasks by stage, each task's rounds, and an inspector for the selected task. **Alerts** (`C-b a`) collect everything waiting for you, and Enter takes you to it. While a run's orchestrator is alive it handles its run's blocked tasks, halts, held or red stages and delivery problems itself (it retries, overrides, resumes, approves holds and accepts red stages, each with a reason), so what reaches you is an approval or acceptance, a profile proposal, a problem only you can fix (such as a full disk or a logged-out CLI), a question the orchestrator asks with `ask_user` (answer it with `1`-`9`, or in its window), or an orchestrator that has stalled or exited, which hands you back everything it held. What it resolved stays visible quietly as `orchestrator handled N`, with each action and its reason in the run view's inspector.
 
 <img src="docs/images/task-inspector.svg" alt="The run view with a running task selected: its inspector shows the pipeline from done to merge, its acceptance test, brief, owned files, worker, dependencies, budget, retries and route">
 
@@ -207,7 +207,7 @@ default_runtime = "shell"   # claude | codex | shell, for `anthrex new` without 
 scrollback_lines = 5000
 
 [bell]
-attention = true            # ring when an agent needs you
+attention = true            # ring when your agent or an orchestrator needs you
 done = false                # ring when an agent finishes
 
 [ui]

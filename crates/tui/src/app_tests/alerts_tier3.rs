@@ -1,6 +1,7 @@
 //! Milestone 9.5 decision 45 (FU-F21): three tier-3 states raise alerts at priority 3 —
 //! a stage held after executor failures, a propagate red (named by its commit, review
-//! ruling I7) and a red tier 3 — the two reds only while no orchestrator lives.
+//! ruling I7) and a red tier 3 — all three only while no orchestrator lives or when it
+//! is stuck (milestone 9.9.8: a living orchestrator is woken for them instead).
 
 use super::alerts::{line, listed};
 use super::runs::{app_with_runs, snapshot};
@@ -72,17 +73,32 @@ fn tier_3_states_raise_alerts() {
         ]
     );
 
-    // A live orchestrator is woken for the two reds; the held stage still alerts.
+    // M9.9.8: a living orchestrator is woken for every tier-3 state, the held stage
+    // and the halt it causes included, so none is listed.
     let app = app_with_runs(vec![], snapshot(1, 100, runs(true)));
+    assert_eq!(listed(&app), vec![]);
+    // One that is stuck says so and gives every one back.
+    let mut stuck = runs(true);
+    for run in &mut stuck {
+        run.orchestrator.as_mut().unwrap().stuck =
+            Some(proto::OrchestratorStuck::Dead { since: None });
+    }
+    let app = app_with_runs(vec![], snapshot(1, 100, stuck));
+    let dead = "orchestrator exited; its alerts are yours";
     assert_eq!(
         listed(&app),
         vec![
+            line(1, "h-held", dead),
+            line(1, "r-reds", dead),
             line(3, "h-held", "run halted: stage 1: tier 3 held"),
             line(
                 3,
                 "h-held",
                 "stage 1 tier 3 held after executor failures; anthrex run resume retries"
             ),
+            line(3, "r-reds", "stage 1 propagate red at bbbb222"),
+            line(3, "r-reds", "stage 2 tier 3 red · fix task fix1"),
+            line(3, "r-reds", "stage 3 tier 3 red"),
         ]
     );
 }

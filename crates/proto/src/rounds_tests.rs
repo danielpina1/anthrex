@@ -367,7 +367,7 @@ fn round_history_line_round_trips() {
 fn appended_variants_keep_their_indices() {
     let names = tagged_names::<PlanEdit>("op");
     assert_eq!(
-        names[names.len() - 2..],
+        names[names.len() - 7..names.len() - 5],
         ["reply_comment", "iterate"],
         "{names:?}"
     );
@@ -388,11 +388,11 @@ fn appended_variants_keep_their_indices() {
     let names = variant_names::<RunRequest>();
     // Milestone 9.5 appends `McpReady` after `Iterate` (`tuning_tests.rs`).
     assert_eq!(
-        names[names.len() - 6..names.len() - 2],
+        names[names.len() - 7..names.len() - 3],
         ["Deliver", "Watch", "Iterate", "McpReady"],
         "{names:?}"
     );
-    let n = names.len() as u8 - 3;
+    let n = names.len() as u8 - 4;
     assert_eq!(
         variant_at::<RunRequest>(n - 1, &json!({"run": "r1", "goal": "more"})),
         Some(RunRequest::Iterate {

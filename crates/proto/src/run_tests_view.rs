@@ -4,8 +4,8 @@
 
 use super::fixtures::*;
 use crate::messages::DaemonMsg;
-use crate::run::{Effort, RouteSpec, Runtime};
-use crate::run_info::{PlanEditInfo, RunsSnapshot, TaskEventInfo};
+use crate::run::{Effort, RouteSpec, RunState, Runtime};
+use crate::run_info::{PlanEditInfo, RunInfo, RunsSnapshot, TaskEventInfo};
 use crate::run_wire::RunReply;
 use crate::{PlannerInfo, PlannerState};
 
@@ -240,6 +240,10 @@ fn orchestrator_snapshot_fields_round_trip() {
         notes: vec!["t1 is blocked".into()],
         wakes: 2,
         wake_held: false,
+        stuck: None,
+        ask: None,
+        handled: Vec::new(),
+        handled_total: 0,
     });
     run.holds = vec![HoldInfo {
         id: "h1".into(),
@@ -324,6 +328,10 @@ fn new_fields_round_trip() {
         notes: Vec::new(),
         wakes: 0,
         wake_held: true,
+        stuck: None,
+        ask: None,
+        handled: Vec::new(),
+        handled_total: 0,
     });
     run.tasks[0].activity = Some("Bash cargo test -p calc".into());
     let msg = DaemonMsg::Run(RunReply::Snapshot(snapshot.clone()));
@@ -404,4 +412,23 @@ fn m9_snapshot_and_window_decode_with_defaults() {
         serde_json::from_value(m9_window_json()).expect("an M9 window decodes");
     assert!(!window.signals_seen);
     assert_eq!(window.id, 7);
+}
+
+/// Milestone 9.9: a halted run's JSON from protocol 19 has no `halt_user_only`; it
+/// decodes to `false`, and `true` survives both codecs.
+#[test]
+fn a_halted_runs_json_without_halt_user_only_decodes_to_false() {
+    let mut run = a_run_info();
+    run.state = RunState::Halted;
+    run.halted_reason = Some("the base branch moved".into());
+    let mut wire = serde_json::to_value(&run).unwrap();
+    assert!(wire.get("halt_user_only").is_none(), "left out while false");
+    wire.as_object_mut().unwrap().remove("halt_user_only");
+    let back: RunInfo = serde_json::from_value(wire).unwrap();
+    assert!(!back.halt_user_only);
+    assert_eq!(back, run);
+    run.halt_user_only = true;
+    let json: RunInfo = serde_json::from_value(serde_json::to_value(&run).unwrap()).unwrap();
+    let pack: RunInfo = rmp_serde::from_slice(&rmp_serde::to_vec_named(&run).unwrap()).unwrap();
+    assert!(json.halt_user_only && pack.halt_user_only);
 }

@@ -129,6 +129,59 @@ fn record_keeps_the_last_fifty() {
 }
 
 /// Review M3: a huge batch cannot make one record (and so every snapshot) huge.
+/// Milestone 9.9 decision 12: the five orchestrator ops read as the log shows them.
+#[test]
+fn the_five_ops_are_described() {
+    let reason = || "r".to_string();
+    let cases = [
+        (
+            PlanEdit::Retry {
+                task_id: "t3".into(),
+                reason: reason(),
+            },
+            "retry t3",
+        ),
+        (
+            PlanEdit::Override {
+                task_id: "t3".into(),
+                reason: reason(),
+            },
+            "override t3",
+        ),
+        (
+            PlanEdit::ResumeRun {
+                reason: reason(),
+                stage: None,
+            },
+            "resume_run",
+        ),
+        (
+            PlanEdit::ResumeRun {
+                reason: reason(),
+                stage: Some(2),
+            },
+            "resume_run stage 2",
+        ),
+        (
+            PlanEdit::ApproveHold {
+                hold: "epic:ui".into(),
+                reason: reason(),
+            },
+            "approve_hold epic:ui",
+        ),
+        (
+            PlanEdit::AcceptRed {
+                stage: 2,
+                reason: reason(),
+            },
+            "accept_red stage 2",
+        ),
+    ];
+    for (edit, text) in cases {
+        assert_eq!(describe(&[edit]), text);
+    }
+}
+
 #[test]
 fn describe_is_capped() {
     let edits: Vec<PlanEdit> = (0..20_000)

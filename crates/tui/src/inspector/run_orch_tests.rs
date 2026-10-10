@@ -327,3 +327,64 @@ fn task_notes_and_message_lines_render_sanitised() {
         }
     }
 }
+
+fn handled(at: u64, op: &str, target: &str, reason: &str) -> proto::HandledInfo {
+    proto::HandledInfo {
+        at,
+        op: op.into(),
+        target: target.into(),
+        reason: reason.into(),
+    }
+}
+
+/// Milestone 9.9.9: the orchestrator's quiet history, newest first, under a count row.
+#[test]
+fn handled_rows_list_newest_first() {
+    let (mut snapshot, windows) = orch_fixture(RunState::Running);
+    let o = snapshot.runs[0].orchestrator.as_mut().unwrap();
+    o.handled = vec![
+        handled(43_500, "retry", "t2", "flaky network"),
+        handled(43_800, "override", "t4", "reviewer was wrong"),
+        handled(
+            44_100,
+            "accept_red",
+            "stage 2",
+            &format!("red on main{}", hostile_text()),
+        ),
+    ];
+    o.handled_total = 3;
+    let app = app_of((snapshot, windows));
+    let o = app.runs.runs[0].orchestrator.as_ref().unwrap();
+    let rows = super::run_orch::handled_rows(o, &app);
+    assert_eq!(
+        rows[0],
+        ("handled".to_owned(), "orchestrator handled 3".to_owned())
+    );
+    assert_eq!(rows.len(), 4);
+    assert_eq!(rows[1].0, "");
+    assert!(
+        rows[1].1.contains("accept_red stage 2 — red on main"),
+        "{rows:?}"
+    );
+    assert_eq!(first_hostile(&rows[1].1), None, "{rows:?}");
+    assert!(
+        rows[2].1.ends_with("override t4 — reviewer was wrong"),
+        "{rows:?}"
+    );
+    assert!(rows[3].1.ends_with("retry t2 — flaky network"), "{rows:?}");
+    // The run's inspection carries them after the orchestrator row.
+    let inspection = inspect_node(&app, &run_key());
+    let labels: Vec<&str> = inspection.fields.iter().map(|f| f.label).collect();
+    let at = labels.iter().position(|l| *l == "orchestrator").unwrap();
+    assert_eq!(labels[at + 1], "handled");
+    assert_eq!(
+        value(&inspection, "handled"),
+        Some("orchestrator handled 3")
+    );
+
+    // None handled: no rows.
+    let (snapshot, windows) = orch_fixture(RunState::Running);
+    let app = app_of((snapshot, windows));
+    let o = app.runs.runs[0].orchestrator.as_ref().unwrap();
+    assert!(super::run_orch::handled_rows(o, &app).is_empty());
+}

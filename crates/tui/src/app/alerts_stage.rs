@@ -15,11 +15,10 @@ pub enum StageAlert {
 /// Milestone 9.5 decision 45: each stage's tier-3 states the user must act on — held
 /// after executor failures; red at propagation (its commit, review ruling I7); a red
 /// tier 3 on the stage's head, or one whose commit is unknown (a `run.json` from before
-/// ruling C-18, ruling T9-2), with its latest fix task. The two reds are the
-/// orchestrator's while it lives.
+/// ruling C-18, ruling T9-2), with its latest fix task, unless the orchestrator accepted
+/// it (milestone 9.9). Which are the user's is `alerts_route`'s to say.
 pub(super) fn stage_alerts(run: &RunInfo) -> Vec<(u16, StageAlert, String)> {
     let mut out = Vec::new();
-    let orchestrated = super::alerts::orchestrator_lives(run);
     for stage in &run.stages {
         let n = stage.n;
         if stage.full.held {
@@ -27,9 +26,6 @@ pub(super) fn stage_alerts(run: &RunInfo) -> Vec<(u16, StageAlert, String)> {
                 "stage {n} tier 3 held after executor failures; anthrex run resume retries"
             );
             out.push((n, StageAlert::Held, text));
-        }
-        if orchestrated {
-            continue;
         }
         if let Some(sha) = &stage.propagate_red {
             let sha7: String = sha.chars().take(7).collect();
@@ -47,7 +43,7 @@ pub(super) fn stage_alerts(run: &RunInfo) -> Vec<(u16, StageAlert, String)> {
             .commit
             .as_ref()
             .is_some_and(|c| Some(c) != stage.head.as_ref());
-        if stage.full.state == FullState::Red && !stale {
+        if stage.full.state == FullState::Red && !stale && !stage.full.accepted {
             let mut text = format!("stage {n} tier 3 red");
             if let Some(fix) = stage.fix_tasks.last() {
                 text.push_str(&format!(" · fix task {fix}"));

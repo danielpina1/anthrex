@@ -7,7 +7,9 @@ use serde_json::json;
 
 use super::dispatch::replies;
 use super::fixture::*;
-use super::orch::{ORCH, add, answer, edit_plan, error, launched, orch_tool};
+use super::orch::{
+    ORCH, add, answer, but_the_log, but_the_stall, edit_plan, error, launched, orch_tool,
+};
 use crate::run::engine::{Effect, EventKind};
 use crate::run::orch::{EpicRecord, PlannerPhase};
 
@@ -328,10 +330,10 @@ fn a_submit_while_the_run_is_being_discarded_is_refused() {
         reply,
         run_id: RUN_ID.into(),
     });
-    let before = fx.run().clone();
+    let before = but_the_stall(fx.run());
     let effects = edit_plan(&mut fx, json!({"edits": [], "submit": true}));
     assert_eq!(error(&effects), format!("run {RUN_ID} is being discarded"));
-    assert_eq!(*fx.run(), before);
+    assert_eq!(but_the_stall(fx.run()), before);
     let reply = fx.reply();
     let effects = fx.next(EventKind::Edit {
         reply,
@@ -345,7 +347,7 @@ fn a_submit_while_the_run_is_being_discarded_is_refused() {
         replies(&effects),
         vec![Err(format!("run {RUN_ID} is being discarded"))]
     );
-    assert_eq!(*fx.run(), before);
+    assert_eq!(but_the_stall(fx.run()), before);
 }
 
 /// Milestone 9.3 task M9.3.7 fix round 1 (ruling: option (b)): an `edit_plan` with no
@@ -383,19 +385,6 @@ fn an_edit_plan_without_edits_is_an_empty_batch() {
     assert!(ok, "{value}");
     let o = fx.run().orch.orchestrator.as_ref().unwrap();
     assert_eq!(o.summary.as_deref(), Some("All done."));
-}
-
-/// `run` without what a rejected batch still changes (task M9.9, decision 40): its
-/// edit-log record, and the revisions that record moves.
-fn but_the_log(run: &crate::run::model::Run) -> crate::run::model::Run {
-    let mut run = run.clone();
-    run.plan_edits.clear();
-    run.revision = 0;
-    // Milestone 9.5 decision 15: the logged batch is a change, so its step's time.
-    run.last_step_at = 0;
-    run.orch.digest_rev = 0;
-    run.orch.digest_fp = 0;
-    run
 }
 
 /// M9.11 re-review finding 3: a 17-character id reaches the plan rules, whose error

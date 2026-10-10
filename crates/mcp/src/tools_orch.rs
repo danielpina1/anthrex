@@ -3,8 +3,8 @@
 //! `task_note`. Every schema is a closed object at
 //! every level. The limits are what the model sees; the daemon parses every call again
 //! (`daemon::run::orch::tools::parse_call`) and refuses what breaks them. No tool here
-//! approves, accepts, merges or overrides anything: `plan_edit`'s `op` has no such
-//! operation.
+//! approves a plan or a design document, or accepts or merges anything; edit_plan's
+//! override sends a task to the engine's merge queue, which still checks it.
 
 use rmcp::model::{JsonObject, Tool};
 use serde_json::{Value, json};
@@ -20,12 +20,14 @@ pub const TASK_RESULT: &str = "task_result";
 pub const SUBMIT_EPIC: &str = "submit_epic";
 pub const TASK_NOTE: &str = "task_note";
 pub const START_GOAL: &str = "start_goal";
+pub const ASK_USER: &str = "ask_user";
 
 /// The most `run_status` waits, in seconds (decision 16).
 pub const RUN_STATUS_MAX_WAIT: u64 = 50;
 
 /// `tools_for(Orchestrator)`, in decision 15's order, then milestone 9.3's `start_goal`
-/// (decision 29), then milestone 9.6's three (`tools_design.rs`).
+/// (decision 29), then milestone 9.6's three (`tools_design.rs`), then milestone 9.9's
+/// `ask_user`.
 pub fn orchestrator_tools() -> Vec<Tool> {
     let mut tools = vec![
         get_context(),
@@ -37,6 +39,7 @@ pub fn orchestrator_tools() -> Vec<Tool> {
         start_goal(),
     ];
     tools.extend(crate::tools_design::orchestrator_design_tools());
+    tools.push(ask_user());
     tools
 }
 
@@ -57,6 +60,25 @@ pub fn task_note() -> Tool {
                 "text": text(4000),
             }),
             &["kind", "text"],
+        ),
+    )
+}
+
+/// Milestone 9.9 decision 15: the orchestrator's one question to the user. The daemon
+/// parses the call again with the same bounds (`orch/tools.rs`).
+fn ask_user() -> Tool {
+    Tool::new(
+        ASK_USER,
+        "Ask the user one question when only they can decide, with up to nine short options \
+         and the context they need. Returns at once; their choice arrives as a message. \
+         Once the plan is approved, never ask in chat instead.",
+        closed(
+            json!({
+                "question": text(500),
+                "options": array(text(200), None, 9),
+                "context": text(4000),
+            }),
+            &["question"],
         ),
     )
 }
@@ -116,7 +138,9 @@ fn edit_plan() -> Tool {
         EDIT_PLAN,
         "Apply plan edits as one batch. Set submit to open the plan gate. Add a summary for \
          the user when the run is complete. Set iterate, with no edits and nothing else, to \
-         start a round the user asked for. Returns at once.",
+         start a round the user asked for. retry, override, resume_run, approve_hold and \
+         accept_red each come alone, with a reason. approve_hold never approves a promoted \
+         run's promotion hold: that is the user's plan approval. Returns at once.",
         closed(
             json!({
                 "edits": array(object(plan_edit()), None, 60),
@@ -193,6 +217,7 @@ fn plan_edit() -> JsonObject {
             "op": one_of(&[
                 "add_task", "split_task", "cancel_task", "amend_task", "add_dep", "answer",
                 "pause", "resume", "finish", "message", "refresh", "reply_comment",
+                "retry", "override", "resume_run", "approve_hold", "accept_red",
             ]),
             "task": object(plan_task()),
             "task_id": text(16),
@@ -218,6 +243,9 @@ fn plan_edit() -> JsonObject {
             "body": text(4000),
             "race": boolean(),
             "pair": boolean(),
+            // Task M9.9.10: the five resolving ops' reason and hold.
+            "reason": text(500),
+            "hold": text(64),
         }),
         &["op"],
     )

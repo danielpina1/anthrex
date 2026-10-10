@@ -2,6 +2,10 @@
   "attention": [
     "t2 blocked (question): which endpoint?"
   ],
+  "ask": {
+    "id": 2,
+    "question": "tabs or spaces?"
+  },
   "counts": {
     "blocked": 1,
     "cancelled": 0,

@@ -133,11 +133,11 @@ fn four_priorities_render_at_80x24() {
     let app = every_app();
     let (buffer, layout) = draw_at(&app, 80, 24);
     // 23 rows of column: max(3, min(C, 23 / 2 − 2, 23 − R − 5)) = 9 rows; the
-    // three P1 alerts whole (eight rows), the last `↓ 7 more`.
+    // three P1 alerts whole (eight rows), the last `↓ 6 more`.
     assert_eq!(
         box_rows(&buffer, &layout),
         [
-            "╭ ⚑ Alerts 10 ───────────────────╮",
+            "╭ ⚑ Alerts 9 ────────────────────╮",
             "│⚑ Add password reset · attn  now│",
             "│  orchestrator asks for         │",
             "│  permission                    │",
@@ -146,7 +146,7 @@ fn four_priorities_render_at_80x24() {
             "│  prompt                        │",
             "│⚑ Add password reset · held     │",
             "│  orchestrator wake-up held     │",
-            "│↓ 7 more                        │",
+            "│↓ 6 more                        │",
             "╰─────────────────── C-b a open ─╯",
         ]
     );
@@ -166,11 +166,11 @@ fn four_priorities_render_at_120x40() {
     let app = every_app();
     let (buffer, layout) = draw_at(&app, 120, 40);
     // 39 rows of column: min(C, 17, 39 − R − 5) = 17 rows. Whole alerts only: six fit
-    // above the `↓ 4 more` row, the box's last, and the next would need two more.
+    // above the `↓ 3 more` row, the box's last, and the next would need two more.
     assert_eq!(
         box_rows(&buffer, &layout),
         [
-            "╭ ⚑ Alerts 10 ───────────────────╮",
+            "╭ ⚑ Alerts 9 ────────────────────╮",
             "│⚑ Add password reset · attn  now│",
             "│  orchestrator asks for         │",
             "│  permission                    │",
@@ -184,10 +184,10 @@ fn four_priorities_render_at_120x40() {
             "│⚑ Add password reset · held     │",
             "│  hold epic:ui awaits approval ·│",
             "│  1 task                        │",
-            "│⚑ Add password reset · held › t1│",
-            "│  blocked (human): needs a key  │",
+            "│⚑ Add password reset · bare › t1│",
+            "│  blocked: which db?            │",
             "│                                │",
-            "│↓ 4 more                        │",
+            "│↓ 3 more                        │",
             "╰─────────────────── C-b a open ─╯",
         ]
     );
@@ -214,7 +214,7 @@ fn more_alerts_than_rows_shows_more() {
     let last = inner.y + inner.height - 1;
     assert_eq!(
         rows[usize::from(inner.height)],
-        "│↓ 7 more                        │"
+        "│↓ 6 more                        │"
     );
     assert_eq!(
         buffer[(inner.x, last)].style().fg,
@@ -227,7 +227,7 @@ fn more_alerts_than_rows_shows_more() {
     let rows = box_rows(&buffer, &layout);
     assert_eq!(
         rows[usize::from(layout.alerts_inner.height)],
-        "|v 7 more                        |"
+        "|v 6 more                        |"
     );
 }
 
@@ -267,7 +267,7 @@ fn hidden_sidebar_shows_the_flag() {
     let (buffer, layout) = draw_at(&app, 80, 24);
     assert_eq!(layout.alerts.height, 0);
     assert!(
-        row(&buffer, 23).starts_with(" ⚑ 10 "),
+        row(&buffer, 23).starts_with(" ⚑ 9 "),
         "{:?}",
         row(&buffer, 23)
     );
@@ -305,7 +305,7 @@ fn hidden_sidebar_shows_the_flag() {
     let (buffer, _) = draw_at(&app, 80, 24);
     assert!(!app.sidebar_visible);
     assert!(
-        row(&buffer, 23).starts_with(" ALERTS  ⚑ 10 "),
+        row(&buffer, 23).starts_with(" ALERTS  ⚑ 9 "),
         "{:?}",
         row(&buffer, 23)
     );
@@ -320,7 +320,7 @@ fn the_agent_list_keeps_its_rows_above_the_box() {
         assert_eq!(layout.sidebar.y + layout.sidebar.height, layout.alerts.y);
         let bottom = layout.sidebar.y + layout.sidebar.height - 1;
         assert!(row(&buffer, bottom).starts_with('╰'), "{width}x{height}");
-        assert!(row(&buffer, layout.alerts.y).starts_with("╭ ⚑ Alerts 10 "));
+        assert!(row(&buffer, layout.alerts.y).starts_with("╭ ⚑ Alerts 9 "));
         // The list and its footer sit inside the agents block.
         let list = layout.sidebar_list;
         assert!(list.y + list.height <= layout.sidebar_footer.y);
@@ -423,6 +423,7 @@ fn a_raw_alert_line_is_sanitised_by_the_box_itself() {
         text: format!("t{bad}"),
         detail: bad.clone(),
         age: Some(41),
+        you: false,
     };
     let app = empty_app();
     for width in [4, 20, 400] {
@@ -461,7 +462,7 @@ fn the_status_bar_precedence_is_prefix_plan_alerts_tree() {
     assert!(app.alerts_focus.is_some());
     let (buffer, _) = draw_at(&app, 120, 24);
     assert!(
-        row(&buffer, 23).starts_with(" PLAN  ⚑ 10  a approve  x reject"),
+        row(&buffer, 23).starts_with(" PLAN  ⚑ 9  a approve  x reject"),
         "{:?}",
         row(&buffer, 23)
     );
@@ -513,5 +514,39 @@ fn a_short_terminal_still_shows_one_alert() {
     // The mark on the interior's last row.
     let rows = box_rows(&buffer, &layout);
     assert_eq!(rows[1], "│                                │");
-    assert_eq!(rows[2], "│↓ 10 more                       │");
+    assert_eq!(rows[2], "│↓ 9 more                        │");
+}
+
+/// Milestone 9.9 decision 23: a user-only alert under a living orchestrator wears a
+/// `you` badge on its first line, in the attention role; others do not.
+#[test]
+fn a_you_alert_wears_the_badge() {
+    let app = empty_app();
+    let alert = |you| crate::app::Alert {
+        priority: 3,
+        key: crate::app::AlertKey::Halted("r".into()),
+        who: crate::app::AlertWho::Run {
+            goal: "goal".into(),
+            id: "r".into(),
+        },
+        task: None,
+        text: "run halted".into(),
+        detail: "run halted".into(),
+        age: None,
+        you,
+    };
+    let first = |you| {
+        let lines = super::alert_lines(&app, &alert(you), 30);
+        lines[0]
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect::<String>()
+    };
+    assert!(
+        first(true).trim_end().ends_with(" you"),
+        "{:?}",
+        first(true)
+    );
+    assert!(!first(false).contains("you"));
 }

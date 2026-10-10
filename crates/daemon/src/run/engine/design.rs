@@ -370,6 +370,21 @@ pub(crate) fn halted_phase(run: &Run) -> Option<&'static str> {
     }
 }
 
+/// The budget halt's reason is `design flow: the <phase> phase passed its <n> min budget`.
+const BUDGET_HALT_HEAD: &str = "design flow: the ";
+const BUDGET_HALT_TAIL: &str = " min budget";
+
+/// Milestone 9.9 final review I-1: whether the run is halted by a phase's budget
+/// ([`tick`]). The budget is the user's cost limit on the orchestrator, so the halt is
+/// user-only (`user_only::halt`).
+pub(crate) fn budget_halted(run: &Run) -> bool {
+    halted_phase(run).is_some()
+        && run
+            .halted_reason
+            .as_deref()
+            .is_some_and(|r| r.starts_with(BUDGET_HALT_HEAD) && r.ends_with(BUDGET_HALT_TAIL))
+}
+
 /// Decision 8, on every tick: a phase past its `phase_minutes` of unpaused wall-clock
 /// time halts the run, retryably; `run resume` returns it to the state it left.
 pub(super) fn tick(run: &mut Run, now: u64) {
@@ -386,7 +401,7 @@ pub(super) fn tick(run: &mut Run, now: u64) {
     if spent <= u64::from(minutes) * 60 {
         return;
     }
-    let text = format!("design flow: the {phase} phase passed its {minutes} min budget");
+    let text = format!("{BUDGET_HALT_HEAD}{phase} phase passed its {minutes}{BUDGET_HALT_TAIL}");
     super::design_spend::stop_clock(run, now);
     if let Some(design) = run.orch.design.as_mut() {
         design.halted_from = Some(run.state);

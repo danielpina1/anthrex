@@ -40,6 +40,11 @@ fn with_actions() -> RunsSnapshot {
                     ),
                 ];
                 for task in &mut run.tasks {
+                    // M9.9.8: the living orchestrator takes the `Human` block unless
+                    // only the user can fix it; this one is listed for the user.
+                    if task.id == "t1" {
+                        task.block.as_mut().expect("t1 is blocked").user_only = true;
+                    }
                     task.actions = vec![
                         action(ActionKind::Answer, "answer", None),
                         action(ActionKind::Retry, "retry", None),

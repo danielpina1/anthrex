@@ -109,6 +109,7 @@ pub fn read_at(now_before_clone: u64) -> u64 {
 /// clone was taken, as given (BR-18), so a hold decided after the clone stays shown.
 pub(super) fn digest_read(run: &mut Run, notes_seq: u64, at: u64) {
     run.orch.digest_read_at = Some(at);
+    super::orch_stall::acted(run, at);
     drop_up_to(run, notes_seq);
 }
 

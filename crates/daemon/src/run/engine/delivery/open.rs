@@ -155,7 +155,7 @@ fn verified_head(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) -> Optio
         return Some(head);
     }
     let full = &run.stage(n)?.full;
-    if full.green_at.as_deref() == Some(head.as_str()) {
+    if full::passed_at(full, &head) {
         return Some(head);
     }
     if full.red_at.as_deref() != Some(head.as_str()) {

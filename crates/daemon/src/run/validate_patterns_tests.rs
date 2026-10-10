@@ -184,10 +184,7 @@ fn race_and_pair_amend_only_before_start() {
             );
         }
         run.tasks[0].state = TaskState::Blocked;
-        run.tasks[0].block = Some(BlockInfo {
-            reason: BlockReason::Human,
-            text: "fixture".into(),
-        });
+        run.tasks[0].block = Some(BlockInfo::new(BlockReason::Human, "fixture"));
         assert_eq!(
             apply(&run, vec![amend("t1", field, false)]).unwrap_err(),
             [refused],

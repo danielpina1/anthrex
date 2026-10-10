@@ -79,10 +79,7 @@ pub(super) fn blocked_t1() -> Fixture {
     );
     let task = fx.task_mut("t1");
     task.state = TaskState::Blocked;
-    task.block = Some(proto::BlockInfo {
-        reason: BlockReason::Question,
-        text: "which table?".into(),
-    });
+    task.block = Some(proto::BlockInfo::new(BlockReason::Question, "which table?"));
     fx.tick();
     fx
 }

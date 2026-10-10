@@ -77,9 +77,14 @@ pub(crate) fn alert_lines(app: &App, alert: &Alert, width: u16) -> Vec<Line<'sta
     });
     let age = alert.age.map(age_text);
     let age_room = age.as_ref().map_or(0, |age| age.width() + 1);
-    let room = width.saturating_sub(mark.width() + task.width() + age_room);
+    // Milestone 9.9 decision 23: the `you` badge, after the who, on the first line.
+    let you = if alert.you { " you" } else { "" };
+    let room = width.saturating_sub(mark.width() + task.width() + age_room + you.len());
     let who = who_text(&alert.who, room, p);
     let mut parts = vec![(mark, style), (who, style), (task, style)];
+    if alert.you {
+        parts.push((you.to_owned(), theme::role(Role::Attention, p)));
+    }
     if let Some(age) = age {
         let used: usize = parts.iter().map(|(text, _)| text.width()).sum();
         let gap = width.saturating_sub(used + age.width()).max(1);

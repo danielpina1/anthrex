@@ -397,7 +397,10 @@ fn a_blocked_task_flags_only_when_it_needs_you() {
     let question = blocked("t1", BlockReason::Question, "which table?");
     let human = blocked("t2", BlockReason::Human, "please decide");
     let mut live = with_orch(at("r-live", RunState::Running, 1), 11);
-    live.tasks = vec![question.clone(), human.clone()];
+    // M9.9.8: the living orchestrator takes a `Human` block too, unless user-only.
+    let mut only_you = blocked("t3", BlockReason::Human, "only you can fix it");
+    only_you.block.as_mut().expect("blocked").user_only = true;
+    live.tasks = vec![question.clone(), human.clone(), only_you];
     let mut bare = at("r-bare", RunState::Running, 2);
     bare.tasks = vec![question.clone()];
     let mut gate = at("r-gate", RunState::AwaitingApproval, 3);
@@ -412,7 +415,11 @@ fn a_blocked_task_flags_only_when_it_needs_you() {
         !task_needs_you(&live, &live.tasks[0]),
         "the orchestrator answers"
     );
-    assert!(task_needs_you(&live, &live.tasks[1]), "a human block");
+    assert!(
+        !task_needs_you(&live, &live.tasks[1]),
+        "the orchestrator takes a human block"
+    );
+    assert!(task_needs_you(&live, &live.tasks[2]), "a user-only block");
     assert!(task_needs_you(&bare, &bare.tasks[0]), "no orchestrator");
     assert!(!task_needs_you(&gate, &gate.tasks[0]), "the gate covers it");
     assert!(!task_needs_you(&held, &held.tasks[0]), "the hold covers it");
@@ -445,7 +452,8 @@ fn a_blocked_task_flags_only_when_it_needs_you() {
         (glyph, role, alerted)
     };
     assert_eq!(drawn(&live, "t1"), ("⊘", Role::Paused, false));
-    assert_eq!(drawn(&live, "t2"), ("⚑", Role::Attention, true));
+    assert_eq!(drawn(&live, "t2"), ("⊘", Role::Paused, false));
+    assert_eq!(drawn(&live, "t3"), ("⚑", Role::Attention, true));
     assert_eq!(drawn(&bare, "t1"), ("⚑", Role::Attention, true));
     assert_eq!(drawn(&gate, "t2"), ("○", Role::Muted, false));
     assert_eq!(drawn(&held, "t2"), ("○", Role::Muted, false));

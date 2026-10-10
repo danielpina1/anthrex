@@ -8,6 +8,7 @@ use crate::run::phases::set_state;
 use proto::{DeciderSource, PlanEdit, RunPath, RunState, Runtime, SizeCheckInfo, TaskState};
 
 use super::actions::rules;
+use super::actor::Actor;
 use super::batch::{Refused, apply_batch};
 use super::dispatch::{history, salvage_ref};
 use super::signals::end_round;
@@ -364,12 +365,28 @@ pub(super) fn retry(
     let Some(run) = state.runs.get_mut(run_id) else {
         return reply(fx, id, Err(unknown(run_id)));
     };
+    let result = retry_on(run, task_id, Actor::User, now, fx);
+    reply(fx, id, result);
+}
+
+/// The retry's core, shared by the user's request and the orchestrator's op (milestone
+/// 9.9 decision 9): the user path's rule first, then the retry; `actor` is named in the
+/// task's history. The user's own run log line is written here; the orchestrator's is
+/// `handled::record`'s.
+pub(super) fn retry_on(
+    run: &mut Run,
+    task_id: &str,
+    actor: Actor,
+    now: u64,
+    fx: &mut Vec<Effect>,
+) -> Result<String, String> {
     if let Some(text) = rules::retry(run, task_id) {
-        return reply(fx, id, Err(text));
+        return Err(text);
     }
     let Some(i) = run.tasks.iter().position(|t| t.id() == task_id) else {
-        return reply(fx, id, Err(rules::refused(rules::retry(run, task_id))));
+        return Err(rules::refused(rules::retry(run, task_id)));
     };
+    let who = actor.who();
     let task = &run.tasks[i];
     let was = task.block.clone().map_or_else(String::new, |b| {
         let label = serde_json::to_value(b.reason)
@@ -384,26 +401,30 @@ pub(super) fn retry(
             run,
             i,
             now,
-            format!("retried by the user: its crown is sent again{was}"),
+            format!("retried by {who}: its crown is sent again{was}"),
         );
-        log(
-            run,
-            now,
-            format!("{task_id} retried: its crown is sent again"),
-        );
-        let text = format!("task {task_id} retried: its race's winner is crowned again");
-        return reply(fx, id, Ok(text));
+        if actor == Actor::User {
+            log(
+                run,
+                now,
+                format!("{task_id} retried: its crown is sent again"),
+            );
+        }
+        return Ok(format!(
+            "task {task_id} retried: its race's winner is crowned again"
+        ));
     }
-    // M9.9 second review, M-c: the user's retry lifts decision 25's cap.
-    run.tasks[i].orch.rewrite_restarts = 0;
-    let how = rung2(run, i, format!("the user retried it{was}"), now, fx);
-    history(run, i, now, format!("retried by the user at rung 2{was}"));
-    log(run, now, format!("{task_id} retried at rung 2"));
-    reply(
-        fx,
-        id,
-        Ok(format!("task {task_id} retried at rung 2: {how}")),
-    );
+    // M9.9 second review, M-c: the user's retry lifts decision 25's cap. Final review
+    // C-1: the orchestrator's does not, or it could lift the cap on its own loop.
+    if actor == Actor::User {
+        run.tasks[i].orch.rewrite_restarts = 0;
+    }
+    let how = rung2(run, i, format!("{who} retried it{was}"), now, fx);
+    history(run, i, now, format!("retried by {who} at rung 2{was}"));
+    if actor == Actor::User {
+        log(run, now, format!("{task_id} retried at rung 2"));
+    }
+    Ok(format!("task {task_id} retried at rung 2: {how}"))
 }
 
 /// Decision 42's re-entry at rung 2 of blocked task `i`, which `run retry` and

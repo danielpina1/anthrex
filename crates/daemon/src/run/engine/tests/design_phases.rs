@@ -205,7 +205,10 @@ fn a_phase_over_budget_halts_and_resume_restarts_its_clock() {
     assert!(log_lines(&fx).contains(&format!("halted: {text}")));
     // Its tools wait for the user.
     let effects = submit(&mut fx, "spec", SPEC);
-    assert_eq!(refused(&effects), format!("run {RUN_ID} is halted"));
+    assert_eq!(
+        refused(&effects),
+        format!("run {RUN_ID} is halted; a lone resume_run (or ask_user) is all it takes")
+    );
     let effects = resume(&mut fx);
     assert_eq!(replies(&effects), vec![Ok(format!("run {RUN_ID} resumed"))]);
     assert_eq!(fx.run().state, RunState::Specifying);

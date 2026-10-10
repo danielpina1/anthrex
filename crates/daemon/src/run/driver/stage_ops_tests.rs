@@ -442,10 +442,7 @@ async fn a_rebaseline_the_engine_refuses_writes_no_ref() {
         task.state = proto::TaskState::Cancelled;
     }
     run.tasks[0].state = proto::TaskState::Blocked;
-    run.tasks[0].block = Some(proto::BlockInfo {
-        reason: proto::BlockReason::Human,
-        text: "waiting".into(),
-    });
+    run.tasks[0].block = Some(proto::BlockInfo::new(proto::BlockReason::Human, "waiting"));
     crate::lock(&rig.service.state)
         .runs
         .insert("r1".into(), run);

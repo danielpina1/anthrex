@@ -130,6 +130,8 @@ fn facts(app: &App, alert: &Alert) -> Vec<(String, String)> {
     let run = match &alert.key {
         AlertKey::Proposal(_) => None,
         AlertKey::Orchestrator(id)
+        | AlertKey::OrchestratorAsks(id)
+        | AlertKey::OrchestratorStuck(id)
         | AlertKey::Gate(id)
         | AlertKey::Halted(id)
         | AlertKey::Accept(id)
@@ -219,6 +221,14 @@ fn facts(app: &App, alert: &Alert) -> Vec<(String, String)> {
                 let route = route_tag(&orch.route);
                 push(&mut rows, "orchestrator", format!("{route} · {status}"));
             }
+        }
+        (AlertKey::OrchestratorAsks(_), Some(_)) => {
+            push(&mut rows, "phase", "asks you".to_owned());
+            // The context, then the numbered options the `1`-`9` keys answer.
+            text_rows(&mut rows, "detail", &alert.detail);
+        }
+        (AlertKey::OrchestratorStuck(_), Some(_)) => {
+            push(&mut rows, "phase", "stuck".to_owned());
         }
         (AlertKey::Delivery { kind, stage, .. }, Some(run)) => {
             push(&mut rows, "phase", delivery_phase(*kind).to_owned());
@@ -368,6 +378,9 @@ fn detail_hints(app: &App, alert: &Alert) -> Vec<Hint> {
     }
     if can_message(app, &alert.key) {
         hints.push(hint("m", "message", 7));
+    }
+    if let AlertKey::OrchestratorAsks(_) = alert.key {
+        hints.push(hint("1-9", "answer", 10));
     }
     match alert.key {
         AlertKey::Blocked { .. } => hints.push(hint("o", "open task", 6)),

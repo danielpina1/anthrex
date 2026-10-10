@@ -470,6 +470,10 @@ pub struct OverrideCount {
     pub op: super::OpId,
     pub reply: u64,
     pub reason: String,
+    /// Milestone 9.9 decision 13: who asked; the orchestrator's override is recorded as
+    /// handled when it lands.
+    #[serde(default)]
+    pub actor: super::actor::Actor,
 }
 
 /// Where a scratch-worktree check runs (ruling T13-I3): the repository, the claimed

@@ -122,6 +122,13 @@ fn describe_one(edit: &PlanEdit) -> String {
         }
         // Milestone 9.3 decision 30.
         PlanEdit::Iterate { .. } => "iterate".to_string(),
+        // Milestone 9.9 decision 12.
+        PlanEdit::Retry { task_id, .. } => format!("retry {task_id}"),
+        PlanEdit::Override { task_id, .. } => format!("override {task_id}"),
+        PlanEdit::ResumeRun { stage: None, .. } => "resume_run".to_string(),
+        PlanEdit::ResumeRun { stage: Some(n), .. } => format!("resume_run stage {n}"),
+        PlanEdit::ApproveHold { hold, .. } => format!("approve_hold {hold}"),
+        PlanEdit::AcceptRed { stage, .. } => format!("accept_red stage {stage}"),
     }
 }
 

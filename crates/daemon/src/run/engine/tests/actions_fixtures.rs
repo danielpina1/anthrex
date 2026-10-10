@@ -204,10 +204,10 @@ pub(super) fn running() -> Fixture {
     // whole gate history, so the block is set in place as `ladder` leaves it.
     let human = fx.task_mut("human");
     human.state = TaskState::Blocked;
-    human.block = Some(BlockInfo {
-        reason: BlockReason::Human,
-        text: "bounced three times at the check".into(),
-    });
+    human.block = Some(BlockInfo::new(
+        BlockReason::Human,
+        "bounced three times at the check",
+    ));
     let cancel = PlanEdit::CancelTask {
         task_id: "doomed".into(),
     };
@@ -255,7 +255,7 @@ pub(super) fn halted() -> Fixture {
 
 /// The one task of a run merged; the ref guard could not read the refs twice: halted,
 /// and a plain resume retries it (review m1).
-fn halted_retryable() -> Fixture {
+pub(super) fn halted_retryable() -> Fixture {
     let mut fx = all_merged();
     for _ in 0..2 {
         fx.tick();
@@ -339,7 +339,7 @@ pub(super) fn complete() -> Fixture {
 
 /// Milestone 9.3: a planned run whose orchestrator's task merged, complete: the one
 /// fixture state a round can start from (decision 9).
-fn complete_orchestrated() -> Fixture {
+pub(super) fn complete_orchestrated() -> Fixture {
     super::goal_rounds_start::complete()
 }
 

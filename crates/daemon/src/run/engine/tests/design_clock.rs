@@ -193,3 +193,26 @@ fn a_cancelled_run_halted_before_its_plan_is_discarded_not_resumed() {
     let check = actions::check(fx.run(), &ActionNode::Run, &ActionKind::Resume);
     assert_eq!(check, Err(refusal));
 }
+
+/// Final review I-1: a phase budget is the user's cost limit on the orchestrator, so
+/// its halt is user-only. It is routed to the user, the orchestrator's `resume_run` is
+/// refused with the user-only text, and the user's resume still works.
+#[test]
+fn a_budget_halt_is_the_users_to_resume() {
+    let mut fx = halted_in_planning();
+    let snap = crate::run::snapshot::snapshot(&fx.state, fx.now);
+    assert_eq!(snap.runs.first().map(|r| r.halt_user_only), Some(true));
+    let args = json!({"edits": [{"op": "resume_run", "reason": "keep going"}]});
+    let effects = orch_tool(&mut fx, ORCH, "edit_plan", args);
+    let refusal = format!(
+        "run {RUN_ID} waits on something only the user can fix, and they have been alerted: {PLANNING_HALT}"
+    );
+    assert_eq!(super::orch::error(&effects), refusal);
+    assert_eq!(fx.run().state, RunState::Halted);
+    assert_eq!(halted_from(&fx), Some(RunState::Planning));
+    assert_eq!(
+        replies(&resume(&mut fx)),
+        vec![Ok(format!("run {RUN_ID} resumed"))]
+    );
+    assert_eq!(fx.run().state, RunState::Planning);
+}

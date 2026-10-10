@@ -183,10 +183,7 @@ fn task_deps_include_implicit_ones_once() {
 #[test]
 fn task_fields_when_blocked() {
     let app = with_task("t5", |task| {
-        task.block = Some(BlockInfo {
-            reason: BlockReason::MisSized,
-            text: "too big".into(),
-        });
+        task.block = Some(BlockInfo::new(BlockReason::MisSized, "too big"));
     });
     let inspection = inspect_node(&app, &task_key("t5"));
     assert_eq!(inspection.glyph.content, "⚑");

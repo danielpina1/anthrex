@@ -193,24 +193,34 @@ async fn get_context_and_task_result_answer_from_the_driver() {
 
 /// Decision 15's routing of the writes: the orchestrator's `edit_plan` and a worker's
 /// `task_note` reach the engine as `OrchEvent::Tool` (before this task every one went
-/// to M8a's worker gate, which knows neither); an edit that would approve does not
-/// parse.
+/// to M8a's worker gate, which knows neither); `override` (milestone 9.9) parses and
+/// reaches the engine, and an edit that would approve the plan does not parse.
 #[tokio::test(flavor = "multi_thread")]
 async fn writes_go_to_the_engine() {
     let rig = Rig::new(|_, _| {}).await;
     let (ok, answer) = rig.orch("edit_plan", json!({"edits": []})).await;
     assert!(ok, "{answer}");
     assert_eq!(answer["accepted"], json!(true), "{answer}");
+    // Milestone 9.9: `override` is the orchestrator's own op, so it parses and reaches
+    // the engine, which refuses it by the user path's rule (t1 is not in review); `approve`
+    // is still no op at all.
     let (ok, answer) = rig
         .orch(
             "edit_plan",
-            json!({"edits": [{"op": "override", "task_id": "t1"}]}),
+            json!({"edits": [{"op": "override", "task_id": "t1", "reason": "fine"}]}),
         )
         .await;
     assert!(!ok);
     let text = answer["error"].as_str().unwrap_or_default();
+    assert!(!text.starts_with("invalid arguments"), "{answer}");
+    assert!(text.contains("t1"), "{answer}");
+    let (ok, answer) = rig
+        .orch("edit_plan", json!({"edits": [{"op": "approve"}]}))
+        .await;
+    assert!(!ok);
+    let text = answer["error"].as_str().unwrap_or_default();
     assert!(
-        text.starts_with("invalid arguments: edits[0]: unknown variant `override`"),
+        text.starts_with("invalid arguments: edits[0]: unknown variant `approve`"),
         "{answer}"
     );
     let wrong = rig.opts(AgentRole::Orchestrator, WORKER, None);

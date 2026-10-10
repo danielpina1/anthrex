@@ -95,10 +95,7 @@ pub(super) fn cancel_now(run: &mut Run, i: usize, why: &str, now: u64, fx: &mut 
         set_state(dependent, TaskState::Blocked, now);
         dependent.awaiting_deps = false;
         dependent.held_answered = false;
-        dependent.block = Some(BlockInfo {
-            reason: BlockReason::DepCancelled,
-            text,
-        });
+        dependent.block = Some(BlockInfo::new(BlockReason::DepCancelled, text));
     }
 }
 
