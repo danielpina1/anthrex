@@ -6,6 +6,7 @@ mod create;
 mod entry;
 mod headless;
 mod headless_end;
+mod headless_terminal;
 mod headless_turns;
 mod remove;
 mod restart;
@@ -18,6 +19,7 @@ pub use headless::{
     DIAGNOSTIC_LINES, SIGNAL_CHANNEL_CAPACITY, WindowSignal, WindowSignalKind, control_refusal,
     subscribe_refusal,
 };
+pub use headless_terminal::{TERMINAL_PIDS_KEPT, TerminalRecord};
 pub use headless_turns::RESUME_START_TIMEOUT;
 pub use remove::{GitRoots, RemoveError};
 pub use role_window::{RUN_WINDOW_SIZE, lost_role_refusal, orchestrator_refusal};
@@ -174,7 +176,7 @@ impl WindowManager {
         let (events, events_rx) = mpsc::unbounded_channel();
         let (changed, _) = watch::channel(Vec::new());
         let (conversations, _) = broadcast::channel(conversation::CONVERSATION_CHANGES_CAPACITY);
-        let (signals, _) = broadcast::channel(headless::SIGNAL_CHANNEL_CAPACITY);
+        let (signals, _) = broadcast::channel(config.signal_capacity.max(1));
         let manager = Arc::new(Self {
             inner: Mutex::new(Inner {
                 next_id: 1,

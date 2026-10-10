@@ -2,7 +2,7 @@
 //! each message in turn, `handle` (one event: the step, then its effects), and `forward`
 //! (the manager's session feed, translated).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -12,7 +12,8 @@ use tokio_util::sync::CancellationToken;
 use super::super::engine::{Event, EventKind};
 use super::super::slots;
 use super::{Msg, RunService, guard, translate, unix_now};
-use crate::manager::WindowSignal;
+use crate::headless::SessionEvent;
+use crate::manager::{TerminalRecord, WindowSignal, WindowSignalKind};
 
 impl RunService {
     /// The event loop's body: each message in turn, until `Stop` or the channel closes.
@@ -108,33 +109,116 @@ impl RunService {
     }
 
     /// The manager's session feed, translated (`observe.rs`) and sent in the order it
-    /// arrives.
+    /// arrives. Decision 9 (M9.11.9, A12): on a lag it takes a fresh receiver and the
+    /// manager's terminal records at one cut, and sends each exit, and each process's
+    /// last turn end, that the lag hid from it ([`Forwarded::catch_up`]).
     pub(super) async fn forward(
         self: Arc<Self>,
         mut signals: broadcast::Receiver<WindowSignal>,
         shutdown: CancellationToken,
     ) {
         let mut last_activity = HashMap::new();
+        let mut forwarded = Forwarded::default();
         loop {
             let received = tokio::select! {
                 _ = shutdown.cancelled() => return,
                 received = signals.recv() => received,
             };
-            match received {
+            let caught_up = match received {
                 Ok(signal) => {
-                    if let Some(agent) = translate(&signal, &mut last_activity, Instant::now()) {
-                        self.send(EventKind::Signal {
-                            window_id: signal.window_id,
-                            signal: agent,
-                        });
+                    forwarded.note(&signal);
+                    if forwarded.prune_due() {
+                        forwarded.prune(&self.manager.headless_terminal_events());
                     }
+                    vec![signal]
                 }
                 Err(broadcast::error::RecvError::Lagged(missed)) => {
-                    tracing::warn!(missed, "the run engine lagged on the session feed");
+                    let (fresh, records) = self.manager.signals_and_terminal_events();
+                    signals = fresh;
+                    let caught_up = forwarded.catch_up(&records);
+                    let caught = caught_up.len();
+                    tracing::warn!(
+                        missed,
+                        caught,
+                        "the run engine lagged on the session feed; caught up from the manager"
+                    );
+                    caught_up
                 }
                 Err(broadcast::error::RecvError::Closed) => return,
+            };
+            for signal in caught_up {
+                if let Some(agent) = translate(&signal, &mut last_activity, Instant::now()) {
+                    self.send(EventKind::Signal {
+                        window_id: signal.window_id,
+                        signal: agent,
+                    });
+                }
             }
         }
+    }
+}
+
+/// Decision 9: what `forward` has forwarded of each `(window, pid)`'s terminal events:
+/// how many prompted turn ends, and whether its exit.
+#[derive(Default)]
+pub(super) struct Forwarded {
+    seen: HashMap<(u32, u32), (u64, bool)>,
+    prune_at: usize,
+}
+
+/// `Forwarded` drops the processes the manager no longer records once it holds more
+/// than this many (or twice what was left at the last prune).
+const PRUNE_FLOOR: usize = 1024;
+
+impl Forwarded {
+    /// Notes a signal about to be forwarded.
+    pub(super) fn note(&mut self, signal: &WindowSignal) {
+        let (WindowSignalKind::Session(event), Some(pid)) = (&signal.kind, signal.pid) else {
+            return;
+        };
+        let key = (signal.window_id, pid);
+        match event {
+            SessionEvent::TurnEnded { .. } => self.seen.entry(key).or_default().0 += 1,
+            SessionEvent::ProcessExited { .. } => self.seen.entry(key).or_default().1 = true,
+            _ => {}
+        }
+    }
+
+    /// The signals a lag hid, from the manager's `records`: for each process, its last
+    /// turn end when the manager applied more than were forwarded (the turn ends in
+    /// between are coalesced into it), then its exit when that was not forwarded. Each
+    /// is noted, so it is never sent twice; processes the manager no longer records are
+    /// forgotten.
+    pub(super) fn catch_up(&mut self, records: &[TerminalRecord]) -> Vec<WindowSignal> {
+        let mut out = Vec::new();
+        let signal = |r: &TerminalRecord, event: &SessionEvent| WindowSignal {
+            window_id: r.window_id,
+            pid: Some(r.pid),
+            kind: WindowSignalKind::Session(event.clone()),
+        };
+        for r in records {
+            let seen = self.seen.entry((r.window_id, r.pid)).or_default();
+            if r.turn_ends > seen.0 {
+                seen.0 = r.turn_ends;
+                out.extend(r.last_turn_end.as_ref().map(|e| signal(r, e)));
+            }
+            if let Some(exit) = r.exited.as_ref().filter(|_| !seen.1) {
+                seen.1 = true;
+                out.push(signal(r, exit));
+            }
+        }
+        self.prune(records);
+        out
+    }
+
+    fn prune_due(&self) -> bool {
+        self.seen.len() > self.prune_at.max(PRUNE_FLOOR)
+    }
+
+    fn prune(&mut self, records: &[TerminalRecord]) {
+        let kept: HashSet<(u32, u32)> = records.iter().map(|r| (r.window_id, r.pid)).collect();
+        self.seen.retain(|key, _| kept.contains(key));
+        self.prune_at = self.seen.len() * 2;
     }
 }
 
