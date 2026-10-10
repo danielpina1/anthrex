@@ -7,12 +7,41 @@ release is a pre-release and any release may change behaviour or the protocol.
 
 ## [Unreleased]
 
-The protocol version is now 20 (19 for model roles, 20 for orchestrator-first alerts): a
-client needs a daemon of the same release. Stop the old daemon (`anthrex daemon stop`)
+The protocol version is now 21 (19 for model roles, 20 for orchestrator-first alerts, 21
+for the simple repository profile): a client needs a daemon of the same release. Stop the old daemon (`anthrex daemon stop`)
 after upgrading.
 
 ### Added
 
+- **A first goal sets the repository up.** A goal started in a repository with no
+  profile no longer fails: it waits in a queue while anthrex reads the repository and
+  checks its commands, and the Alerts box shows `setting up anthrex · reading the repo`,
+  then `· checking commands (n/m)`, then one `review how anthrex will work here`. Enter
+  opens the review card; **Use this** stores the profile and starts every goal that was
+  waiting, in order. Goals wait however long the review takes, and a drained goal is
+  triaged against the repository as it is when it starts. With `--yes`, the goal stores
+  the profile itself as soon as every command checks out (a dropped command still waits
+  for your review). A set-up that fails keeps the queue and offers **Retry**;
+  discarding the proposal drops the waiting goals, and `anthrex profile status` lists
+  what waits and what was dropped. `anthrex run start --goal` in such a repository
+  exits with status 3 and prints nothing on stdout (on stderr: `queued: <goal> waits
+  for the repository profile (anthrex profile); no run started yet`), so a script that
+  expects a run id stops.
+- **The review card.** `anthrex learned how to work in this repo` lists what anthrex
+  will use, in plain words, each command with its check (`✓ 12s`, `✗ 3m10s`) and a
+  `couldn't verify:` line for each command that did not pass; a later re-detection
+  shows only the rows that changed, `old → new`. `⏎` **Use this**, `e` edit a row, `x`
+  discard, `esc` later (the proposal, its alert and the waiting goals stay).
+- **Row edits.** Editing a command on the Profile screen checks it once: on ✓ it is
+  saved at once (`saved <label>`); on ✗ the row shows why, with `o` for its output, `s`
+  to save it anyway and `r` to revert. The same works on the review card, where the
+  edit changes only the proposal until **Use this**. Edits stay refused while a run is
+  live in the repository (`finish or cancel the run in this repo to change its
+  profile`).
+- **`anthrex profile use`** stores the ready proposal and starts any waiting goals;
+  `anthrex profile confirm` still works as its alias.
+- **`anthrex profile edit --anyway`** stores the edit once verification has run, even
+  if a check fails (it implies `--yes`).
 - **Orchestrator-first alerts.** While a run's orchestrator is alive, a blocked task, a
   halted run, a held or red stage and a delivery problem go to the orchestrator first,
   not to you. It resolves them itself with five new `edit_plan` ops, each with a reason
@@ -38,6 +67,16 @@ after upgrading.
 
 ### Changed
 
+- **The Profile screen is one plain page.** `C-b P` shows one status line (`Ready ·
+  verified 2h ago`, `Needs review — anthrex has a proposal`, `Out of date — Cargo.toml
+  changed · re-checking`, `Not set up — press d to set up`, and the rest), then three
+  sections (How anthrex checks your work, Your repo, Delivery) with plain labels and
+  each key dimmed beside it, and the rest folded under `Advanced ▸` (`a` opens it).
+  `anthrex profile status` prints the same status line. `profile proposal ready`
+  alerts now read `review how anthrex will work here`.
+- **`onboarding.auto` means only re-detection.** A goal in a repository with no profile
+  now sets it up whatever `[orchestrator.onboarding] auto` says; `auto` still decides
+  whether a stale profile is detected again on its own.
 - **Worker windows no longer ring.** Only an orchestrator window and the windows you
   started yourself ring the bell or show a toast when they need you; a run's workers,
   reviewers and scouts report to their orchestrator instead.
@@ -62,6 +101,12 @@ after upgrading.
 - **Research scouts run the `research` row** (built-in: Claude Haiku at low effort).
   `[orchestrator.tuning] escalate_above_percent` and a `tuning.toml`'s `[routes]` are no
   longer used, and `anthrex run stats` proposes no model routes.
+
+### Removed
+
+- **The Profile screen's tabs, its `s` store-on-pass toggle and its confirm page.** The
+  screen has one page, the card replaces the confirm page, and an edit from the screen
+  is always saved once its check passes. `c`, `p` and Tab do nothing there any more.
 
 ### Fixed
 

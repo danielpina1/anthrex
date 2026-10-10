@@ -49,6 +49,7 @@ from pty_smoke_pr import pr_stage
 from pty_smoke_keep_going import keep_going_stage
 from pty_smoke_tuning import tuning_stage
 from pty_smoke_design import design_stage
+from pty_smoke_profile import profile_stage
 from pty_smoke_run_view import run_view_stage
 from pty_smoke_tui import tui_stage
 
@@ -1776,6 +1777,7 @@ def main():
     keep_going_stage(PtyProc, BIN, run_cmd, fail, ENV)
     tuning_stage(PtyProc, BIN, run_cmd, fail, ENV)
     design_stage(PtyProc, BIN, run_cmd, fail, ENV)
+    profile_stage(PtyProc, BIN, run_cmd, fail, ENV)
     tui_stage(PtyProc, BIN, run_cmd, fail, ANTHREX_CONFIG_PATH)
 
     print("== stage 12: stop the daemon, verify status ==")

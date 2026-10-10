@@ -669,6 +669,23 @@ Row edits (`crates/daemon/src/profile/tests_edit.rs`, `tests_edit_proposal.rs`; 
 | `use_this_waits_for_a_proposal_edit_being_checked`: the `Confirm` lands while the check runs | `daemon/src/profile/tests_edit_proposal.rs` | the check sleeps 2 s | The `Confirm` and the `use_ready` call follow the edit's reply at once (two requests, a file read each); the job is registered before the reply, so they see it running unless the checkout's prepare and the 2 s sleep finished first. The positive half (the `Confirm` after the check ends) waits with `PROFILE_WAIT`. | **Recorded.** |
 | `e2e_edit_anyway_stores_a_failing_check`, `e2e_edit_yes_still_needs_a_pass` | `cli/tests/profile_edit_rows.rs` | `PROFILE_WAIT` (300 s) | One detection to `Ready`, then one edit's verification: the M8b.11 row's derivation. | **Recorded.** |
 
+### Recorded, from M9.10.12 (2026-10-10)
+
+A first goal sets the profile up end to end (`crates/cli/tests/profile_cli_tui.rs`) and smoke stage 11l (`scripts/pty_smoke_profile.py`). Measured: the three runnable `profile_cli_tui` tests together about 6 s; stage 11l alone on a fresh daemon about 5 s (the set-up about 1 s).
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| `e2e_tui_queued_goal_review_and_use_this` (and the ignored row-edit test): the goal form's tagged `StartGoal` reply | `cli/tests/profile_cli_tui.rs` | `GOAL_WAIT` (140 s) | `run start --goal`'s reply in a test ("Recorded, from M8b"); a queued reply is a subset of it (the model checks, `goal_ready` and the detection's start). | **Recorded.** |
+| `wait_review`: the snapshot lists the review proposal | `cli/tests/profile_cli_tui.rs` | `PROFILE_WAIT` (300 s), a deadline loop every 200 ms over `List`, failing at once on a `Failed` set-up | M8b.11's row: one detection to `Ready`. | **Recorded.** Measured about 2 s. |
+| `the_goal_completes`: the drained goal's run is listed, then completes | `cli/tests/profile_cli_tui.rs` | `RUN_WAIT` (300 s) each, polled every 200 ms, failing at once on a dropped goal | As `profile_queue.rs::wait_one_run` after `use` (M9.10.5's row), then one task path. | **Recorded.** |
+| `wait_stored_new_check`: an edit with `yes: true` is stored | `cli/tests/profile_cli_tui.rs` | `PROFILE_WAIT` (300 s), polled every 200 ms | The edit's verification (M8b.11's row). | **Recorded.** |
+| Stage 11l: `run start --goal`'s queued exit | `scripts/pty_smoke_profile.py` | `GOAL_CMD_TIMEOUT` (1300 s, imported from stage 11d) | `run start --goal`'s own worst case, 1228.25 s (stage 11d's row). | **Recorded.** |
+| Stage 11l: the review alert in the Alerts box (`SETUP_WAIT`) | `scripts/pty_smoke_profile.py` | `5200s` | `PROFILE_WAIT`'s derivation with the smoke daemon's defaults (it reads no `[orchestrator]` table): `scouts.timeout_secs` 900 s + one verified command (`check`) at `onboarding.verify_timeout_secs` 1800 s + at most 40 engine git calls at `git_timeout_secs` 60 s (2400 s) = 5100 s, rounded up. A hang guard. | **Recorded.** Measured a few seconds. |
+| Stage 11l: each key's frame (the Alerts box's focus, ` PROFILE `, the tree, its filter and the run's node, the Profile screen's project after `C-b P`, the screen and the tree closing) (`SCREEN_WAIT`) and the detach (`DETACH_WAIT`) | the same | `10s`; `5s` | Stage 11t's rows, imported: one client frame, nothing waits on the daemon. | **Recorded.** |
+| Stage 11l: the card's title and first section, and `Ready · verified` (`CARD_WAIT`) | the same | `45s` | The screen's `Status`/`Show` replies, which the client gives up on at `REPLY_TIMEOUT` (30 s, `crates/tui/src/app/replies.rs`), + 15 s, as stage 11t's `SETTINGS_LOAD_WAIT`. | **Recorded.** |
+| Stage 11l: after **Use this**, `run status --json` lists the goal's run | the same | `GOAL_CMD_TIMEOUT` (1300 s), polled every 0.5 s | The store and the drain are spawned at once; the drained start is any goal's start (stage 11d's derivation). | **Recorded.** |
+| Stage 11l: the run's completion and its accept | the same | `RUN_WAIT` (300 s); `ACCEPT_CMD_TIMEOUT` (900 s) | Stage 11c's constants, imported: one task path, and `run accept`'s 668.25 s. | **Recorded.** |
+
 ### Fixed, from M9.5.8's flake fix (ruling F-1, 2026-10-03)
 
 | Test | File | Bound | Derivation | Status |
