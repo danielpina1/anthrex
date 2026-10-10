@@ -309,3 +309,63 @@ fn a_failed_resume_keeps_an_in_flight_wrap_up() {
     assert!(fx.run().outbox.is_empty(), "{:#?}", fx.run().outbox);
     assert_eq!(fx.task("t1").rounds, before);
 }
+
+/// Stream E review I1: a fresh session the window limit refused keeps its `append`
+/// (`turns_fixes::a_refused_fresh_launch_keeps_its_messages`); the user's retry of the
+/// blocked task carries it into the session it starts, not a blank one.
+#[test]
+fn a_retry_keeps_what_a_refused_fresh_session_carried() {
+    let (mut fx, window) = working_on("[task.budget]\ntool_calls = 1\nminutes = 1000");
+    for _ in 0..2 {
+        fx.signal(
+            window,
+            AgentSignal::ToolUse {
+                name: "Bash".into(),
+                target: None,
+            },
+        );
+    }
+    assert_eq!(fx.task("t1").rung, 2);
+    let created = fx.run().windows_created;
+    fx.run_mut().limits.max_windows = created;
+    queue(&mut fx, "[anthrex] X");
+    let effects = killed_exit(&mut fx, window);
+    let (op, _) = only_op(&effects, "DiffSoFar");
+    let effects = fx.done(
+        op,
+        OpResult::Diff {
+            stat: String::new(),
+            patch: String::new(),
+        },
+    );
+    assert!(ops_in(&effects, "CreateWindow").is_empty(), "refused");
+    let t1 = fx.task("t1");
+    assert_eq!(t1.state, TaskState::Blocked);
+    let append = t1.fresh_session.as_ref().and_then(|f| f.append.clone());
+    let append = append.expect("kept for a retry");
+    assert!(append.ends_with("\n\n[anthrex] X"), "{append}");
+
+    fx.run_mut().limits.max_windows = created + 4;
+    let effects = retry(&mut fx, "t1");
+    let (op, _) = only_op(&effects, "DiffSoFar");
+    let effects = fx.done(
+        op,
+        OpResult::Diff {
+            stat: String::new(),
+            patch: String::new(),
+        },
+    );
+    let (_, kind) = only_op(&effects, "CreateWindow");
+    let OpKind::CreateWindow { first_turn, .. } = kind else {
+        unreachable!()
+    };
+    assert!(
+        first_turn.ends_with(&format!("\n\n{append}")),
+        "{first_turn}"
+    );
+    assert_eq!(first_turn.matches("[anthrex] X").count(), 1, "{first_turn}");
+    assert!(
+        first_turn.contains("retried it"),
+        "the retry's reason: {first_turn}"
+    );
+}

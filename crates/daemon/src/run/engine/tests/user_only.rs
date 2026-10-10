@@ -267,3 +267,26 @@ fn an_ordinary_block_is_the_orchestrators_to_cancel() {
     assert!(super::orch::answer(&effects).0, "{effects:#?}");
     assert_eq!(fx.task("t1").state, proto::TaskState::Cancelled);
 }
+
+/// Stream E review I2: splitting cancels the task it splits, so the orchestrator may not
+/// split a user-only task either; the refusal is decision 5's.
+#[test]
+fn the_orchestrator_may_not_split_a_user_only_task() {
+    let mut fx = blocked_with("git commit failed: Author identity unknown");
+    let before = fx.task("t1").block.clone();
+    let into = super::orch::add("t9", "auth")["task"].clone();
+    let effects = edit_plan(
+        &mut fx,
+        json!({"edits": [{"op": "split_task", "task_id": "t1", "into": [into]}]}),
+    );
+    let (ok, value) = super::orch::answer(&effects);
+    assert!(!ok, "{value}");
+    assert_eq!(value["errors"][0]["task"], "t1");
+    assert_eq!(
+        value["errors"][0]["message"],
+        "task t1 waits on something only the user can fix, and they have been alerted: git commit failed: Author identity unknown"
+    );
+    let t1 = fx.task("t1");
+    assert_eq!((t1.state, &t1.block), (proto::TaskState::Blocked, &before));
+    assert!(fx.run().tasks.iter().all(|t| t.id() != "t9"));
+}

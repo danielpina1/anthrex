@@ -191,13 +191,39 @@ fn a_reviewers_note_names_its_tasks_block() {
 #[test]
 fn a_note_survives_a_save() {
     let (mut fx, window) = working();
-    let plain = fx.task("t1").rounds[0].clone();
-    let value = serde_json::to_value(&plain).unwrap();
-    assert!(value.get("sandbox_note").is_none(), "{value}");
     broken(&mut fx, window, note(1));
-    let round = fx.task("t1").rounds[0].clone();
-    let text = serde_json::to_string(&round).unwrap();
-    let back: crate::run::model::AgentRound = serde_json::from_str(&text).unwrap();
-    assert_eq!(back.sandbox_note, Some(note(1)));
-    assert_eq!(back, round);
+    // The whole run, as `run.json` holds it.
+    let value = serde_json::to_value(fx.run()).unwrap();
+    let back: crate::run::model::Run = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(&back, fx.run());
+    assert_eq!(back.tasks[0].rounds[0].sandbox_note, Some(note(1)));
+    // A run file written before the field: the key is absent, and it loads as `None`.
+    let mut old = value;
+    let round = &mut old["tasks"][0]["rounds"][0];
+    assert!(
+        round
+            .as_object_mut()
+            .unwrap()
+            .remove("sandbox_note")
+            .is_some()
+    );
+    let back: crate::run::model::Run = serde_json::from_value(old).unwrap();
+    assert_eq!(back.tasks[0].rounds[0].sandbox_note, None);
+    // A round with no note is written with no such key.
+    fx.task_mut("t1").rounds[0].sandbox_note = None;
+    let value = serde_json::to_value(fx.run()).unwrap();
+    assert!(value["tasks"][0]["rounds"][0].get("sandbox_note").is_none());
+}
+
+/// Stream E review m2: a reason that already ends with the bubblewrap hint (a
+/// missing-sandbox startup failure) gets the note appended and the hint not again.
+#[test]
+fn a_hinted_reason_is_not_hinted_twice() {
+    use crate::headless::failure::{SANDBOX_HINT, SANDBOX_UNAVAILABLE};
+    let (mut fx, window) = working();
+    broken(&mut fx, window, note(1));
+    let reason = format!("claude could not start: {SANDBOX_UNAVAILABLE}{SANDBOX_HINT}");
+    let text = crate::run::engine::rounds::with_sandbox_note(fx.run_mut(), 0, reason.clone());
+    assert_eq!(text, format!("{reason}; {}", note(1)));
+    assert_eq!(text.matches(SANDBOX_HINT).count(), 1, "{text}");
 }

@@ -25,7 +25,9 @@
 //!   holds at most [`HOLD_CAP`] events. Past it, the oldest held `Activity`,
 //!   `ToolUse` or `Said` makes room: losing one costs a counter and a `last_event`
 //!   that a later event refreshes. Milestone 9.0.5's unthrottled `Said` is
-//!   counter-only too, so a burst of text never crowds out a `TurnEnded`. An evicted
+//!   counter-only too, so a burst of text never crowds out a `TurnEnded`. A held
+//!   `SandboxBroken` (milestone 9.11 decision 7) is never evicted: its note is kept
+//!   once and nothing refreshes it (stream E review m1). An evicted
 //!   `Said` is not refreshed by later events, though: its text is lost as `activity`
 //!   and `last_text` unless a later `Said` replaces it. That happens only past
 //!   [`HOLD_CAP`] events before a launch binds. With none to evict, a new signal is
@@ -201,10 +203,7 @@ fn evictable(event: &HeldEvent) -> bool {
     matches!(
         event,
         HeldEvent::Signal(
-            AgentSignal::Activity
-                | AgentSignal::ToolUse { .. }
-                | AgentSignal::Said { .. }
-                | AgentSignal::SandboxBroken { .. }
+            AgentSignal::Activity | AgentSignal::ToolUse { .. } | AgentSignal::Said { .. }
         )
     )
 }

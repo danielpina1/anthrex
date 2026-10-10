@@ -147,5 +147,9 @@ pub(super) fn with_sandbox_note(run: &mut Run, i: usize, reason: String) -> Stri
     let Some(note) = last.and_then(|r| r.sandbox_note.take()) else {
         return reason;
     };
+    // Stream E review m2: a reason that carries the hint already is not hinted again.
+    if reason.ends_with(failure::SANDBOX_HINT) {
+        return format!("{reason}; {note}");
+    }
     failure::with_sandbox_hint(&format!("{reason}; {note}"))
 }

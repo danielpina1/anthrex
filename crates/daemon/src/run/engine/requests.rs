@@ -453,15 +453,21 @@ pub(super) fn rung2(
     }
     ladder::kill_worker(run, i, fx);
     review::stop_reviewers(run, i, now, fx);
-    // Milestone 9.11 decision 4: the mail a blocked task held goes to its fresh session.
+    // A research or review task has no worktree and never a start commit: it is
+    // dispatched again, as that kind starts (a fresh research session, a fresh review
+    // of its target), never a worker's fresh session (M9.9 review fixes).
     let restarts = {
         let task = &run.tasks[i];
         task.start_commit.is_some() && !super::schedule::is_reader_task(task)
     };
+    // Milestone 9.11 decision 4: the mail a blocked task held goes to its fresh session,
+    // after what a fresh session it kept already carries (one the window limit refused:
+    // stream E review I1).
     let texts = match restarts {
         true => ladder::take_queued(run, i),
         false => Vec::new(),
     };
+    let kept = run.tasks[i].fresh_session.take().and_then(|f| f.append);
     let task = &mut run.tasks[i];
     // A launch the restart lost belongs to the session being replaced.
     for round in task.rounds.iter_mut().filter(|r| r.relaunch.is_some()) {
@@ -486,10 +492,7 @@ pub(super) fn rung2(
     // `kill_worker`'s `supersede` ended the hand-back context (`handed_back`,
     // `resolution`); its gates' pass goes too (carry T14-R2).
     task.gates_after_handback = false;
-    // A research or review task has no worktree and never a start commit: it is
-    // dispatched again, as that kind starts (a fresh research session, a fresh review
-    // of its target), never a worker's fresh session (M9.9 review fixes).
-    if task.start_commit.is_none() || super::schedule::is_reader_task(task) {
+    if !restarts {
         set_state(task, TaskState::Queued, now);
         task.block = None;
         task.fresh_session = None;
@@ -503,7 +506,7 @@ pub(super) fn rung2(
     } else {
         let mut fresh = FreshSession {
             reason: why,
-            append: None,
+            append: kept,
         };
         super::outbox::accumulate(&mut fresh, texts);
         task.fresh_session = Some(fresh);
