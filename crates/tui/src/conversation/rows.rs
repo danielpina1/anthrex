@@ -44,7 +44,8 @@ pub const TAB_WIDTH: usize = 4;
 /// become `TAB_WIDTH` spaces, an ANSI escape — CSI (`ESC [` or C1 `\u{9b}`) through its
 /// final byte, or a string sequence (`ESC ]`, `ESC P`, `ESC X`, `ESC ^`, `ESC _`, C1
 /// `\u{9d}`/`\u{90}`) through BEL or ST — is removed whole, and every other control
-/// character (newlines included) is dropped.
+/// character (newlines included) is dropped, as is every hidden format character
+/// (`proto::safe_text::is_hidden_format`: bidi overrides, zero-width characters).
 pub fn clean(line: &str) -> String {
     let mut out = String::with_capacity(line.len());
     let mut chars = line.chars().peekable();
@@ -67,7 +68,7 @@ pub fn clean(line: &str) -> String {
             },
             '\u{9b}' => skip_csi(&mut chars),
             '\u{9d}' | '\u{90}' | '\u{98}' | '\u{9e}' | '\u{9f}' => skip_string(&mut chars),
-            c if c.is_control() => {}
+            c if c.is_control() || proto::safe_text::is_hidden_format(c) => {}
             c => out.push(c),
         }
     }

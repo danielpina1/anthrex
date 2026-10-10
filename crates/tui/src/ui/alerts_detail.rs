@@ -128,7 +128,7 @@ fn facts(app: &App, alert: &Alert) -> Vec<(String, String)> {
         rows.push((label.to_owned(), value));
     };
     let run = match &alert.key {
-        AlertKey::Proposal(_) | AlertKey::Setup(_) => None,
+        AlertKey::Proposal(_) | AlertKey::Setup(_) | AlertKey::Dropped(_) => None,
         AlertKey::Orchestrator(id)
         | AlertKey::OrchestratorAsks(id)
         | AlertKey::OrchestratorStuck(id)
@@ -267,6 +267,12 @@ fn facts(app: &App, alert: &Alert) -> Vec<(String, String)> {
             text_rows(&mut rows, "detail", &alert.detail);
             push(&mut rows, "project", one_line(&project.to_string_lossy()));
         }
+        // Milestone 9.11 decision 22: every drop of the project's goals.
+        (AlertKey::Dropped(project), _) => {
+            push(&mut rows, "phase", "could not start".to_owned());
+            text_rows(&mut rows, "detail", &alert.detail);
+            push(&mut rows, "project", one_line(&project.to_string_lossy()));
+        }
         (_, None) => {}
     }
     if let Some(age) = alert.age {
@@ -401,7 +407,7 @@ fn detail_hints(app: &App, alert: &Alert) -> Vec<Hint> {
     match alert.key {
         AlertKey::Blocked { .. } => hints.push(hint("o", "open task", 6)),
         AlertKey::Proposal(_) => {}
-        AlertKey::Setup(_) => hints.push(hint("o", "open profile", 6)),
+        AlertKey::Setup(_) | AlertKey::Dropped(_) => hints.push(hint("o", "open profile", 6)),
         _ => hints.push(hint("o", "open run", 6)),
     }
     hints

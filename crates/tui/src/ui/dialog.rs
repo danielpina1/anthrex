@@ -367,16 +367,18 @@ pub fn render_force_remove(frame: &mut Frame, name: &str, message: &str, area: R
     let key = |k: &'static str, r: Role, words: &'static str| {
         Line::from(vec![Span::styled(k, role(r, p)), Span::raw(words)])
     };
-    body.push(key(
-        "f  ",
-        Role::Failed,
-        "force: delete the worktree and everything in it",
-    ));
+    // Milestone 9.11 decision 25 (B9): the safe keys first, the destructive one last, so
+    // a dialog clipped by a short terminal shows `n` before it shows `f`.
+    body.push(key("n  ", Role::Accent, "cancel"));
     body.push(key(
         "k  ",
         Role::Accent,
         "keep the worktree, remove the window",
     ));
-    body.push(key("n  ", Role::Accent, "cancel"));
+    body.push(key(
+        "f  ",
+        Role::Failed,
+        "force: delete the worktree and everything in it",
+    ));
     render_dialog(frame, "worktree holds work", true, body, area, p);
 }

@@ -102,7 +102,8 @@ pub fn route_kind(key: &AlertKey, run: Option<&RunInfo>) -> RouteKind {
         AlertKey::Hold { .. } => RouteKind::Hold,
         AlertKey::Accept(_) => RouteKind::Accept,
         // Milestone 9.10 decision 34: a project alert, the user's; the list never asks.
-        AlertKey::Proposal(_) | AlertKey::Setup(_) => RouteKind::Proposal,
+        // Milestone 9.11 decision 22: a dropped goal's alert too.
+        AlertKey::Proposal(_) | AlertKey::Setup(_) | AlertKey::Dropped(_) => RouteKind::Proposal,
         AlertKey::Orchestrator(_) => RouteKind::Orchestrator,
         AlertKey::OrchestratorAsks(_) => RouteKind::OrchestratorAsks,
         AlertKey::OrchestratorStuck(_) => RouteKind::OrchestratorStuck,

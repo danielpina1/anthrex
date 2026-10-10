@@ -293,7 +293,7 @@ fn alerts_view_hints(app: &App) -> Vec<Hint> {
     // Task 10 review M2: a set-up's `o` in the detail's words.
     match key {
         AlertKey::Proposal(_) => {}
-        AlertKey::Setup(_) => hints.push(hint("o", "open profile", 7)),
+        AlertKey::Setup(_) | AlertKey::Dropped(_) => hints.push(hint("o", "open profile", 7)),
         _ => hints.push(hint("o", "open", 7)),
     }
     hints.push(back);
