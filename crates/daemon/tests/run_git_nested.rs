@@ -125,3 +125,89 @@ fn an_unreadable_packed_refs_is_work_and_never_blocks() {
         vec!["big".to_string(), "fifo".to_string()]
     );
 }
+
+/// `git init --separate-git-dir` of `<task>/<name>` into `git_dir`, then the user's
+/// repository's `main` checked out there (detached): an initialized submodule's
+/// shape, its `.git` a file naming `git_dir`.
+fn separate(task: &Path, name: &str, git_dir: &Path, user: &Path) -> PathBuf {
+    let path = task.join(name);
+    std::fs::create_dir_all(&path).unwrap();
+    std::fs::create_dir_all(git_dir.parent().unwrap()).unwrap();
+    out(
+        &path,
+        &[
+            "init",
+            "-q",
+            &format!("--separate-git-dir={}", git_dir.display()),
+        ],
+    );
+    out(&path, &["fetch", "-q", user.to_str().unwrap(), "HEAD"]);
+    out(&path, &["checkout", "-q", "--detach", "FETCH_HEAD"]);
+    path
+}
+
+/// Fix round 1 (I3): an initialized submodule (its `.git` a file naming a directory
+/// under the checkout's own git directory's `modules/`) is probed like a nested
+/// repository: clean at a commit the user has, it is not work; with an uncommitted
+/// file it is. A `.git` file naming a directory anywhere else still counts as work.
+#[test]
+fn an_initialized_submodule_is_probed_like_a_nested_repository() {
+    let repo = repo();
+    let (keep, task) = task_worktree(&repo, "r", "t1");
+    let admin = PathBuf::from(out(&task, &["rev-parse", "--absolute-git-dir"]))
+        .canonicalize()
+        .unwrap();
+    let sub = separate(&task, "sub", &admin.join("modules/sub"), &repo.root);
+    assert!(sub.join(".git").is_file());
+    assert_eq!(
+        nested_work(real_git(), &task, T).unwrap(),
+        Vec::<String>::new()
+    );
+    write(&sub, "p.txt", "uncommitted\n");
+    assert_eq!(
+        nested_work(real_git(), &task, T).unwrap(),
+        vec!["sub".to_string()]
+    );
+    std::fs::remove_file(sub.join("p.txt")).unwrap();
+    // Its git directory outside the checkout's own: not probed, kept.
+    separate(&task, "away", &keep.path().join("away.git"), &repo.root);
+    assert_eq!(
+        nested_work(real_git(), &task, T).unwrap(),
+        vec!["away".to_string()]
+    );
+}
+
+/// Fix round 1 (I3), the everyday shape: `git submodule add` of another repository.
+/// Its commits are not the user's repository's, but each is its remote's (a
+/// remote-tracking tip) or the commit the checkout records for it (its gitlink), so it
+/// holds no unsaved work; a commit made in it afterwards does.
+#[test]
+fn a_submodule_of_another_repository_at_its_upstream_commit_is_not_work() {
+    let repo = repo();
+    let lib = support::run_git::repo();
+    commit_file(&lib.root, "lib.txt", "lib\n", "lib work");
+    let (_keep, task) = task_worktree(&repo, "r", "t1");
+    // As `git submodule update --init` lays it out (its git directory under the
+    // checkout's own `modules/`), without the config entries it would also write,
+    // which the pin check refuses in a task checkout.
+    let admin = PathBuf::from(out(&task, &["rev-parse", "--absolute-git-dir"]))
+        .canonicalize()
+        .unwrap();
+    std::fs::create_dir_all(admin.join("modules")).unwrap();
+    let separate = format!("--separate-git-dir={}", admin.join("modules/sub").display());
+    out(
+        &task,
+        &["clone", "-q", &separate, lib.root.to_str().unwrap(), "sub"],
+    );
+    out(&task, &["add", "sub"]);
+    assert!(task.join("sub/.git").is_file());
+    assert_eq!(
+        nested_work(real_git(), &task, T).unwrap(),
+        Vec::<String>::new()
+    );
+    commit_file(&task.join("sub"), "new.txt", "local\n", "unpushed");
+    assert_eq!(
+        nested_work(real_git(), &task, T).unwrap(),
+        vec!["sub".to_string()]
+    );
+}

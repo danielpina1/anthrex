@@ -375,6 +375,24 @@ mod tests {
         assert!(!rig.repo.exists(), "the checkout's repository was kept");
     }
 
+    /// Fix round 1 (I3): a clean initialized submodule (its `.git` a file naming the
+    /// checkout's own `modules/sub`, at a commit the user has) does not block removal.
+    #[test]
+    fn a_checkout_with_a_clean_initialized_submodule_is_removed() {
+        let rig = Rig::new();
+        let admin = std::path::PathBuf::from(git(&rig.task, &["rev-parse", "--absolute-git-dir"]));
+        let sub = rig.task.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::create_dir_all(admin.join("modules")).unwrap();
+        let separate = format!("--separate-git-dir={}", admin.join("modules/sub").display());
+        git(&sub, &["init", "-q", &separate]);
+        git(&sub, &["fetch", "-q", rig.root.to_str().unwrap(), "HEAD"]);
+        git(&sub, &["checkout", "-q", "--detach", "FETCH_HEAD"]);
+        let removed = rig.remove();
+        assert!(removed.is_ok(), "{removed:?}");
+        assert!(!rig.task.exists(), "the checkout was kept");
+    }
+
     /// Fix round 1 (I2): a deleted race-lane checkout whose head the engine already
     /// recorded on its lane branch still gets its salvage ref there (`keep_head`, as a
     /// live lane's clean checkout does), so the commits outlive the branch.

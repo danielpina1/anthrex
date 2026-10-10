@@ -11,24 +11,31 @@
 //! caller's [`super::super::GitQueue::write`].
 
 use std::ffi::OsStr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::super::{Git, failure, import, nul_fields, os};
-use super::gitlinks;
 
 /// Milestone 9.11 decision 14 (A14): the nested repositories in `worktree` whose work
 /// its salvage cannot keep, as paths relative to it. The salvage leaves every gitlink
 /// out of `add -A`, and a nested repository's commits live in its own object store, so
 /// removing the checkout would lose them. The candidates are the index's gitlinks and
 /// the untracked directories git reports as repositories (`ls-files --others` stops at
-/// one and names it `<dir>/`). One holds work when it has a ref or a `HEAD` naming a
-/// commit the user's repository lacks, or its working tree differs from its `HEAD`
-/// ([`nested_dirty`]). Anything the probe cannot read counts as work: keeping a
+/// one and names it `<dir>/`). One holds work as [`probe`] decides: an unsaved commit
+/// or a working tree that differs from its `HEAD` ([`nested_dirty`]). Anything the probe cannot read counts as work: keeping a
 /// checkout loses nothing.
 pub fn nested_work(git: &OsStr, worktree: &Path, timeout: Duration) -> Result<Vec<String>, String> {
     let g = Git::new(git, timeout);
-    let mut subs = gitlinks(g, worktree)?;
+    // The index's gitlinks, each with the commit the checkout records for it.
+    let staged = g.ok(worktree, &[os("ls-files"), os("-s"), os("-z")])?;
+    let recorded: Vec<(String, String)> = nul_fields(&staged)
+        .filter_map(|entry| entry.strip_prefix("160000 "))
+        .filter_map(|rest| {
+            let (id, path) = rest.split_once('\t')?;
+            Some((path.to_string(), id.split(' ').next()?.to_string()))
+        })
+        .collect();
+    let mut subs: Vec<String> = recorded.iter().map(|(path, _)| path.clone()).collect();
     let others = [
         os("ls-files"),
         os("-z"),
@@ -41,7 +48,11 @@ pub fn nested_work(git: &OsStr, worktree: &Path, timeout: Duration) -> Result<Ve
     subs.dedup();
     let mut kept = Vec::new();
     for sub in subs {
-        if nested_holds_work(g, worktree, &worktree.join(&sub)) {
+        let gitlink = recorded
+            .iter()
+            .find(|(path, _)| *path == sub)
+            .map(|(_, id)| id.as_str());
+        if nested_holds_work(g, worktree, &worktree.join(&sub), gitlink) {
             kept.push(sub);
         }
     }
@@ -51,26 +62,91 @@ pub fn nested_work(git: &OsStr, worktree: &Path, timeout: Duration) -> Result<Ve
 /// Whether the nested repository at `dir` holds work (see [`nested_work`]). Read only
 /// with `lstat` and plain reads, never through a link, and never by a git command that
 /// reads its (worker-written) configuration.
-fn nested_holds_work(g: Git<'_>, worktree: &Path, dir: &Path) -> bool {
+fn nested_holds_work(g: Git<'_>, worktree: &Path, dir: &Path, gitlink: Option<&str>) -> bool {
     let dot = dir.join(".git");
     match std::fs::symlink_metadata(&dot) {
         // A gitlink with no repository: only an empty directory is nothing.
         Err(_) => std::fs::read_dir(dir).is_ok_and(|mut d| d.next().is_some()),
-        // A `.git` file or link names a repository elsewhere: not probed.
+        // Fix round 1 (I3): an initialized submodule's `.git` file, naming a directory
+        // under the checkout's own git directory, is probed there.
+        Ok(meta) if meta.is_file() => match module_dir(worktree, dir, &dot) {
+            Some(module) => probe(g, (worktree, dir), &module, gitlink),
+            None => true,
+        },
+        // A link names a repository elsewhere: not probed.
         Ok(meta) if !meta.is_dir() => true,
-        Ok(_) => {
-            let Some((head, mut ids)) = nested_ids(&dot) else {
-                return true;
-            };
-            ids.extend(head.clone());
-            let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
-            match import::missing(g, worktree, &ids) {
-                Ok(missing) if missing.is_empty() => {}
-                _ => return true,
+        Ok(_) => probe(g, (worktree, dir), &dot, gitlink),
+    }
+}
+
+/// The repository whose git directory is `dot` and whose working tree is `dir`
+/// holds work (see [`nested_work`]): a commit named by its `HEAD` or one of its own
+/// refs that the user's repository lacks, that is not a remote-tracking tip of it (its
+/// remote has it) and not `gitlink` (the commit the checkout records for it), or a
+/// working tree that differs from its `HEAD`.
+fn probe(g: Git<'_>, (worktree, dir): (&Path, &Path), dot: &Path, gitlink: Option<&str>) -> bool {
+    let Some((head, refs)) = nested_ids(dot) else {
+        return true;
+    };
+    let upstream: Vec<&str> = (refs.iter())
+        .filter(|(name, _)| name.starts_with("refs/remotes/"))
+        .map(|(_, id)| id.as_str())
+        .chain(gitlink)
+        .collect();
+    let mut ids: Vec<&str> = (refs.iter())
+        .filter(|(name, _)| !name.starts_with("refs/remotes/"))
+        .map(|(_, id)| id.as_str())
+        .chain(head.as_deref())
+        .filter(|id| !upstream.contains(id))
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    match import::missing(g, worktree, &ids) {
+        Ok(missing) if missing.is_empty() => {}
+        _ => return true,
+    }
+    nested_dirty(g, dir, dot, head.as_deref()).unwrap_or(true)
+}
+
+/// Fix round 1 (I3): the git directory a submodule's `.git` file at `dot` names
+/// (`gitdir: <path>`, relative to `dir` or absolute), when it lies, lexically and with
+/// no link in any component below it, under the git directory of the checkout
+/// `worktree` (an engine pin's: no worker grant covers it on macOS, and the Linux grant
+/// denies its `modules/`), or under a linked checkout's common directory's `modules/`.
+/// `None` otherwise: the caller keeps the checkout.
+fn module_dir(worktree: &Path, dir: &Path, dot: &Path) -> Option<PathBuf> {
+    use std::path::Component;
+    let pin = crate::worktree::pinned::pinned(worktree).filter(|pin| pin.broken.is_none())?;
+    let text = plain_text(dot)?;
+    let named = Path::new(text.strip_prefix("gitdir:")?.trim());
+    let base = dir.canonicalize().ok()?;
+    let mut resolved = PathBuf::new();
+    for component in base.join(named).components() {
+        match component {
+            Component::ParentDir => {
+                resolved.pop();
             }
-            nested_dirty(g, dir, &dot, head.as_deref()).unwrap_or(true)
+            Component::CurDir => {}
+            other => resolved.push(other),
         }
     }
+    let roots = [
+        Some(pin.git_dir.clone()),
+        (!pin.standalone).then(|| pin.common_dir.join("modules")),
+    ];
+    let root = roots
+        .into_iter()
+        .flatten()
+        .find(|root| resolved.starts_with(root))?;
+    let mut at = root.clone();
+    for component in resolved.strip_prefix(&root).ok()?.components() {
+        at.push(component);
+        let meta = std::fs::symlink_metadata(&at).ok()?;
+        if !meta.is_dir() {
+            return None;
+        }
+    }
+    (at != root).then_some(at)
 }
 
 /// The cap on a ref, `HEAD`, `packed-refs`, `.git` file or `info/exclude` the probe
@@ -139,9 +215,13 @@ fn before_open(path: &Path) {
     let _ = path;
 }
 
-/// The nested git directory `dot`'s `HEAD` commit (`None` when unborn) and the commit
-/// ids of every ref (loose and packed). `None` when something is not a plain file.
-fn nested_ids(dot: &Path) -> Option<(Option<String>, Vec<String>)> {
+/// A ref's name and the commit id it holds.
+type NamedId = (String, String);
+
+/// The nested git directory `dot`'s `HEAD` commit (`None` when unborn) and every ref
+/// (loose and packed) naming a commit id, as `(name, id)`. `None` when something is
+/// not a plain file.
+fn nested_ids(dot: &Path) -> Option<(Option<String>, Vec<NamedId>)> {
     let text = plain_text(&dot.join("HEAD"))?;
     let mut ids = Vec::new();
     let mut pending = vec![dot.join("refs")];
@@ -153,7 +233,9 @@ fn nested_ids(dot: &Path) -> Option<(Option<String>, Vec<String>)> {
                 pending.push(entry.path());
             } else if kind.is_file() {
                 let text = plain_text(&entry.path())?;
-                ids.extend(Some(text.trim().to_string()).filter(|id| import::is_id(id)));
+                let id = text.trim().to_string();
+                let name = entry.path().strip_prefix(dot).ok()?.display().to_string();
+                ids.extend(import::is_id(&id).then_some((name, id)));
             } else {
                 return None;
             }
@@ -170,9 +252,9 @@ fn nested_ids(dot: &Path) -> Option<(Option<String>, Vec<String>)> {
         packed
             .lines()
             .filter(|line| !line.starts_with(['#', '^']))
-            .filter_map(|line| line.split(' ').next())
-            .filter(|id| import::is_id(id))
-            .map(str::to_string),
+            .filter_map(|line| line.split_once(' '))
+            .filter(|(id, _)| import::is_id(id))
+            .map(|(id, name)| (name.trim().to_string(), id.to_string())),
     );
     let head = match text.trim().strip_prefix("ref:") {
         // A branch's tip is among `ids` already; an unborn branch has none.
