@@ -126,15 +126,19 @@ enum Claim {
 /// once either binds (`DaemonLock::acquire_or_yield`).
 const SPAWN_MARKER_FRESH: Duration = PRE_BIND_ALLOWANCE;
 
-/// Whether a client's spawn is in flight: the marker exists and is younger than
-/// `SPAWN_MARKER_FRESH`. A clock that went backwards reads as fresh.
+/// Whether a client's spawn is in flight: the marker exists and is provably younger than
+/// `SPAWN_MARKER_FRESH`. Anything else is stale, a marker whose mtime is in the future
+/// included (a clock stepped back, or a data directory restored with future times):
+/// read as fresh, it would hold back every start until the wall clock passed it (stream
+/// S re-review N2). Reading such a marker as stale costs at most a second daemon, which
+/// yields to the first.
 fn spawn_in_flight(data_dir: &Path) -> bool {
     std::fs::metadata(data_dir.join(daemon::lifecycle::SPAWN_MARKER))
         .and_then(|meta| meta.modified())
         .map(|written| {
             std::time::SystemTime::now()
                 .duration_since(written)
-                .map_or(true, |age| age < SPAWN_MARKER_FRESH)
+                .is_ok_and(|age| age < SPAWN_MARKER_FRESH)
         })
         .unwrap_or(false)
 }
@@ -182,8 +186,15 @@ async fn start_once(exe: &Path, data_dir: &Path) -> anyhow::Result<bool> {
             tokio::task::spawn_blocking(move || {
                 // Written under the claim, before the spawn: a client that wins the claim
                 // after this one drops it, but before the child takes it, sees the marker.
-                std::fs::write(&marker, std::process::id().to_string())?;
-                spawn_detached(&exe)
+                // Advisory (stream S re-review N3): a marker that cannot be written costs
+                // at most a second daemon, so it never stops the spawn; and a spawn that
+                // failed takes its marker back, so it holds no waiting client back.
+                let _ = std::fs::write(&marker, std::process::id().to_string());
+                let spawned = spawn_detached(&exe);
+                if spawned.is_err() {
+                    let _ = std::fs::remove_file(&marker);
+                }
+                spawned
             })
             .await
             .map_err(|error| anyhow::anyhow!("daemon spawn failed: {error}"))??;
@@ -320,6 +331,23 @@ mod tests {
             "the previous run's content must survive the rotation, not be discarded: \
              expected daemon.stderr.log.1 to exist"
         );
+    }
+
+    /// Stream S re-review N2: only a marker provably younger than `SPAWN_MARKER_FRESH` is
+    /// a spawn in flight; one from the future and one past the freshness are both stale.
+    #[test]
+    fn only_a_provably_fresh_spawn_marker_is_in_flight() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!spawn_in_flight(dir.path()), "no marker");
+        let path = dir.path().join(daemon::lifecycle::SPAWN_MARKER);
+        let file = std::fs::File::create(&path).unwrap();
+        assert!(spawn_in_flight(dir.path()), "a marker written just now");
+        let now = std::time::SystemTime::now();
+        file.set_modified(now + Duration::from_secs(3600)).unwrap();
+        assert!(!spawn_in_flight(dir.path()), "a marker from the future");
+        file.set_modified(now - SPAWN_MARKER_FRESH - Duration::from_secs(1))
+            .unwrap();
+        assert!(!spawn_in_flight(dir.path()), "a marker past its freshness");
     }
 
     /// An ordinary, well-behaved sink (nothing has ever pushed it over the cap) must be

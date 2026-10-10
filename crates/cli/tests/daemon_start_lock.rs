@@ -153,6 +153,29 @@ fn two_starts_behind_a_stopping_daemon_spawn_one_daemon() {
     release.join().unwrap();
 }
 
+/// Stream S re-review N2: a spawn marker whose mtime is in the future (a clock stepped
+/// back, or a data directory restored with future times) is not provably younger than
+/// `SPAWN_MARKER_FRESH`, so it is stale: it must not hold back a start. Before the fix
+/// it read as fresh until the wall clock passed it, and every start failed.
+#[test]
+fn a_spawn_marker_from_the_future_does_not_block_a_start() {
+    let dir = tempdir();
+    let _stop = StopOnDrop(dir.path());
+    warm_up();
+    let data = dir.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    let marker = std::fs::File::create(data.join(daemon::lifecycle::SPAWN_MARKER)).unwrap();
+    marker
+        .set_modified(std::time::SystemTime::now() + Duration::from_secs(24 * 3600))
+        .unwrap();
+    drop(marker);
+
+    let started = Instant::now();
+    let start = start_command(dir.path()).finish(START_LIMIT);
+    assert_started(dir.path(), start, started);
+    assert_running(dir.path());
+}
+
 /// Task M9.11.28b: `support::TestDaemon::start` waits for its foreground daemon's socket
 /// with the client's own start bound, `ENSURE_DAEMON_SOCKET_WAIT` (it waited a literal 3 s,
 /// which failed once under load). The reproduction is the same held lock: the daemon binds
