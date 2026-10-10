@@ -17,9 +17,13 @@ use super::validate_kinds::{READER_TEST_MODE_NOTE, check_reader_fields, is_reade
 use super::validate_stages::check_stage_fields;
 pub(super) use super::validate_stages::{reserved_new_id, split_child_stage};
 
-pub use super::validate_graph::{
-    EditScope, combined_cycles, implicit_deps, validate_tasks, validate_tasks_with,
-};
+pub use super::validate_graph::{EditScope, combined_cycles, implicit_deps};
+
+/// Decision 11 (M9.11.10, B5): a brief's cap, in characters (the TUI form's own,
+/// `tui::run_edit::BRIEF_MAX_CHARS`).
+pub const BRIEF_MAX_CHARS: usize = 1_000_000;
+/// Decision 11: the cap on a plan's briefs together, in bytes.
+pub const PLAN_BRIEFS_MAX_BYTES: usize = 4 * 1024 * 1024;
 
 const ID_PATTERN: &str = "^[a-z0-9][a-z0-9-]{0,15}$";
 const ID_MAX: usize = 16;
@@ -45,6 +49,45 @@ pub(crate) fn is_valid_id(id: &str) -> bool {
         && bytes
             .iter()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'-')
+}
+
+/// `validate_graph::validate_tasks`, and decision 11's cap on the briefs together.
+pub fn validate_tasks(
+    tasks: &[Task],
+    touched: &BTreeSet<String>,
+    scope: &EditScope,
+    limits: (u32, u32),
+    models: &RunModels,
+) -> Vec<PlanError> {
+    let mut errors = super::validate_graph::validate_tasks(tasks, touched, scope, limits, models);
+    errors.extend(briefs_total(tasks));
+    errors
+}
+
+/// `validate_graph::validate_tasks_with`, and decision 11's cap on the briefs together.
+pub fn validate_tasks_with(
+    tasks: &[Task],
+    touched: &BTreeSet<String>,
+    added_deps: Option<&BTreeSet<(String, String)>>,
+    scope: &EditScope,
+    limits: (u32, u32),
+    models: &RunModels,
+) -> Vec<PlanError> {
+    use super::validate_graph::validate_tasks_with as graph;
+    let mut errors = graph(tasks, touched, added_deps, scope, limits, models);
+    errors.extend(briefs_total(tasks));
+    errors
+}
+
+/// Decision 11 (M9.11.10, B5): every task's brief together, in bytes, at most
+/// [`PLAN_BRIEFS_MAX_BYTES`], so the largest plan's gate snapshot fits one frame.
+fn briefs_total(tasks: &[Task]) -> Option<PlanError> {
+    let total: usize = tasks.iter().map(|t| t.spec.brief.len()).sum();
+    (total > PLAN_BRIEFS_MAX_BYTES).then(|| {
+        let text =
+            format!("the plan's briefs total {total} bytes; at most {PLAN_BRIEFS_MAX_BYTES}");
+        PlanError::new(None, "", "fields", text)
+    })
 }
 
 /// Ruling T13-minors (m1): the note on a tdd task whose profile has no `test_passed`.
@@ -264,6 +307,11 @@ fn check_fields(spec: &PlanTask, errors: &mut Vec<PlanError>) {
     }
     if spec.brief.trim().is_empty() {
         errors.push(e("brief", "fields", "must not be blank".to_string()));
+    }
+    // Decision 11 (M9.11.10): counted in characters, as the TUI form counts them.
+    if spec.brief.chars().count() > BRIEF_MAX_CHARS {
+        let text = format!("at most {BRIEF_MAX_CHARS} characters");
+        errors.push(e("brief", "fields", text));
     }
     if spec.acceptance.is_empty() {
         errors.push(e(
@@ -499,3 +547,7 @@ pub fn protected_notes(owns: &[String], protected_files: &[String]) -> Vec<Strin
 #[cfg(test)]
 #[path = "validate_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "validate_caps_tests.rs"]
+mod caps_tests;

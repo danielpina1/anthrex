@@ -172,3 +172,35 @@ fn stats_json_and_the_report_line_are_printable() {
         "research report: /tmp/repo [2J.md"
     );
 }
+
+/// Decision 10 (M9.11.10): a run id that matches nothing in a list holding the
+/// daemon's whole share of finished runs may be an older run the list leaves out, so the
+/// refusal says so; with one finished run fewer the text is unchanged (the existing
+/// tests' `no run matches '<run>'`).
+#[test]
+fn a_full_list_names_the_cap() {
+    use daemon::run::snapshot::TERMINAL_RUNS_SHOWN;
+    let finished = |n: usize| -> Vec<RunInfo> {
+        let mut list: Vec<RunInfo> = (0..n)
+            .map(|i| RunInfo {
+                run_id: format!("done-{i:02}"),
+                state: proto::RunState::Accepted,
+                ..status::tests::example()
+            })
+            .collect();
+        list.push(RunInfo {
+            run_id: "live-0".into(),
+            state: proto::RunState::Running,
+            ..status::tests::example()
+        });
+        list
+    };
+    assert_eq!(
+        resolve_run(&finished(TERMINAL_RUNS_SHOWN), "nope").unwrap_err(),
+        "no run matches 'nope' (only the 50 most recent finished runs are listed)"
+    );
+    assert_eq!(
+        resolve_run(&finished(TERMINAL_RUNS_SHOWN - 1), "nope").unwrap_err(),
+        "no run matches 'nope'"
+    );
+}

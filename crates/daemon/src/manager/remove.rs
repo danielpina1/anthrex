@@ -58,6 +58,30 @@ use crate::worktree::{self, ManagedWorktree, WorktreeError};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
+use tokio::sync::watch;
+
+/// M9.11.12 (B4): a worktree removal under way, as `shutdown` waits for it. Its sender
+/// is held by `remove_with_worktree` and dropped when the removal is over, however it
+/// ends; `until` is the removal's own bound, its `OPERATION_TIMEOUT` deadline plus the
+/// kill grace (the doc of `remove_with_worktree`).
+#[derive(Clone)]
+pub(super) struct Tracked {
+    done: watch::Receiver<()>,
+    until: Instant,
+}
+
+impl Tracked {
+    fn is_over(&self) -> bool {
+        self.done.has_changed().is_err()
+    }
+
+    /// Until the removal is over, or its own bound has passed.
+    pub(super) async fn wait(mut self) {
+        let until = tokio::time::Instant::from_std(self.until);
+        // `changed` returns `Err` once the sender is dropped; nothing is ever sent.
+        let _ = tokio::time::timeout_at(until, self.done.changed()).await;
+    }
+}
 
 /// How often the kill wait asks whether the child has been reaped (design decision 19
 /// step 3). Never with the manager lock held.
@@ -153,8 +177,9 @@ impl WindowManager {
 
         // Step 1, under the lock: is this window removable, and is anyone else already
         // removing it? The guard clears `removing` again on every path below that leaves
-        // the window listed.
-        let (wt, guard) = self.begin_removal(id)?;
+        // the window listed. `_running` tells `shutdown` when this removal is over, on
+        // every path, by being dropped (M9.11.12).
+        let (wt, guard, _running) = self.begin_removal(id, deadline)?;
 
         // Step 2, before the kill: does the tree hold work? A refusal here has cost the
         // user nothing — their agent is still running in the checkout.
@@ -200,7 +225,11 @@ impl WindowManager {
 
     /// Design decision 19 step 1. Pure bookkeeping under the lock: nothing here touches
     /// the disk, so the lock is held for as long as a `BTreeMap` lookup takes.
-    fn begin_removal(&self, id: u32) -> anyhow::Result<(ManagedWorktree, Removing<'_>)> {
+    fn begin_removal(
+        &self,
+        id: u32,
+        deadline: Instant,
+    ) -> anyhow::Result<(ManagedWorktree, Removing<'_>, watch::Sender<()>)> {
         let mut inner = crate::lock(&self.inner);
         // Fix wave 7 (item 1's audit of every admission-time check alongside restart's
         // Major 1): unlike `create`'s `admit` and `begin_restart`, this had no
@@ -253,6 +282,15 @@ impl WindowManager {
             anyhow::bail!("window '{}' is restarting", entry.name);
         }
         entry.removing = true;
+        // M9.11.12 (B4): tracked under `inner`, beside the `shutting_down` check above.
+        let (running, done) = watch::channel(());
+        let tracked = Tracked {
+            done,
+            until: deadline + self.config.kill_grace,
+        };
+        let mut removals = crate::lock(&self.removals);
+        removals.retain(|_, removal| !removal.is_over());
+        removals.insert(id, tracked);
         Ok((
             wt,
             Removing {
@@ -260,6 +298,7 @@ impl WindowManager {
                 id,
                 held: true,
             },
+            running,
         ))
     }
 

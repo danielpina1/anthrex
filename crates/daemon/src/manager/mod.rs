@@ -6,6 +6,7 @@ mod create;
 mod entry;
 mod headless;
 mod headless_end;
+mod headless_terminal;
 mod headless_turns;
 mod remove;
 mod restart;
@@ -18,6 +19,7 @@ pub use headless::{
     DIAGNOSTIC_LINES, SIGNAL_CHANNEL_CAPACITY, WindowSignal, WindowSignalKind, control_refusal,
     subscribe_refusal,
 };
+pub use headless_terminal::{TERMINAL_PIDS_KEPT, TerminalRecord};
 pub use headless_turns::RESUME_START_TIMEOUT;
 pub use remove::{GitRoots, RemoveError};
 pub use role_window::{RUN_WINDOW_SIZE, lost_role_refusal, orchestrator_refusal};
@@ -166,6 +168,10 @@ pub struct WindowManager {
     /// The engine's feed (decision 27, `manager::headless`).
     signals: broadcast::Sender<WindowSignal>,
     config: ManagerConfig,
+    /// M9.11.12 (B4): each worktree removal under way, by window, with its deadline
+    /// (`remove.rs`). Written only while `inner` is held too, so `shutdown` sees every
+    /// removal admitted before it.
+    removals: Mutex<BTreeMap<u32, remove::Tracked>>,
 }
 
 impl WindowManager {
@@ -174,7 +180,7 @@ impl WindowManager {
         let (events, events_rx) = mpsc::unbounded_channel();
         let (changed, _) = watch::channel(Vec::new());
         let (conversations, _) = broadcast::channel(conversation::CONVERSATION_CHANGES_CAPACITY);
-        let (signals, _) = broadcast::channel(headless::SIGNAL_CHANNEL_CAPACITY);
+        let (signals, _) = broadcast::channel(config.signal_capacity.max(1));
         let manager = Arc::new(Self {
             inner: Mutex::new(Inner {
                 next_id: 1,
@@ -191,6 +197,7 @@ impl WindowManager {
             events,
             signals,
             config,
+            removals: Mutex::new(BTreeMap::new()),
         });
         (manager, events_rx)
     }
@@ -503,9 +510,10 @@ impl WindowManager {
         Ok(())
     }
 
-    /// Run the same bounded group escalation for every live child concurrently.
+    /// Run the same bounded group escalation for every live child concurrently, then wait
+    /// for every worktree removal under way (M9.11.12), each until its own deadline.
     pub async fn shutdown(&self) {
-        let pending: Vec<_> = {
+        let (pending, removals): (Vec<_>, Vec<_>) = {
             let mut inner = crate::lock(&self.inner);
             // Share create's admission lock: an accepted window is in this snapshot,
             // and a creation still resolving its project cannot spawn afterward.
@@ -521,15 +529,21 @@ impl WindowManager {
             // this daemon spawned, and exiting before they finish would take them down
             // mid-HUP/TERM/KILL and leave a descendant behind (`entry.rs`'s
             // `orphaned_cleanups` doc comment).
-            inner
-                .cleanups
-                .values()
-                .cloned()
+            let pending = (inner.cleanups.values().cloned())
                 .chain(inner.orphaned_cleanups.iter().cloned())
-                .collect()
+                .collect();
+            // Under `inner`, as each removal is admitted: none admitted before
+            // `shutting_down` was set is missed.
+            (
+                pending,
+                crate::lock(&self.removals).values().cloned().collect(),
+            )
         };
         for mut done in pending {
             let _ = done.wait_for(|finished| *finished).await;
+        }
+        for removal in removals {
+            removal.wait().await;
         }
     }
 }

@@ -58,6 +58,9 @@ pub struct ManagerConfig {
     /// fails and its process is killed (M8a.18). Production: `RESUME_START_TIMEOUT`;
     /// injected so a test can reach the timeout path.
     pub resume_start_timeout: Duration,
+    /// The engine feed's capacity (M9.11.9, decision 9): production
+    /// `SIGNAL_CHANNEL_CAPACITY`; a test makes it small to force a lag.
+    pub signal_capacity: usize,
     /// Replaces decision 18's launch jitter before a headless Codex turn's process
     /// (M8a.18) when set. `None` in production (`new`, `from_vars`); a test injects a
     /// long value to prove the wait happens without racing a short one.
@@ -137,6 +140,7 @@ impl ManagerConfig {
             cli_caps: crate::headless::argv::CLI_CAPS,
             decider_bin: None,
             code_host: Default::default(),
+            signal_capacity: super::headless::SIGNAL_CHANNEL_CAPACITY,
         }
     }
 
@@ -179,6 +183,7 @@ impl ManagerConfig {
             cli_caps: crate::headless::argv::CLI_CAPS,
             decider_bin: nonempty("ANTHREX_DECIDER_BIN"),
             code_host,
+            signal_capacity: super::headless::SIGNAL_CHANNEL_CAPACITY,
         }
     }
 
