@@ -67,6 +67,9 @@ enum ProfileCommand {
         /// Store it as soon as verification passes
         #[arg(long)]
         yes: bool,
+        /// Store it once verification has run, even if a check fails (implies --yes)
+        #[arg(long)]
+        anyway: bool,
         /// Where this platform cannot confine the verification, run it unconfined anyway
         #[arg(long)]
         unconfined_checks: bool,
@@ -121,7 +124,10 @@ async fn dispatch(
             if json {
                 println!("{}", serde_json::to_string_pretty(&status)?);
             } else {
-                print!("{}", status_text(&status));
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_secs());
+                print!("{}", status_text(&status, now));
             }
             Ok(())
         }
@@ -173,22 +179,35 @@ async fn dispatch(
             value,
             unset: _,
             yes,
+            anyway,
             unconfined_checks,
         } => done(
             request(
                 &mut client,
-                ProfileRequest::Edit {
-                    dir,
-                    key,
-                    value,
-                    yes,
-                    unconfined_checks,
-                    anyway: false,
-                    on_proposal: false,
-                },
+                edit_request(dir, key, value, yes, anyway, unconfined_checks),
             )
             .await?,
         ),
+    }
+}
+
+/// `profile edit`'s request; `--anyway` implies `--yes` (decision 37).
+fn edit_request(
+    dir: PathBuf,
+    key: String,
+    value: Option<String>,
+    yes: bool,
+    anyway: bool,
+    unconfined_checks: bool,
+) -> ProfileRequest {
+    ProfileRequest::Edit {
+        dir,
+        key,
+        value,
+        yes: yes || anyway,
+        unconfined_checks,
+        anyway,
+        on_proposal: false,
     }
 }
 
@@ -244,29 +263,51 @@ fn minute(unix: u64) -> String {
     at.get(..16).unwrap_or(&at).to_string()
 }
 
-/// `profile status`'s text (the brief's CLI section).
-pub fn status_text(status: &ProfileStatus) -> String {
-    let mut out = format!("profile: {}\n", status.project.display());
+/// A daemon-supplied string as one terminal line (goals, reasons, labels, paths).
+fn one(text: &str) -> String {
+    crate::run_cmd::printable(&proto::safe_text::one_line(text))
+}
+
+/// `profile status`'s text (decision 38): the project, the status line, today's lines,
+/// then the waiting and dropped goals. `now` is Unix seconds, read once by the caller.
+/// Every daemon-supplied string goes through `printable`.
+pub fn status_text(status: &ProfileStatus, now: u64) -> String {
+    crate::run_cmd::printable(&status_body(status, now))
+}
+
+fn status_body(status: &ProfileStatus, now: u64) -> String {
+    let mut out = format!("profile: {}\n", one(&status.project.display().to_string()));
+    out.push_str(&format!(
+        "  {}\n",
+        one(&tui::profile_words::status_line(status, now))
+    ));
     match (status.confirmed_at, &status.unparseable) {
-        (_, Some(problem)) => out.push_str(&format!("  stored: does not parse: {problem}\n")),
+        (_, Some(problem)) => {
+            out.push_str(&format!("  stored: does not parse: {}\n", one(problem)));
+        }
         (Some(at), None) => out.push_str(&format!(
             "  stored: yes, confirmed {} ({})\n",
             minute(at),
-            status.repo_dir.join("profile.toml").display()
+            one(&status.repo_dir.join("profile.toml").display().to_string())
         )),
         (None, None) => out.push_str("  stored: no\n"),
     }
     if !status.stale.is_empty() {
         out.push_str(&format!(
             "  stale: {} changed since it was confirmed\n",
-            status.stale.join(", ")
+            status
+                .stale
+                .iter()
+                .map(|f| one(f))
+                .collect::<Vec<_>>()
+                .join(", ")
         ));
     }
     match &status.proposal {
         None => out.push_str("  detection: none\n"),
         Some(record) => match &record.state {
             ProposalState::Failed { reason } => {
-                out.push_str(&format!("  detection: failed: {reason}\n"));
+                out.push_str(&format!("  detection: failed: {}\n", one(reason)));
             }
             state => {
                 let mut line = format!(
@@ -275,7 +316,7 @@ pub fn status_text(status: &ProfileStatus) -> String {
                     minute(record.updated_at).get(11..).unwrap_or_default()
                 );
                 if let (Some(id), Some(window)) = (&record.scout_id, record.window_id) {
-                    line.push_str(&format!(" (scout {id}, window {window})"));
+                    line.push_str(&format!(" (scout {}, window {window})", one(id)));
                 }
                 out.push_str(&line);
                 out.push('\n');
@@ -289,5 +330,132 @@ pub fn status_text(status: &ProfileStatus) -> String {
             "  verification: unconfined (this platform cannot confine it, or worker_sandbox is off)\n",
         );
     }
+    for queued in &status.queued {
+        out.push_str(&format!("  waiting: {}\n", one(&queued.goal)));
+    }
+    for dropped in &status.dropped_goals {
+        out.push_str(&format!(
+            "  dropped goal \"{}\": {}\n",
+            one(&dropped.goal),
+            one(&dropped.reason)
+        ));
+    }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proto::{DroppedGoal, ProfileSource, QueuedGoalInfo, SetupState};
+
+    fn status() -> ProfileStatus {
+        ProfileStatus {
+            project: PathBuf::from("/work/app"),
+            repo_dir: PathBuf::from("/data/repos/app"),
+            source: ProfileSource::Stored,
+            confirmed_at: Some(900),
+            stale: Vec::new(),
+            unparseable: None,
+            proposal: None,
+            scout: None,
+            verify_confined: true,
+            queued: Vec::new(),
+            checking: None,
+            verified_at: Some(940),
+            unreadable_text: None,
+            dropped_goals: Vec::new(),
+        }
+    }
+
+    fn queued(goal: &str) -> QueuedGoalInfo {
+        QueuedGoalInfo {
+            id: "q1".into(),
+            project: PathBuf::from("/work/app"),
+            goal: goal.into(),
+            queued_at: 950,
+            yes: false,
+            trust_project: false,
+            unconfined_checks: false,
+            setup: SetupState::NeedsReview,
+        }
+    }
+
+    #[test]
+    fn status_text_has_the_status_line_second() {
+        let mut s = status();
+        s.queued = vec![queued("add a")];
+        s.dropped_goals = vec![DroppedGoal {
+            goal: "add b".into(),
+            reason: "the profile was rejected".into(),
+            at: 960,
+        }];
+        let text = status_text(&s, 1000);
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines[0], "profile: /work/app");
+        assert_eq!(lines[1], "  Ready · verified 1m ago");
+        assert!(lines[2].starts_with("  stored: yes, confirmed "), "{text}");
+        assert!(text.contains("  detection: none\n"), "{text}");
+        assert!(text.contains("  verification: confined, as runs are\n"));
+        let tail = &lines[lines.len() - 2..];
+        assert_eq!(tail[0], "  waiting: add a");
+        assert_eq!(
+            tail[1],
+            "  dropped goal \"add b\": the profile was rejected"
+        );
+    }
+
+    #[test]
+    fn status_text_draws_daemon_text_safely() {
+        let mut s = status();
+        s.project = PathBuf::from("/work/\u{1b}[31mapp");
+        s.stale = vec!["a\u{1b}[2Jb".into(), "x\ny".into()];
+        s.queued = vec![queued("go\n  stored: forged\u{1b}]0;t\u{7}\u{202e}")];
+        s.dropped_goals = vec![DroppedGoal {
+            goal: "g\r\n  waiting: forged".into(),
+            reason: "r\u{1b}[0m\nline".into(),
+            at: 1,
+        }];
+        s.unparseable = Some("bad\u{1b}[1m toml".into());
+        let text = status_text(&s, 1000);
+        assert!(
+            !text.chars().any(|c| c.is_control() && c != '\n'),
+            "{text:?}"
+        );
+        assert!(!text.contains('\u{202e}'), "{text:?}");
+        // A goal or reason cannot start a line of its own.
+        for line in text.lines() {
+            assert!(
+                !line.starts_with("  stored: forged") && !line.starts_with("  waiting: forged"),
+                "{text:?}"
+            );
+        }
+        assert_eq!(
+            text.lines().filter(|l| l.starts_with("  waiting:")).count(),
+            1
+        );
+    }
+
+    #[test]
+    fn edit_anyway_sends_the_request_with_yes() {
+        let request = edit_request(
+            PathBuf::from("/work/app"),
+            "check".into(),
+            Some("false".into()),
+            false,
+            true,
+            false,
+        );
+        assert_eq!(
+            request,
+            ProfileRequest::Edit {
+                dir: PathBuf::from("/work/app"),
+                key: "check".into(),
+                value: Some("false".into()),
+                yes: true,
+                unconfined_checks: false,
+                anyway: true,
+                on_proposal: false,
+            }
+        );
+    }
 }
