@@ -455,3 +455,33 @@ fn every_key_has_an_editor_kind() {
     assert_eq!(edit_text(&profile, "env.RUST_LOG"), "debug");
     assert_eq!(edit_text(&RepoProfile::default(), "check"), "");
 }
+
+/// Decision 24 (M9.10.9): `rows` walks the sections in order, each key at its place,
+/// every `env.<NAME>` before the environment section's add row.
+#[test]
+fn rows_walk_the_sections_in_order() {
+    let mut profile = full_profile();
+    profile.env.insert("A_FIRST".into(), "1".into());
+    let keys: Vec<String> = rows(&profile, None, None)
+        .into_iter()
+        .map(|r| r.key)
+        .collect();
+    let mut want: Vec<String> = Vec::new();
+    for (_, _, section) in sections() {
+        for key in section.iter() {
+            if *key == ENV_ADD {
+                want.extend(["env.A_FIRST".to_string(), "env.RUST_LOG".to_string()]);
+            }
+            want.push(key.to_string());
+        }
+    }
+    assert_eq!(keys, want);
+    let titles: Vec<&str> = rows(&profile, None, None)
+        .iter()
+        .map(|r| r.section)
+        .collect();
+    let mut deduped = titles.clone();
+    deduped.dedup();
+    let order: Vec<&str> = sections().iter().map(|(t, _, _)| *t).collect();
+    assert_eq!(deduped, order, "each section's rows are together");
+}

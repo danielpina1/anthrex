@@ -1,8 +1,9 @@
-//! The Profile screen's pages, drawn as kit dialogs over it (decision 5): the Detect
-//! toggles, the Discard and Unset pages, the raw-text page (the file shown exactly,
+//! The Profile screen's pages, drawn as kit dialogs over it (9.0.6 decision 5), as
+//! milestone 9.10 decision 30 words them: the Detect toggles in plain words, the
+//! Discard and Unset pages, the raw-text page (the file shown exactly, sanitised,
 //! scrolled), a row's page, and the editors. Split from `ui/profile.rs` by responsibility (`AGENTS.md` hard rule 8).
 
-use super::{hint, pad, tail_lines};
+use super::{hint, listed, pad, plain, tail_lines};
 use crate::app::profile_screen::{EditorField, ProfilePage, ProfileScreen};
 use crate::safe_text::{multi_line, one_line};
 use crate::theme::{Glyph, Palette, Role, glyph, role};
@@ -66,7 +67,7 @@ fn page_parts(
 ) -> (String, bool, Vec<Line<'static>>, Line<'static>) {
     let w = usize::from(width.min(kit::WRAP)).max(1);
     let wrap = |text: &str| -> Vec<Line<'static>> {
-        wrap_words(&one_line(text), w)
+        wrap_words(&plain(text, p), w)
             .into_iter()
             .map(Line::raw)
             .collect()
@@ -81,23 +82,36 @@ fn page_parts(
             unconfined_checks,
             focus,
         } => {
-            let toggle = |i: usize, label: &str, on: bool| {
+            // Decision 30: each toggle in plain words, what it does under it.
+            let toggle = |i: usize, label: &str, what: &str, on: bool| {
                 let mark = if *focus == i {
                     glyph(Glyph::Selection, p.ascii)
                 } else {
                     " "
                 };
-                Line::from(vec![
+                let mut lines = vec![Line::from(vec![
                     Span::styled(format!("{mark} "), role(kit::bar_role(keys), p)),
-                    Span::styled(pad(label, 19), role(Role::Muted, p)),
+                    Span::raw(pad(label, 34)),
                     Span::raw(kit::choice_in(if on { "on" } else { "off" }, p)),
-                ])
+                ])];
+                for part in wrap_words(what, w.saturating_sub(2).max(1)) {
+                    lines.push(Line::styled(format!("  {part}"), role(Role::Muted, p)));
+                }
+                lines
             };
-            let mut body = vec![
-                toggle(0, "trust project", *trust_project),
-                toggle(1, "unconfined checks", *unconfined_checks),
-                Line::default(),
-            ];
+            let mut body = toggle(
+                0,
+                "Trust this repo's agent settings",
+                "let agents use the settings files this repo tracks, like .claude/ and .mcp.json",
+                *trust_project,
+            );
+            body.extend(toggle(
+                1,
+                "Run checks outside the sandbox",
+                "only needed on systems where anthrex can't confine commands",
+                *unconfined_checks,
+            ));
+            body.push(Line::default());
             body.extend(
                 wrap("a real agent will read the repository")
                     .into_iter()
@@ -141,10 +155,24 @@ fn page_parts(
             ("profile file".into(), false, body, h)
         }
         ProfilePage::Row { key, .. } => {
+            // Decision 30: the key dimmed, the value (a list one item per line), the
+            // hint, the check line and, after a ✗, its output.
             let row = s.rows().into_iter().find(|r| r.key == *key);
-            let value = row.as_ref().and_then(|r| r.value.clone());
-            let mut body = vec![Line::styled(one_line(key), role(Role::Muted, p))];
-            body.extend(wrap(&value.unwrap_or_else(|| "unset".into())));
+            let shown = listed(s);
+            let mut body = vec![Line::styled(plain(key, p), role(Role::Muted, p))];
+            let value = match shown.and_then(|sh| sh.profile.as_ref()) {
+                Some(profile) if key == "delivery.mode" => {
+                    crate::profile_words::delivery_text(profile.delivery.as_ref())
+                }
+                Some(profile) => crate::profile_view::edit_text(profile, key),
+                None => String::new(),
+            };
+            if value.is_empty() {
+                body.push(Line::styled(plain("—", p), role(Role::Muted, p)));
+            }
+            for line in multi_line(&value).split('\n').filter(|l| !l.is_empty()) {
+                body.extend(wrap(line));
+            }
             body.extend(
                 wrap(crate::profile_words::hint(key))
                     .into_iter()
@@ -153,10 +181,18 @@ fn page_parts(
             let check = row.and_then(|r| r.check);
             let tail = match (s.edit_of(key), &check) {
                 (Some(proto::RowEditState::Failed { reason, tail, .. }), _) => {
-                    body.extend(wrap(&format!("couldn't verify: {reason}")));
+                    body.extend(
+                        wrap(&format!("couldn't verify: {reason}"))
+                            .into_iter()
+                            .map(|l| l.style(role(Role::Failed, p))),
+                    );
                     tail.clone()
                 }
-                (_, Some(c)) => {
+                (Some(proto::RowEditState::Verifying), _) => {
+                    body.push(Line::styled(plain("checking…", p), role(Role::Working, p)));
+                    String::new()
+                }
+                (None, Some(c)) => {
                     body.push(Line::raw(crate::profile_view::check_cell(c, p.ascii)));
                     c.tail.clone()
                 }
@@ -166,7 +202,7 @@ fn page_parts(
                 body.extend(tail_lines(&tail, 2, w, p));
             }
             let h = hints(&[("j/k", "scroll"), ("esc", "back")]);
-            (one_line(&crate::profile_words::label(key)), false, body, h)
+            (plain(&crate::profile_words::label(key), p), false, body, h)
         }
         ProfilePage::Edit(editor) => {
             let label = |text: &str| Span::styled(pad(text, 7), role(Role::Muted, p));

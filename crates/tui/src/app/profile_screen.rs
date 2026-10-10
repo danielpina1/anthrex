@@ -258,7 +258,7 @@ impl ProfileScreen {
     }
 
     /// What is listed now (decisions 27-29): the card's rows while it shows, else the
-    /// stored profile's; in section order, the main sections, then the `Advanced` line
+    /// stored profile's; in section order (`profile_view::rows`), the main sections, then the `Advanced` line
     /// and, open, what it holds. The changes card lists only changed rows, unfolded.
     pub fn rows(&self) -> Vec<Row> {
         let (side, against) = if self.showing_card() {
@@ -286,7 +286,7 @@ impl ProfileScreen {
         let rows = match &against {
             Some(Some(stored)) => {
                 let rows = profile_view::rows(profile, verification, Some(stored));
-                return in_section_order(profile_view::changed(rows));
+                return profile_view::changed(rows);
             }
             Some(None) => profile_view::rows(profile, verification, None)
                 .into_iter()
@@ -294,7 +294,6 @@ impl ProfileScreen {
                 .collect(),
             None => profile_view::rows(profile, verification, None),
         };
-        let rows = in_section_order(rows);
         let (main, advanced): (Vec<Row>, Vec<Row>) = rows.into_iter().partition(|r| !r.advanced);
         let mut out = main;
         out.push(advanced_row());
@@ -366,7 +365,6 @@ impl ProfileScreen {
 /// The `Advanced ▸` line (decision 29), listed among the rows so it can be selected.
 fn advanced_row() -> Row {
     Row {
-        group: "",
         section: "",
         label: "Advanced".into(),
         advanced: false,
@@ -376,28 +374,6 @@ fn advanced_row() -> Row {
         mark: None,
         check: None,
     }
-}
-
-/// `rows` in decision 24's section order: by section, then by the key's place in it,
-/// each `env.<NAME>` at `env`'s place and the add row last in its section.
-fn in_section_order(mut rows: Vec<Row>) -> Vec<Row> {
-    let place = |row: &Row| {
-        let key = if row.key.starts_with("env.") {
-            ENV_ADD
-        } else {
-            row.key.as_str()
-        };
-        let sections = profile_view::sections();
-        let section = sections.iter().position(|(_, _, keys)| keys.contains(&key));
-        let at = section.and_then(|i| sections[i].2.iter().position(|k| *k == key));
-        (
-            section.unwrap_or(usize::MAX),
-            at.unwrap_or(0),
-            row.key == ENV_ADD,
-        )
-    };
-    rows.sort_by_key(place);
-    rows
 }
 
 impl App {

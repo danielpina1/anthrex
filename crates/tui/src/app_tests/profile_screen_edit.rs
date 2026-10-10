@@ -194,8 +194,8 @@ fn the_delivery_rows_send_the_bare_value() {
     );
 }
 
-/// Review finding m4: the delivery rows drawn at 80×24, Unicode and ASCII: the group,
-/// both keys (unset reads `unset`), the selection bar on `delivery.mode`, and its
+/// Review finding m4: the delivery rows drawn at 80×24, Unicode and ASCII: the head,
+/// both keys (no `[delivery]` reads as a local merge), the bar on `delivery.mode`, and its
 /// editor's choice after a step from `local`: `< pr >` (`‹ pr ›` in Unicode).
 #[test]
 fn the_delivery_rows_draw_at_80x24() {
@@ -215,8 +215,9 @@ fn the_delivery_rows_draw_at_80x24() {
             .iter()
             .find(|r| r.contains("delivery.mode"))
             .expect("mode row");
-        assert!(mode.contains(&format!("{bar} ")), "{mode}");
-        assert!(mode.contains("unset"), "{mode}");
+        assert!(mode.contains(&format!("{bar}Delivery")), "{mode}");
+        // No `[delivery]` reads as a local merge (decision 26).
+        assert!(mode.contains("merge here, no pull request"), "{mode}");
         assert!(rows.iter().any(|r| r.contains("delivery")), "{rows:#?}");
         tap(&mut app, KeyCode::Char('e'));
         tap(&mut app, KeyCode::Right);

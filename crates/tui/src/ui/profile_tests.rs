@@ -1,20 +1,28 @@
-//! Milestone 9.0.6 task 13: the Profile screen, drawn (one page since milestone 9.10.8;
-//! milestone 9.10.9 rewrites these for the plain screen).
+//! Milestone 9.10.9: the plain Profile screen, drawn (SP §4.4): the fixtures, then the
+//! status line, the three sections, Advanced, the dimmed keys and the hint line. A row's
+//! ✗, the hints and the error rows are in `profile_rows_tests.rs`, the pages and the
+//! hostile text in `profile_pages_tests.rs`.
 
 use crate::app::App;
-use crate::app::profile_screen::{ProfilePage, ProfileScreen, Shown, Side};
+use crate::app::profile_screen::{ProfileScreen, Shown, Side};
 use crate::app::screens::Screen;
 use crate::settings::UiSettings;
+use crate::theme::{Role, role};
+use crate::ui::audit;
 use proto::{
-    CommandCheck, DroppedCommand, ProfileSource, ProfileStatus, ProfileVerification,
-    ProposalOrigin, ProposalRecord, ProposalState, RepoProfile,
+    CheckProgress, CommandCheck, DeliveryMode, DeliveryProfile, DroppedCommand, ProfileSource,
+    ProfileStatus, ProfileVerification, ProposalOrigin, ProposalRecord, ProposalState, RepoProfile,
 };
-use ratatui::{Terminal, backend::TestBackend};
+use ratatui::buffer::Buffer;
 use std::collections::BTreeMap;
 
-const SIZES: [(u16, u16); 2] = [(80, 24), (120, 40)];
+pub(crate) const SIZES: [(u16, u16); 2] = [(80, 24), (120, 40)];
+/// The daemon's clock in these tests.
+pub(crate) const NOW: u64 = 1_000_000;
+/// Verified two days (and a bit) before [`NOW`].
+const VERIFIED: u64 = NOW - 2 * 86_400 - 100;
 
-fn check(command: &str, code: Option<i32>, secs: u64) -> CommandCheck {
+pub(crate) fn check(command: &str, code: Option<i32>, secs: u64) -> CommandCheck {
     CommandCheck {
         command: command.into(),
         ok: code == Some(0),
@@ -25,25 +33,32 @@ fn check(command: &str, code: Option<i32>, secs: u64) -> CommandCheck {
     }
 }
 
-fn profile() -> RepoProfile {
+/// SP §4.4's profile.
+pub(crate) fn sp_profile() -> RepoProfile {
     RepoProfile {
-        setup: Some("make setup".into()),
+        setup: Some("cargo fetch".into()),
         check: Some("cargo test --workspace".into()),
-        build_check: Some("cargo build".into()),
-        source: vec!["src/**".into()],
-        env: BTreeMap::from([("RUST_LOG".into(), "debug".into())]),
+        single_test: Some("cargo test -p {crate} {test}".into()),
+        source: vec!["crates/".into()],
+        test_paths: vec!["crates/*/tests".into()],
+        protected: vec![".github/".into(), "Cargo.lock".into()],
+        delivery: Some(DeliveryProfile {
+            mode: DeliveryMode::Pr,
+            remote: "origin".into(),
+        }),
         ..RepoProfile::default()
     }
 }
 
-fn verification() -> ProfileVerification {
+/// Its verification: every main command passed.
+pub(crate) fn sp_verification() -> ProfileVerification {
     ProfileVerification {
-        at: 0,
+        at: VERIFIED,
         confined: true,
-        setup: Some(check("make setup", Some(0), 2)),
-        check: Some(check("cargo test --workspace", Some(0), 4)),
-        single_test: None,
-        build_check: Some(check("cargo build", Some(101), 12)),
+        setup: Some(check("cargo fetch", Some(0), 12)),
+        check: Some(check("cargo test --workspace", Some(0), 190)),
+        single_test: Some(check("cargo test -p {crate} {test}", Some(0), 4)),
+        build_check: None,
         module_graph: None,
         module_test: None,
         module_tests: None,
@@ -51,43 +66,57 @@ fn verification() -> ProfileVerification {
     }
 }
 
-fn status(state: Option<ProposalState>) -> ProfileStatus {
+pub(crate) fn record(state: ProposalState, origin: ProposalOrigin) -> ProposalRecord {
+    ProposalRecord {
+        project: "/p/shop".into(),
+        state,
+        origin,
+        started_at: NOW - 60,
+        updated_at: NOW - 60,
+        base_sha: String::new(),
+        scout_id: None,
+        window_id: None,
+        profile: None,
+        verification: None,
+        dropped: vec![],
+        proposed: None,
+        trusted_project: vec![],
+        unconfined_checks: false,
+        auto_confirm: false,
+        edit: None,
+    }
+}
+
+/// A status with a stored profile (when `stored`), verified two days ago, and a review
+/// proposal in `state` (when given).
+pub(crate) fn status_of(stored: bool, state: Option<ProposalState>) -> ProfileStatus {
     ProfileStatus {
         project: "/p/shop".into(),
         repo_dir: "/data/shop".into(),
-        source: ProfileSource::Stored,
-        confirmed_at: Some(1_060),
-        stale: vec!["check".into()],
+        source: if stored {
+            ProfileSource::Stored
+        } else {
+            ProfileSource::None
+        },
+        confirmed_at: stored.then_some(VERIFIED),
+        stale: vec![],
         unparseable: None,
-        proposal: state.map(|state| ProposalRecord {
-            project: "/p/shop".into(),
-            state,
-            origin: ProposalOrigin::Detect,
-            started_at: 3_400,
-            updated_at: 3_400,
-            base_sha: String::new(),
-            scout_id: None,
-            window_id: None,
-            profile: None,
-            verification: None,
-            dropped: vec![],
-            proposed: None,
-            trusted_project: vec![],
-            unconfined_checks: false,
-            auto_confirm: false,
-            edit: None,
-        }),
+        proposal: state.map(|s| record(s, ProposalOrigin::Detect)),
         scout: None,
         verify_confined: true,
         queued: Vec::new(),
         checking: None,
-        verified_at: None,
+        verified_at: stored.then_some(VERIFIED),
         unreadable_text: None,
         dropped_goals: Vec::new(),
     }
 }
 
-fn shown(profile: RepoProfile, v: ProfileVerification, dropped: Vec<DroppedCommand>) -> Side {
+pub(crate) fn shown(
+    profile: RepoProfile,
+    v: ProfileVerification,
+    dropped: Vec<DroppedCommand>,
+) -> Side {
     Side::Ready(Box::new(Shown {
         toml: toml::to_string(&profile).unwrap(),
         profile: Some(profile),
@@ -103,31 +132,45 @@ pub(crate) fn screen_mut(app: &mut App) -> &mut ProfileScreen {
     }
 }
 
-fn base_app(ascii: bool) -> App {
+pub(crate) fn base_app(ascii: bool) -> App {
     let mut settings = UiSettings::default();
     settings.badges.ascii = ascii;
     let mut app = App::new(vec![], "/tmp".into(), settings);
     app.set_terminal_size(80, 24);
-    let snap = crate::tree::run_fixtures::snapshot(3_460, vec![]);
+    let snap = crate::tree::run_fixtures::snapshot(NOW, vec![]);
     app.on_daemon(proto::DaemonMsg::Run(proto::RunReply::Snapshot(snap)));
     let _ = app.open_profile_on("/p/shop".into());
     app
 }
 
-/// The screen on `/p/shop` with a stored profile and its verification (each changed by
-/// `change`), and a proposal that drops a command, on the Profile tab.
+/// SP §4.4's screen: the stored profile, verified two days ago, nothing proposed.
+pub(crate) fn sp_app(ascii: bool) -> App {
+    let mut app = base_app(ascii);
+    let s = screen_mut(&mut app);
+    s.status = Some(status_of(true, None));
+    s.stored = shown(sp_profile(), sp_verification(), vec![]);
+    s.proposal = Side::Absent("no proposal".into());
+    app
+}
+
+/// The screen with a stored profile (changed by `change`) whose re-detection runs,
+/// Advanced open and the `check` row's output shown (the audit's fixture too).
 pub(crate) fn app_with_profile(
     change: impl FnOnce(&mut RepoProfile, &mut ProfileVerification),
 ) -> App {
     let mut app = base_app(false);
-    let (mut p, mut v) = (profile(), verification());
+    let (mut p, mut v) = (sp_profile(), sp_verification());
+    p.build_check = Some("cargo build".into());
+    v.build_check = Some(check("cargo build", Some(101), 12));
+    p.env = BTreeMap::from([("RUST_LOG".into(), "debug".into())]);
     change(&mut p, &mut v);
-    // The check record is of the profile's own command, so the row carries it.
     if let (Some(command), Some(c)) = (&p.check, v.check.as_mut()) {
         c.command = command.clone();
     }
     let s = screen_mut(&mut app);
-    s.status = Some(status(Some(ProposalState::Scouting)));
+    let mut st = status_of(true, Some(ProposalState::Scouting));
+    st.stale = vec!["Cargo.toml".into()];
+    s.status = Some(st);
     s.stored = shown(p, v, vec![]);
     s.advanced = true;
     s.expanded = Some("check".into());
@@ -136,7 +179,7 @@ pub(crate) fn app_with_profile(
 
 /// What a frame shows, and every span the screen built (the buffer drops control
 /// characters on its own, so the spans are checked too).
-fn render_text(app: &App, w: u16, h: u16) -> String {
+pub(crate) fn render_text(app: &App, w: u16, h: u16) -> String {
     let mut out = screen_text(app, w, h).replace('\n', " ");
     if let Some(Screen::Profile(s)) = &app.screen {
         for line in crate::ui::profile::body_lines(app, s, w) {
@@ -155,377 +198,283 @@ fn render_text(app: &App, w: u16, h: u16) -> String {
     out
 }
 
-fn screen_text(app: &App, w: u16, h: u16) -> String {
-    let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
-    terminal
-        .draw(|f| {
-            crate::ui::draw(f, app);
+pub(crate) fn screen_text(app: &App, w: u16, h: u16) -> String {
+    audit::rows(&audit::draw(app, w, h)).join("\n")
+}
+
+/// The screen's frame in `buffer`: its interior rows (between the borders, trailing
+/// spaces trimmed) from the first, the interior's left column, first row and width.
+pub(crate) struct Interior {
+    pub rows: Vec<String>,
+    pub x0: u16,
+    pub y0: u16,
+    pub width: u16,
+}
+
+pub(crate) fn interior(buffer: &Buffer, ascii: bool) -> Interior {
+    let title = if ascii {
+        "profile - shop"
+    } else {
+        "profile · shop"
+    };
+    let &(tx, ty) = audit::find(buffer, title)
+        .first()
+        .unwrap_or_else(|| panic!("no frame:\n{}", audit::rows(buffer).join("\n")));
+    let left = tx - 2;
+    let right = (left + 1..buffer.area.right())
+        .find(|&x| matches!(buffer[(x, ty)].symbol(), "┐" | "+"))
+        .expect("the frame's corner");
+    let rows = (ty + 1..buffer.area.bottom())
+        .map(|y| {
+            let row: String = (left + 1..right).map(|x| buffer[(x, y)].symbol()).collect();
+            row.trim_end().to_owned()
         })
-        .unwrap();
-    let buffer = terminal.backend().buffer().clone();
-    (0..h)
-        .map(|y| (0..w).map(|x| buffer[(x, y)].symbol()).collect::<String>() + "\n")
-        .collect()
+        .collect();
+    Interior {
+        rows,
+        x0: left + 1,
+        y0: ty + 1,
+        width: right - left - 1,
+    }
 }
 
+pub(crate) fn select(app: &mut App, key: &str) {
+    let s = screen_mut(app);
+    s.selected = s.rows().iter().position(|r| r.key == key).unwrap();
+}
+
+/// SP §4.4: the status line on the first row, right-aligned; the three sections; the
+/// folded Advanced line; each key dimmed in the right column, the cells in one column.
 #[test]
-fn status_rows_render_at_80x24_and_120x40() {
+fn the_screen_at_80x24_and_120x40() {
     for ascii in [false, true] {
-        let mut app = base_app(ascii);
-        let s = screen_mut(&mut app);
-        s.status = Some(status(Some(ProposalState::Scouting)));
+        let app = sp_app(ascii);
+        let muted = role(Role::Muted, app.palette()).fg.unwrap();
+        let f = |text: &str| crate::theme::fold(text, ascii);
+        let mark = if ascii { "+" } else { "✓" };
         for (w, h) in SIZES {
-            let text = screen_text(&app, w, h);
-            let dot = if ascii { "-" } else { "·" };
+            let buffer = audit::draw(&app, w, h);
+            let i = interior(&buffer, ascii);
+            let (rows, iw) = (&i.rows, usize::from(i.width));
+            let all = rows.join("\n");
+            let status = f("Ready · verified 2 days ago");
+            assert_eq!(rows[0], format!("{status:>iw$}"), "{w}x{h}\n{all}");
+            assert_eq!(rows[1], "");
             for want in [
-                format!("profile {dot} shop"),
-                "stored    confirmed 40m ago".into(),
-                "stale     check".into(),
-                "proposal  scout running 1m".into(),
-                "d detect".into(),
-                " PROFILE ".into(),
+                " How anthrex checks your work".to_string(),
+                "   check        cargo test --workspace".into(),
+                "   single test  cargo test -p {crate} {test}".into(),
+                " Your repo".into(),
+                "   source       crates/".into(),
+                "   tests        crates/*/tests".into(),
+                f("   generated    —"),
+                "   protected    .github/, Cargo.lock".into(),
+                f(" Delivery       pull request · remote origin"),
             ] {
-                assert!(text.contains(&want), "{ascii} {w}x{h}: {want}\n{text}");
-            }
-            if ascii {
-                assert!(text.is_ascii(), "{w}x{h}\n{text}");
-            }
-        }
-        let s = screen_mut(&mut app);
-        s.status = Some(status(Some(ProposalState::Failed {
-            reason: "scout timed out".into(),
-        })));
-        let text = screen_text(&app, 120, 40);
-        assert!(text.contains("proposal  failed: scout timed out"), "{text}");
-        let s = screen_mut(&mut app);
-        s.status = None;
-        assert!(screen_text(&app, 80, 24).contains("loading"));
-    }
-}
-
-#[test]
-fn the_page_renders_sections_checks_and_dropped() {
-    for ascii in [false, true] {
-        let mut app = app_with_profile(|_, _| {});
-        app.settings.badges.ascii = ascii;
-        // The failed `build_check` row selected, so it is in view at 80x24.
-        let s = screen_mut(&mut app);
-        s.selected = s
-            .rows()
-            .iter()
-            .position(|r| r.key == "build_check")
-            .unwrap();
-        for (w, h) in SIZES {
-            let text = screen_text(&app, w, h);
-            let (pass, fail) = if ascii {
-                ("+ 0 - 4s", "x 101 - 12s")
-            } else {
-                ("✓ 0 · 4s", "✗ 101 · 12s")
-            };
-            for want in [
-                "How anthrex checks your work",
-                "testing tiers",
-                "cargo test --workspace",
-                pass,
-                fail,
-                "test result: ok. 3 passed",
-            ] {
-                assert!(text.contains(want), "{ascii} {w}x{h}: {want}\n{text}");
-            }
-            if ascii {
-                assert!(text.is_ascii(), "{w}x{h}\n{text}");
-            }
-        }
-        // The full height shows every section and the environment's rows.
-        screen_mut(&mut app).expanded = None;
-        let text = screen_text(&app, 120, 60);
-        for want in [
-            "Your repo",
-            "Delivery",
-            "environment",
-            "env.RUST_LOG",
-            "debug",
-        ] {
-            assert!(text.contains(want), "{want}\n{text}");
-        }
-        // The changes card: its marks and its dropped commands with their reasons.
-        let mut proposal = profile();
-        proposal.check = Some("cargo test".into());
-        proposal.setup = None;
-        let dropped = vec![DroppedCommand {
-            key: "single_test".into(),
-            command: "cargo test {test}".into(),
-            reason: "exit 101 after 3s".into(),
-            tail: String::new(),
-        }];
-        let s = screen_mut(&mut app);
-        s.proposal = shown(proposal, verification(), dropped);
-        s.status = Some(status(Some(ProposalState::Ready)));
-        s.expanded = None;
-        s.selected = s.rows().len() - 1;
-        let text = screen_text(&app, 120, 60);
-        let (removed, changed) = if ascii { ("-", "~") } else { ("−", "~") };
-        for want in [
-            "anthrex found changes in how to work in this repo".to_string(),
-            format!("{changed} check"),
-            format!("{removed} setup"),
-            "dropped".into(),
-            "single_test".into(),
-            "exit 101 after 3s".into(),
-        ] {
-            assert!(text.contains(&want), "{ascii}: {want}\n{text}");
-        }
-    }
-}
-
-#[test]
-fn the_raw_text_page_shows_the_file() {
-    let mut app = app_with_profile(|_, _| {});
-    let toml = "check = \"cargo test\"\nsource = [\"src/**\"]\n\n# protected: built-in";
-    screen_mut(&mut app).page = Some(ProfilePage::RawText {
-        text: toml.into(),
-        scroll: 0,
-    });
-    for (w, h) in SIZES {
-        let text = screen_text(&app, w, h);
-        for want in [
-            "profile file",
-            "check = \"cargo test\"",
-            "source = [\"src/**\"]",
-            "# protected: built-in",
-            "j/k scroll",
-        ] {
-            assert!(text.contains(want), "{w}x{h}: {want}\n{text}");
-        }
-    }
-}
-
-#[test]
-fn an_error_row_shows_the_daemons_text() {
-    let mut app = app_with_profile(|_, _| {});
-    screen_mut(&mut app).error = Some("run r1 is live in /p/shop; edit later".into());
-    for (w, h) in SIZES {
-        assert!(screen_text(&app, w, h).contains("run r1 is live in /p/shop"));
-    }
-}
-
-/// Review Focus 5: profile commands, check output tails and environment names can carry
-/// ESC, U+202E and line separators.
-#[test]
-fn profile_screen_text_is_sanitised() {
-    let hostile = crate::safe_text::tests::hostile_text();
-    let app = app_with_profile(|p, v| {
-        p.check = Some(hostile.clone());
-        v.check.as_mut().unwrap().tail = hostile.clone();
-        p.env.insert("NAME".into(), hostile.clone());
-    });
-    for (w, h) in [(80, 24), (120, 40)] {
-        assert_eq!(
-            crate::safe_text::tests::first_hostile(&render_text(&app, w, h)),
-            None
-        );
-    }
-}
-
-/// The same for the status rows, the proposal view, the error row and every page.
-#[test]
-fn profile_screen_pages_are_sanitised() {
-    let hostile = crate::safe_text::tests::hostile_text();
-    let mut app = app_with_profile(|p, _| {
-        p.env.insert(hostile.clone(), hostile.clone());
-        p.source = vec![hostile.clone()];
-    });
-    let mut p = profile();
-    p.check = Some(hostile.clone());
-    let dropped = vec![DroppedCommand {
-        key: hostile.clone(),
-        command: hostile.clone(),
-        reason: hostile.clone(),
-        tail: hostile.clone(),
-    }];
-    let s = screen_mut(&mut app);
-    s.proposal = shown(p, verification(), dropped);
-    s.error = Some(hostile.clone());
-    s.message = Some(hostile.clone());
-    let mut st = status(Some(ProposalState::Failed {
-        reason: hostile.clone(),
-    }));
-    st.stale = vec![hostile.clone()];
-    st.unparseable = Some(hostile.clone());
-    s.status = Some(st);
-    let pages = [
-        None,
-        Some(ProfilePage::RawText {
-            text: hostile.clone(),
-            scroll: 0,
-        }),
-        Some(ProfilePage::Unset {
-            key: hostile.clone(),
-        }),
-        Some(ProfilePage::Discard),
-        Some(ProfilePage::Detect {
-            trust_project: true,
-            unconfined_checks: false,
-            focus: 1,
-        }),
-        Some(ProfilePage::Row {
-            key: format!("env.{hostile}"),
-            scroll: 0,
-        }),
-    ];
-    // The profile, then the card.
-    for card in [false, true] {
-        if card {
-            let mut st = status(Some(ProposalState::Ready));
-            st.queued = vec![];
-            screen_mut(&mut app).status = Some(st);
-        }
-        for page in &pages {
-            let s = screen_mut(&mut app);
-            s.page = page.clone();
-            for (w, h) in SIZES {
-                assert_eq!(
-                    crate::safe_text::tests::first_hostile(&render_text(&app, w, h)),
-                    None,
-                    "{card} {page:?} {w}x{h}"
+                assert!(
+                    rows.iter().any(|r| r.starts_with(&want)),
+                    "{ascii} {w}x{h}: {want:?}\n{all}"
                 );
             }
+            let fold_mark = if ascii { ">" } else { "▸" };
+            let advanced = format!(
+                "Advanced {fold_mark}     {}",
+                crate::profile_words::ADVANCED_SUMMARY
+            );
+            let cut = &advanced[..advanced.find(", environment").unwrap()];
+            let line = rows
+                .iter()
+                .find(|r| r.contains("Advanced"))
+                .expect("Advanced");
+            assert!(line.starts_with(&format!(" {cut}")), "{w}x{h}: {line}");
+            if w >= 120 {
+                assert_eq!(line, &format!(" {advanced}"));
+            }
+            // Each key in the right column, dimmed; the cells in one column.
+            let advanced_at = rows.iter().position(|r| r.contains("Advanced")).unwrap();
+            let mut cells = Vec::new();
+            for key in [
+                "setup",
+                "check",
+                "single_test",
+                "source",
+                "test_paths",
+                "generated",
+                "protected",
+                "delivery.mode",
+            ] {
+                let at: Vec<(u16, u16)> = audit::find(&buffer, key)
+                    .into_iter()
+                    .filter(|&(x, y)| {
+                        x == i.x0 + i.width - 18 && usize::from(y - i.y0) < advanced_at
+                    })
+                    .collect();
+                assert_eq!(at.len(), 1, "{ascii} {w}x{h}: {key}\n{all}");
+                let (x, y) = at[0];
+                assert_eq!(buffer[(x, y)].fg, muted, "{key} is dimmed");
+                if ["setup", "check", "single_test"].contains(&key) {
+                    let cell = (i.x0..x).find(|&cx| buffer[(cx, y)].symbol() == mark);
+                    cells.push(cell.unwrap_or_else(|| panic!("{key}: no cell\n{all}")));
+                }
+            }
+            assert!(cells.windows(2).all(|p| p[0] == p[1]), "{cells:?}");
+            if ascii {
+                assert_eq!(audit::first_non_ascii(&buffer), None);
+            }
         }
     }
-    // An editor over a hostile value.
-    let s = screen_mut(&mut app);
-    s.page = None;
-    s.status = Some(status(None));
-    let rows = s.rows();
-    for (i, row) in rows.iter().enumerate() {
-        let s = screen_mut(&mut app);
-        s.selected = i;
-        s.page = None;
-        app.on_key(crossterm::event::KeyEvent::new(
-            crossterm::event::KeyCode::Char('e'),
-            crossterm::event::KeyModifiers::NONE,
-        ));
-        for (w, h) in SIZES {
+}
+
+/// Decision 23: each of the ten lines on the first row, in its role.
+#[test]
+fn every_status_line_draws() {
+    let stale = |mut s: ProfileStatus| {
+        s.stale = vec!["Cargo.toml".into()];
+        s
+    };
+    let checking = |done: Option<u32>| {
+        let mut s = status_of(false, Some(ProposalState::Verifying));
+        s.checking = done.map(|done| CheckProgress { done, total: 4 });
+        s
+    };
+    let mut unreadable = status_of(true, None);
+    unreadable.unparseable = Some("expected `=`".into());
+    let cases = [
+        (
+            status_of(false, None),
+            "Not set up — press d to set up",
+            Role::Muted,
+        ),
+        (
+            status_of(false, Some(ProposalState::Scouting)),
+            "Setting up… reading the repo",
+            Role::Working,
+        ),
+        (
+            checking(Some(2)),
+            "Setting up… checking commands (2/4)",
+            Role::Working,
+        ),
+        (
+            checking(None),
+            "Setting up… checking commands",
+            Role::Working,
+        ),
+        (
+            status_of(false, Some(ProposalState::Ready)),
+            "Needs review — anthrex has a proposal",
+            Role::Attention,
+        ),
+        (
+            status_of(true, None),
+            "Ready · verified 2 days ago",
+            Role::Done,
+        ),
+        (
+            stale(status_of(true, Some(ProposalState::Scouting))),
+            "Out of date — Cargo.toml changed · re-checking",
+            Role::Working,
+        ),
+        (
+            stale(status_of(true, Some(ProposalState::Ready))),
+            "Out of date — Cargo.toml changed · review the changes",
+            Role::Attention,
+        ),
+        (
+            stale(status_of(true, None)),
+            "Out of date — Cargo.toml changed · press d to check again",
+            Role::Attention,
+        ),
+        (
+            unreadable,
+            "Can't read the profile file — ⏎ shows it",
+            Role::Failed,
+        ),
+    ];
+    for ascii in [false, true] {
+        for (status, line, r) in &cases {
+            let mut app = sp_app(ascii);
+            screen_mut(&mut app).status = Some(status.clone());
+            let buffer = audit::draw(&app, 120, 40);
+            let rows = interior(&buffer, ascii).rows;
+            let line = crate::theme::fold(line, ascii);
+            assert!(
+                rows[0].ends_with(&line),
+                "{ascii}: {line}\n{}",
+                rows.join("\n")
+            );
+            let &(x, y) = audit::find(&buffer, &line).first().unwrap();
             assert_eq!(
-                crate::safe_text::tests::first_hostile(&render_text(&app, w, h)),
-                None,
-                "editor of {:?} {w}x{h}",
-                row.key
+                buffer[(x, y)].fg,
+                role(*r, app.palette()).fg.unwrap(),
+                "{line}"
             );
         }
     }
-}
-
-#[test]
-fn no_panic_at_tiny_sizes() {
-    let mut app = app_with_profile(|_, _| {});
-    let pages = [
-        None,
-        Some(ProfilePage::RawText {
-            text: "a = 1\n".repeat(50),
-            scroll: 3,
-        }),
-        Some(ProfilePage::Discard),
-        Some(ProfilePage::Detect {
-            trust_project: false,
-            unconfined_checks: false,
-            focus: 0,
-        }),
-        Some(ProfilePage::Row {
-            key: "check".into(),
-            scroll: 1,
-        }),
-    ];
-    for page in pages {
-        for ready in [false, true] {
-            let s = screen_mut(&mut app);
-            s.page = page.clone();
-            s.status = Some(status(ready.then_some(ProposalState::Ready)));
-            for (w, h) in [(1, 1), (2, 2), (10, 3), (20, 5), (30, 8), (79, 23)] {
-                screen_text(&app, w, h);
-            }
-        }
-    }
-}
-
-/// Decision 5: while a page or a modal is open, the screen's border is muted; the
-/// page's (or the modal's) is the one accented border.
-#[test]
-fn a_page_mutes_the_screens_border() {
-    use crate::theme::{Role, role};
-    let mut app = app_with_profile(|_, _| {});
-    let accent = role(Role::Accent, app.palette()).fg;
-    let corner = |app: &App| {
-        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-        terminal
-            .draw(|f| {
-                crate::ui::draw(f, app);
-            })
-            .unwrap();
-        terminal.backend().buffer()[(0, 0)].fg
-    };
-    assert_eq!(Some(corner(&app)), accent);
-    screen_mut(&mut app).page = Some(ProfilePage::Discard);
-    assert_ne!(Some(corner(&app)), accent);
-    // Final review minor 3: a modal over the screen (a late `ConfirmNeeded`'s menu can
-    // open over any screen) mutes it too.
-    screen_mut(&mut app).page = None;
-    app.modal = Some(crate::app::Modal::Confirm {
-        message: "Stop the daemon and kill every agent?".into(),
-        action: crate::app::PendingAction::StopDaemon,
-    });
-    assert_ne!(Some(corner(&app)), accent);
-}
-
-/// Principle 6: a refusal longer than the footer's three lines is marked cut.
-#[test]
-fn a_cut_refusal_is_marked() {
-    let mut app = app_with_profile(|_, _| {});
-    screen_mut(&mut app).error = Some("word ".repeat(200));
-    let text = screen_text(&app, 80, 24);
-    assert!(text.contains("word …"), "{text}");
-    screen_mut(&mut app).error = Some("short refusal".into());
-    assert!(!screen_text(&app, 80, 24).contains('…'));
-}
-
-/// Decision 37 (principle 9): the Discard page is destructive, so its `y discard` is
-/// drawn key and word in `Failed`, as the action menu's and the Settings discard page's
-/// are; the raw-text page's `j/k scroll` keeps the plain grammar (key in the accent).
-#[test]
-fn the_discard_page_is_destructive() {
-    use crate::theme::{Role, role};
-    use crate::ui::audit;
-    let mut app = app_with_profile(|_, _| {});
-    let (failed, accent) = (
-        role(Role::Failed, app.palette()).fg.expect("a colour"),
-        role(Role::Accent, app.palette()).fg.expect("a colour"),
+    // Too narrow, the line is cut from its left.
+    let mut app = sp_app(false);
+    let mut st = status_of(true, None);
+    st.stale = vec!["crates/a/very/long/path/Cargo.toml".into()];
+    screen_mut(&mut app).status = Some(st);
+    let rows = interior(&audit::draw(&app, 40, 20), false).rows;
+    assert!(
+        rows[0].starts_with('…') && rows[0].ends_with("press d to check again"),
+        "{}",
+        rows[0]
     );
-    for (w, h) in SIZES {
-        screen_mut(&mut app).page = Some(ProfilePage::Discard);
-        let buffer = audit::draw(&app, w, h);
-        let &(x, y) = audit::find(&buffer, "y discard · esc back")
-            .first()
-            .unwrap_or_else(|| panic!("{w}x{h}:\n{}", audit::rows(&buffer).join("\n")));
-        for dx in 0..9 {
-            if dx != 1 {
-                assert_eq!(buffer[(x + dx, y)].fg, failed, "{w}x{h} y discard +{dx}");
-            }
-        }
-        assert_ne!(
-            buffer[(x + 12, y)].fg,
-            failed,
-            "{w}x{h}: esc is not destructive"
-        );
-        let &(tx, ty) = audit::find(&buffer, "discard proposal").first().unwrap();
-        assert_eq!(buffer[(tx, ty)].fg, failed, "{w}x{h}: the title");
+}
 
-        screen_mut(&mut app).page = Some(ProfilePage::RawText {
-            text: "check = \"cargo test\"".into(),
-            scroll: 0,
-        });
-        let buffer = audit::draw(&app, w, h);
-        let &(x, y) = audit::find(&buffer, "j/k scroll").first().unwrap();
-        assert_eq!(buffer[(x, y)].fg, accent, "{w}x{h}: the page's key");
-        assert_ne!(buffer[(x + 4, y)].fg, failed, "{w}x{h}: its word");
+#[test]
+fn advanced_open_draws_its_sub_heads() {
+    let mut app = app_with_profile(|_, _| {});
+    screen_mut(&mut app).expanded = None;
+    let text = screen_text(&app, 120, 60);
+    for want in [
+        " Advanced ▾",
+        " testing tiers",
+        " output filter",
+        " environment",
+        " timeouts",
+        " test result pattern",
+        " shared code area",
+        " repo details",
+        " delivery remote",
+        "   build check  cargo build",
+        "   RUST_LOG     debug",
+        "env.RUST_LOG",
+        "   add a variable",
+    ] {
+        assert!(text.contains(want), "{want}\n{text}");
+    }
+    assert!(!text.contains(crate::profile_words::ADVANCED_SUMMARY));
+}
+
+#[test]
+fn the_hint_line_follows_the_selection() {
+    let mut app = sp_app(false);
+    let muted = role(Role::Muted, app.palette()).fg.unwrap();
+    for (key, hint) in [
+        (
+            "single_test",
+            "single test — how anthrex runs one test; {test} is filled in",
+        ),
+        ("source", "source — where the code lives"),
+        (
+            "delivery.mode",
+            "Delivery — how finished work reaches you: a local merge or a pull request",
+        ),
+    ] {
+        select(&mut app, key);
+        for (w, h) in SIZES {
+            let buffer = audit::draw(&app, w, h);
+            let rows = interior(&buffer, false).rows;
+            let at = rows
+                .iter()
+                .position(|r| r.trim_start().starts_with(hint))
+                .unwrap_or_else(|| panic!("{hint}\n{}", rows.join("\n")));
+            assert_eq!(rows[at - 1], "", "a blank row above the hint");
+            let &(x, y) = audit::find(&buffer, hint).first().unwrap();
+            assert_eq!(buffer[(x, y)].fg, muted);
+        }
     }
 }

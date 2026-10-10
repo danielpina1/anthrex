@@ -1,30 +1,43 @@
-//! Milestone 9.0.6 decisions 33-35: the Profile screen, drawn over the body. A frame
-//! titled `profile · <project>`, its one page's lines (the status, then the card's or
-//! the profile's rows; scrolled to keep the selected row in view, cuts marked), then the
-//! daemon's last text: its refusal in `Failed` (decision 37's among them). Milestone
-//! 9.10.9 redraws it in plain words. A page draws as a kit dialog over it, and the
-//! screen's border is then muted (decision 5). Every string a profile, a check, the
-//! scout or the daemon wrote passes `safe_text` here or in the kit. Pure: `&App` in.
+//! Milestone 9.10 decisions 27-31 (SP §4.4): the Profile screen, drawn over the body.
+//! A frame titled `profile · <project>`; its first row the status line, right-aligned;
+//! then the review card (`profile_card.rs`) or the profile: bold section heads, one row
+//! per key (the bar, the label, the value, the check cell in one column, the key dimmed
+//! at the right; under 60 columns the key column goes, then the cells), the `Advanced`
+//! line; below the list, the selected row's hint or its ✗ line, and the daemon's last
+//! text. A page draws as a kit dialog over it, and the screen's border is then muted
+//! (9.0.6 decision 5). Every string a profile, a check, the scout or the daemon wrote
+//! passes `safe_text`; the whole is folded with `theme::fold` in ASCII. Pure: `&App` in.
 
 use crate::app::profile_screen::{ADVANCED_ROW, ProfileScreen, Shown, Side};
 use crate::app::{App, region::KeyRegion};
-use crate::inspector::run_format::format_duration;
-use crate::profile_view::{ENV_ADD, Row, check_cell};
+use crate::profile_view::{ENV_ADD, Row};
+use crate::profile_words;
 use crate::safe_text::{multi_line, one_line};
-use crate::theme::{Glyph, Palette, Role, dot, ellipsis, glyph, role};
+use crate::theme::{Glyph, Palette, Role, dot, ellipsis, fold, glyph, role};
 use crate::ui::kit::{self, Hint, cut, wrap_words};
-use proto::ProposalState;
+use proto::{ProposalOrigin, ProposalState, RowEditState};
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::Modifier;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
+use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-/// The key column's width: the longest key (`check_timeout_secs`) and a space.
-const KEY_W: usize = 19;
+/// The label's columns (a longer label pushes its value right by what it overflows).
+const LABEL_W: usize = 13;
+/// Where a value starts: the bar, two spaces, the label.
+const VALUE_AT: usize = 3 + LABEL_W;
+/// The cell's columns: `checking...` in ASCII.
+const CELL_W: usize = 11;
+/// The key column: the longest key (`check_timeout_secs`).
+const KEY_W: usize = 18;
+const GAP: usize = 2;
+/// Under these interior widths the key column, then the cells' column, are dropped.
+const KEYS_FROM: usize = 60;
+const CELLS_FROM: usize = 40;
 
-fn hint(key: &str, word: &str, priority: u8) -> Hint {
+pub(super) fn hint(key: &str, word: &str, priority: u8) -> Hint {
     Hint {
         key: key.to_string(),
         word: word.to_string(),
@@ -40,148 +53,240 @@ fn project_name(s: &ProfileScreen) -> String {
         .unwrap_or_else(|| s.dir.display().to_string())
 }
 
-/// The status bar's hints while the screen has the keys (decision 6), in milestone
-/// 9.10 decision 29's order; the lowest priority drops first.
+/// Whether the selected row has a ✗ row edit (decision 31: `s` and `r` are offered).
+fn failed_selected(s: &ProfileScreen) -> bool {
+    s.rows()
+        .get(s.selected)
+        .and_then(|r| s.edit_of(&r.key))
+        .is_some_and(|e| matches!(e, RowEditState::Failed { .. }))
+}
+
+/// The status bar's hints while the screen has the keys (9.0.6 decision 6), in
+/// milestone 9.10 decision 29's order, dropped from the right (`esc` last of all).
 pub(crate) fn hints(s: &ProfileScreen) -> Vec<Hint> {
     if s.page.is_some() {
         return vec![hint("esc", "back", 9)];
     }
-    if s.showing_card() {
-        return vec![
-            hint("⏎", "use this", 8),
-            hint("e", "edit", 6),
-            hint("a", "advanced", 4),
-            hint("o", "output", 3),
-            hint("x", "discard", 5),
-            hint("esc", "later", 9),
+    let mut list: Vec<(&str, &str)> = if s.showing_card() {
+        vec![
+            ("⏎", "use this"),
+            ("e", "edit"),
+            ("a", "advanced"),
+            ("o", "output"),
+            ("x", "discard"),
+        ]
+    } else {
+        let mut list = vec![
+            ("⏎", "open"),
+            ("e", "edit"),
+            ("u", "unset"),
+            ("a", "advanced"),
+            ("d", s.detect_title()),
+            ("o", "output"),
         ];
+        if s.review_proposal() {
+            list.push(("x", "discard proposal"));
+        }
+        list
+    };
+    if failed_selected(s) {
+        list.extend([("s", "save anyway"), ("r", "revert")]);
     }
-    let mut out = vec![
-        hint("⏎", "open", 6),
-        hint("e", "edit", 7),
-        hint("u", "unset", 4),
-        hint("a", "advanced", 3),
-        hint("d", s.detect_title(), 7),
-        hint("o", "output", 2),
-    ];
-    if s.review_proposal() {
-        out.push(hint("x", "discard proposal", 5));
-    }
-    let failed = s
-        .rows()
-        .get(s.selected)
-        .and_then(|r| s.edit_of(&r.key))
-        .is_some_and(|e| matches!(e, proto::RowEditState::Failed { .. }));
-    if failed {
-        out.push(hint("s", "save anyway", 8));
-        out.push(hint("r", "revert", 8));
-    }
-    out.push(hint("esc", "back", 9));
+    let mut out: Vec<Hint> = (list.iter().enumerate())
+        .map(|(i, (k, w))| hint(k, w, 8u8.saturating_sub(i as u8)))
+        .collect();
+    let esc = if s.showing_card() { "later" } else { "back" };
+    out.push(hint("esc", esc, 9));
     out
 }
 
-/// `stored`, `stale`, `unparseable` and `proposal` (Interfaces "Profile status rows").
-fn status_rows(app: &App, s: &ProfileScreen, width: u16, p: Palette) -> Vec<Line<'static>> {
-    let Some(status) = &s.status else {
-        // No reply will come for the last `Status` (minor 2): why, until one does.
-        if let Some(why) = &s.status_failed {
-            let text = cut(&one_line(why), usize::from(width), ellipsis(p));
-            return vec![Line::styled(text, role(Role::Failed, p))];
-        }
-        return vec![Line::styled(
-            format!("loading{}", ellipsis(p)),
-            role(Role::Muted, p),
-        )];
-    };
-    let mut rows = Vec::new();
-    let stored = match (status.source, status.confirmed_at) {
-        (proto::ProfileSource::Stored, Some(at)) => {
-            format!("confirmed {} ago", format_duration(app.run_age(at)))
-        }
-        (proto::ProfileSource::Stored, None) => "stored".to_string(),
-        _ => "none".to_string(),
-    };
-    rows.push(("stored".to_string(), stored));
-    if !status.stale.is_empty() {
-        rows.push(("stale".to_string(), status.stale.join(", ")));
+/// The profile listed now: the proposal while the card shows, else the stored one.
+pub(super) fn listed(s: &ProfileScreen) -> Option<&Shown> {
+    match if s.showing_card() {
+        &s.proposal
+    } else {
+        &s.stored
+    } {
+        Side::Ready(shown) => Some(shown),
+        _ => None,
     }
-    if let Some(text) = &status.unparseable {
-        rows.push(("unparseable".to_string(), text.clone()));
-    }
-    rows.push(("proposal".to_string(), proposal_text(app, status)));
-    kit::labelled_rows(&rows, width, p)
 }
 
-/// Interfaces "Profile status rows": the proposal's state.
-fn proposal_text(app: &App, status: &proto::ProfileStatus) -> String {
-    match status.proposal.as_ref().map(|r| (&r.state, r.started_at)) {
-        None => "none".to_string(),
-        Some((ProposalState::Preparing | ProposalState::Scouting, at)) => {
-            format!("scout running {}", format_duration(app.run_age(at)))
-        }
-        Some((ProposalState::Verifying, _)) => "verifying".to_string(),
-        Some((ProposalState::Ready, _)) => "ready".to_string(),
-        Some((ProposalState::Failed { reason }, _)) => format!("failed: {reason}"),
-    }
+/// `text` sanitised, then folded for the palette.
+pub(super) fn plain(text: &str, p: Palette) -> String {
+    fold(&one_line(text), p.ascii)
 }
 
 /// `text` padded with spaces to `width` columns.
-fn pad(text: &str, width: usize) -> String {
+pub(super) fn pad(text: &str, width: usize) -> String {
     format!("{text}{}", " ".repeat(width.saturating_sub(text.width())))
 }
 
-/// One key row: selection bar, mark, key, value, check cell.
-/// The bar is the accent only while the screen holds the keys (`keys`, decision 1).
-fn key_row(row: &Row, selected: bool, keys: bool, width: usize, p: Palette) -> Line<'static> {
-    let sel = if selected {
+/// `text` cut to its last `max` columns, starting with the ellipsis when cut.
+fn cut_left(text: &str, max: usize, ell: &str) -> String {
+    if text.width() <= max {
+        return text.to_string();
+    }
+    let room = max.saturating_sub(ell.width());
+    let mut kept = Vec::new();
+    let mut used = 0;
+    for g in text.graphemes(true).rev() {
+        if used + g.width() > room {
+            break;
+        }
+        used += g.width();
+        kept.push(g);
+    }
+    kept.reverse();
+    if max >= ell.width() {
+        format!("{ell}{}", kept.concat())
+    } else {
+        kept.concat()
+    }
+}
+
+/// Decision 23's role for a status line: `Done` ready, `Working` setting up or
+/// re-checking, `Attention` review and out of date, `Failed` unreadable.
+fn status_role(line: &str) -> Role {
+    if line.starts_with("Can't") {
+        Role::Failed
+    } else if line.starts_with("Setting up") || line.ends_with("re-checking") {
+        Role::Working
+    } else if line.starts_with("Needs review") || line.starts_with("Out of date") {
+        Role::Attention
+    } else if line.starts_with("Ready") {
+        Role::Done
+    } else {
+        Role::Muted
+    }
+}
+
+/// The first row: the status line, right-aligned, cut from its left.
+fn status_line(app: &App, s: &ProfileScreen, width: usize, p: Palette) -> Line<'static> {
+    let (text, r) = match (&s.status, &s.status_failed) {
+        (Some(status), _) => {
+            let line = profile_words::status_line(status, app.run_now());
+            (plain(&line, p), status_role(&line))
+        }
+        // No reply will come for the last `Status` (minor 2): why, until one does.
+        (None, Some(why)) => (plain(why, p), Role::Failed),
+        (None, None) => (format!("loading{}", ellipsis(p)), Role::Muted),
+    };
+    let text = cut_left(&text, width, ellipsis(p));
+    let lead = " ".repeat(width.saturating_sub(text.width()));
+    Line::from(vec![Span::raw(lead), Span::styled(text, role(r, p))])
+}
+
+/// What a row draws, before layout.
+pub(super) struct Parts {
+    /// `Delivery`: the bold head at column 1, its value and key on the same line.
+    pub head: bool,
+    pub label: String,
+    pub value: String,
+    pub value_role: Option<Role>,
+    pub cell: Option<(String, Role)>,
+    pub key: String,
+}
+
+/// One row: the bar, the label, the value (cut), the cell at its column, the key
+/// dimmed at the right; the key column goes under 60 columns, then the cells'.
+fn row_line(parts: &Parts, selected: bool, keys: bool, width: usize, p: Palette) -> Line<'static> {
+    let ell = ellipsis(p);
+    let bar = if selected {
         glyph(Glyph::Selection, p.ascii)
     } else {
         " "
     };
-    let mark = row.mark.map_or(" ", |m| m.glyph(p.ascii));
-    let key = if row.key == ENV_ADD {
-        "env.<NAME>".to_string()
-    } else {
-        one_line(&row.key)
-    };
-    let key = pad(&cut(&key, KEY_W - 1, ellipsis(p)), KEY_W);
-    let cell = row.check.as_ref().map(|c| (check_cell(c, p.ascii), c.ok));
-    let cell_w = cell.as_ref().map_or(0, |(text, _)| text.width() + 2);
-    let room = width.saturating_sub(3 + KEY_W + cell_w);
-    let (value, value_style) = match (&row.value, row.key == ENV_ADD) {
-        (_, true) => ("add a variable".to_string(), role(Role::Muted, p)),
-        (Some(v), _) => (one_line(v), ratatui::style::Style::default()),
-        (None, _) => ("unset".to_string(), role(Role::Muted, p)),
-    };
-    let value = cut(&value, room, ellipsis(p));
-    let key_style = if selected {
-        ratatui::style::Style::default().add_modifier(Modifier::BOLD)
-    } else {
-        role(Role::Muted, p)
-    };
-    let mut spans = vec![
-        Span::styled(sel.to_string(), role(kit::bar_role(keys), p)),
-        Span::raw(format!("{mark} ")),
-        Span::styled(key, key_style),
-        Span::styled(value.clone(), value_style),
-    ];
-    if let Some((text, ok)) = cell {
-        let gap = room.saturating_sub(value.width()) + 2;
-        spans.push(Span::raw(" ".repeat(gap)));
+    let (show_key, show_cell) = (width >= KEYS_FROM, width >= CELLS_FROM);
+    let right = usize::from(show_cell) * (GAP + CELL_W) + usize::from(show_key) * (GAP + KEY_W);
+    let label = plain(&parts.label, p);
+    let mut spans = vec![Span::styled(bar.to_string(), role(kit::bar_role(keys), p))];
+    let lead = if parts.head {
+        let label = cut(&label, VALUE_AT - 2, ell);
         spans.push(Span::styled(
-            text,
-            role(if ok { Role::Done } else { Role::Failed }, p),
+            pad(&label, VALUE_AT - 1),
+            Style::default().add_modifier(Modifier::BOLD),
         ));
+        VALUE_AT
+    } else {
+        let label = cut(&label, width.saturating_sub(3), ell);
+        let label_w = LABEL_W.max(label.width() + 1);
+        spans.push(Span::raw(format!("  {}", pad(&label, label_w))));
+        3 + label_w
+    };
+    let room = width.saturating_sub(lead + right);
+    let value = cut(&plain(&parts.value, p), room, ell);
+    let value_style = parts.value_role.map_or(Style::default(), |r| role(r, p));
+    let padded = if right > 0 { pad(&value, room) } else { value };
+    spans.push(Span::styled(padded, value_style));
+    if show_cell {
+        let (cell, r) = parts.cell.clone().unwrap_or((String::new(), Role::Muted));
+        spans.push(Span::raw(" ".repeat(GAP)));
+        let cell = cut(&fold(&cell, p.ascii), CELL_W, ell);
+        let cell = if show_key { pad(&cell, CELL_W) } else { cell };
+        spans.push(Span::styled(cell, role(r, p)));
+    }
+    if show_key {
+        spans.push(Span::raw(" ".repeat(GAP)));
+        let key = if parts.key == ENV_ADD {
+            "env".to_string()
+        } else {
+            plain(&parts.key, p)
+        };
+        spans.push(Span::styled(cut(&key, KEY_W, ell), role(Role::Muted, p)));
     }
     Line::from(spans)
 }
 
+/// A row's cell on the profile: `checking…` while its row edit verifies, `✗` after a
+/// ✗, else its check's `✓` / `✗` (decision 31).
+fn profile_cell(s: &ProfileScreen, row: &Row, p: Palette) -> Option<(String, Role)> {
+    match s.edit_of(&row.key) {
+        Some(RowEditState::Verifying) => Some(("checking…".into(), Role::Working)),
+        Some(RowEditState::Failed { .. }) => {
+            Some((glyph(Glyph::Failed, p.ascii).into(), Role::Failed))
+        }
+        None => row.check.as_ref().map(|c| {
+            let (g, r) = if c.ok {
+                (Glyph::Passed, Role::Done)
+            } else {
+                (Glyph::Failed, Role::Failed)
+            };
+            (glyph(g, p.ascii).to_string(), r)
+        }),
+    }
+}
+
+/// A value as a row shows it: delivery in words (decision 26), `—` for none.
+pub(super) fn value_text(
+    key: &str,
+    value: Option<&str>,
+    shown: Option<&Shown>,
+) -> (String, Option<Role>) {
+    if key == "delivery.mode" {
+        let delivery = shown.and_then(|s| s.profile.as_ref()?.delivery.as_ref());
+        return (profile_words::delivery_text(delivery), None);
+    }
+    if key == ENV_ADD {
+        return (String::new(), None);
+    }
+    match value {
+        Some(v) => (v.to_string(), None),
+        None => ("—".into(), Some(Role::Muted)),
+    }
+}
+
 /// Agent- or tool-written lines, one by one, sanitised and cut to `width`, indented.
-fn tail_lines(text: &str, indent: usize, width: usize, p: Palette) -> Vec<Line<'static>> {
+pub(super) fn tail_lines(
+    text: &str,
+    indent: usize,
+    width: usize,
+    p: Palette,
+) -> Vec<Line<'static>> {
     multi_line(text)
         .split('\n')
         .map(|line| {
-            let line = cut(&one_line(line), width.saturating_sub(indent), ellipsis(p));
+            let line = cut(&plain(line, p), width.saturating_sub(indent), ellipsis(p));
             Line::styled(
                 format!("{}{line}", " ".repeat(indent)),
                 role(Role::Muted, p),
@@ -190,102 +295,23 @@ fn tail_lines(text: &str, indent: usize, width: usize, p: Palette) -> Vec<Line<'
         .collect()
 }
 
-/// The card's or the profile's lines, and the index of the selected row's line.
-fn profile_rows(
-    app: &App,
-    s: &ProfileScreen,
-    width: u16,
-    p: Palette,
-) -> (Vec<Line<'static>>, usize) {
-    let w = usize::from(width);
-    let bold = ratatui::style::Style::default().add_modifier(Modifier::BOLD);
-    let card = s.showing_card();
-    let head = match (card, s.has_stored()) {
-        (true, true) => "anthrex found changes in how to work in this repo",
-        (true, false) => "anthrex learned how to work in this repo",
-        (false, _) => "stored profile",
-    };
-    let mut out = vec![Line::styled(head, bold)];
-    let side = if card { &s.proposal } else { &s.stored };
-    let shown: &Shown = match side {
-        Side::Loading => {
-            out.push(Line::styled(
-                format!("loading{}", ellipsis(p)),
-                role(Role::Muted, p),
-            ));
-            return (out, 0);
-        }
-        Side::Failed(why) => {
-            let text = cut(&one_line(why), w, ellipsis(p));
-            out.push(Line::styled(text, role(Role::Failed, p)));
-            return (out, 0);
-        }
-        Side::Absent(_) => {
-            out.push(Line::styled("no stored profile", role(Role::Muted, p)));
-            return (out, 0);
-        }
-        Side::Ready(shown) => shown,
-    };
-    if shown.profile.is_none() {
-        out.push(Line::styled(
-            "this profile does not read back",
-            role(Role::Failed, p),
-        ));
+/// The output `o` shows under a row: a ✗ row edit's, else its check's.
+fn output_of(s: &ProfileScreen, row: &Row) -> Option<String> {
+    if let Some(RowEditState::Failed { tail, .. }) = s.edit_of(&row.key) {
+        return Some(tail.clone());
     }
-    let mut at = 0;
-    let mut section = "";
-    let rows = s.rows();
-    let keys = app.key_region() == KeyRegion::Screen;
-    for (i, row) in rows.iter().enumerate() {
-        if i == s.selected {
-            at = out.len();
-        }
-        if row.key == ADVANCED_ROW {
-            out.push(advanced_line(s, i == s.selected, keys, p));
-            section = "";
-            continue;
-        }
-        if row.section != section {
-            section = row.section;
-            out.push(Line::styled(section.to_string(), bold));
-            if i == s.selected {
-                at = out.len();
-            }
-        }
-        out.push(key_row(row, i == s.selected, keys, w, p));
-        if s.expanded.as_deref() == Some(row.key.as_str())
-            && let Some(check) = &row.check
-        {
-            out.extend(tail_lines(&check.tail, 6, w, p));
-        }
-    }
-    let last = s.selected + 1 == rows.len();
-    if !shown.dropped.is_empty() {
-        out.push(Line::styled("dropped", bold));
-        for d in &shown.dropped {
-            let head = format!("{}  {}", one_line(&d.key), one_line(&d.command));
-            out.push(Line::raw(format!(
-                "  {}",
-                cut(&head, w.saturating_sub(2), ellipsis(p))
-            )));
-            for part in wrap_words(&one_line(&d.reason), w.saturating_sub(4).max(1)) {
-                out.push(Line::styled(
-                    format!("    {part}"),
-                    role(Role::Attention, p),
-                ));
-            }
-        }
-    }
-    // On the last row, the view runs to the end, so the dropped commands show.
-    if last {
-        at = out.len() - 1;
-    }
-    (out, at)
+    row.check.as_ref().map(|c| c.tail.clone())
 }
 
 /// `Advanced ▸     <summary>` folded, `Advanced ▾` open (decision 29).
-fn advanced_line(s: &ProfileScreen, selected: bool, keys: bool, p: Palette) -> Line<'static> {
-    let sel = if selected {
+fn advanced_line(
+    s: &ProfileScreen,
+    selected: bool,
+    keys: bool,
+    width: usize,
+    p: Palette,
+) -> Line<'static> {
+    let bar = if selected {
         glyph(Glyph::Selection, p.ascii)
     } else {
         " "
@@ -293,25 +319,151 @@ fn advanced_line(s: &ProfileScreen, selected: bool, keys: bool, p: Palette) -> L
     let (mark, summary) = match (s.advanced, p.ascii) {
         (true, false) => ("▾", ""),
         (true, true) => ("v", ""),
-        (false, false) => ("▸", crate::profile_words::ADVANCED_SUMMARY),
-        (false, true) => (">", crate::profile_words::ADVANCED_SUMMARY),
+        (false, false) => ("▸", profile_words::ADVANCED_SUMMARY),
+        (false, true) => (">", profile_words::ADVANCED_SUMMARY),
     };
-    Line::from(vec![
-        Span::styled(sel.to_string(), role(kit::bar_role(keys), p)),
-        Span::raw(format!("  Advanced {mark}     ")),
-        Span::styled(summary, role(Role::Muted, p)),
-    ])
+    let head = format!("Advanced {mark}");
+    let mut spans = vec![
+        Span::styled(bar.to_string(), role(kit::bar_role(keys), p)),
+        Span::styled(head.clone(), Style::default().add_modifier(Modifier::BOLD)),
+    ];
+    if !summary.is_empty() {
+        let room = width.saturating_sub(1 + head.width() + 5);
+        spans.push(Span::raw("     "));
+        spans.push(Span::styled(
+            cut(summary, room, ellipsis(p)),
+            role(Role::Muted, p),
+        ));
+    }
+    Line::from(spans)
 }
 
-/// The daemon's last text: a refusal in `Failed`, a `Done` muted.
-fn footer(s: &ProfileScreen, width: u16, p: Palette) -> Vec<Line<'static>> {
-    let (text, r) = match (&s.error, &s.message) {
-        (Some(e), _) => (e, Role::Failed),
-        (None, Some(m)) => (m, Role::Muted),
+/// The listed rows' lines (section heads, rows, outputs, the Advanced line), and the
+/// index of the selected row's line.
+fn list_lines(
+    app: &App,
+    s: &ProfileScreen,
+    width: usize,
+    p: Palette,
+) -> (Vec<Line<'static>>, usize) {
+    let card = s.showing_card();
+    let side = if card { &s.proposal } else { &s.stored };
+    let shown = match side {
+        Side::Loading => {
+            let text = format!("loading{}", ellipsis(p));
+            return (vec![Line::styled(text, role(Role::Muted, p))], 0);
+        }
+        Side::Failed(why) => {
+            let text = cut(&plain(why, p), width, ellipsis(p));
+            return (vec![Line::styled(text, role(Role::Failed, p))], 0);
+        }
+        // No stored profile: the status line says what to do.
+        Side::Absent(_) => return (vec![], 0),
+        Side::Ready(shown) => shown,
+    };
+    let mut out = Vec::new();
+    if shown.profile.is_none() {
+        out.push(Line::styled(
+            "this profile does not read back",
+            role(Role::Failed, p),
+        ));
+    }
+    let keys = app.key_region() == KeyRegion::Screen;
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let mut at = 0;
+    let mut section = "";
+    for (i, row) in s.rows().iter().enumerate() {
+        let selected = i == s.selected;
+        if row.key == ADVANCED_ROW {
+            at = if selected { out.len() } else { at };
+            out.push(advanced_line(s, selected, keys, width, p));
+            section = "";
+            continue;
+        }
+        let head = row.key == "delivery.mode" && row.section == "Delivery";
+        if row.section != section && !head {
+            out.push(Line::styled(format!(" {}", row.section), bold));
+        }
+        section = row.section;
+        let parts = if card {
+            card::parts(s, row, head, p)
+        } else {
+            let (value, value_role) = value_text(&row.key, row.value.as_deref(), Some(shown));
+            Parts {
+                head,
+                label: row.label.clone(),
+                value,
+                value_role,
+                cell: profile_cell(s, row, p),
+                key: row.key.clone(),
+            }
+        };
+        at = if selected { out.len() } else { at };
+        out.push(row_line(&parts, selected, keys, width, p));
+        if s.expanded.as_deref() == Some(row.key.as_str())
+            && let Some(tail) = output_of(s, row)
+        {
+            out.extend(tail_lines(&tail, 6, width, p));
+        }
+    }
+    if card {
+        out.extend(card::dropped_lines(shown, width, p));
+        // On the last row, the view runs to the end, so the dropped commands show.
+        if s.selected + 1 >= s.rows().len() {
+            at = out.len().saturating_sub(1);
+        }
+    }
+    (out, at)
+}
+
+/// Below the list: the selected row's hint (`<label> — <hint>`, muted), or its ✗ line
+/// (decision 31).
+fn hint_line(s: &ProfileScreen, width: usize, p: Palette) -> Option<Line<'static>> {
+    listed(s)?;
+    let row = s.rows().into_iter().nth(s.selected)?;
+    if row.key == ADVANCED_ROW {
+        return None;
+    }
+    let (text, r) = match s.edit_of(&row.key) {
+        Some(RowEditState::Failed { reason, .. }) => (
+            format!(
+                "couldn't verify: {} · o output · s save anyway · r revert",
+                one_line(reason)
+            ),
+            Role::Failed,
+        ),
+        _ => {
+            let hint = profile_words::hint(&row.key);
+            if hint.is_empty() {
+                return None;
+            }
+            (format!("{} — {hint}", one_line(&row.label)), Role::Muted)
+        }
+    };
+    let text = cut(&fold(&text, p.ascii), width.saturating_sub(3), ellipsis(p));
+    Some(Line::styled(format!("   {text}"), role(r, p)))
+}
+
+/// Decision 23: a failed set-up's reason, the screen's error row.
+fn setup_failure(s: &ProfileScreen) -> Option<String> {
+    let proposal = s.status.as_ref()?.proposal.as_ref()?;
+    match (&proposal.state, &proposal.origin) {
+        (_, ProposalOrigin::Edit { .. }) => None,
+        (ProposalState::Failed { reason }, _) => Some(format!("setting up failed: {reason}")),
+        _ => None,
+    }
+}
+
+/// The daemon's last text: a refusal (or a failed set-up) in `Failed`, a `Done` muted.
+fn footer(s: &ProfileScreen, width: usize, p: Palette) -> Vec<Line<'static>> {
+    let (text, r) = match (&s.error, setup_failure(s), &s.message) {
+        (Some(e), _, _) => (e.clone(), Role::Failed),
+        (None, Some(failed), _) => (failed, Role::Failed),
+        (None, None, Some(m)) => (m.clone(), Role::Muted),
         _ => return vec![],
     };
-    let w = usize::from(width).max(1);
-    let mut lines = wrap_words(&one_line(text), w);
+    let w = width.max(1);
+    let mut lines = wrap_words(&plain(&text, p), w);
     if lines.len() > 3 {
         lines.truncate(3);
         // What is cut is marked (principle 6).
@@ -324,30 +476,45 @@ fn footer(s: &ProfileScreen, width: u16, p: Palette) -> Vec<Line<'static>> {
         .collect()
 }
 
-/// The page's fixed head (the card's title, or `stored profile`), its lines (the status
-/// rows, then the rows), and the selected line's index.
-fn page_body(
-    app: &App,
-    s: &ProfileScreen,
-    width: u16,
-) -> (Vec<Line<'static>>, Vec<Line<'static>>, usize) {
-    let p = app.palette();
-    let mut lines = status_rows(app, s, width, p);
-    lines.push(Line::default());
-    let offset = lines.len();
-    let (mut rows, at) = profile_rows(app, s, width, p);
-    let head = rows.remove(0);
-    lines.extend(rows);
-    (vec![head], lines, (offset + at).saturating_sub(1))
+/// The screen's parts: its fixed head (the status line, the card's title), its list
+/// (scrolled), the selected line's index in it, and its fixed foot (the hint line,
+/// the daemon's text).
+struct Body {
+    head: Vec<Line<'static>>,
+    list: Vec<Line<'static>>,
+    at: usize,
+    foot: Vec<Line<'static>>,
 }
 
-/// Everything the screen shows, unscrolled: the head, the lines, the footer.
+fn body(app: &App, s: &ProfileScreen, width: u16) -> Body {
+    let p = app.palette();
+    let w = usize::from(width);
+    let mut head = vec![status_line(app, s, w, p), Line::default()];
+    if s.showing_card() {
+        head.push(card::title(s, w, p));
+        head.push(Line::default());
+    }
+    let (list, at) = list_lines(app, s, w, p);
+    let mut foot = Vec::new();
+    if let Some(line) = hint_line(s, w, p) {
+        foot.extend([Line::default(), line]);
+    }
+    foot.extend(footer(s, w, p));
+    Body {
+        head,
+        list,
+        at,
+        foot,
+    }
+}
+
+/// Everything the screen shows, unscrolled: the head, the list, the foot.
 #[cfg(test)]
 pub(crate) fn body_lines(app: &App, s: &ProfileScreen, width: u16) -> Vec<Line<'static>> {
-    let (head, lines, _) = page_body(app, s, width);
-    let mut out = head;
-    out.extend(lines);
-    out.extend(footer(s, width, app.palette()));
+    let b = body(app, s, width);
+    let mut out = b.head;
+    out.extend(b.list);
+    out.extend(b.foot);
     out
 }
 
@@ -364,14 +531,13 @@ pub fn render(frame: &mut Frame, app: &App, s: &ProfileScreen, area: Rect) {
     if inner.width == 0 || inner.height == 0 {
         return;
     }
-    let foot = footer(s, inner.width, p);
-    let (head, lines, at) = page_body(app, s, inner.width);
+    let b = body(app, s, inner.width);
     let rows = usize::from(inner.height)
-        .saturating_sub(head.len())
-        .saturating_sub(foot.len());
-    let mut all = head;
-    all.extend(kit::window(lines, at, rows, p));
-    all.extend(foot);
+        .saturating_sub(b.head.len())
+        .saturating_sub(b.foot.len());
+    let mut all = b.head;
+    all.extend(kit::window(b.list, b.at, rows, p));
+    all.extend(b.foot);
     frame.render_widget(Paragraph::new(all), inner);
     if let Some(page) = &s.page {
         render_page(
@@ -385,6 +551,8 @@ pub fn render(frame: &mut Frame, app: &App, s: &ProfileScreen, area: Rect) {
     }
 }
 
+#[path = "profile_card.rs"]
+mod card;
 #[path = "profile_pages.rs"]
 mod pages;
 pub(crate) use pages::list_width;
@@ -395,3 +563,15 @@ use pages::render_page;
 #[cfg(test)]
 #[path = "profile_tests.rs"]
 pub(crate) mod tests;
+
+#[cfg(test)]
+#[path = "profile_card_tests.rs"]
+mod card_tests;
+
+#[cfg(test)]
+#[path = "profile_rows_tests.rs"]
+mod rows_tests;
+
+#[cfg(test)]
+#[path = "profile_pages_tests.rs"]
+mod pages_tests;

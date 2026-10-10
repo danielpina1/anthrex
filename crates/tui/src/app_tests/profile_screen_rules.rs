@@ -147,7 +147,7 @@ fn a_running_detection_hides_the_old_proposal() {
     let check = screen(&app).rows().into_iter().find(|r| r.key == "check");
     assert_eq!(check.and_then(|r| r.value).as_deref(), Some("cargo test"));
     let text = render(&app);
-    assert!(text.contains("scout running"), "{text}");
+    assert!(text.contains("Setting up… reading the repo"), "{text}");
     assert!(!text.contains("cargo test --workspace"), "{text}");
 }
 
