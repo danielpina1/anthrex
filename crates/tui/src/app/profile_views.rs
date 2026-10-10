@@ -132,6 +132,17 @@ impl App {
                 // A late view (its entry expired) fills the open screen still loading
                 // on it, else is dropped (decision 16, minor 2); a late outcome shown.
                 let late = request_id.and_then(|id| self.replies.expired_view(id).cloned());
+                // Review M7: a late status may still hold a waited-for goal's drop.
+                if let (
+                    Some(PendingWhat::Profile {
+                        dir,
+                        ask: ProfileAsk::Status,
+                    }),
+                    ProfileReply::Status(status),
+                ) = (&late, reply.as_ref())
+                {
+                    self.note_profile_status(&dir.clone(), status);
+                }
                 match late.zip(*request_id) {
                     Some((PendingWhat::Profile { dir, ask }, id))
                         if self.profile_awaits(&dir, ask, id) =>

@@ -112,3 +112,18 @@ fn the_wheel_on_the_primary_screen_scrolls_back() {
     assert!(app.on_scroll(false, 2, 1, &layout).is_empty());
     assert_eq!(app.scroll_offset, 0);
 }
+
+/// Review M6: the UTF-8 encoding's own limit, 2015, as the X10 one's.
+#[test]
+fn a_coordinate_past_utf8_sends_nothing() {
+    let (mut app, layout) = wheel_app(2100);
+    app.parser.process(b"\x1b[?1000h\x1b[?1005h");
+    // Column 2015 (0-based 2014) is the code point 32 + 2015 = U+07FF.
+    let mut expected = b"\x1b[M".to_vec();
+    expected.push(96);
+    expected.extend("\u{7FF}".as_bytes());
+    expected.push(32 + 2);
+    assert_eq!(app.on_scroll(true, 2014, 1, &layout), input(&expected));
+    assert!(app.on_scroll(true, 2015, 1, &layout).is_empty());
+    assert_eq!(app.scroll_offset, 0);
+}

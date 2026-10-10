@@ -70,6 +70,8 @@ impl App {
         let mut effects = self.expire_replies();
         effects.extend(self.screens_tick(now));
         effects.extend(self.tick(now));
+        // Milestone 9.11 decision 22 (fix round 1): a dropped-goal status held by the gap.
+        effects.extend(self.ask_dropped_due(now));
         effects
     }
 

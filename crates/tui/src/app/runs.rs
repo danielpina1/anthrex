@@ -179,9 +179,10 @@ impl App {
             // subscription is live, so a pending retry has nothing left to do.
             RunReply::Snapshot(snapshot) => {
                 // Milestone 9.11 decision 22: a queued goal that left with no run.
-                let mut effects = self.watch_queued_goals(&snapshot);
+                let now = Instant::now();
+                let mut effects = self.watch_queued_goals(&snapshot, now);
                 self.replace_runs(snapshot);
-                self.runs_received_at = Instant::now();
+                self.runs_received_at = now;
                 self.run_subscribed = true;
                 effects.extend(self.focus_off_idle());
                 return effects;

@@ -287,3 +287,179 @@ fn the_alert_is_the_users() {
         "as the set-up alert"
     );
 }
+
+/// Fix round 1 (review I1): the daemon's drain hides a goal before its start returns,
+/// so the first status, asked while the drain runs, holds no drop yet. The wait
+/// survives it; the next snapshot change asks again (once the gap has passed) and the
+/// drop on that reply raises the alert.
+#[test]
+fn a_drop_recorded_after_the_first_status_still_raises_the_alert() {
+    let (mut app, effects) = left_the_queue();
+    let [(first, _)] = status_requests(&effects)[..] else {
+        panic!("one status request: {effects:?}");
+    };
+    // Asked during the drain: no drop yet.
+    reply(&mut app, first, status(R, vec![]));
+    assert!(alerts(&app).is_empty());
+    // The drain ends (the daemon publishes); the gap since the first ask has not
+    // passed on the real clock, so the ask waits for a tick past it.
+    let effects = deliver(&mut app, snapshot(QUEUED_AT + 20, vec![]));
+    let mut asked = status_requests(&effects);
+    if asked.is_empty() {
+        asked = status_requests(&app.on_tick_at(Instant::now() + Duration::from_secs(2)));
+    }
+    let [(second, ref dir)] = asked[..] else {
+        panic!("one second status request: {asked:?}");
+    };
+    assert_eq!(dir, &PathBuf::from(R));
+    reply(
+        &mut app,
+        second,
+        status(R, vec![drop_of("add a", REASON, QUEUED_AT + 15)]),
+    );
+    assert_eq!(
+        listed(&app),
+        vec![(
+            3,
+            "r".to_owned(),
+            format!("could not start \"add a\": {REASON}")
+        )]
+    );
+}
+
+/// Fix round 1: a goal whose run appears in a later snapshot is no longer waited for:
+/// nothing more is asked, and no alert is raised.
+#[test]
+fn a_goal_whose_run_appears_later_ends_the_wait() {
+    let (mut app, effects) = left_the_queue();
+    let [(first, _)] = status_requests(&effects)[..] else {
+        panic!("one status request: {effects:?}");
+    };
+    reply(&mut app, first, status(R, vec![]));
+    let effects = deliver(
+        &mut app,
+        snapshot(QUEUED_AT + 20, vec![started("run-1", R, "add a")]),
+    );
+    assert!(status_requests(&effects).is_empty(), "{effects:?}");
+    let later = Instant::now() + Duration::from_secs(5);
+    assert!(status_requests(&app.on_tick_at(later)).is_empty());
+    assert!(alerts(&app).is_empty());
+}
+
+/// The give-up bound is the CLI's `GOAL_REQUEST_TIMEOUT` (1220 s,
+/// `docs/timing-budgets.md`), rebuilt from the daemon's constants.
+#[test]
+fn the_start_budget_is_a_goal_starts_worst_case() {
+    assert_eq!(
+        crate::app::alerts::GOAL_START_BUDGET,
+        Duration::from_secs(1220)
+    );
+}
+
+/// Fix round 1: past one start budget per goal up to this one in its queue, the wait
+/// ends silently: nothing more is asked, and a drop that arrives later raises nothing.
+#[test]
+fn the_wait_ends_silently_at_its_bound() {
+    let (mut app, effects) = left_the_queue();
+    let [(first, _)] = status_requests(&effects)[..] else {
+        panic!("one status request: {effects:?}");
+    };
+    // The goal left at `QUEUED_AT + 10`, first in its queue: one budget.
+    let bound = QUEUED_AT + 10 + crate::app::alerts::GOAL_START_BUDGET.as_secs();
+    let effects = deliver(&mut app, snapshot(bound - 1, vec![]));
+    let later = Instant::now() + Duration::from_secs(5);
+    assert!(
+        status_requests(&effects).is_empty(),
+        "the first ask is still in flight"
+    );
+    let effects = deliver(&mut app, snapshot(bound, vec![]));
+    assert!(status_requests(&effects).is_empty(), "{effects:?}");
+    assert!(status_requests(&app.on_tick_at(later)).is_empty());
+    // The first ask's reply, late, names the drop: the wait is over, so no alert.
+    reply(
+        &mut app,
+        first,
+        status(R, vec![drop_of("add a", REASON, QUEUED_AT + 5)]),
+    );
+    assert!(alerts(&app).is_empty(), "{:?}", alerts(&app));
+}
+
+/// The second goal of a queue waits behind the first one's start: two budgets.
+#[test]
+fn a_goal_behind_another_waits_two_budgets() {
+    let mut app = app_with_runs(
+        vec![],
+        with_queue(
+            QUEUED_AT,
+            vec![queued("q-1", R, "add a"), queued("q-2", R, "fix b")],
+        ),
+    );
+    let effects = deliver(&mut app, snapshot(QUEUED_AT + 10, vec![]));
+    let [(first, _)] = status_requests(&effects)[..] else {
+        panic!("one status request for the directory: {effects:?}");
+    };
+    reply(&mut app, first, status(R, vec![]));
+    let budget = crate::app::alerts::GOAL_START_BUDGET.as_secs();
+    let past_one = QUEUED_AT + 10 + budget;
+    let effects = deliver(&mut app, snapshot(past_one, vec![]));
+    let mut asked = status_requests(&effects);
+    if asked.is_empty() {
+        asked = status_requests(&app.on_tick_at(Instant::now() + Duration::from_secs(2)));
+    }
+    let [(second, _)] = asked[..] else {
+        panic!("the second goal still waits: {asked:?}");
+    };
+    reply(
+        &mut app,
+        second,
+        status(
+            R,
+            vec![
+                drop_of("add a", REASON, past_one),
+                drop_of("fix b", "the brief is empty", past_one),
+            ],
+        ),
+    );
+    assert_eq!(
+        listed(&app),
+        vec![(
+            3,
+            "r".to_owned(),
+            "could not start \"fix b\": the brief is empty".to_owned()
+        )],
+        "only the goal still waited for is raised"
+    );
+}
+
+/// The re-ask is rate-limited: none while one is in flight, none within the gap of
+/// the last, and only once a snapshot made it due.
+#[test]
+fn a_reask_waits_for_the_reply_and_the_gap() {
+    use crate::app::alerts::ASK_GAP;
+    let (mut app, effects) = left_the_queue();
+    let base = Instant::now();
+    let [(first, _)] = status_requests(&effects)[..] else {
+        panic!("one status request: {effects:?}");
+    };
+    let ask = |app: &mut App, at: Instant| status_requests(&app.on_tick_at(at));
+    // In flight: a later snapshot asks nothing.
+    assert!(status_requests(&deliver(&mut app, snapshot(QUEUED_AT + 20, vec![]))).is_empty());
+    assert!(ask(&mut app, base).is_empty());
+    // Answered with no drop: the change is asked once the gap has passed.
+    reply(&mut app, first, status(R, vec![]));
+    assert!(ask(&mut app, base).is_empty(), "within the gap");
+    let second = ask(&mut app, base + ASK_GAP);
+    assert_eq!(second.len(), 1, "{second:?}");
+    reply(&mut app, second[0].0, status(R, vec![]));
+    // Nothing is due until another snapshot.
+    assert!(ask(&mut app, base + ASK_GAP * 3).is_empty(), "nothing due");
+    assert!(status_requests(&deliver(&mut app, snapshot(QUEUED_AT + 30, vec![]))).is_empty());
+    let third = ask(&mut app, base + ASK_GAP * 4);
+    assert_eq!(third.len(), 1, "{third:?}");
+    // Its reply not back: another snapshot and a tick far past the gap ask nothing.
+    assert!(status_requests(&deliver(&mut app, snapshot(QUEUED_AT + 40, vec![]))).is_empty());
+    assert!(
+        ask(&mut app, base + ASK_GAP * 10).is_empty(),
+        "one in flight"
+    );
+}

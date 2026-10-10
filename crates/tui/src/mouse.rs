@@ -349,8 +349,6 @@ impl App {
     }
 }
 
-/// One axis of a drag: the viewport moves against the cursor by as far as the
-/// cursor travelled, so the content appears to move with it.
 /// The largest coordinate the X10 encoding carries: `32 + 223` is the byte 255.
 const X10_MAX: u16 = 223;
 
@@ -389,6 +387,8 @@ fn wheel_report(
     }
 }
 
+/// One axis of a drag: the viewport moves against the cursor by as far as the
+/// cursor travelled, so the content appears to move with it.
 fn dragged(pan: u16, from: u16, to: u16) -> u16 {
     if to >= from {
         pan.saturating_sub(to - from)
