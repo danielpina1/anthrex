@@ -485,6 +485,8 @@ fn print_outcome(reply: RunReply) -> anyhow::Result<()> {
     }
 }
 
+use daemon::run::snapshot::TERMINAL_RUNS_SHOWN;
+
 /// `run` names a run by its id, or by a prefix or suffix of it matching exactly one run.
 pub fn resolve_run(runs: &[RunInfo], run: &str) -> Result<String, String> {
     if run.is_empty() {
@@ -499,6 +501,12 @@ pub fn resolve_run(runs: &[RunInfo], run: &str) -> Result<String, String> {
         .filter(|id| id.starts_with(run) || id.ends_with(run))
         .collect();
     match matches.as_slice() {
+        // Decision 10 (M9.11.10): a full list leaves older finished runs out.
+        [] if runs.iter().filter(|r| r.state.is_terminal()).count() >= TERMINAL_RUNS_SHOWN => {
+            Err(format!(
+                "no run matches '{run}' (only the {TERMINAL_RUNS_SHOWN} most recent finished runs are listed)"
+            ))
+        }
         [] => Err(format!("no run matches '{run}'")),
         [one] => Ok(one.to_string()),
         many => Err(format!(

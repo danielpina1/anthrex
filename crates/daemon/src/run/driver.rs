@@ -68,7 +68,7 @@ use tokio_util::sync::CancellationToken;
 use super::engine::{AgentSignal, EngineState, EventKind, INTERRUPT_GRACE_SECS, ReplyId};
 use super::git::GitQueue;
 use super::slots::{self, TestScheduler};
-use super::snapshot::snapshot;
+use super::snapshot::{fit_frame, snapshot};
 use super::test_cache::TestCache;
 #[cfg(test)]
 use crate::manager::ManagerConfig;
@@ -312,7 +312,8 @@ impl RunService {
         // The engine guard drops at the end of this `let`, before the scout table's
         // lock is taken (AGENTS.md rule 2).
         let snap = snapshot(&crate::lock(&self.state), unix_now());
-        self.with_scouts(snap)
+        // Decision 10: the frame guard, on the snapshot as sent.
+        fit_frame(self.with_scouts(snap))
     }
 
     fn send(&self, kind: EventKind) {
@@ -465,7 +466,8 @@ impl RunService {
         self.clear_ended_orchestrators(&snap);
         let (snap, generation) = self.overlaid(snap);
         crate::lock(&self.book).proposals_published = generation;
-        let _ = self.pushes.send(Arc::new(snap));
+        // Decision 10: the frame guard, on the snapshot as sent.
+        let _ = self.pushes.send(Arc::new(fit_frame(snap)));
     }
 
     fn watch_root(&self, root: &Path) {
