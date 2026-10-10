@@ -102,3 +102,36 @@ async fn a_run_from_a_newer_anthrex_is_left_alone() {
         "the restore rewrote a newer run.json"
     );
 }
+
+/// Stream X review X-M2: a `format` that is present but not a whole number this build
+/// can read (a string, a fraction, a negative, one past `u32`) is a format this build
+/// does not know: the run is skipped and left as it is, never read as 0 and rewritten.
+#[test]
+fn a_run_whose_format_is_not_a_whole_number_is_left_alone() {
+    for format in [
+        serde_json::json!("2"),
+        serde_json::json!(1.5),
+        serde_json::json!(-1),
+        serde_json::json!(4_294_967_296u64),
+        serde_json::json!(null),
+    ] {
+        let data = tempfile::tempdir().unwrap();
+        let mut json = saved_json(data.path());
+        json.as_object_mut()
+            .unwrap()
+            .insert("format".into(), format.clone());
+        let file = run_file(data.path());
+        let bytes = serde_json::to_vec(&json).unwrap();
+        std::fs::write(&file, &bytes).unwrap();
+        let (runs, problems) = load_all(data.path());
+        assert!(runs.is_empty(), "{format}: the run was loaded");
+        assert_eq!(
+            problems,
+            [format!(
+                "run {RUN_ID} skipped: written by a newer anthrex (run format {format}; this one reads up to 1); left as it is"
+            )],
+            "{format}"
+        );
+        assert_eq!(std::fs::read(&file).unwrap(), bytes, "{format}");
+    }
+}

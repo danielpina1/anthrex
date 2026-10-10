@@ -281,16 +281,17 @@ struct Stamped<'a> {
     run: &'a Run,
 }
 
-/// The `format` of a `run.json` when it is above [`RUN_FORMAT`]. Read on its own, so a
-/// file whose other fields this build cannot parse is still recognised.
-fn newer_format(bytes: &[u8]) -> Option<u32> {
-    #[derive(serde::Deserialize)]
-    struct Format {
-        #[serde(default)]
-        format: u32,
+/// The `format` of a `run.json`, as written, when this build cannot read it: above
+/// [`RUN_FORMAT`], or present but not a whole number (stream X review X-M2: a key this
+/// build does not understand is a newer format, never 0). Read on its own, so a file
+/// whose other fields this build cannot parse is still recognised.
+fn newer_format(bytes: &[u8]) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+    let format = value.get("format")?;
+    match format.as_u64() {
+        Some(n) if n <= u64::from(RUN_FORMAT) => None,
+        _ => Some(format.to_string()),
     }
-    let format = serde_json::from_slice::<Format>(bytes).ok()?.format;
-    (format > RUN_FORMAT).then_some(format)
 }
 
 fn name(dir: &Path) -> String {
