@@ -348,6 +348,11 @@ fn a_hostile_start_directory_is_drawn_sanitised() {
     let rows = audit::rows(&buffer).join("\n");
     assert!(rows.contains("profile · xyz"), "{rows}");
     assert!(!hidden(&buffer), "{rows}");
+    // `x` is offered with a review proposal (milestone 9.10 decision 29).
+    super::super::profile_screen::set_status(
+        &mut app,
+        super::super::profile_screen::status(Some(proto::ProposalState::Scouting)),
+    );
     tap(&mut app, KeyCode::Char('x'));
     let buffer = draw(&app, 80, 24);
     let rows = audit::rows(&buffer).join("\n");

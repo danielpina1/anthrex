@@ -1,8 +1,10 @@
-//! The Profile screen's pages (decision 35): the Detect toggles, the Reject, Unset and
-//! Confirm pages, and the editor fitted to a key's type, with their keys and pastes.
-//! Split from `app/profile_screen.rs` by responsibility (`AGENTS.md` hard rule 8). Pure.
+//! The Profile screen's pages (milestone 9.0.6 decision 35, milestone 9.10 decision 30):
+//! the Detect toggles, the Discard and Unset pages, the raw-text and row pages, and the
+//! editor fitted to a key's type, with their keys and pastes. Every edit sends `yes:
+//! true` (decision 16), on the proposal while the card shows. Split from
+//! `app/profile_screen.rs` by responsibility (`AGENTS.md` hard rule 8). Pure.
 
-use super::{Editor, EditorField, ProfileAsk, ProfilePage};
+use super::{Editor, EditorField, ProfileAsk, ProfilePage, Saving};
 use crate::app::{App, Effect, ToastLevel};
 use crate::profile_view::{self, Kind};
 use crate::safe_text::one_line;
@@ -33,7 +35,7 @@ pub(super) fn editor_for(key: &str, text: &str) -> Editor {
         key: key.to_string(),
         field,
         error: None,
-        from_proposal: false,
+        on_proposal: false,
     }
 }
 
@@ -80,7 +82,20 @@ impl App {
             return vec![];
         }
         let dir = s.dir.clone();
-        let yes = s.store_on_pass;
+        // The lines a scrolled page can scroll through.
+        let tail_lines = match &s.page {
+            Some(ProfilePage::Row { key, .. }) => output_lines(s, key),
+            _ => 0,
+        };
+        let edit = |key: String, value: Option<String>, on_proposal: bool| ProfileRequest::Edit {
+            dir: dir.clone(),
+            key,
+            value,
+            yes: true,
+            unconfined_checks: false,
+            anyway: false,
+            on_proposal,
+        };
         let y = key.code == KeyCode::Char('y');
         let enter = key.code == KeyCode::Enter;
         let mut warn = None;
@@ -109,7 +124,7 @@ impl App {
                 }
                 _ if enter => {
                     // Progress ruling: it starts a real agent, so `y` only.
-                    warn = Some("press y to detect");
+                    warn = Some("press y to start");
                     None
                 }
                 _ if y => Some((
@@ -122,73 +137,37 @@ impl App {
                 )),
                 _ => None,
             },
-            Some(ProfilePage::Reject) if y => Some((
-                ProfileAsk::Reject,
+            Some(ProfilePage::Discard) if y => Some((
+                ProfileAsk::Discard,
                 ProfileRequest::Reject { dir: dir.clone() },
             )),
-            Some(ProfilePage::Reject) => {
-                warn = enter.then_some("press y to reject proposal");
+            Some(ProfilePage::Discard) => {
+                warn = enter.then_some("press y to discard");
                 None
             }
-            Some(ProfilePage::Unset { key: unset }) if y || enter => Some((
-                ProfileAsk::Edit,
-                ProfileRequest::Edit {
-                    dir: dir.clone(),
-                    key: unset.clone(),
-                    value: None,
-                    yes,
-                    unconfined_checks: false,
-                    anyway: false,
-                    on_proposal: false,
-                },
-            )),
+            Some(ProfilePage::Unset {
+                key: unset,
+                on_proposal,
+            }) if y || enter => Some((ProfileAsk::Edit, edit(unset.clone(), None, *on_proposal))),
             Some(ProfilePage::Unset { .. }) => None,
-            Some(ProfilePage::Confirm { toml, scroll }) => match key.code {
-                KeyCode::Char('j' | 'k')
-                | KeyCode::Down
-                | KeyCode::Up
-                | KeyCode::PageDown
-                | KeyCode::PageUp => {
-                    let step: isize = match key.code {
-                        KeyCode::Char('j') | KeyCode::Down => 1,
-                        KeyCode::Char('k') | KeyCode::Up => -1,
-                        KeyCode::PageDown => 10,
-                        _ => -10,
-                    };
-                    let last = toml.lines().count().saturating_sub(1);
-                    *scroll = scroll.saturating_add_signed(step).min(last);
-                    None
-                }
-                _ if y => Some((
-                    ProfileAsk::Confirm,
-                    ProfileRequest::Confirm {
-                        dir: dir.clone(),
-                        shown: Some(toml.clone()),
-                    },
-                )),
-                _ => {
-                    warn = enter.then_some("press y to confirm");
-                    None
-                }
-            },
+            Some(ProfilePage::RawText { text, scroll }) => {
+                scroll_by(scroll, key.code, text.lines().count());
+                None
+            }
+            Some(ProfilePage::Row { scroll, .. }) => {
+                scroll_by(scroll, key.code, tail_lines);
+                None
+            }
             Some(ProfilePage::Edit(editor)) => {
                 if !enter {
                     on_editor_key(editor, key, width);
                     return vec![];
                 }
                 match edit_of(editor) {
-                    Ok((key, value)) => Some((
-                        ProfileAsk::Edit,
-                        ProfileRequest::Edit {
-                            dir: dir.clone(),
-                            key,
-                            value: Some(value),
-                            yes,
-                            unconfined_checks: false,
-                            anyway: false,
-                            on_proposal: false,
-                        },
-                    )),
+                    Ok((key, value)) => {
+                        let on_proposal = editor.on_proposal;
+                        Some((ProfileAsk::Edit, edit(key, Some(value), on_proposal)))
+                    }
                     Err(why) => {
                         editor.error = Some(why);
                         None
@@ -210,6 +189,19 @@ impl App {
         }
         if let Some(s) = self.profile_screen_mut() {
             s.page = None;
+            // Decision 31: the edit's outcome is watched for `saved <label>`.
+            if let ProfileRequest::Edit {
+                key, on_proposal, ..
+            } = &request
+            {
+                let before = s.value_on(*on_proposal, key);
+                s.saving = Some(Saving {
+                    key: key.clone(),
+                    on_proposal: *on_proposal,
+                    before,
+                    done: false,
+                });
+            }
         }
         vec![self.profile_send(dir, ask, request)]
     }
@@ -279,4 +271,30 @@ fn on_editor_key(editor: &mut Editor, key: KeyEvent, width: u16) {
             _ => line_key(name, key, width.saturating_sub(7)),
         },
     }
+}
+
+/// A scrolled page's j/k/PageUp/PageDown over `lines` lines, stopping at the last.
+fn scroll_by(scroll: &mut usize, code: KeyCode, lines: usize) {
+    let step: isize = match code {
+        KeyCode::Char('j') | KeyCode::Down => 1,
+        KeyCode::Char('k') | KeyCode::Up => -1,
+        KeyCode::PageDown => 10,
+        KeyCode::PageUp => -10,
+        _ => return,
+    };
+    *scroll = scroll
+        .saturating_add_signed(step)
+        .min(lines.saturating_sub(1));
+}
+
+/// The output lines a row page shows for `key`: its failed edit's, else its check's.
+fn output_lines(s: &super::ProfileScreen, key: &str) -> usize {
+    if let Some(proto::RowEditState::Failed { tail, .. }) = s.edit_of(key) {
+        return tail.lines().count();
+    }
+    s.rows()
+        .into_iter()
+        .find(|r| r.key == key)
+        .and_then(|r| r.check)
+        .map_or(0, |c| c.tail.lines().count())
 }

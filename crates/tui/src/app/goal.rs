@@ -304,6 +304,30 @@ impl App {
         true
     }
 
+    /// Milestone 9.10 decision 35: `Queued` is a success with no run yet. The form
+    /// closes, its draft goes and `message` is toasted, as a started goal's; no run
+    /// view is awaited. A closed dialog's request clears that project's draft (and
+    /// the reopened dialog's editor while it holds exactly the goal sent). `false`
+    /// when `request_id` is neither's.
+    pub(super) fn goal_queued(&mut self, request_id: Option<u64>, message: &str) -> bool {
+        if self.goal_form_waiting_on(request_id).is_some() {
+            self.close_goal_form(false);
+        } else if let Some((_, project, sent)) = self.take_goal_sent(request_id) {
+            self.goal_drafts.remove(&project);
+            if let Some(Modal::StartGoal(form)) = &mut self.modal
+                && form.project == project
+                && !form.submitting
+                && form.goal.text() == sent
+            {
+                form.goal = TextArea::editor("");
+            }
+        } else {
+            return false;
+        }
+        self.toast(super::runs::capped(message));
+        true
+    }
+
     /// The closed dialog's request, when `request_id` is its reply's.
     fn take_goal_sent(&mut self, request_id: Option<u64>) -> Option<(u64, PathBuf, String)> {
         match self.goal_sent.take() {

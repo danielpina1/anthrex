@@ -277,7 +277,8 @@ fn task_panel_shown(app: &App) -> bool {
 
 /// Milestone 9.0.7 decision 11 and Interfaces "Hint priorities": the Alerts view's
 /// keys for the selected alert — Enter's entry, `.` where the alert has a node, `o`
-/// but on a proposal (Enter opens its screen) — or `esc` alone with none selected.
+/// but on a proposal (Enter opens its screen; a set-up's `o` opens the Profile
+/// screen, milestone 9.10 decision 34) — or `esc` alone with none selected.
 fn alerts_view_hints(app: &App) -> Vec<Hint> {
     use crate::app::AlertKey;
     use crate::app::alerts_view::{alert_node, enter_label};

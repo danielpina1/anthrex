@@ -1,8 +1,9 @@
-//! The Profile screen's pages, drawn as kit dialogs over it (decision 5): the Detect
-//! toggles, the Reject, Unset and Confirm pages (the TOML shown exactly, scrolled), and
-//! the editors. Split from `ui/profile.rs` by responsibility (`AGENTS.md` hard rule 8).
+//! The Profile screen's pages, drawn as kit dialogs over it (9.0.6 decision 5), as
+//! milestone 9.10 decision 30 words them: the Detect toggles in plain words, the
+//! Discard and Unset pages, the raw-text page (the file shown exactly, sanitised,
+//! scrolled), a row's page, and the editors. Split from `ui/profile.rs` by responsibility (`AGENTS.md` hard rule 8).
 
-use super::{hint, pad, store_line};
+use super::{hint, listed, pad, plain, tail_lines};
 use crate::app::profile_screen::{EditorField, ProfilePage, ProfileScreen};
 use crate::safe_text::{multi_line, one_line};
 use crate::theme::{Glyph, Palette, Role, glyph, role};
@@ -50,13 +51,13 @@ fn hard_wrap(line: &str, width: usize) -> Vec<String> {
     out
 }
 
-/// A page's title, whether it is destructive, its body and its hint line.
 /// The editor's list area width in a terminal `width` wide, which its Up and Down
 /// move by; a one-line value is 7 columns narrower (milestone 9.0.7 decision 35).
 pub(crate) fn list_width(width: u16) -> u16 {
     width.min(kit::DIALOG_MAX).saturating_sub(4)
 }
 
+/// A page's title, whether it is destructive, its body and its hint line.
 fn page_parts(
     s: &ProfileScreen,
     page: &ProfilePage,
@@ -66,7 +67,7 @@ fn page_parts(
 ) -> (String, bool, Vec<Line<'static>>, Line<'static>) {
     let w = usize::from(width.min(kit::WRAP)).max(1);
     let wrap = |text: &str| -> Vec<Line<'static>> {
-        wrap_words(&one_line(text), w)
+        wrap_words(&plain(text, p), w)
             .into_iter()
             .map(Line::raw)
             .collect()
@@ -75,53 +76,67 @@ fn page_parts(
         let list: Vec<Hint> = list.iter().map(|(k, v)| hint(k, v, 5)).collect();
         kit::hints_joined(width, &list, crate::theme::dot_sep(p), p)
     };
-    let dir = s.dir.display().to_string();
     match page {
         ProfilePage::Detect {
             trust_project,
             unconfined_checks,
             focus,
         } => {
-            let toggle = |i: usize, label: &str, on: bool| {
+            // Decision 30: each toggle in plain words, what it does under it.
+            let toggle = |i: usize, label: &str, what: &str, on: bool| {
                 let mark = if *focus == i {
                     glyph(Glyph::Selection, p.ascii)
                 } else {
                     " "
                 };
-                Line::from(vec![
+                let mut lines = vec![Line::from(vec![
                     Span::styled(format!("{mark} "), role(kit::bar_role(keys), p)),
-                    Span::styled(pad(label, 19), role(Role::Muted, p)),
+                    Span::raw(pad(label, 34)),
                     Span::raw(kit::choice_in(if on { "on" } else { "off" }, p)),
-                ])
+                ])];
+                for part in wrap_words(what, w.saturating_sub(2).max(1)) {
+                    lines.push(Line::styled(format!("  {part}"), role(Role::Muted, p)));
+                }
+                lines
             };
-            let mut body = vec![
-                toggle(0, "trust project", *trust_project),
-                toggle(1, "unconfined checks", *unconfined_checks),
-                Line::default(),
-            ];
+            let mut body = toggle(
+                0,
+                "Trust this repo's agent settings",
+                "let agents use the settings files this repo tracks, like .claude/ and .mcp.json",
+                *trust_project,
+            );
+            body.extend(toggle(
+                1,
+                "Run checks outside the sandbox",
+                "only needed on systems where anthrex can't confine commands",
+                *unconfined_checks,
+            ));
+            body.push(Line::default());
             body.extend(
                 wrap("a real agent will read the repository")
                     .into_iter()
                     .map(|l| l.style(role(Role::Attention, p))),
             );
             let h = hints(&[
-                ("y", "detect"),
+                ("y", "start"),
                 ("space", "toggle"),
                 ("tab", "next"),
                 ("esc", "cancel"),
             ]);
-            ("detect".into(), false, body, h)
+            (s.detect_title().into(), false, body, h)
         }
-        ProfilePage::Reject => {
+        ProfilePage::Discard => {
             // Decision 37 (principle 9): a destructive page's key and word in `Failed`,
             // as `ui/action_menu.rs::verb_hints` and the Settings discard page draw them.
-            let h = kit::destructive(hints(&[("y", "reject"), ("esc", "back")]), "y", "reject", p);
-            let body = wrap(&format!(
-                "the proposal for {dir} is deleted; a running scout or verification stops"
-            ));
-            ("reject proposal".into(), true, body, h)
+            let h = kit::destructive(
+                hints(&[("y", "discard"), ("esc", "back")]),
+                "y",
+                "discard",
+                p,
+            );
+            ("discard proposal".into(), true, wrap(&s.discard_text()), h)
         }
-        ProfilePage::Unset { key } => (
+        ProfilePage::Unset { key, .. } => (
             format!("unset {key}"),
             false,
             wrap(&format!(
@@ -130,14 +145,64 @@ fn page_parts(
             )),
             hints(&[("⏎", "unset"), ("esc", "back")]),
         ),
-        ProfilePage::Confirm { toml, .. } => {
-            let body = multi_line(toml)
+        ProfilePage::RawText { text, .. } => {
+            let body = multi_line(text)
                 .split('\n')
                 .flat_map(|line| hard_wrap(&one_line(line), w))
                 .map(Line::raw)
                 .collect();
-            let h = hints(&[("y", "store"), ("j/k", "scroll"), ("esc", "back")]);
-            ("confirm profile".into(), false, body, h)
+            let h = hints(&[("j/k", "scroll"), ("esc", "back")]);
+            ("profile file".into(), false, body, h)
+        }
+        ProfilePage::Row { key, .. } => {
+            // Decision 30: the key dimmed, the value (a list one item per line), the
+            // hint, the check line and, after a ✗, its output.
+            let row = s.rows().into_iter().find(|r| r.key == *key);
+            let shown = listed(s);
+            let mut body = vec![Line::styled(plain(key, p), role(Role::Muted, p))];
+            let value = match shown.and_then(|sh| sh.profile.as_ref()) {
+                Some(profile) if key == "delivery.mode" => {
+                    crate::profile_words::delivery_text(profile.delivery.as_ref())
+                }
+                Some(profile) => crate::profile_view::edit_text(profile, key),
+                None => String::new(),
+            };
+            if value.is_empty() {
+                body.push(Line::styled(plain("—", p), role(Role::Muted, p)));
+            }
+            for line in multi_line(&value).split('\n').filter(|l| !l.is_empty()) {
+                body.extend(wrap(line));
+            }
+            body.extend(
+                wrap(crate::profile_words::hint(key))
+                    .into_iter()
+                    .map(|l| l.style(role(Role::Muted, p))),
+            );
+            let check = row.and_then(|r| r.check);
+            let tail = match (s.edit_of(key), &check) {
+                (Some(proto::RowEditState::Failed { reason, tail, .. }), _) => {
+                    body.extend(
+                        wrap(&format!("couldn't verify: {reason}"))
+                            .into_iter()
+                            .map(|l| l.style(role(Role::Failed, p))),
+                    );
+                    tail.clone()
+                }
+                (Some(proto::RowEditState::Verifying), _) => {
+                    body.push(Line::styled(plain("checking…", p), role(Role::Working, p)));
+                    String::new()
+                }
+                (None, Some(c)) => {
+                    body.push(Line::raw(crate::profile_view::check_cell(c, p.ascii)));
+                    c.tail.clone()
+                }
+                _ => String::new(),
+            };
+            if !tail.is_empty() {
+                body.extend(tail_lines(&tail, 2, w, p));
+            }
+            let h = hints(&[("j/k", "scroll"), ("esc", "back")]);
+            (plain(&crate::profile_words::label(key), p), false, body, h)
         }
         ProfilePage::Edit(editor) => {
             let label = |text: &str| Span::styled(pad(text, 7), role(Role::Muted, p));
@@ -181,16 +246,8 @@ fn page_parts(
                     }
                 }
             }
-            body.push(Line::default());
-            if editor.from_proposal {
-                body.extend(
-                    wrap("starts from the stored profile; saving replaces the current proposal")
-                        .into_iter()
-                        .map(|l| l.style(role(Role::Attention, p))),
-                );
-            }
-            body.push(store_line(s, p));
             if let Some(error) = &editor.error {
+                body.push(Line::default());
                 body.extend(
                     wrap(error)
                         .into_iter()
@@ -238,7 +295,9 @@ pub(super) fn render_page(
     // The page fits the area: a long TOML scrolls inside it.
     let room = usize::from(area.height.saturating_sub(4));
     let body = match page {
-        ProfilePage::Confirm { scroll, .. } => scrolled(body, *scroll, room, p),
+        ProfilePage::RawText { scroll, .. } | ProfilePage::Row { scroll, .. } => {
+            scrolled(body, *scroll, room, p)
+        }
         _ => body.into_iter().take(room).collect(),
     };
     let mut lines = body;

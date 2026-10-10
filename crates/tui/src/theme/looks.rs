@@ -113,7 +113,8 @@ pub fn ci_look(state: CiState, ascii: bool) -> (&'static str, Role) {
     }
 }
 
-/// P1 `Attention` bold, P2 and P3 `Attention` without bold, P4 `Done` (decision 3).
+/// P1 `Attention` bold, P2 and P3 `Attention` without bold, P4 `Done` (decision 3);
+/// milestone 9.10 decision 34's P5 (a set-up under way) `Working`.
 pub fn alert_style(priority: u8, p: Palette) -> Style {
     match priority {
         1 => role(Role::Attention, p),
@@ -121,15 +122,18 @@ pub fn alert_style(priority: u8, p: Palette) -> Style {
             fg: role(Role::Attention, p).fg,
             ..Style::default()
         },
-        _ => role(Role::Done, p),
+        4 => role(Role::Done, p),
+        _ => role(Role::Working, p),
     }
 }
 
-/// An alert's mark: `⚑` for priorities 1 to 3, `✓` for 4 (decision 3).
+/// An alert's mark: `⚑` for priorities 1 to 3, `✓` for 4 (decision 3), `◇` (`~`)
+/// for milestone 9.10's priority 5.
 pub fn alert_glyph(priority: u8, ascii: bool) -> &'static str {
     match priority {
         1..=3 => glyph(Glyph::NeedsYou, ascii),
-        _ => glyph(Glyph::Passed, ascii),
+        4 => glyph(Glyph::Passed, ascii),
+        _ => glyph(Glyph::Checking, ascii),
     }
 }
 

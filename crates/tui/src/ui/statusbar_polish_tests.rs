@@ -87,7 +87,7 @@ fn the_profile_badge_sits_above_plan() {
         let mut app = gate_app(w, h);
         app.open_plan_review(RUN_ID.into(), ReviewTarget::Gate);
         assert!(bar(&app, w, h).starts_with(" PLAN "), "{w}");
-        let _ = app.open_profile_on("/r/demo".into(), false);
+        let _ = app.open_profile_on("/r/demo".into());
         let text = bar(&app, w, h);
         assert!(text.starts_with(" PROFILE "), "{w}: {text}");
         assert!(text.contains("d detect"), "{w}: {text}");
@@ -365,7 +365,7 @@ fn every_mode_keeps_esc_at_40_columns() {
     modes.push(("action menu", menu));
 
     let mut profile = gate_app(w, h);
-    let _ = profile.open_profile_on("/r/demo".into(), false);
+    let _ = profile.open_profile_on("/r/demo".into());
     modes.push(("profile", profile));
     let mut settings = gate_app(w, h);
     prefix(&mut settings);

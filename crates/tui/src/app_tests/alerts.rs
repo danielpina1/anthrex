@@ -52,7 +52,7 @@ fn alerts_in_priority_order() {
             line(3, "d-bare › t1", "blocked: which db?"),
             line(3, "e-halt", "run halted: disk full"),
             line(4, "f-done", "ready to accept · 2/2 merged"),
-            line(4, "shop", "profile proposal ready"),
+            line(4, "shop", "review how anthrex will work here"),
         ]
     );
     let keys: Vec<AlertKey> = alerts(&app).into_iter().map(|a| a.key).collect();

@@ -429,3 +429,74 @@ fn a_refused_action_is_muted() {
     assert_ne!(fg("answer ·"), muted);
     assert_ne!(fg("cancel task"), muted);
 }
+
+/// Milestone 9.10 decisions 33-34 (review focus 4): a queued goal's text, a set-up's
+/// failure reason and a project's name are hostile; neither the box, the view, the
+/// bar nor any alert's detail draws one of their characters.
+#[test]
+fn set_up_alert_text_is_sanitised() {
+    use proto::{QueuedGoalInfo, SetupState};
+    let bad = hostile_text();
+    let goal = |id: &str, project: &str, setup: SetupState| QueuedGoalInfo {
+        id: id.into(),
+        project: project.into(),
+        goal: format!("g{bad}\n{bad}next"),
+        queued_at: NOW - 3,
+        yes: false,
+        trust_project: false,
+        unconfined_checks: false,
+        setup,
+    };
+    let failed = format!("/tmp/f{bad}");
+    let reading = format!("/tmp/s{bad}");
+    let review = format!("/tmp/p{bad}");
+    let reason = format!("why{bad}\n{bad}\nmore{bad}");
+    let mut app = app_of(vec![pty(1, "shell", "/tmp/repo", Status::Idle)], vec![]);
+    let mut snap = snapshot(NOW, vec![]);
+    snap.queued_goals = vec![
+        goal("q-1", &failed, SetupState::Failed { reason }),
+        goal(
+            "q-2",
+            &failed,
+            SetupState::Failed {
+                reason: bad.clone(),
+            },
+        ),
+        goal("q-3", &reading, SetupState::Reading),
+        goal("q-4", &review, SetupState::NeedsReview),
+    ];
+    snap.proposals = vec![ProposalAlertInfo {
+        project: review.clone().into(),
+        updated_at: NOW - 5,
+    }];
+    app.on_daemon(proto::DaemonMsg::Run(proto::RunReply::Snapshot(snap)));
+    chord(&mut app, 'a');
+    let n = crate::app::alerts(&app).len();
+    assert_eq!(n, 3);
+    for at in 0..n {
+        for (w, h) in [(80, 24), (120, 40)] {
+            let (buffer, _) = draw_at(&app, w, h);
+            for y in 0..h {
+                let text: String = (0..w).map(|x| buffer[(x, y)].symbol()).collect();
+                assert_eq!(first_hostile(&text), None, "alert {at} {w}x{h}: {text:?}");
+            }
+        }
+        let alert = crate::app::alerts(&app)[at].clone();
+        for width in [1, 10, 49, 400] {
+            let lines = super::detail_lines(&app, &alert, width);
+            for line in &lines {
+                let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+                assert_eq!(first_hostile(&text), None, "{text:?}");
+            }
+            let all: String = (lines.iter().flat_map(|l| l.spans.iter()))
+                .map(|s| s.content.as_ref())
+                .collect();
+            if width == 400 {
+                assert!(all.contains("waiting"), "alert {at}: {all:?}");
+                // The failed set-up (listed first, P3) shows its whole reason.
+                assert_eq!(at == 0, all.contains("more"), "alert {at}: {all:?}");
+            }
+        }
+        press(&mut app, KeyCode::Char('j'), KeyModifiers::NONE);
+    }
+}
