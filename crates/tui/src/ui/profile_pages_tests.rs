@@ -406,3 +406,47 @@ fn a_failed_row_page_is_sanitised() {
         }
     }
 }
+
+/// Final review M4: the unset page says what happens, by its target: removed from the
+/// profile (an edit is stored at once, or once checked) or from this proposal, and,
+/// for a key whose change re-runs the verification, that it is checked first.
+#[test]
+fn the_unset_page_names_its_target() {
+    let mut app = sp_app(false);
+    for (key, on_proposal, want) in [
+        ("source", false, "source is removed from the profile"),
+        (
+            "check",
+            false,
+            "check is removed from the profile; it is checked first",
+        ),
+        ("protected", true, "protected is removed from this proposal"),
+        (
+            "single_test",
+            true,
+            "single test is removed from this proposal; it is checked first",
+        ),
+    ] {
+        let page = ProfilePage::Unset {
+            key: key.into(),
+            on_proposal,
+        };
+        screen_mut(&mut app).page = Some(page.clone());
+        let Some(crate::app::screens::Screen::Profile(s)) = &app.screen else {
+            unreachable!()
+        };
+        // The page's wrapped lines, joined again.
+        let text = crate::ui::profile::page_lines(&app, s, &page, 76)
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(text.contains(want), "{want}\n{text}");
+        assert!(!text.contains("becomes a proposal"), "{text}");
+    }
+}

@@ -241,9 +241,6 @@ impl App {
                     self.toast(capped(&message));
                 }
             }
-            // Milestone 9.10 decision 12: the goal waits for its repository's profile.
-            // Until M9.10.10 the form closes as for a refused start and the daemon's
-            // message is toasted.
             // Milestone 9.10 decision 35: the goal waits for its repository's profile.
             RunReply::Queued {
                 message,

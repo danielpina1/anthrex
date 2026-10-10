@@ -155,13 +155,14 @@ fn hints_follow_the_view() {
         ])
     );
     s.status = Some(status_of(false, Some(ProposalState::Ready)));
+    // The card over this fixture's stored profile lists only what changed, unfolded:
+    // no `a` (final review M2).
     assert_eq!(
         pairs(s),
         words(&[
             ("⏎", "use this"),
             ("e", "edit"),
             ("u", "unset"),
-            ("a", "advanced"),
             ("o", "output"),
             ("x", "discard"),
             ("esc", "later")
@@ -380,4 +381,35 @@ fn dropped_goals_are_drawn_with_their_reasons() {
     assert_eq!(buffer[(x, y)].fg, failed);
     let cut = format!("dropped the queued goal \"{}…\":", "g".repeat(59));
     assert!(text.contains(&cut), "{text}");
+}
+
+/// Final review M1: with no stored profile and nothing listed, only `d` (and `x` with a
+/// review proposal) is offered; `d` goes while a set-up runs, since its `y` would be
+/// refused. M2: the changes card has no Advanced line, so no `a`.
+#[test]
+fn hints_offer_only_what_works() {
+    let words = |list: &[(&str, &str)]| -> Vec<(String, String)> {
+        list.iter()
+            .map(|(k, w)| (k.to_string(), w.to_string()))
+            .collect()
+    };
+    let mut app = sp_app(false);
+    let s = screen_mut(&mut app);
+    s.stored = crate::app::profile_screen::Side::Absent("no stored profile".into());
+    s.status = Some(status_of(false, None));
+    assert_eq!(pairs(s), words(&[("d", "set up"), ("esc", "back")]));
+    s.status = Some(status_of(false, Some(ProposalState::Scouting)));
+    assert_eq!(
+        pairs(s),
+        words(&[("x", "discard proposal"), ("esc", "back")])
+    );
+    // The changes card: a stored profile and a ready proposal that changes `check`.
+    let mut app = sp_app(false);
+    let s = screen_mut(&mut app);
+    let mut proposal = super::tests::sp_profile();
+    proposal.check = Some("cargo test --all".into());
+    s.proposal = super::tests::shown(proposal, super::tests::sp_verification(), vec![]);
+    s.status = Some(status_of(true, Some(ProposalState::Ready)));
+    assert!(s.showing_card());
+    assert!(!pairs(s).iter().any(|(k, _)| k == "a"), "{:?}", pairs(s));
 }

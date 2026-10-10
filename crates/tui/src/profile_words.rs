@@ -208,9 +208,14 @@ pub fn setup_text(state: &SetupState) -> String {
             "setting up anthrex · checking commands".to_string()
         }
         SetupState::NeedsReview => "review how anthrex will work here".to_string(),
+        // Its first line with words (task 10 review M5: not a leading blank one).
         SetupState::Failed { reason } => format!(
             "setting up failed: {}",
-            reason.lines().next().unwrap_or_default()
+            reason
+                .lines()
+                .map(str::trim)
+                .find(|line| !line.is_empty())
+                .unwrap_or_default()
         ),
     }
 }

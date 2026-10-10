@@ -273,6 +273,36 @@ fn setup_texts() {
         }),
         "setting up failed: no network"
     );
+    // Task 7 review M2: the two states the test left out.
+    assert_eq!(
+        setup_text(&SetupState::Checking { progress: None }),
+        "setting up anthrex · checking commands"
+    );
+    assert_eq!(
+        setup_text(&SetupState::NeedsReview),
+        "review how anthrex will work here"
+    );
+    // Task 10 review M5: a reason that starts with blank lines names its first words.
+    assert_eq!(
+        setup_text(&SetupState::Failed {
+            reason: "\n  \nno network\nsecond".into()
+        }),
+        "setting up failed: no network"
+    );
+}
+
+/// Task 7 review M1: a stored profile with neither a verification nor a confirmation
+/// time reads plain `Ready`.
+#[test]
+fn a_stored_profile_with_no_time_is_ready() {
+    let s = ProfileStatus {
+        source: ProfileSource::Stored,
+        ..status()
+    };
+    assert_eq!(
+        status_line_tone(&s, NOW),
+        ("Ready".to_string(), StatusTone::Ready)
+    );
 }
 
 /// M9.10.9 fix round 1 (review minor 2): each status line's tone comes from the status,

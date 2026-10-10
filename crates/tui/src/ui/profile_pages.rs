@@ -136,15 +136,29 @@ fn page_parts(
             );
             ("discard proposal".into(), true, wrap(&s.discard_text()), h)
         }
-        ProfilePage::Unset { key, .. } => (
-            format!("unset {key}"),
-            false,
-            wrap(&format!(
-                "the stored profile without {} becomes a proposal",
-                one_line(key)
-            )),
-            hints(&[("⏎", "unset"), ("esc", "back")]),
-        ),
+        ProfilePage::Unset { key, on_proposal } => {
+            // Final review M4: an unset is stored at once (decision 16), or once checked
+            // for a key whose change re-runs the verification; on the card it changes
+            // the proposal.
+            let target = if *on_proposal {
+                "this proposal"
+            } else {
+                "the profile"
+            };
+            let field = key.split('.').next().unwrap_or(key);
+            let checked = daemon::profile::proposal::REVERIFY_KEYS.contains(&field);
+            let text = format!(
+                "{} is removed from {target}{}",
+                crate::profile_words::label(key),
+                if checked { "; it is checked first" } else { "" }
+            );
+            (
+                format!("unset {key}"),
+                false,
+                wrap(&text),
+                hints(&[("⏎", "unset"), ("esc", "back")]),
+            )
+        }
         ProfilePage::RawText { text, .. } => {
             let body = multi_line(text)
                 .split('\n')

@@ -66,6 +66,10 @@ pub(crate) fn hints(s: &ProfileScreen) -> Vec<Hint> {
     if s.page.is_some() {
         return vec![hint("esc", "back", 9)];
     }
+    let rows = s.rows();
+    // Final review M1: with nothing listed (no stored profile), the row keys do nothing.
+    let unreadable = s.status.as_ref().is_some_and(|st| st.unparseable.is_some());
+    let nothing = rows.is_empty() && !unreadable && !s.showing_card();
     let mut list: Vec<(&str, &str)> = if s.showing_card() {
         vec![
             ("⏎", "use this"),
@@ -75,6 +79,16 @@ pub(crate) fn hints(s: &ProfileScreen) -> Vec<Hint> {
             ("o", "output"),
             ("x", "discard"),
         ]
+    } else if nothing {
+        // `d`'s `y` is refused while a set-up runs.
+        let mut list = Vec::new();
+        if !s.in_progress() {
+            list.push(("d", s.detect_title()));
+        }
+        if s.review_proposal() {
+            list.push(("x", "discard proposal"));
+        }
+        list
     } else {
         let mut list = vec![
             ("⏎", "open"),
@@ -89,6 +103,11 @@ pub(crate) fn hints(s: &ProfileScreen) -> Vec<Hint> {
         }
         list
     };
+    // Final review M2: `a` only where an Advanced line is listed (not on the changes
+    // card, which lists its rows unfolded).
+    if !rows.iter().any(|r| r.key == ADVANCED_ROW) {
+        list.retain(|(k, _)| *k != "a");
+    }
     if failed_selected(s) {
         list.extend([("s", "save anyway"), ("r", "revert")]);
     }

@@ -261,3 +261,21 @@ fn a_failed_proposal_edit_is_named_before_use_this() {
         assert!(text.contains(&f("failed its check;")), "{text}");
     }
 }
+
+/// Final review M6: over an unreadable stored profile the card's Enter is **Use this**,
+/// which replaces the file; the status line says that, not `⏎ shows it`.
+#[test]
+fn the_card_over_an_unreadable_file_says_enter_replaces_it() {
+    let mut app = fresh_app(false);
+    let s = screen_mut(&mut app);
+    let mut st = status_of(true, Some(ProposalState::Ready));
+    st.unparseable = Some("expected `]`".into());
+    s.status = Some(st);
+    assert!(s.showing_card());
+    let text = crate::ui::audit::rows(&audit::draw(&app, 120, 40)).join("\n");
+    assert!(
+        text.contains("Needs review — the profile file can't be read; ⏎ replaces it"),
+        "{text}"
+    );
+    assert!(!text.contains("⏎ shows it"), "{text}");
+}

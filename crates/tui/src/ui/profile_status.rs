@@ -47,9 +47,18 @@ fn status_role(tone: StatusTone) -> Role {
     }
 }
 
+/// The status line while the card shows over an unreadable stored profile.
+const UNREADABLE_CARD: &str = "Needs review — the profile file can't be read; ⏎ replaces it";
+
 /// The first row: the status line, right-aligned, cut from its left.
 pub(super) fn status_line(app: &App, s: &ProfileScreen, width: usize, p: Palette) -> Line<'static> {
     let (text, r) = match (&s.status, &s.status_failed) {
+        // Final review M6: on the card Enter is **Use this**, which replaces the file
+        // that cannot be read; the line says so in place of `⏎ shows it`.
+        (Some(status), _) if status.unparseable.is_some() && s.showing_card() => (
+            plain(UNREADABLE_CARD, p),
+            status_role(StatusTone::Attention),
+        ),
         (Some(status), _) => {
             let (line, tone) = profile_words::status_line_tone(status, app.run_now());
             (plain(&line, p), status_role(tone))
