@@ -302,9 +302,12 @@ pub(super) fn rung2(run: &mut Run, i: usize, reason: String, now: u64, fx: &mut 
     let task = &mut run.tasks[i];
     task.rung = 2;
     set_state(task, TaskState::Working, now);
+    // Stream E re-review N1: a fresh session already decided (a second rung 2 before it
+    // starts) hands on what it carries; the new reason replaces its reason only.
+    let kept = task.fresh_session.take().and_then(|f| f.append);
     let mut fresh = FreshSession {
         reason: reason.clone(),
-        append: None,
+        append: kept,
     };
     outbox::accumulate(&mut fresh, texts);
     task.fresh_session = Some(fresh);

@@ -369,3 +369,37 @@ fn a_retry_keeps_what_a_refused_fresh_session_carried() {
         "the retry's reason: {first_turn}"
     );
 }
+
+/// Stream E re-review N1: the automatic rung 2 can meet a fresh session already
+/// decided. A stall at its interrupt's deadline takes rung 2 (the session killed, the
+/// queued nudge and message in the fresh session's `append`); the run is paused and
+/// resumed before the killed process exits, and `restore::resume_worker` sees the
+/// round's expired interrupt again: a second stall, a second rung 2. The messages the
+/// first fresh session carried reach the session that starts, once.
+#[test]
+fn a_second_rung_2_keeps_what_the_first_fresh_session_carried() {
+    let (mut fx, window) = working_on(ROOMY);
+    let quiet = fx.task("t1").rounds[0].last_event;
+    fx.send(quiet + 601, EventKind::Tick);
+    queue(&mut fx, "[anthrex] keep the parser");
+    fx.send(quiet + 632, EventKind::Tick);
+    let t1 = fx.task("t1");
+    assert_eq!((t1.rung, t1.stalls), (2, 1));
+    let append = t1.fresh_session.as_ref().and_then(|f| f.append.clone());
+    let append = append.expect("the first rung 2 carried the mail");
+    assert!(append.ends_with("[anthrex] keep the parser"), "{append}");
+
+    edit(&mut fx, vec![proto::PlanEdit::Pause]);
+    super::control::resume(&mut fx);
+    let t1 = fx.task("t1");
+    assert_eq!(t1.stalls, 2, "the resume stalled the retiring round again");
+    let kept = t1.fresh_session.as_ref().and_then(|f| f.append.clone());
+    assert_eq!(kept.as_deref(), Some(append.as_str()), "the append is kept");
+
+    let first_turn = fresh_first_turn(&mut fx, window);
+    assert!(
+        first_turn.ends_with(&format!("\n\n{append}")),
+        "{first_turn}"
+    );
+    assert_eq!(first_turn.matches("keep the parser").count(), 1);
+}
