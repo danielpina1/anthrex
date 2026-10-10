@@ -136,6 +136,7 @@ fn profile_screen_pages_are_sanitised() {
         }),
         Some(ProfilePage::Unset {
             key: hostile.clone(),
+            on_proposal: false,
         }),
         Some(ProfilePage::Discard),
         Some(ProfilePage::Detect {
@@ -337,5 +338,40 @@ fn the_discard_page_is_destructive() {
         let &(x, y) = audit::find(&buffer, "j/k scroll").first().unwrap();
         assert_eq!(buffer[(x, y)].fg, accent, "{w}x{h}: the page's key");
         assert_ne!(buffer[(x + 4, y)].fg, failed, "{w}x{h}: its word");
+    }
+}
+
+/// Review M5 (fix round 1): a row page over a failed row edit draws its hostile value,
+/// reason and output sanitised, on the profile and on the card.
+#[test]
+fn a_failed_row_page_is_sanitised() {
+    let hostile = crate::safe_text::tests::hostile_text();
+    let mut app = app_with_profile(|p, _| p.check = Some(hostile.clone()));
+    for state in [Some(ProposalState::Verifying), Some(ProposalState::Ready)] {
+        let mut st = status_of(true, state);
+        if let Some(p) = st.proposal.as_mut() {
+            p.edit = Some(proto::RowEdit {
+                key: "check".into(),
+                value: Some(hostile.clone()),
+                state: proto::RowEditState::Failed {
+                    reason: hostile.clone(),
+                    tail: hostile.clone(),
+                    secs: 3,
+                },
+            });
+        }
+        let s = screen_mut(&mut app);
+        s.status = Some(st);
+        s.page = Some(ProfilePage::Row {
+            key: "check".into(),
+            scroll: 0,
+        });
+        for (w, h) in SIZES {
+            assert_eq!(
+                crate::safe_text::tests::first_hostile(&render_text(&app, w, h)),
+                None,
+                "{w}x{h}"
+            );
+        }
     }
 }

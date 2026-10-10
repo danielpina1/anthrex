@@ -201,12 +201,13 @@ impl App {
                     }
                     _ => {}
                 }
-                s.note_saved();
                 let now = Instant::now();
-                sides
+                let effects = sides
                     .into_iter()
                     .flat_map(|proposed| self.profile_show(proposed, now))
-                    .collect()
+                    .collect();
+                self.profile_note_saved();
+                effects
             }
             (
                 ProfileAsk::Show { proposed },
@@ -224,7 +225,7 @@ impl App {
                     dropped: dropped.clone(),
                 };
                 *s.side_mut(proposed) = Side::Ready(Box::new(shown));
-                s.note_saved();
+                self.profile_note_saved();
                 vec![]
             }
             (ProfileAsk::Show { proposed }, ProfileReply::Refused { message }) => {
@@ -247,12 +248,27 @@ impl App {
             (_, ProfileReply::Done { message }) => {
                 s.message = Some(message.clone());
                 s.error = None;
-                if ask != ProfileAsk::Edit {
-                    s.saving = None;
+                match (ask, s.saving.as_mut()) {
+                    (ProfileAsk::Edit, Some(saving)) => saving.done = true,
+                    _ => s.saving = None,
                 }
                 self.profile_fetch_all(Instant::now())
             }
             _ => vec![],
+        }
+    }
+
+    /// Decision 31: whether the watched edit ended, once the latest status and its
+    /// side's latest view are both back (`ProfileScreen::note_saved`).
+    fn profile_note_saved(&mut self) {
+        let Some(Screen::Profile(s)) = &self.screen else {
+            return;
+        };
+        let side = s.saving.as_ref().map_or(0, |v| usize::from(v.on_proposal));
+        let out = |id: Option<u64>| id.is_some_and(|id| self.replies.contains(id));
+        let settled = !out(s.status_id) && !out(s.show_id[side]);
+        if let Some(s) = self.profile_screen_mut() {
+            s.note_saved(settled);
         }
     }
 }

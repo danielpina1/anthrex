@@ -250,7 +250,8 @@ fn u_unsets_after_its_page() {
     assert_eq!(
         screen(&app).page,
         Some(ProfilePage::Unset {
-            key: "setup".into()
+            key: "setup".into(),
+            on_proposal: false,
         })
     );
     assert!(tap(&mut app, KeyCode::Esc).is_empty());
@@ -309,7 +310,11 @@ fn an_edit_refused_during_a_live_run_shows_the_daemons_text() {
 
 /// A status whose `Edit`-origin proposal (a row edit of the stored profile) carries
 /// `edit` of `check` = `value` in `state`.
-fn row_edit_status(proposal: ProposalState, value: &str, state: RowEditState) -> ProfileReply {
+pub(super) fn row_edit_status(
+    proposal: ProposalState,
+    value: &str,
+    state: RowEditState,
+) -> ProfileReply {
     status_with(Some(proposal), |st| {
         if let Some(p) = st.proposal.as_mut() {
             p.origin = ProposalOrigin::Edit {
@@ -415,6 +420,12 @@ fn a_failed_row_offers_save_anyway_and_revert() {
             on_proposal: false,
         }]
     );
+    // `r` once `s` has its reply (a second key waits for the first's).
+    let id = tagged(&effects)[0].0;
+    let refused = ProfileReply::Refused {
+        message: "finish or cancel the run in this repo to change its profile".into(),
+    };
+    reply(&mut app, id, refused);
     let effects = tap(&mut app, KeyCode::Char('r'));
     assert_eq!(
         profile_requests(&effects),

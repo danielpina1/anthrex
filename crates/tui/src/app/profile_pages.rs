@@ -35,6 +35,7 @@ pub(super) fn editor_for(key: &str, text: &str) -> Editor {
         key: key.to_string(),
         field,
         error: None,
+        on_proposal: false,
     }
 }
 
@@ -81,13 +82,12 @@ impl App {
             return vec![];
         }
         let dir = s.dir.clone();
-        let on_proposal = s.showing_card();
         // The lines a scrolled page can scroll through.
         let tail_lines = match &s.page {
             Some(ProfilePage::Row { key, .. }) => output_lines(s, key),
             _ => 0,
         };
-        let edit = |key: String, value: Option<String>| ProfileRequest::Edit {
+        let edit = |key: String, value: Option<String>, on_proposal: bool| ProfileRequest::Edit {
             dir: dir.clone(),
             key,
             value,
@@ -145,9 +145,10 @@ impl App {
                 warn = enter.then_some("press y to discard");
                 None
             }
-            Some(ProfilePage::Unset { key: unset }) if y || enter => {
-                Some((ProfileAsk::Edit, edit(unset.clone(), None)))
-            }
+            Some(ProfilePage::Unset {
+                key: unset,
+                on_proposal,
+            }) if y || enter => Some((ProfileAsk::Edit, edit(unset.clone(), None, *on_proposal))),
             Some(ProfilePage::Unset { .. }) => None,
             Some(ProfilePage::RawText { text, scroll }) => {
                 scroll_by(scroll, key.code, text.lines().count());
@@ -163,7 +164,10 @@ impl App {
                     return vec![];
                 }
                 match edit_of(editor) {
-                    Ok((key, value)) => Some((ProfileAsk::Edit, edit(key, Some(value)))),
+                    Ok((key, value)) => {
+                        let on_proposal = editor.on_proposal;
+                        Some((ProfileAsk::Edit, edit(key, Some(value), on_proposal)))
+                    }
                     Err(why) => {
                         editor.error = Some(why);
                         None
@@ -186,12 +190,16 @@ impl App {
         if let Some(s) = self.profile_screen_mut() {
             s.page = None;
             // Decision 31: the edit's outcome is watched for `saved <label>`.
-            if let ProfileRequest::Edit { key, .. } = &request {
-                let before = s.value_on(on_proposal, key);
+            if let ProfileRequest::Edit {
+                key, on_proposal, ..
+            } = &request
+            {
+                let before = s.value_on(*on_proposal, key);
                 s.saving = Some(Saving {
                     key: key.clone(),
-                    on_proposal,
+                    on_proposal: *on_proposal,
                     before,
+                    done: false,
                 });
             }
         }

@@ -20,6 +20,12 @@ impl App {
         if s.page.is_some() {
             return self.on_profile_page_key(key);
         }
+        // `s`, `r` and **Use this** wait for the last one's reply (review M1).
+        let last_act = s.acting;
+        let acting = last_act.is_some_and(|id| self.replies.contains(id));
+        let Some(s) = self.profile_screen_mut() else {
+            return vec![];
+        };
         let rows = s.rows();
         let row = rows.get(s.selected).cloned();
         let last = rows.len().saturating_sub(1);
@@ -32,6 +38,7 @@ impl App {
             KeyCode::PageDown => s.selected = (s.selected + 10).min(last),
             KeyCode::PageUp => s.selected = s.selected.saturating_sub(10),
             KeyCode::Char('a') => toggle_advanced(s),
+            KeyCode::Enter if card && acting => {}
             KeyCode::Enter if card => return self.profile_use_this(),
             KeyCode::Enter => match &row {
                 Some(r) if r.key == ADVANCED_ROW => toggle_advanced(s),
@@ -42,11 +49,10 @@ impl App {
                     });
                 }
                 None => {
+                    // Decision 30: the file's text exactly (decision 32), nothing else.
                     if let Some(status) = s.status.as_ref().filter(|st| st.unparseable.is_some()) {
-                        let text = status.unreadable_text.clone();
-                        let text = text.or_else(|| status.unparseable.clone());
                         s.page = Some(ProfilePage::RawText {
-                            text: text.unwrap_or_default(),
+                            text: status.unreadable_text.clone().unwrap_or_default(),
                             scroll: 0,
                         });
                     }
@@ -61,13 +67,16 @@ impl App {
                         .filter(|_| row.key != ENV_ADD)
                         .map(|p| profile_view::edit_text(p, &row.key))
                         .unwrap_or_default();
-                    s.page = Some(ProfilePage::Edit(Box::new(editor_for(&row.key, &text))));
+                    let mut editor = editor_for(&row.key, &text);
+                    editor.on_proposal = card;
+                    s.page = Some(ProfilePage::Edit(Box::new(editor)));
                 }
             }
             KeyCode::Char('u') => {
                 if let Some(row) = on_row.filter(|r| r.key != ENV_ADD) {
                     s.page = Some(ProfilePage::Unset {
                         key: row.key.clone(),
+                        on_proposal: card,
                     });
                 }
             }
@@ -87,6 +96,7 @@ impl App {
                     focus: 0,
                 });
             }
+            KeyCode::Char('s' | 'r') if acting => {}
             KeyCode::Char(c @ ('s' | 'r')) => {
                 let failed = on_row.and_then(|r| failed_edit(s, &r.key)).cloned();
                 if let Some(edit) = failed {
@@ -115,7 +125,7 @@ impl App {
             dir: s.dir.clone(),
             shown: Some(shown.toml.clone()),
         };
-        self.profile_send_now(ProfileAsk::Confirm, request)
+        self.profile_act(ProfileAsk::Confirm, request)
     }
 
     /// Decisions 18 and 19: `s` stores (or applies) the failed edit anyway; `r` reverts.
@@ -124,9 +134,11 @@ impl App {
             return vec![];
         };
         let dir = s.dir.clone();
+        // Their outcome is the daemon's text ("stored although its check failed", or
+        // the revert's), never `saved <label>` (decision 31: only on ✓).
+        s.saving = None;
         if !anyway {
-            return self
-                .profile_send_now(ProfileAsk::RevertEdit, ProfileRequest::RevertEdit { dir });
+            return self.profile_act(ProfileAsk::RevertEdit, ProfileRequest::RevertEdit { dir });
         }
         let request = ProfileRequest::Edit {
             dir,
@@ -137,7 +149,18 @@ impl App {
             anyway: true,
             on_proposal: s.review_proposal(),
         };
-        self.profile_send_now(ProfileAsk::Edit, request)
+        self.profile_act(ProfileAsk::Edit, request)
+    }
+
+    /// `s`, `r` or **Use this**, recorded so another waits for its reply.
+    fn profile_act(&mut self, ask: ProfileAsk, request: ProfileRequest) -> Vec<Effect> {
+        let effects = self.profile_send_now(ask, request);
+        if let (Some(s), [Effect::Send(proto::ClientMsg::RunTagged { id, .. })]) =
+            (self.profile_screen_mut(), effects.as_slice())
+        {
+            s.acting = Some(*id);
+        }
+        effects
     }
 
     /// One request from a key, unless the link is down (minor 4).

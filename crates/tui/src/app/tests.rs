@@ -137,6 +137,9 @@ mod profile_screen_views;
 #[path = "../app_tests/profile_card.rs"]
 mod profile_card;
 
+#[path = "../app_tests/profile_row_actions.rs"]
+mod profile_row_actions;
+
 #[path = "../app_tests/polish/mod.rs"]
 mod polish;
 

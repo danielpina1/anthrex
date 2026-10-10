@@ -73,6 +73,9 @@ pub struct Editor {
     pub key: String,
     pub field: EditorField,
     pub error: Option<String>,
+    /// The side it edits, fixed when it opened: the proposal (opened on the card) or
+    /// the stored profile; the card coming or going meanwhile does not move it.
+    pub on_proposal: bool,
 }
 
 /// A dialog over the screen.
@@ -87,6 +90,8 @@ pub enum ProfilePage {
     Discard,
     Unset {
         key: String,
+        /// As `Editor::on_proposal`.
+        on_proposal: bool,
     },
     /// Decisions 30 and 32: the unreadable profile file's text, exactly.
     RawText {
@@ -115,12 +120,14 @@ pub enum ProfileAsk {
 
 /// An edit sent from the screen whose outcome is not known yet: once its check passes
 /// (no row edit left) and its side's value moved from `before`, the message row says
-/// `saved <label>` (decision 31).
+/// `saved <label>` (decision 31). Forgotten once its outcome is known either way.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Saving {
     pub key: String,
     pub on_proposal: bool,
     pub before: Option<String>,
+    /// Its `Done` came (the views asked after it say how it ended).
+    pub done: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -149,6 +156,8 @@ pub struct ProfileScreen {
     /// decision 37), so one sent before a detection never draws the old proposal.
     pub(crate) show_id: [Option<u64>; 2],
     pub(crate) saving: Option<Saving>,
+    /// The request id of the last `s`, `r` or **Use this**: another waits for its reply.
+    pub(crate) acting: Option<u64>,
 }
 
 /// Interfaces-style refusal of `C-b a`, `C-b m` and `C-b t` over a full screen.
@@ -173,6 +182,7 @@ impl ProfileScreen {
             show_sent_at: [None; 2],
             show_id: [None; 2],
             saving: None,
+            acting: None,
         }
     }
 
@@ -334,13 +344,18 @@ impl ProfileScreen {
         )
     }
 
-    /// Decision 31: an edit sent from here passed: no row edit is left for it and its
-    /// side's value moved. Says `saved <label>` once.
-    fn note_saved(&mut self) {
+    /// Decision 31: an edit sent from here ended: no row edit is left for it, and the
+    /// status and its side arrived after its `Done` (`settled`: nothing asked since is
+    /// still out). A moved value says `saved <label>`; either way it is forgotten.
+    pub(super) fn note_saved(&mut self, settled: bool) {
         let Some(saving) = &self.saving else {
             return;
         };
-        if self.status.is_none() || self.row_edit().is_some_and(|e| e.key == saving.key) {
+        if !saving.done
+            || !settled
+            || self.status.is_none()
+            || self.row_edit().is_some_and(|e| e.key == saving.key)
+        {
             return;
         }
         let side = if saving.on_proposal {
@@ -357,8 +372,8 @@ impl ProfileScreen {
                 crate::profile_words::label(&saving.key)
             ));
             self.error = None;
-            self.saving = None;
         }
+        self.saving = None;
     }
 }
 

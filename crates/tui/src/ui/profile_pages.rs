@@ -136,7 +136,7 @@ fn page_parts(
             );
             ("discard proposal".into(), true, wrap(&s.discard_text()), h)
         }
-        ProfilePage::Unset { key } => (
+        ProfilePage::Unset { key, .. } => (
             format!("unset {key}"),
             false,
             wrap(&format!(
