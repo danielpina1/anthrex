@@ -55,7 +55,7 @@ pub use handback::{
     HandBack, MERGED_LIST_MAX, MergedCommits, UNCOMMITTED, hand_back, hand_back_listing,
     tracked_changes,
 };
-pub use import::{HeadFile, head_file, rebase_in_progress, sync};
+pub use import::{HeadFile, head_file, rebase_in_progress, salvage_gone, sync};
 pub use merge::{
     ACCEPT_LIST_MAX, AcceptOutcome, CandidateStep, RefCheck, cas_update, commit_tree,
     commits_since, guard_refs, materialize, merge_tree, read_ref, reattach, run_work_on_base,

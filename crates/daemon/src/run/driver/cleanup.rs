@@ -63,7 +63,15 @@ pub(super) async fn remove_keeping(
     reference: String,
     keep_head: bool,
 ) -> Result<Option<String>, String> {
-    let salvaged = salvage_in(service, ctx, path.clone(), reference, keep_head).await?;
+    let salvaged = salvage_at(
+        service,
+        ctx,
+        root.clone(),
+        path.clone(),
+        reference,
+        keep_head,
+    )
+    .await?;
     // Final fix batch F1c: a standalone checkout goes with its repository (the
     // worker's private objects, the engine's own files, its temporary directory).
     let repo = git::checkout_repo_dir(&ctx.data_dir, &path);
@@ -76,7 +84,8 @@ pub(super) async fn remove_keeping(
 }
 
 /// Decision 20's salvage alone, `keep_head` as [`remove_keeping`]'s: `Some(ref)` when
-/// it made one. A worktree already gone has nothing to salvage.
+/// it made one. A worktree already gone is salvaged from its repository, in the run's
+/// project ([`salvage_at`]).
 pub(super) async fn salvage_in(
     service: &Arc<RunService>,
     ctx: &OpCtx,
@@ -84,10 +93,31 @@ pub(super) async fn salvage_in(
     reference: String,
     keep_head: bool,
 ) -> Result<Option<String>, String> {
-    if !path.exists() {
-        return Ok(None);
-    }
+    let project = ctx.project.clone();
+    salvage_at(service, ctx, project, path, reference, keep_head).await
+}
+
+/// [`salvage_in`] in the user's repository at `root`. A task checkout the user deleted
+/// still has its repository, whose `HEAD` and private objects hold the worker's
+/// commits: they are kept under `reference` before anything removes it (milestone 9.11
+/// decision 13, `git::salvage_gone`).
+async fn salvage_at(
+    service: &Arc<RunService>,
+    ctx: &OpCtx,
+    root: PathBuf,
+    path: PathBuf,
+    reference: String,
+    keep_head: bool,
+) -> Result<Option<String>, String> {
     let message = salvage_message(&ctx.run_id, &reference);
+    if !path.exists() {
+        let repo = git::checkout_repo_dir(&ctx.data_dir, &path);
+        return service
+            .write(ctx, move |g, t| {
+                git::salvage_gone(g, &root, &repo, &reference, &message, t)
+            })
+            .await;
+    }
     service
         .write(ctx, move |g, t| {
             git::salvage(g, &path, &reference, &message, keep_head, t)
@@ -181,7 +211,144 @@ pub(super) async fn clean_up(
 
 #[cfg(test)]
 mod tests {
-    use super::salvage_message;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use super::{remove_keeping, salvage_message};
+    use crate::manager::{ManagerConfig, WindowManager};
+    use crate::run::driver::{GitRoots, OpCtx, RunService};
+    use crate::run::git;
+
+    const T: Duration = Duration::from_secs(30);
+
+    struct NoRoots;
+    impl GitRoots for NoRoots {
+        fn register(&self, _: PathBuf) {}
+        fn unregister(&self, _: &Path) {}
+    }
+
+    /// git in `dir` with none of the machine's configuration; its stdout, trimmed.
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args([
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                "core.hooksPath=/dev/null",
+            ])
+            .args(args)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
+            .env_remove("GIT_COMMON_DIR")
+            .env_remove("GIT_PREFIX")
+            .env_remove("GIT_OBJECT_DIRECTORY")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {out:?}");
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    }
+
+    /// A repository with its own identity, task `t1`'s checkout of run `r1` (its own
+    /// repository in the run's data directory, as `PrepareWorktree` makes it), the
+    /// service and the op context.
+    struct Rig {
+        _tmp: tempfile::TempDir,
+        root: PathBuf,
+        task: PathBuf,
+        repo: PathBuf,
+        service: Arc<RunService>,
+        ctx: OpCtx,
+    }
+
+    impl Rig {
+        fn new() -> Rig {
+            let tmp = tempfile::tempdir().unwrap();
+            let top = tmp.path().canonicalize().unwrap();
+            let root = top.join("repo");
+            std::fs::create_dir_all(&root).unwrap();
+            git(&root, &["init", "-q", "-b", "main"]);
+            git(&root, &["config", "user.name", "t"]);
+            git(&root, &["config", "user.email", "t@t"]);
+            std::fs::write(root.join("a.txt"), "a\n").unwrap();
+            git(&root, &["add", "-A"]);
+            git(&root, &["commit", "-q", "-m", "base"]);
+            let base = git(&root, &["rev-parse", "HEAD"]);
+            let data_dir = top.join("data/runs/r1");
+            let task = top.join("wt/runs/r1/t1");
+            let repo = git::checkout_repo_dir(&data_dir, &task);
+            let g = std::ffi::OsStr::new("git");
+            git::prepare_task_worktree(g, &root, "anthrex/r1/t1", &base, &task, &repo, T).unwrap();
+            let config = ManagerConfig::for_tests("/tmp/ax-unused.sock".into(), "/bin/sh".into());
+            let (manager, _events) = WindowManager::new(config);
+            let run_ctx = crate::run::driver::RunContext::new(
+                top.join("data"),
+                manager.config(),
+                config::Orchestrator::default(),
+                Arc::new(NoRoots),
+            );
+            let ctx = OpCtx {
+                run_id: "r1".into(),
+                project: root.clone(),
+                data_dir,
+                git_timeout: T,
+                check_timeout: T,
+                confine: None,
+            };
+            let service = RunService::new(manager, run_ctx);
+            Rig {
+                _tmp: tmp,
+                root,
+                task,
+                repo,
+                service,
+                ctx,
+            }
+        }
+
+        /// `remove_keeping` of the task's checkout, salvaging to `<run>/t1/1`.
+        fn remove(&self) -> Result<Option<String>, String> {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(remove_keeping(
+                &self.service,
+                &self.ctx,
+                self.root.clone(),
+                self.task.clone(),
+                "refs/anthrex/salvage/r1/t1/1".into(),
+                false,
+            ))
+        }
+    }
+
+    /// Milestone 9.11 decision 13 (A3), through the driver: a checkout the user deleted
+    /// keeps its worker's commits under the salvage ref, then its repository goes.
+    #[test]
+    fn a_deleted_checkout_is_salvaged_before_its_repository_goes() {
+        let rig = Rig::new();
+        std::fs::write(rig.task.join("w.txt"), "work\n").unwrap();
+        git(&rig.task, &["add", "-A"]);
+        git(&rig.task, &["commit", "-q", "-m", "worker"]);
+        let worker = git(&rig.task, &["rev-parse", "HEAD"]);
+        std::fs::remove_dir_all(&rig.task).unwrap();
+
+        let reference = "refs/anthrex/salvage/r1/t1/1";
+        assert_eq!(rig.remove(), Ok(Some(reference.to_string())));
+        assert_eq!(git(&rig.root, &["rev-parse", reference]), worker);
+        assert_eq!(
+            git(&rig.root, &["show", &format!("{reference}:w.txt")]),
+            "work"
+        );
+        assert!(!rig.repo.exists(), "the checkout's repository was kept");
+    }
 
     #[test]
     fn the_salvage_message_names_the_task() {
