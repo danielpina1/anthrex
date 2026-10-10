@@ -11,6 +11,7 @@ mod asks;
 mod bisect;
 mod budgets;
 mod cancel_work;
+mod carried_messages;
 mod chains;
 mod chains_continue;
 mod chains_delivered;

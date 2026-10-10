@@ -453,6 +453,15 @@ pub(super) fn rung2(
     }
     ladder::kill_worker(run, i, fx);
     review::stop_reviewers(run, i, now, fx);
+    // Milestone 9.11 decision 4: the mail a blocked task held goes to its fresh session.
+    let restarts = {
+        let task = &run.tasks[i];
+        task.start_commit.is_some() && !super::schedule::is_reader_task(task)
+    };
+    let texts = match restarts {
+        true => ladder::take_queued(run, i),
+        false => Vec::new(),
+    };
     let task = &mut run.tasks[i];
     // A launch the restart lost belongs to the session being replaced.
     for round in task.rounds.iter_mut().filter(|r| r.relaunch.is_some()) {
@@ -492,10 +501,12 @@ pub(super) fn rung2(
         }
         "it is dispatched again"
     } else {
-        task.fresh_session = Some(FreshSession {
+        let mut fresh = FreshSession {
             reason: why,
             append: None,
-        });
+        };
+        super::outbox::accumulate(&mut fresh, texts);
+        task.fresh_session = Some(fresh);
         if task.awaiting_deps {
             task.held_answered = true;
             "the run head is merged into its worktree first"

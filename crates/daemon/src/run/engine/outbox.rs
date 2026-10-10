@@ -311,7 +311,7 @@ fn delivered_to(
 
 /// Ruling T12-I3: messages for a fresh session still to start join the end of its
 /// prompt, in order, after any already there.
-fn accumulate(fresh: &mut FreshSession, texts: Vec<String>) {
+pub(super) fn accumulate(fresh: &mut FreshSession, texts: Vec<String>) {
     if texts.is_empty() {
         return;
     }
