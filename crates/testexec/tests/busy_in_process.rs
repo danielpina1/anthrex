@@ -4,7 +4,9 @@
 //! descriptor, any fork another test thread takes (a `spawn`, a `write_executable`, a
 //! [`StalledFork`]) inherits that descriptor too, and keeps the script busy after this
 //! test's own fork is released: 51 of 200 runs failed that way when it shared `busy.rs`.
-//! Here the only fork is the test's own [`StalledFork`].
+//! Here the only fork is the test's own [`StalledFork`]. Linux only: macOS does not
+//! refuse to exec a file open for writing.
+#![cfg(target_os = "linux")]
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
@@ -21,8 +23,7 @@ fn run(script: &Path) -> std::io::Result<std::process::ExitStatus> {
 /// The pattern every stand-in used before: written in this process, closed, chmod'ed and
 /// renamed into place. A fork taken while the write descriptor was open keeps a copy of
 /// it, on the same inode the rename put at `path`, so the exec is refused until that
-/// child execs. Linux only: macOS does not refuse to exec a file open for writing.
-#[cfg(target_os = "linux")]
+/// child execs.
 #[test]
 fn a_script_written_in_process_is_busy_while_a_fork_holds_its_descriptor_renamed_or_not() {
     use std::io::Write;
