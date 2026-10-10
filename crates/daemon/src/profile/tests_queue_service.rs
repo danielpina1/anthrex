@@ -416,3 +416,23 @@ async fn the_snapshot_generation_moves_with_the_queue_and_the_progress() {
         "the generation went down when the job ended"
     );
 }
+
+/// M9.10.5: `profile status` gives the queued goals the set-up of the proposal it
+/// shows. The proposal's file is written before memory notes it, so a status read in
+/// between found `Ready` on disk and the goals still `Checking`.
+#[tokio::test(flavor = "multi_thread")]
+async fn status_gives_the_queued_goals_the_shown_proposals_set_up() {
+    let rig = Rig::new();
+    let project = repo(rig.dir.path(), "app");
+    rig.profiles
+        .queue_goal(goal(&project, "add a flag", false))
+        .await
+        .unwrap();
+    // On disk only, as `save_if_current` leaves it before its `note_proposal`.
+    let dir = rig.repo_dir(&project);
+    let ready = record(&project, ProposalState::Ready, 1_790_000_000);
+    store::save_proposal(&dir, &ready).unwrap();
+    let status = status(&rig.profiles, &project).await;
+    assert_eq!(status.queued.len(), 1);
+    assert_eq!(status.queued[0].setup, SetupState::NeedsReview);
+}

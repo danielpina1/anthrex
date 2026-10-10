@@ -27,7 +27,7 @@ use crate::run::orch::result::{TaskGit, task_result};
 use crate::run::orch::tools::{OrchCall, parse_call};
 
 #[path = "chain_goal.rs"]
-mod chain_goal;
+pub(in crate::run::driver) mod chain_goal;
 #[path = "chain_ops.rs"]
 mod chain_ops;
 pub(super) use chain_goal::Next;
@@ -148,13 +148,21 @@ impl RunService {
         (snap, generation)
     }
 
-    /// Whether the ready proposals changed since the last push (decision 10).
+    /// Whether the ready proposals changed since the last push (decision 10). When
+    /// they did, the engine's revision moves too (milestone 9.10 decision 10), as a
+    /// change of the chain table alone moves it: a subscriber's `forward` drops every
+    /// snapshot whose revision it has already sent, so a profile-only change would
+    /// otherwise never reach a client.
     pub(super) fn proposals_moved(&self) -> bool {
         let Some(adaptation) = self.adaptation.get() else {
             return false;
         };
         let generation = adaptation.profiles.snapshot_generation();
-        generation != crate::lock(&self.book).proposals_published
+        let moved = generation != crate::lock(&self.book).proposals_published;
+        if moved {
+            crate::lock(&self.state).revision += 1;
+        }
+        moved
     }
 
     /// Decision 28: `run approve|reject --hold`, the only way a hold is decided.

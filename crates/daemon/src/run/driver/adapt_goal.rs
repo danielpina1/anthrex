@@ -12,7 +12,7 @@ use std::time::Duration;
 use proto::run_wire::request;
 use proto::{
     DeciderMode, DeliveryMode, DesignMode, HistoryLine, OrchestratorChoice, Plan, ProfileSpec,
-    ProposalOrigin, ProposalState, RepoProfile, RoleRoutingInput, RunPath, RunReply, TriageInfo,
+    ProposalState, RepoProfile, RoleRoutingInput, RunPath, RunReply, TriageInfo,
 };
 
 use super::super::build::{Planned, Shape, TuneOnce};
@@ -22,7 +22,7 @@ use super::{Adaptation, read_evidence, unparseable};
 use crate::decider::call::decide;
 use crate::decider::fallback::{OFF_REASON, fallback_decision};
 use crate::decider::{DeciderKind::Triage, DeciderRequest, Decision, TriageInput};
-use crate::profile::service::{Effective, state_label};
+use crate::profile::service::Effective;
 use crate::run::confine;
 use crate::run::design::{GoalOrigin, mode_for};
 use crate::run::engine::{EventKind, HISTORY_FILE};
@@ -73,20 +73,9 @@ impl BuildError {
     }
 }
 
-/// Decision 22 step 2's first refusal (and the one that starts detection).
-pub const DETECTION_STARTED: &str = "this repository has no stored profile; detection has started (anthrex profile status), then confirm it with anthrex profile confirm and start the goal again";
-/// … with `onboarding.auto` off.
-pub const DETECT_FIRST: &str = "this repository has no stored profile; run anthrex profile detect, then anthrex profile confirm";
-/// … with a proposal ready.
-pub const PROPOSAL_READY: &str = "this repository has no stored profile; a proposal is ready: anthrex profile show --proposed, then anthrex profile confirm";
-
-/// … while a proposal is in progress.
-fn detection_running(state: &ProposalState) -> String {
-    format!(
-        "this repository has no stored profile; detection is {} (anthrex profile status)",
-        state_label(state)
-    )
-}
+/// Milestone 9.10 decision 13: a continued goal (`--continue`) cannot wait in a queue,
+/// since its chain's orchestrator is running; with no stored profile it is refused.
+pub const CONTINUE_NEEDS_PROFILE: &str = "this repository has no stored profile any more; start a new goal (anthrex run start --goal) to set it up";
 
 async fn blocking<T: Send + 'static>(
     f: impl FnOnce() -> Result<T, String> + Send + 'static,
@@ -111,22 +100,42 @@ pub(in crate::run::driver) struct GoalReady {
     pub frozen: Frozen,
 }
 
+/// Why a goal is not ready to triage: a refusal in `run start --goal`'s words, or
+/// (milestone 9.10 decision 12) no stored profile, which queues the goal.
+pub(in crate::run::driver) enum GoalNotReady {
+    Refused(String),
+    NoProfile {
+        pre: Preflight,
+        proposal: Option<ProposalState>,
+    },
+}
+
+impl From<String> for GoalNotReady {
+    fn from(message: String) -> Self {
+        GoalNotReady::Refused(message)
+    }
+}
+
 impl RunService {
     /// Decision 22's steps 1 and 2, and the delivery's preflight (milestone 9.2
-    /// decision 17), in that order, each refusal as `run start --goal` words it.
+    /// decision 17), in that order, each refusal as `run start --goal` words it. The
+    /// trust flag is the caller's, for the set-up of a goal with no profile (milestone
+    /// 9.10 decision 12).
     pub(in crate::run::driver) async fn goal_ready(
         &self,
         goal: &str,
         dir: &Path,
-        (trust_project, unconfined_checks): (bool, bool),
+        (_, unconfined_checks): (bool, bool),
         delivery: Option<DeliveryMode>,
-    ) -> Result<GoalReady, String> {
+    ) -> Result<GoalReady, GoalNotReady> {
         // Review m2: a blank goal never spends a triage call.
         if let Some(refusal) = triage::blank_goal(goal) {
-            return Err(refusal);
+            return Err(refusal.into());
         }
         let Some(adaptation) = self.adaptation.get() else {
-            return Err("the profile service is not running".to_string());
+            return Err(GoalNotReady::Refused(
+                "the profile service is not running".to_string(),
+            ));
         };
         // 1. M8a's early refusals, exactly as `build_plan` applies them.
         let live = self.ctx.settings.current();
@@ -135,18 +144,20 @@ impl RunService {
         if let Some(refusal) =
             confine::start_refusal(config.worker_sandbox, confine::available(), allowed)
         {
-            return Err(refusal);
+            return Err(refusal.into());
         }
         let timeout = Duration::from_secs(config.git_timeout_secs);
         let (g, d) = (self.ctx.git.clone(), dir.to_path_buf());
         let pre = blocking(move || git::preflight(&g, &d, timeout)).await?;
-        // 2. A stored profile, or the reason there is none.
+        // 2. A stored profile, or (milestone 9.10 decision 12) none: the caller queues
+        // the goal, or refuses a continued one (decision 13).
         let (profile, report) = match adaptation.profiles.effective(&pre.project).await {
             Effective::Stored { profile, meta, .. } => (profile, meta.report),
-            Effective::Unparseable { path, error } => return Err(unparseable(&path, &error)),
+            Effective::Unparseable { path, error } => {
+                return Err(unparseable(&path, &error).into());
+            }
             Effective::Absent { proposal } => {
-                let flags = (trust_project, unconfined_checks);
-                return Err(no_profile(adaptation, &pre, proposal, flags).await);
+                return Err(GoalNotReady::NoProfile { pre, proposal });
             }
         };
         // Milestone 9.2 decision 17: preflight before triage, so a refusal costs no
@@ -185,10 +196,48 @@ impl RunService {
             return refused(format!("orchestrator.effort: {problem}"));
         }
         let flags = (trust_project, unconfined_checks);
-        let ready = match self.goal_ready(&goal, &dir, flags, delivery).await {
-            Ok(ready) => ready,
-            Err(message) => return refused(message),
+        let (ready, stored) = match self.goal_ready(&goal, &dir, flags, delivery).await {
+            Ok(ready) => (ready, String::new()),
+            Err(GoalNotReady::Refused(message)) => return refused(message),
+            // Milestone 9.10 decision 9: a `--yes` goal stores a ready proposal at once.
+            Err(GoalNotReady::NoProfile {
+                pre,
+                proposal: Some(ProposalState::Ready),
+            }) if yes => match self.use_ready_for(&pre, &goal, &dir, flags, delivery).await {
+                Ok(pair) => pair,
+                Err(message) => return refused(message),
+            },
+            // Decision 12: the goal waits for the profile.
+            Err(GoalNotReady::NoProfile { pre, proposal }) => {
+                let start = NoProfileStart {
+                    pre,
+                    proposal,
+                    goal,
+                    dir,
+                    flags,
+                    yes,
+                    choices: (orchestrator, delivery, design),
+                };
+                return self.queue_goal_start(start).await;
+            }
         };
+        let choices = (orchestrator, design);
+        let reply = self
+            .start_ready(goal, dir, flags, yes, choices, ready)
+            .await;
+        stored_first(reply, &stored)
+    }
+
+    /// Decision 22, steps 3 to 6, for a goal that passed steps 1 and 2.
+    async fn start_ready(
+        &self,
+        goal: String,
+        dir: PathBuf,
+        (trust_project, unconfined_checks): (bool, bool),
+        yes: bool,
+        (orchestrator, design): (Option<OrchestratorChoice>, Option<DesignMode>),
+        ready: GoalReady,
+    ) -> RunReply {
         let GoalReady {
             pre,
             profile,
@@ -475,36 +524,9 @@ impl RunService {
     }
 }
 
-/// Decision 22 step 2's refusal for a repository with no stored profile. With
-/// `onboarding.auto` on and nothing pending, detection starts first (with the goal's
-/// own `--trust-project` and `--unconfined-checks`); its refusals are stored as the
-/// proposal's `Failed` reason.
-async fn no_profile(
-    adaptation: &Adaptation,
-    pre: &Preflight,
-    proposal: Option<ProposalState>,
-    (trust_project, unconfined_checks): (bool, bool),
-) -> String {
-    match proposal {
-        Some(ProposalState::Ready) => PROPOSAL_READY.to_string(),
-        Some(
-            state @ (ProposalState::Preparing | ProposalState::Scouting | ProposalState::Verifying),
-        ) => detection_running(&state),
-        None | Some(ProposalState::Failed { .. }) => {
-            if !adaptation.profiles.onboarding_auto() {
-                return DETECT_FIRST.to_string();
-            }
-            adaptation
-                .profiles
-                .detect_or_record(pre, ProposalOrigin::Goal, trust_project, unconfined_checks)
-                .await;
-            DETECTION_STARTED.to_string()
-        }
-    }
-}
-
 #[path = "goal_queue.rs"]
 mod queue;
+use queue::{NoProfileStart, stored_first};
 
 #[cfg(test)]
 #[path = "adapt_goal_tests.rs"]

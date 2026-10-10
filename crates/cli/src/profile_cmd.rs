@@ -45,8 +45,9 @@ enum ProfileCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Store the ready proposal
-    Confirm {
+    /// Use the ready proposal: store it, then start any queued goals
+    #[command(alias = "confirm")]
+    Use {
         /// Do not ask first
         #[arg(long)]
         yes: bool,
@@ -142,7 +143,7 @@ async fn dispatch(
             let reply = request(&mut client, ProfileRequest::Show { dir, proposed }).await?;
             show(reply, json)
         }
-        ProfileCommand::Confirm { yes } => {
+        ProfileCommand::Use { yes } => {
             let shown = request(
                 &mut client,
                 ProfileRequest::Show {

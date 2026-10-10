@@ -648,6 +648,17 @@ The goal queue's service tests (`crates/daemon/src/profile/tests_queue_service.r
 |---|---|---|---|---|
 | The drain waits (`a_queued_goal_waits_and_a_confirm_starts_it`, `a_failed_start_is_dropped_with_its_reason`, `after_ready_stores_…`, `restore_keeps_the_queue_and_drains_…`, `restore_drops_a_goal_whose_directory_is_gone`) | `daemon/src/profile/tests_queue_service.rs` (`REQUEST_WAIT`) | 75 s, a deadline loop every 20 ms | A spawned drain: the `writes` mutex (held by nothing else once the request has answered), the queue file written on `spawn_blocking`, a test starter that answers at once, and at restore one `is_dir` per goal and one `store::load`. No git, no agent, no scheduler slot. The bound is the CLI harness's `REQUEST_WAIT`; a hang guard. | **Recorded.** |
 
+### Recorded, from M9.10.5 (2026-10-10)
+
+A goal with no profile is queued (`crates/cli/tests/profile_queue.rs`, `crates/daemon/src/run/driver/goal_queue_tests.rs`). Measured: the eight end-to-end tests together 7 s; the two driver tests together 1 s.
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| `wait_pushed` (`e2e_a_failed_set_up_keeps_the_queue_and_retry_detects_again`, `e2e_a_queued_goal_reaches_the_snapshot_while_setting_up`) | `cli/tests/profile_queue.rs` | `REQUEST_WAIT` (75 s), a deadline loop every 20 ms over what the watcher received | The queue write and the next 1 s tick's push for `Reading`; for `Failed`, the onboarding checkout's prepare and discard (4 git calls at `git_timeout_secs = 5`, 20 s), `fake-agent`'s spawn and its startup failure, the failed record's write, and one tick: about 25 s at worst. Measured about 1 s. A hang guard. | **Recorded.** |
+| `wait_one_run` | `cli/tests/profile_queue.rs` | `RUN_WAIT` (300 s) after `use`; `PROFILE_WAIT + RUN_WAIT` for a `--yes` goal, which sets up first | After a store the drain is spawned at once; the start is any goal's (`GOAL_WAIT`, 140 s, "Recorded, from M8b"). With `--yes` the whole detection comes first (`PROFILE_WAIT`). A hang guard, polled every 200 ms. | **Recorded.** |
+| `e2e_a_goal_with_yes_waits_for_review_when_a_command_was_dropped`: nothing stored one poll after `Ready` | `cli/tests/profile_queue.rs` | 200 ms, then asserts no run, the goal still queued and no stored profile | A negative check: `after_ready` runs in the task that wrote `Ready`, and a wrong store would be one `confirm_record` (a few small writes) and the queue's take-out, milliseconds. A longer window would only slow the test. | **Recorded.** |
+| `onboarding_auto_off_still_sets_up_a_goal`: the set-up fails (`SETTLE`) | `daemon/src/run/driver/goal_queue_tests.rs` | 120 s, a deadline loop every 20 ms | The onboarding checkout's prepare and discard (4 git calls at the test's `git_timeout_secs = 5`, 20 s) and a scout whose binary does not exist, failing at spawn. Measured under 1 s. A hang guard. | **Recorded.** |
+
 ### Fixed, from M9.5.8's flake fix (ruling F-1, 2026-10-03)
 
 | Test | File | Bound | Derivation | Status |

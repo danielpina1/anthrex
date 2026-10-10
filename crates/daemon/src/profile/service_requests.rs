@@ -149,7 +149,13 @@ impl ProfileService {
                 .and_then(|active| active.counter.progress()),
             _ => None,
         };
-        let (queued, dropped_goals) = self.queued_for(&project);
+        let (mut queued, dropped_goals) = self.queued_for(&project);
+        // M9.10.5: the goals' set-up reads the proposal this reply shows; memory's copy
+        // (`Table.states`) is noted just after each write, so it can trail the file.
+        let setup = super::queue::setup_state(proposal.as_ref().map(|r| &r.state), checking);
+        for goal in &mut queued {
+            goal.setup = setup.clone();
+        }
         Ok(ProfileStatus {
             repo_dir: self.repo_dir(&project),
             project,
