@@ -50,8 +50,10 @@ impl MouseState {
 
 impl App {
     /// The sidebar wheel scrolls tree rows and the overview's wheel pans the
-    /// graph. Outside tree mode, the main wheel forwards SGR mouse reports
-    /// when enabled, otherwise it scrolls the local terminal history.
+    /// graph. Outside tree mode, the main wheel forwards mouse reports in the
+    /// app's encoding when a mouse mode is on, sends cursor keys to an
+    /// alternate-screen app without one, and otherwise scrolls the local
+    /// terminal history.
     pub fn on_scroll(
         &mut self,
         up: bool,
@@ -90,16 +92,39 @@ impl App {
         if self.tree_input.is_some() || !main_inner.contains((column, row).into()) {
             return vec![];
         }
-        if self.parser.screen().mouse_protocol_mode() != vt100::MouseProtocolMode::None {
+        // Milestone 9.11 decision 26: the wheel follows the app. A mouse mode gets the
+        // report in the encoding it asked for; an alternate screen without one gets
+        // cursor keys, as xterm's `alternateScroll` sends; otherwise the client's own
+        // scrollback scrolls.
+        let screen = self.parser.screen();
+        if screen.mouse_protocol_mode() != vt100::MouseProtocolMode::None {
             let Some(id) = self.focused_pty() else {
                 return vec![];
             };
             let x = column - main_inner.x + 1;
             let y = row - main_inner.y + 1;
             let button = if up { 64 } else { 65 };
+            return match wheel_report(screen.mouse_protocol_encoding(), button, x, y) {
+                Some(bytes) => vec![Effect::Send(ClientMsg::Input {
+                    window_id: id,
+                    bytes,
+                })],
+                None => vec![],
+            };
+        }
+        if screen.alternate_screen() {
+            let Some(id) = self.focused_pty() else {
+                return vec![];
+            };
+            let arrow: &[u8] = match (up, screen.application_cursor()) {
+                (true, false) => b"\x1b[A",
+                (false, false) => b"\x1b[B",
+                (true, true) => b"\x1bOA",
+                (false, true) => b"\x1bOB",
+            };
             return vec![Effect::Send(ClientMsg::Input {
                 window_id: id,
-                bytes: format!("\x1b[<{button};{x};{y}M").into_bytes(),
+                bytes: arrow.repeat(usize::from(WHEEL_ROWS)),
             })];
         }
         let target = if up {
@@ -326,6 +351,44 @@ impl App {
 
 /// One axis of a drag: the viewport moves against the cursor by as far as the
 /// cursor travelled, so the content appears to move with it.
+/// The largest coordinate the X10 encoding carries: `32 + 223` is the byte 255.
+const X10_MAX: u16 = 223;
+
+/// The largest coordinate the UTF-8 encoding carries: `32 + 2015` is U+07FF, the last
+/// code point of two bytes, xterm's own limit for this mode.
+const UTF8_MAX: u16 = 2015;
+
+/// A wheel report for `button` at the 1-based cell (`x`, `y`), in the app's `encoding`
+/// (milestone 9.11 decision 26). `None` when the coordinate does not fit the encoding:
+/// a wrong report would land on another cell, so nothing is sent.
+fn wheel_report(
+    encoding: vt100::MouseProtocolEncoding,
+    button: u16,
+    x: u16,
+    y: u16,
+) -> Option<Vec<u8>> {
+    match encoding {
+        vt100::MouseProtocolEncoding::Sgr => Some(format!("\x1b[<{button};{x};{y}M").into_bytes()),
+        vt100::MouseProtocolEncoding::Default => {
+            if x > X10_MAX || y > X10_MAX {
+                return None;
+            }
+            let byte = |v: u16| u8::try_from(32 + v).ok();
+            Some(vec![0x1b, b'[', b'M', byte(button)?, byte(x)?, byte(y)?])
+        }
+        vt100::MouseProtocolEncoding::Utf8 => {
+            if x > UTF8_MAX || y > UTF8_MAX {
+                return None;
+            }
+            let mut report = String::from("\x1b[M");
+            for v in [button, x, y] {
+                report.push(char::from_u32(32 + u32::from(v))?);
+            }
+            Some(report.into_bytes())
+        }
+    }
+}
+
 fn dragged(pan: u16, from: u16, to: u16) -> u16 {
     if to >= from {
         pan.saturating_sub(to - from)

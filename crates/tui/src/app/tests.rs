@@ -170,6 +170,9 @@ mod clock;
 #[path = "../app_tests/prefix_modal.rs"]
 mod prefix_modal;
 
+#[path = "../app_tests/wheel.rs"]
+mod wheel;
+
 fn win(id: u32, name: &str, status: Status) -> WindowInfo {
     WindowInfo {
         id,
