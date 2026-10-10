@@ -15,6 +15,7 @@ mod support;
 #[path = "run_journal/fixture.rs"]
 mod fixture;
 
+use daemon::run::engine::OpResult;
 use daemon::run::journal::{JOURNAL_FILE, JournalLine, append, load_all, save_run};
 use daemon::run::model::{OpId, Run};
 use daemon::run::reconcile::{Reconciliation, reconcile_with_orphan_parent};
@@ -112,12 +113,13 @@ impl Orphan {
     /// launchd, a subreaper's pid elsewhere.
     fn parent(&self) -> u32 {
         let mut ppid = 0;
-        wait_until("the orphan's reparenting", Duration::from_secs(10), || {
+        let reparented = wait_until("the orphan's reparenting", Duration::from_secs(10), || {
             ppid = ps_field(self.pid, "ppid")
                 .and_then(|p| p.parse().ok())
                 .unwrap_or(0);
             ppid != 0 && ppid != std::process::id()
         });
+        assert!(reparented, "the orphan was never reparented (ppid {ppid})");
         ppid
     }
 
@@ -168,15 +170,25 @@ fn saved_with_done(run: &Run, journal_pid: u32) -> (Run, Vec<JournalLine>) {
         },
     )
     .unwrap();
+    let line = format!(
+        r#"{{"op":{LAUNCH_OP},"done":{{"Window":{{"window_id":{WINDOW_ID},"pid":{journal_pid}}}}}}}"#
+    );
+    // The writer's bytes, not only their meaning: `journal::append` serialises a line
+    // with `serde_json`, exactly as here, so M9.11.13's `Done` is this text.
+    let written = serde_json::to_string(&JournalLine::Done {
+        op: LAUNCH_OP,
+        result: OpResult::Window {
+            window_id: WINDOW_ID,
+            pid: Some(journal_pid),
+        },
+    })
+    .unwrap();
+    assert_eq!(written, line, "the journal writes the shape restore reads");
     let mut file = std::fs::OpenOptions::new()
         .append(true)
         .open(dir.join(JOURNAL_FILE))
         .unwrap();
-    writeln!(
-        file,
-        r#"{{"op":{LAUNCH_OP},"done":{{"Window":{{"window_id":{WINDOW_ID},"pid":{journal_pid}}}}}}}"#
-    )
-    .unwrap();
+    writeln!(file, "{line}").unwrap();
     drop(file);
     let data = run.data_dir.parent().unwrap().parent().unwrap();
     let (mut runs, problems) = load_all(data);
@@ -188,7 +200,7 @@ fn saved_with_done(run: &Run, journal_pid: u32) -> (Run, Vec<JournalLine>) {
             l,
             JournalLine::Done {
                 op: LAUNCH_OP,
-                result: daemon::run::engine::OpResult::Window {
+                result: OpResult::Window {
                     window_id: WINDOW_ID,
                     pid: Some(p),
                 },
@@ -209,6 +221,9 @@ fn a_leftover_known_only_from_the_journal_is_stopped() {
     let id = unique_id("journal-only-session");
     let leftover = Orphan::start(&id);
     let parent = leftover.parent();
+    if cfg!(target_os = "macos") {
+        assert_eq!(parent, 1, "launchd adopts orphans");
+    }
     let run = run_with_round(data.path(), &id, None, false);
     let (run, journal) = saved_with_done(&run, leftover.pid);
 
