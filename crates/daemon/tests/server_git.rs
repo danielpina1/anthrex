@@ -210,9 +210,10 @@ async fn two_windows_register_once_while_the_watcher_arms_slowly() {
     two_windows_register_once(&d, root, Some(&mut armed)).await;
 }
 
-/// The injected arming stall: past one probe, so a wait that bounds the arming by a
-/// probe's budget fails.
-const ARM_HOLD: Duration = PROBE_TIMEOUT.saturating_add(Duration::from_secs(1));
+/// The injected arming stall, counted from the registration: past one probe and past
+/// the old waits' 8 s `recv_until` after the change, so the old waits failed however
+/// long the test's own set-up (a second window, a removal) took.
+const ARM_HOLD: Duration = PROBE_TIMEOUT.saturating_add(Duration::from_secs(9));
 
 /// `armed`: the injected arm's notifications, for the stalled variant; the change's
 /// wait then starts once the watcher is armed, so the stall is outside its bound.

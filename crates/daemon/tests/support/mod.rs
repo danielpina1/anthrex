@@ -19,6 +19,7 @@ use daemon::server::{GitWiring, serve};
 use proto::{ClientKind, ClientMsg, DaemonMsg, Runtime, WindowSpec, read_frame, write_frame};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::net::UnixStream;
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
@@ -89,16 +90,35 @@ pub fn notifying_arm(hold: Duration) -> (ArmFn, tokio::sync::mpsc::UnboundedRece
 }
 
 /// A registry with the real probe and `arm` (a [`notifying_arm`]), publishing to
-/// `publish`: `GitRegistry::new` with its watcher builder injected.
+/// `publish`: `GitRegistry::new` with its watcher builder injected. The probe counts
+/// each probe it has *finished* in the returned counter ([`probes_finished`]).
 pub fn registry_with_arm(
     settings: config::Git,
     publish: tokio::sync::mpsc::UnboundedSender<(PathBuf, Option<proto::GitState>)>,
     arm: ArmFn,
-) -> daemon::git::GitRegistry {
-    let probe: daemon::git::ProbeFn = Arc::new(|root: &std::path::Path| {
-        daemon::git::probe::probe(std::ffi::OsStr::new("git"), root, PROBE_TIMEOUT)
+) -> (daemon::git::GitRegistry, Arc<AtomicUsize>) {
+    let finished = Arc::new(AtomicUsize::new(0));
+    let (real, count) = (GitWiring::real_probe(), finished.clone());
+    let probe: daemon::git::ProbeFn = Arc::new(move |root: &std::path::Path| {
+        let state = real(root);
+        count.fetch_add(1, Ordering::SeqCst);
+        state
     });
-    daemon::git::GitRegistry::with_seams(settings, publish, probe, arm)
+    let registry = daemon::git::GitRegistry::with_seams(settings, publish, probe, arm);
+    (registry, finished)
+}
+
+/// Waits up to `within` until [`registry_with_arm`]'s probe has finished `n` probes.
+pub async fn probes_finished(finished: &AtomicUsize, n: usize, within: Duration) {
+    let deadline = std::time::Instant::now() + within;
+    while finished.load(Ordering::SeqCst) < n {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "only {} of {n} probes finished within {within:?}",
+            finished.load(Ordering::SeqCst)
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
 }
 
 /// Whether a `git` binary runs here at all.

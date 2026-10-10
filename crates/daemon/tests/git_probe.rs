@@ -369,8 +369,12 @@ fn timeout_marks_the_state_stale(stall: &str) {
     // `probe` must terminate and reap not just the wrapper but its whole process group
     // — a probe that leaves a grandchild running (or merely unreaped) will eventually
     // exhaust the daemon. The wrapper was killed and reaped before `probe` returned, so
-    // the pid file is final now: absent, the group was killed before the fork, and the
-    // group kill leaves no grandchild to look for; present, that grandchild must go.
+    // the pid file is final now. Present, its grandchild must go. Absent (or empty: `>`
+    // truncates before `printf` writes), the kill struck before the wrapper recorded
+    // one: either before the fork, or between `sleep 100 &` and the `printf`, when a
+    // grandchild exists in the group but cannot be named here. The group kill covers
+    // it; this test only checks a grandchild it can name, so in the no-stall case the
+    // check may be skipped on a run where the kill wins that race.
     let recorded = fs::read_to_string(&pid_file)
         .ok()
         .and_then(|text| text.trim().parse::<libc::pid_t>().ok());

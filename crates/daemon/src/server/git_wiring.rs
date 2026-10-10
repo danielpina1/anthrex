@@ -35,13 +35,24 @@ impl GitWiring {
     /// [`Self::new`] with the watcher builder injected (M9.11.37): the real probe, and
     /// `arm` in place of `watch::arm`, so a test can hold or observe a root's arming in
     /// a whole daemon, as `tests/git_registry_arming.rs` does for the registry alone.
+    /// The production probe as a [`ProbeFn`]: the real `git` under
+    /// [`crate::git::probe::PROBE_TIMEOUT`], what `GitRegistry::new` runs. Tests wrap
+    /// it (M9.11.37).
+    pub fn real_probe() -> ProbeFn {
+        Arc::new(|root: &Path| {
+            crate::git::probe::probe(OsStr::new("git"), root, crate::git::probe::PROBE_TIMEOUT)
+        })
+    }
+
     pub fn with_seams(settings: config::Git, arm: ArmFn) -> Self {
         let (publish_tx, publish_rx) = mpsc::unbounded_channel();
-        let probe: ProbeFn = Arc::new(|root: &Path| {
-            crate::git::probe::probe(OsStr::new("git"), root, crate::git::probe::PROBE_TIMEOUT)
-        });
         GitWiring {
-            registry: Arc::new(GitRegistry::with_seams(settings, publish_tx, probe, arm)),
+            registry: Arc::new(GitRegistry::with_seams(
+                settings,
+                publish_tx,
+                Self::real_probe(),
+                arm,
+            )),
             publish_rx,
         }
     }

@@ -466,6 +466,12 @@ fn arm_wait(hold: Duration) -> Duration {
     hold + Duration::from_secs(60)
 }
 
+/// From the arm's notification to the post-arm probe finished: it may wait behind the
+/// registration probe still in flight, each under [`PROBE_TIMEOUT`].
+fn post_arm_probe_deadline() -> Duration {
+    PROBE_TIMEOUT * 2 + WALL_CLOCK_SLACK
+}
+
 fn git(dir: &Path, args: &[&str]) {
     let args: Vec<&std::ffi::OsStr> = args.iter().map(std::ffi::OsStr::new).collect();
     support::git(dir, &args);
@@ -525,7 +531,7 @@ async fn real_write_triggers_a_probe(hold: Duration) {
     let root = repo.path().to_path_buf();
     let (tx, mut rx) = mpsc::unbounded_channel::<Publication>();
     let (arm, mut armed) = support::notifying_arm(hold);
-    let registry = support::registry_with_arm(git_settings(true), tx, arm);
+    let (registry, finished) = support::registry_with_arm(git_settings(true), tx, arm);
     registry.register(root.clone());
 
     // The registration probe sees a clean tree.
@@ -537,6 +543,9 @@ async fn real_write_triggers_a_probe(hold: Duration) {
     assert_eq!(first.1.as_ref().map(|s| s.dirty), Some(0));
 
     support::armed(&mut armed, arm_wait(hold)).await;
+    // The probe `run_root` runs once armed must be done too (the registration probe
+    // is 1, it is 2): a write it could still read would pass without the watcher.
+    support::probes_finished(&finished, 2, post_arm_probe_deadline()).await;
     std::fs::write(root.join("a.txt"), "two\n").unwrap();
 
     wait_for_state(
@@ -576,7 +585,7 @@ async fn a_commit_in_a_linked_worktree_triggers_a_probe() {
 
     let (tx, mut rx) = mpsc::unbounded_channel::<Publication>();
     let (arm, mut armed) = support::notifying_arm(Duration::ZERO);
-    let registry = support::registry_with_arm(git_settings(true), tx, arm);
+    let (registry, finished) = support::registry_with_arm(git_settings(true), tx, arm);
     registry.register(linked.clone());
 
     let first = tokio::time::timeout(registration_probe_deadline(), rx.recv())
@@ -587,6 +596,7 @@ async fn a_commit_in_a_linked_worktree_triggers_a_probe() {
     assert_eq!(first.1.as_ref().map(|s| s.dirty), Some(0));
 
     support::armed(&mut armed, arm_wait(Duration::ZERO)).await;
+    support::probes_finished(&finished, 2, post_arm_probe_deadline()).await;
     std::fs::write(linked.join("a.txt"), "two\n").unwrap();
     wait_for_state(
         &mut rx,
