@@ -19,7 +19,7 @@ use proto::run_wire::request;
 use proto::{DeliveryMode, DesignMode, OrchestratorChoice, Plan, RunReply, RunState};
 
 use super::super::RunService;
-use super::super::adapt::GoalReady;
+use super::super::adapt::{CONTINUE_NEEDS_PROFILE, GoalNotReady, GoalReady};
 use super::super::build::{Planned, Shape, TuneOnce};
 use super::super::delivery::DeliveryStart;
 use crate::run::chain::{CONTINUE_START_BOUND, START_GOAL_TOOL_BOUND, continuable};
@@ -221,12 +221,17 @@ impl RunService {
         if roots.worktree.is_some() && roots.project != joined.project {
             return Err(other_project(&joined.chain, &joined.project));
         }
-        let flags = (next.trust_project, next.unconfined_checks);
+        // Milestone 9.10 decision 13: a continued goal never waits in a queue.
         let GoalReady {
             profile, frozen, ..
-        } = self
-            .goal_ready(&next.goal, &next.dir, flags, next.delivery)
-            .await?;
+        } = match self
+            .goal_ready(&next.goal, &next.dir, next.unconfined_checks, next.delivery)
+            .await
+        {
+            Ok(ready) => ready,
+            Err(GoalNotReady::Refused(message)) => return Err(message),
+            Err(GoalNotReady::NoProfile { .. }) => return Err(CONTINUE_NEEDS_PROFILE.to_string()),
+        };
         let plan = Plan {
             goal: next.goal.clone(),
             max_writers: None,

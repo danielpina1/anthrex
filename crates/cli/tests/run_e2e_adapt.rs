@@ -274,14 +274,17 @@ fn e2e_goal_without_deciders_takes_the_plan_path() {
     assert_eq!(triage_calls(&h), 0, "mode off spawns no decider");
 }
 
+/// Milestone 9.10 decisions 12 and 39: a goal with no stored profile is queued (exit 3,
+/// nothing on stdout) and starts the repository's set-up.
 #[test]
 fn e2e_goal_without_a_profile_starts_detection() {
     let files: Vec<(&str, &str)> = ADAPT_FILES.to_vec();
     let h = RunHarness::adapt("claude", PROFILE_LINES, &[], &files);
     h.onboarding_report(1, json!({"check": "sh check.sh"}));
     let out = h.start_goal("add a", &[]);
-    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
-    assert_eq!(stderr(&out).trim_end(), DETECTION_STARTED);
+    assert_eq!(out.status.code(), Some(3), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "");
+    assert_eq!(stderr(&out).trim_end(), QUEUED);
     assert!(no_run_branches(&h.repo));
     assert_eq!(triage_calls(&h), 0, "no triage without a stored profile");
     let status = h.profile_status();
@@ -299,10 +302,12 @@ fn e2e_goal_without_a_profile_starts_detection() {
     );
     let state = status.proposal.map(|p| p.state);
     assert_eq!(state, Some(ProposalState::Ready), "{}", h.log_tail());
+    assert_eq!(status.queued.len(), 1, "{:?}", status.queued);
 }
 
-/// Decision 22 step 2's refusal that starts detection (exact).
-const DETECTION_STARTED: &str = "this repository has no stored profile; detection has started (anthrex profile status), then confirm it with anthrex profile confirm and start the goal again";
+/// Milestone 9.10 decision 39: `run start --goal`'s stderr for a queued goal (exact).
+const QUEUED: &str =
+    "queued: add a waits for the repository profile (anthrex profile); no run started yet";
 
 const HOOKED_SETTINGS: &str = r#"{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"true"}]}]}}"#;
 

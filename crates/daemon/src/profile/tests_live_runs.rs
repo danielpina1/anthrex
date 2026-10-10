@@ -5,10 +5,11 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use proto::{ProfileReply, ProfileRequest};
+use proto::{ProfileReply, ProfileRequest, ProposalOrigin, ProposalState, RowEdit, RowEditState};
 
-use super::service_requests::live_run;
-use super::tests_ready::{Rig, repo};
+use super::service_requests::LIVE_RUN;
+use super::store;
+use super::tests_ready::{Rig, record, repo};
 
 /// A `LiveRuns` that names `r-0001` for `project` and nothing elsewhere.
 fn one_live_run(rig: &Rig, project: &Path) {
@@ -29,6 +30,8 @@ fn edit_of(project: &Path) -> ProfileRequest {
         value: Some("[\"src/*\"]".into()),
         yes: false,
         unconfined_checks: false,
+        anyway: false,
+        on_proposal: false,
     }
 }
 
@@ -38,13 +41,16 @@ async fn an_edit_during_a_live_run_is_refused() {
     let project = repo(rig.dir.path(), "app");
     rig.store_profile(&project);
     one_live_run(&rig, &project);
+    // Milestone 9.10 decision 20: one text, whatever the edit's target.
+    let expected = "finish or cancel the run in this repo to change its profile";
+    assert_eq!(LIVE_RUN, expected);
     let reply = rig.profiles.request(edit_of(&project)).await;
-    let expected = format!(
-        "run r-0001 is live in {}; edit the profile once it finishes (runs keep the profile they started with)",
-        project.display()
+    assert_eq!(
+        reply,
+        ProfileReply::Refused {
+            message: expected.to_string()
+        }
     );
-    assert_eq!(live_run("r-0001", &project), expected);
-    assert_eq!(reply, ProfileReply::Refused { message: expected });
     assert!(
         rig.on_disk(&project).is_none(),
         "a refused edit wrote a proposal"
@@ -54,6 +60,55 @@ async fn an_edit_during_a_live_run_is_refused() {
     rig.profiles.set_live_runs(Arc::new(|_: &Path| Vec::new()));
     rig.edit(&project).await;
     assert!(rig.on_disk(&project).is_some());
+}
+
+/// Decision 20: an edit of a review proposal, `anyway` too, and a revert of the stored
+/// profile's failed edit wait for the live run as well.
+#[tokio::test(flavor = "multi_thread")]
+async fn every_row_edit_and_a_stored_revert_wait_for_a_live_run() {
+    let rig = Rig::new();
+    let project = repo(rig.dir.path(), "app");
+    let expected = ProfileReply::Refused {
+        message: LIVE_RUN.to_string(),
+    };
+    one_live_run(&rig, &project);
+    let dir = rig.repo_dir(&project);
+    std::fs::create_dir_all(&dir).unwrap();
+    let review = record(&project, ProposalState::Ready, 1_790_000_000);
+    store::save_proposal(&dir, &review).unwrap();
+    for anyway in [false, true] {
+        let mut request = edit_of(&project);
+        if let ProfileRequest::Edit {
+            anyway: a,
+            on_proposal,
+            ..
+        } = &mut request
+        {
+            (*a, *on_proposal) = (anyway, true);
+        }
+        assert_eq!(rig.profiles.request(request).await, expected);
+    }
+    assert_eq!(rig.on_disk(&project), Some(review));
+
+    let mut failed = record(&project, ProposalState::Ready, 1_790_000_000);
+    failed.origin = ProposalOrigin::Edit {
+        keys: vec!["check".into()],
+    };
+    failed.edit = Some(RowEdit {
+        key: "check".into(),
+        value: Some("false".into()),
+        state: RowEditState::Failed {
+            reason: "exit 1 after 0s".into(),
+            tail: String::new(),
+            secs: 0,
+        },
+    });
+    store::save_proposal(&dir, &failed).unwrap();
+    let revert = ProfileRequest::RevertEdit {
+        dir: project.clone(),
+    };
+    assert_eq!(rig.profiles.request(revert).await, expected);
+    assert_eq!(rig.on_disk(&project), Some(failed));
 }
 
 /// Pinning: only `Edit` waits for live runs.

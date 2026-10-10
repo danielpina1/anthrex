@@ -6,43 +6,41 @@ use std::sync::Arc;
 
 use proto::{
     ProfileReply, ProfileSource, ProfileStatus, ProposalOrigin, ProposalRecord, ProposalState,
+    RowEditState,
 };
 
-use super::proposal::{apply_edit, show_text};
+use super::proposal::show_text;
+use super::row_edit::{refuse_held, still_checking};
 use super::service::{
     ProfileService, already_running, auto_allowed, blocking, in_progress, state_label,
 };
-use super::service_run::{Job, confirm_record};
+use super::service_queue::{DISCARDED, dropped_note};
+use super::service_run::confirm_record;
 use super::store::{self, Stored};
 use crate::run::driver::unix_now;
 use crate::run::git;
 use crate::run::plan::Preflight;
 
 /// Decision 6's refusal text for a stored profile that does not parse.
-fn unparseable(path: &Path, error: &str) -> String {
+pub(super) fn unparseable(path: &Path, error: &str) -> String {
     format!(
         "the stored profile at {} does not parse: {error}; fix it with anthrex profile edit or re-detect it with anthrex profile detect",
         path.display()
     )
 }
 
-fn no_stored(project: &Path) -> String {
+pub(super) fn no_stored(project: &Path) -> String {
     format!(
         "no stored profile for {}; run anthrex profile detect first",
         project.display()
     )
 }
 
-/// Milestone 9.0.6 decision 37: an edit waits for the runs live in its project.
-pub fn live_run(run: &str, project: &Path) -> String {
-    format!(
-        "run {run} is live in {}; edit the profile once it finishes (runs keep the profile they started with)",
-        project.display()
-    )
-}
+/// Milestone 9.10 decision 20: every row edit waits for the runs live in its project.
+pub const LIVE_RUN: &str = "finish or cancel the run in this repo to change its profile";
 
 /// Refused while a rejected detection still cleans up.
-fn stopping(project: &Path) -> String {
+pub(super) fn stopping(project: &Path) -> String {
     format!(
         "detection for {} is stopping after anthrex profile reject; try again in a moment",
         project.display()
@@ -53,7 +51,7 @@ impl ProfileService {
     /// The project (main checkout) `dir` belongs to, without preflight's clean-tree
     /// rules: `status`, `show`, `confirm`, `reject` and a non-command `edit` work in a
     /// dirty checkout.
-    async fn project_of(&self, dir: PathBuf) -> Result<PathBuf, String> {
+    pub(super) async fn project_of(&self, dir: PathBuf) -> Result<PathBuf, String> {
         let (g, timeout) = (self.ctx.git.clone(), self.git_timeout());
         blocking(move || {
             let roots = crate::project::detect_roots_with(&g, &dir, timeout);
@@ -74,13 +72,16 @@ impl ProfileService {
         blocking(move || git::preflight(&g, &dir, timeout)).await
     }
 
-    async fn load(&self, project: &Path) -> Result<(Stored, Option<ProposalRecord>), String> {
+    pub(super) async fn load(
+        &self,
+        project: &Path,
+    ) -> Result<(Stored, Option<ProposalRecord>), String> {
         let dir = self.repo_dir(project);
         blocking(move || Ok((store::load(&dir), store::load_proposal(&dir)?))).await
     }
 
     /// Refuses when work for `project` runs (or a rejected one still cleans up).
-    async fn refuse_if_running(&self, project: &Path) -> Result<(), String> {
+    pub(super) async fn refuse_if_running(&self, project: &Path) -> Result<(), String> {
         let stopping_now = crate::lock(&self.table)
             .active
             .get(project)
@@ -101,15 +102,24 @@ impl ProfileService {
         let (stored, mut proposal) = self.load(&project).await?;
         let (mut source, mut confirmed_at, mut stale, mut unparseable) =
             (ProfileSource::None, None, Vec::new(), None);
+        let (mut verified_at, mut unreadable_text) = (None, None);
         match stored {
             Stored::Found { meta, .. } => {
                 source = ProfileSource::Stored;
                 confirmed_at = Some(meta.confirmed_at);
+                // Decision 23: an edit-only profile has no verification record.
+                verified_at = Some(
+                    meta.verification
+                        .as_ref()
+                        .map_or(meta.confirmed_at, |v| v.at),
+                );
                 let p = project.clone();
                 stale = blocking(move || Ok(store::stale(&p, &meta))).await?;
             }
             Stored::Unparseable { path, error } => {
-                unparseable = Some(unparseable_text(&path, &error))
+                unparseable = Some(unparseable_text(&path, &error));
+                // Decision 32: the file's own text, for the screen's raw-text page.
+                unreadable_text = blocking(move || Ok(store::load_text(&path))).await?;
             }
             Stored::Absent => {}
         }
@@ -131,6 +141,22 @@ impl ProfileService {
             .as_ref()
             .and_then(|record| record.scout_id.as_deref())
             .and_then(|id| self.scouts.info(id));
+        // Decision 10: only while the proposal verifies, from its running counter.
+        let checking = match proposal.as_ref().map(|record| &record.state) {
+            Some(ProposalState::Verifying) => crate::lock(&self.table)
+                .active
+                .get(&project)
+                .and_then(|active| active.counter.progress()),
+            _ => None,
+        };
+        self.adopt_for_status(&project).await;
+        let (mut queued, dropped_goals) = self.queued_for(&project);
+        // M9.10.5: the goals' set-up reads the proposal this reply shows; memory's copy
+        // (`Table.states`) is noted just after each write, so it can trail the file.
+        let setup = super::queue::setup_state(proposal.as_ref().map(|r| &r.state), checking);
+        for goal in &mut queued {
+            goal.setup = setup.clone();
+        }
         Ok(ProfileStatus {
             repo_dir: self.repo_dir(&project),
             project,
@@ -141,6 +167,11 @@ impl ProfileService {
             proposal,
             scout,
             verify_confined: self.verify_confined(),
+            queued,
+            checking,
+            verified_at,
+            unreadable_text,
+            dropped_goals,
         })
     }
 
@@ -208,7 +239,7 @@ impl ProfileService {
 
     /// `profile confirm`: the ready proposal stored, the proposal deleted.
     pub(super) async fn confirm(
-        &self,
+        self: &Arc<Self>,
         dir: PathBuf,
         shown: Option<String>,
     ) -> Result<ProfileReply, String> {
@@ -216,6 +247,11 @@ impl ProfileService {
         let _writes = self.writes.lock().await;
         let active = crate::lock(&self.table).active.contains_key(&project);
         if active {
+            // M9.10.6 fix round (M2): a proposal row edit being checked says so.
+            let checking = self.load(&project).await?.1.and_then(|r| r.edit);
+            if let Some(edit) = checking.filter(|e| e.state == RowEditState::Verifying) {
+                return Err(still_checking(&edit.key));
+            }
             return Err(match self.running(&project).await {
                 Some(state) => already_running(&project, &state),
                 None => stopping(&project),
@@ -227,6 +263,10 @@ impl ProfileService {
                 project.display()
             )
         })?;
+        // Decision 15 (fix round I1): a held ✗ of the stored profile is never stored.
+        if let Some(refusal) = refuse_held(&record) {
+            return Err(refusal);
+        }
         let profile = ready_profile(&record)?;
         // Review m3: only the proposal the user was shown is stored.
         let current = show_text(&profile, record.verification.as_ref(), &record.dropped);
@@ -237,7 +277,11 @@ impl ProfileService {
         let p = project.clone();
         let message = blocking(move || confirm_record(&dir, &p, &record)).await?;
         self.note_proposal(&project, None);
-        Ok(ProfileReply::Done { message })
+        // Milestone 9.10 decision 6: the queued goals start once the store is done.
+        let starting = self.drain_after_store(&project);
+        Ok(ProfileReply::Done {
+            message: format!("{message}{starting}"),
+        })
     }
 
     /// `profile reject`: a running scout stopped (through `ScoutService::stop`, the
@@ -245,7 +289,14 @@ impl ProfileService {
     /// work, or here when none runs), and `proposal.json` deleted.
     pub(super) async fn reject(&self, dir: PathBuf) -> Result<ProfileReply, String> {
         let project = self.project_of(dir).await?;
-        let _writes = self.writes.lock().await;
+        let writes = self.writes.lock().await;
+        // Milestone 9.10 decision 8: a goal cannot start without the proposal. Dropped
+        // first, under this hold: a crash then leaves a proposal with no queue, never
+        // goals waiting on a proposal that is gone.
+        let dropped = self
+            .drop_queued_locked(&writes, &project, DISCARDED)
+            .await
+            .map_err(|error| format!("could not drop the queued goals: {error}"))?;
         let running = {
             let mut table = crate::lock(&self.table);
             table.active.get_mut(&project).map(|active| {
@@ -264,121 +315,30 @@ impl ProfileService {
         })
         .await?;
         self.note_proposal(&project, None);
+        // Task 4 re-review minor 3: a retry after a late failure (a checkout it could
+        // not discard) finds no proposal but the marker or a checkout; it cleans up.
+        let mut cleaned = false;
         if running.is_none() {
             for name in [super::ONBOARDING_CHECKOUT, super::VERIFY_CHECKOUT] {
-                self.discard_checkout(&project, name).await?;
+                cleaned |= self.discard_checkout(&project, name).await?.is_some();
             }
             let dir = self.repo_dir(&project);
-            blocking(move || store::delete_detection(&dir).map_err(|e| e.to_string())).await?;
-            if !existed {
-                return Err(format!("no proposal for {}", project.display()));
-            }
+            cleaned |= blocking(move || {
+                let marked = store::load_detection(&dir).is_some();
+                store::delete_detection(&dir).map_err(|e| e.to_string())?;
+                Ok(marked)
+            })
+            .await?;
+        }
+        if running.is_none() && !existed && dropped == 0 && !cleaned {
+            return Err(format!("no proposal for {}", project.display()));
         }
         Ok(ProfileReply::Done {
-            message: format!("rejected the proposal for {}", project.display()),
-        })
-    }
-
-    /// `profile edit`: the stored profile with one value changed becomes a proposal,
-    /// verified again when a command's input changed (decision 10).
-    pub(super) async fn edit(
-        self: &Arc<Self>,
-        dir: PathBuf,
-        key: String,
-        value: Option<String>,
-        yes: bool,
-        unconfined_checks: bool,
-    ) -> Result<ProfileReply, String> {
-        let project = self.project_of(dir.clone()).await?;
-        if let Some(run) = self.live_runs(&project).first() {
-            return Err(live_run(run, &project));
-        }
-        self.refuse_if_running(&project).await?;
-        let (stored, meta) = match self.load(&project).await?.0 {
-            Stored::Found { profile, meta, .. } => (profile, meta),
-            Stored::Unparseable { path, error } => return Err(unparseable(&path, &error)),
-            Stored::Absent => return Err(no_stored(&project)),
-        };
-        let (edited, reverify) = apply_edit(&stored, &key, value.as_deref())?;
-        let shown = format!(
-            "proposed: {key} = {}",
-            value.as_deref().unwrap_or("(unset)")
-        );
-        let now = unix_now();
-        let mut record = ProposalRecord {
-            project: project.clone(),
-            state: ProposalState::Ready,
-            origin: ProposalOrigin::Edit {
-                keys: vec![key.clone()],
-            },
-            started_at: now,
-            updated_at: now,
-            base_sha: String::new(),
-            scout_id: None,
-            window_id: None,
-            profile: None,
-            verification: None,
-            dropped: Vec::new(),
-            proposed: Some(edited.clone()),
-            trusted_project: Vec::new(),
-            unconfined_checks,
-            auto_confirm: yes,
-        };
-        if reverify {
-            self.confinement_refusal(unconfined_checks)?;
-            let pre = self.preflight(dir).await?;
-            let Some((generation, token)) = self.register(&project) else {
-                return Err(already_running(&project, &ProposalState::Verifying));
-            };
-            record.state = ProposalState::Verifying;
-            record.base_sha = pre.base_sha.clone();
-            self.save_if_current(generation, &record).await;
-            let job = Job {
-                generation,
-                token,
-                pre,
-                record,
-                codex_config: Vec::new(),
-                route: None,
-            };
-            tokio::spawn(self.clone().verify_in_background(job));
-            return Ok(ProfileReply::Done {
-                message: if yes {
-                    format!(
-                        "{shown}; it is stored as soon as verification passes (anthrex profile status)"
-                    )
-                } else {
-                    format!(
-                        "{shown}; verifying (anthrex profile status), then confirm with anthrex profile confirm"
-                    )
-                },
-            });
-        }
-        record.profile = Some(edited);
-        record.verification = meta.verification;
-        let _writes = self.writes.lock().await;
-        let active = crate::lock(&self.table).active.contains_key(&project);
-        if active {
-            return Err(stopping(&project));
-        }
-        let repo_dir = self.repo_dir(&project);
-        let (p, written) = (project.clone(), record.clone());
-        blocking(move || {
-            if yes {
-                confirm_record(&repo_dir, &p, &record).map(|_| ())
-            } else {
-                store::save_proposal(&repo_dir, &record).map_err(|e| e.to_string())
-            }
-        })
-        .await?;
-        // `edit --yes` deleted the proposal; otherwise it is the ready one just written.
-        self.note_proposal(&project, (!yes).then_some(&written));
-        Ok(ProfileReply::Done {
-            message: if yes {
-                format!("{shown}; stored (it needed no verification)")
-            } else {
-                format!("{shown}; confirm with anthrex profile confirm")
-            },
+            message: format!(
+                "rejected the proposal for {}{}",
+                project.display(),
+                dropped_note(dropped)
+            ),
         })
     }
 }
@@ -396,7 +356,7 @@ fn unparseable_text(path: &Path, error: &str) -> String {
 }
 
 /// The proposal's profile when it is `Ready`, else why it cannot be shown or stored.
-fn ready_profile(record: &ProposalRecord) -> Result<proto::RepoProfile, String> {
+pub(super) fn ready_profile(record: &ProposalRecord) -> Result<proto::RepoProfile, String> {
     match (&record.state, &record.profile) {
         (ProposalState::Ready, Some(profile)) => Ok(profile.clone()),
         (ProposalState::Failed { reason }, _) => Err(format!(

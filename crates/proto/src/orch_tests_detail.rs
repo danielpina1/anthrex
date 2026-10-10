@@ -196,6 +196,8 @@ fn appended_variants_keep_their_indices() {
     expected.push("Settings");
     // Milestone 9.6 appends `Doc` after `Settings` (`design_tests.rs`).
     expected.push("Doc");
+    // Milestone 9.10 appends `Queued` after `Doc` (`profile_tests.rs`).
+    expected.push("Queued");
     assert_eq!(variant_names::<RunReply>(), expected);
     let detail = a_detail(None);
     assert_eq!(

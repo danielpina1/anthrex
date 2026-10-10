@@ -105,7 +105,7 @@ pub(crate) fn fixtures() -> Vec<(&'static str, App)> {
         (
             "profile with a page",
             with(profile(), |a| {
-                crate::ui::profile::tests::screen_mut(a).page = Some(ProfilePage::Reject);
+                crate::ui::profile::tests::screen_mut(a).page = Some(ProfilePage::Discard);
             }),
         ),
         ("profile under the help", with(profile(), |a| chord(a, '?'))),
@@ -261,10 +261,10 @@ pub(crate) fn fixtures() -> Vec<(&'static str, App)> {
             ),
         ),
         (
-            "profile confirm page",
+            "profile raw-text page",
             with(profile(), |a| {
-                crate::ui::profile::tests::screen_mut(a).page = Some(ProfilePage::Confirm {
-                    toml: "check = \"cargo test\"".into(),
+                crate::ui::profile::tests::screen_mut(a).page = Some(ProfilePage::RawText {
+                    text: "check = \"cargo test\"".into(),
                     scroll: 0,
                 });
             }),

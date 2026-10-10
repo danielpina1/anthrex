@@ -91,6 +91,7 @@ pub(super) fn no_runs() -> RunsSnapshot {
         now: 0,
         proposals: Vec::new(),
         idle_orchestrators: Vec::new(),
+        queued_goals: Vec::new(),
     }
 }
 
@@ -237,6 +238,16 @@ impl App {
                 // is still shown. This client sends `StartGoal` only tagged, so an
                 // untagged `Triaged` is not its own and changes nothing (M8c).
                 if !self.goal_started(request_id, run_id, &message) && request_id.is_some() {
+                    self.toast(capped(&message));
+                }
+            }
+            // Milestone 9.10 decision 35: the goal waits for its repository's profile.
+            RunReply::Queued {
+                message,
+                request_id,
+                ..
+            } => {
+                if !self.goal_queued(request_id, &message) && request_id.is_some() {
                     self.toast(capped(&message));
                 }
             }

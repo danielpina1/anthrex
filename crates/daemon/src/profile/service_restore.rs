@@ -8,9 +8,13 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use proto::{AgentRole, ProposalOrigin, ProposalState};
+use proto::{AgentRole, ProposalOrigin, ProposalRecord, ProposalState, RowEditState};
 
-use super::service::{ProfileService, RESTART_REASON, auto_allowed, blocking, in_progress};
+use super::queue::{self, GoalQueue};
+use super::service::{
+    EDIT_RESTART_REASON, ProfileService, RESTART_REASON, auto_allowed, blocking, in_progress,
+};
+use super::service_queue::INTERRUPTED;
 use super::store::{self, Stored};
 use crate::run::driver::unix_now;
 use crate::run::git::checkout_repo_dir;
@@ -30,6 +34,72 @@ fn names_in(dir: &Path) -> Result<Vec<OsString>, String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
         Err(error) => Err(error.to_string()),
     }
+}
+
+/// The goal shown for a queue file that could not be read (fix round 1, I2).
+pub const UNREADABLE_QUEUE: &str = "(unreadable queue)";
+
+/// Decision 11's queue, loaded at start. A file that does not parse is renamed aside
+/// (`queued_goals.json.unreadable-<unix secs>`, never swept), so no later write
+/// replaces the goals it may hold, and the loss is recorded as one dropped goal that
+/// names the kept file. One that could not be read (task 4 re-review minor 1: an I/O
+/// error, perhaps passing) is left in place and not loaded; the first write of that
+/// queue loads it again and refuses while it still cannot be read
+/// (`ProfileService::adopt_queue`). Blocking.
+fn load_queue(dir: &Path) -> GoalQueue {
+    let error = match queue::load(dir) {
+        Ok(queue) => return settle_starting(dir, queue),
+        Err(queue::LoadError::Unreadable(error)) => {
+            tracing::warn!(%error, "a goal queue that cannot be read is left in place");
+            return GoalQueue::default();
+        }
+        Err(queue::LoadError::Unparseable(error)) => error,
+    };
+    let now = unix_now();
+    let aside = set_aside(dir, queue::QUEUE_FILE, now);
+    let aside = match aside {
+        Ok(aside) => aside,
+        Err(rename) => {
+            tracing::warn!(%error, %rename, "a goal queue that does not read is ignored");
+            return GoalQueue::default();
+        }
+    };
+    tracing::warn!(%error, aside = %aside.display(), "a goal queue that does not read is kept aside");
+    let mut kept = GoalQueue::default();
+    let reason = format!(
+        "the queue file could not be read ({error}); it is kept as {}",
+        aside.display()
+    );
+    kept.record_drop(UNREADABLE_QUEUE, &reason, now);
+    if let Err(error) = queue::save(dir, &kept) {
+        tracing::warn!(%error, "could not record the unreadable goal queue");
+    }
+    kept
+}
+
+/// `dir/<name>` renamed to `dir/<name>.unreadable-<now>`, which nothing sweeps; the new
+/// path. Blocking.
+fn set_aside(dir: &Path, name: &str, now: u64) -> Result<PathBuf, String> {
+    let aside = dir.join(format!("{name}.unreadable-{now}"));
+    std::fs::rename(dir.join(name), &aside).map_err(|e| e.to_string())?;
+    Ok(aside)
+}
+
+/// Final review I1: each goal a stop caught in `starting` becomes a dropped goal with
+/// [`INTERRUPTED`], written back, so it is never started again (decision 6). Blocking.
+fn settle_starting(dir: &Path, mut queue: GoalQueue) -> GoalQueue {
+    if queue.starting.is_empty() {
+        return queue;
+    }
+    let now = unix_now();
+    for goal in std::mem::take(&mut queue.starting) {
+        tracing::info!("{}", queue::drop_line(&goal.goal, INTERRUPTED));
+        queue.record_drop(&goal.goal, INTERRUPTED, now);
+    }
+    if let Err(error) = queue::save(dir, &queue) {
+        tracing::warn!(%error, "could not record the goals a stop interrupted");
+    }
+    queue
 }
 
 /// What the start found in one repository's data directory.
@@ -110,6 +180,11 @@ impl ProfileService {
             let service = self.clone();
             tokio::spawn(async move { service.auto_at_start(project, meta).await });
         }
+        // Milestone 9.10 decision 11: the queues `restore` loaded.
+        let waiting: Vec<PathBuf> = crate::lock(&self.table).queued.keys().cloned().collect();
+        for project in waiting {
+            tokio::spawn(self.clone().drain_at_start(project));
+        }
     }
 
     /// Step 2 for one repository data directory, and what it records.
@@ -117,22 +192,30 @@ impl ProfileService {
         let dir = repo_dir.to_path_buf();
         let loaded = blocking(move || {
             store::sweep_leftovers(&dir).map_err(|e| e.to_string())?;
-            let proposal = store::load_proposal(&dir).ok().flatten();
-            Ok((proposal, store::load(&dir), store::load_detection(&dir)))
+            // Final review M2: `Err` is a file there that does not read.
+            let proposal = store::load_proposal(&dir);
+            // Milestone 9.10 decision 11: the goals waiting for this profile.
+            let queue = load_queue(&dir);
+            let loaded = (store::load(&dir), store::load_detection(&dir));
+            Ok((proposal, loaded.0, loaded.1, queue))
         })
         .await;
-        let (proposal, stored, marker) = match loaded {
+        let (proposal, stored, marker, queue) = match loaded {
             Ok(loaded) => loaded,
             Err(error) => {
                 tracing::warn!(repo_dir = %repo_dir.display(), %error, "profile restore");
-                (None, Stored::Absent, None)
+                (Ok(None), Stored::Absent, None, GoalQueue::default())
             }
         };
+        let unreadable = proposal.as_ref().err().cloned();
+        let proposal = proposal.ok().flatten();
+        let proposal_file = unreadable.is_some() || proposal.is_some();
         // A record counts only for the data directory its own project keys to, so one
         // repository's record cannot name another.
         let ours = |project: &PathBuf| {
             super::repo_dir(&self.ctx.data_dir, project).file_name() == Some(name.as_os_str())
         };
+        let has_stored = matches!(stored, Stored::Found { .. });
         let stored = match stored {
             Stored::Found { meta, .. } => meta
                 .project
@@ -142,31 +225,118 @@ impl ProfileService {
             _ => None,
         };
         let mut project = stored.as_ref().map(|(project, _)| project.clone());
-        if let Some(record) = proposal.filter(|record| ours(&record.project)) {
+        let proposal = proposal.filter(|record| ours(&record.project));
+        let has_proposal = proposal.is_some();
+        if let Some(record) = proposal {
             project = Some(record.project.clone());
             // Decision 10 (M9.0.5): the ready list is rebuilt from disk, loaded off the
             // table's lock above; an interrupted proposal fails below, so is not ready.
             self.note_proposal(&record.project, Some(&record));
-            if in_progress(&record.state) {
+            // Milestone 9.10.6: a row edit being checked is failed as well.
+            let checking = matches!(&record.edit, Some(e) if e.state == RowEditState::Verifying);
+            if in_progress(&record.state) || checking {
                 let mut failed = record;
-                failed.state = ProposalState::Failed {
-                    reason: RESTART_REASON.to_string(),
-                };
+                if in_progress(&failed.state) {
+                    failed.state = ProposalState::Failed {
+                        reason: RESTART_REASON.to_string(),
+                    };
+                }
+                if let Some(edit) = failed.edit.as_mut().filter(|_| checking) {
+                    edit.state = RowEditState::Failed {
+                        reason: EDIT_RESTART_REASON.to_string(),
+                        tail: String::new(),
+                        secs: 0,
+                    };
+                }
                 failed.updated_at = unix_now();
-                let dir = repo_dir.to_path_buf();
+                let (dir, written) = (repo_dir.to_path_buf(), failed.clone());
                 let saved = blocking(move || {
-                    store::save_proposal(&dir, &failed).map_err(|e| e.to_string())
+                    store::save_proposal(&dir, &written).map_err(|e| e.to_string())
                 })
                 .await;
-                if let Err(error) = saved {
-                    tracing::warn!(repo_dir = %repo_dir.display(), %error, "profile restore");
+                match saved {
+                    // Milestone 9.10 decision 10: memory says `Failed` too.
+                    Ok(()) => self.note_proposal(&failed.project, Some(&failed)),
+                    Err(error) => {
+                        tracing::warn!(repo_dir = %repo_dir.display(), %error, "profile restore")
+                    }
                 }
             }
+        }
+        let queued = queue.goals.first().map(|goal| goal.project.clone());
+        let queued = queued.filter(|project| ours(project)).or(project.clone());
+        if let Some(queued) = queued.filter(|_| !queue.is_empty()) {
+            // Goals with no proposal and no stored profile wait on a set-up nothing
+            // runs (a crash before their set-up's first write): failed, so it can be
+            // retried, never shown reading the repo forever.
+            // Final review M2: only where no `proposal.json` is, after one that does not
+            // read is set aside; a readable one of another project is left alone.
+            if !queue.goals.is_empty() && !has_proposal && !has_stored {
+                match unreadable {
+                    Some(error) => self.set_proposal_aside(repo_dir, &queued, &error).await,
+                    None if !proposal_file => {
+                        self.fail_orphan_set_up(repo_dir, &queued, RESTART_REASON)
+                            .await;
+                    }
+                    None => {}
+                }
+            }
+            self.remember_queue(&queued, queue);
         }
         Found {
             project: marker.filter(|project| ours(project)).or(project),
             name,
             stored,
+        }
+    }
+
+    /// Final review M2: a `proposal.json` that does not read, beside queued goals and
+    /// no stored profile, renamed aside; then the goals' set-up is failed, naming it.
+    async fn set_proposal_aside(&self, repo_dir: &Path, project: &Path, error: &str) {
+        let dir = repo_dir.to_path_buf();
+        match blocking(move || set_aside(&dir, store::PROPOSAL_FILE, unix_now())).await {
+            Ok(aside) => {
+                let reason = format!(
+                    "the proposal could not be read ({error}); it is kept as {}",
+                    aside.display()
+                );
+                self.fail_orphan_set_up(repo_dir, project, &reason).await;
+            }
+            Err(rename) => {
+                tracing::warn!(%error, %rename, "a proposal that does not read is left in place");
+            }
+        }
+    }
+
+    /// A `Failed` goal set-up for `project`, written and noted (fix round 1, I1).
+    async fn fail_orphan_set_up(&self, repo_dir: &Path, project: &Path, reason: &str) {
+        let now = unix_now();
+        let failed = ProposalRecord {
+            project: project.to_path_buf(),
+            state: ProposalState::Failed {
+                reason: reason.to_string(),
+            },
+            origin: ProposalOrigin::Goal,
+            started_at: now,
+            updated_at: now,
+            base_sha: String::new(),
+            scout_id: None,
+            window_id: None,
+            profile: None,
+            verification: None,
+            dropped: Vec::new(),
+            proposed: None,
+            trusted_project: Vec::new(),
+            unconfined_checks: false,
+            auto_confirm: false,
+            edit: None,
+        };
+        let (dir, written) = (repo_dir.to_path_buf(), failed.clone());
+        match blocking(move || store::save_proposal(&dir, &written).map_err(|e| e.to_string()))
+            .await
+        {
+            Ok(()) => self.note_proposal(project, Some(&failed)),
+            Err(error) => tracing::warn!(%error, "could not fail an interrupted goal set-up"),
         }
     }
 

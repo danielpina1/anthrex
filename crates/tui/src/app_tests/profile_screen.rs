@@ -3,8 +3,7 @@
 //! a moved clock (Global Constraint 11).
 
 use super::*;
-use crate::app::AlertKey;
-use crate::app::profile_screen::{ProfilePage, ProfileScreen, ProfileTab, Side};
+use crate::app::profile_screen::{ADVANCED_ROW, ProfilePage, ProfileScreen, Side};
 use crate::app::screens::Screen;
 use proto::{
     DroppedCommand, ModuleNames, ProfileReply, ProfileRequest, ProfileSource, ProfileStatus,
@@ -12,7 +11,6 @@ use proto::{
 };
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
 
 pub(super) const DIR: &str = "/p/shop";
 
@@ -51,7 +49,7 @@ pub(super) fn profile_requests(effects: &[Effect]) -> Vec<ProfileRequest> {
         .collect()
 }
 
-fn statuses(effects: &[Effect]) -> usize {
+pub(super) fn statuses(effects: &[Effect]) -> usize {
     profile_requests(effects)
         .iter()
         .filter(|r| matches!(r, ProfileRequest::Status { .. }))
@@ -65,7 +63,7 @@ pub(super) fn screen(app: &App) -> &ProfileScreen {
     }
 }
 
-fn screen_mut(app: &mut App) -> &mut ProfileScreen {
+pub(super) fn screen_mut(app: &mut App) -> &mut ProfileScreen {
     match &mut app.screen {
         Some(Screen::Profile(s)) => s,
         _ => panic!("no profile screen"),
@@ -96,6 +94,7 @@ fn record(state: ProposalState) -> ProposalRecord {
         trusted_project: vec![],
         unconfined_checks: false,
         auto_confirm: false,
+        edit: None,
     }
 }
 
@@ -110,6 +109,11 @@ pub(super) fn status(state: Option<ProposalState>) -> ProfileReply {
         proposal: state.map(record),
         scout: None,
         verify_confined: true,
+        queued: Vec::new(),
+        checking: None,
+        verified_at: None,
+        unreadable_text: None,
+        dropped_goals: Vec::new(),
     })
 }
 
@@ -164,22 +168,61 @@ pub(super) fn ready_app() -> (App, [u64; 3]) {
     (app, ids)
 }
 
-/// The Profile tab with `key` selected.
+/// The screen open with a stored profile and no proposal: the profile itself.
+pub(super) fn stored_app() -> (App, [u64; 3]) {
+    let mut app = open_app();
+    let ids = open(&mut app);
+    reply(&mut app, ids[0], status(None));
+    reply(&mut app, ids[1], shown(&stored_profile(), vec![]));
+    let none = ProfileReply::Refused {
+        message: "no proposal for /p/shop".into(),
+    };
+    reply(&mut app, ids[2], none);
+    (app, ids)
+}
+
+/// `status(state)` changed by `change`.
+pub(super) fn status_with(
+    state: Option<ProposalState>,
+    change: impl FnOnce(&mut ProfileStatus),
+) -> ProfileReply {
+    let ProfileReply::Status(mut st) = status(state) else {
+        unreachable!()
+    };
+    change(&mut st);
+    ProfileReply::Status(st)
+}
+
+/// `key`'s row selected (Advanced opened when the key sits inside it).
 pub(super) fn select(app: &mut App, key: &str) {
-    if screen(app).tab != ProfileTab::Profile {
-        tap(app, KeyCode::Tab);
-    }
-    for _ in 0..6 {
-        tap(app, KeyCode::PageUp);
-    }
-    for _ in 0..60 {
-        let s = screen(app);
-        if s.rows().get(s.selected).is_some_and(|r| r.key == key) {
-            return;
+    for advanced in [false, true] {
+        if advanced && !screen(app).advanced {
+            tap(app, KeyCode::Char('a'));
         }
-        tap(app, KeyCode::Char('j'));
+        for _ in 0..6 {
+            tap(app, KeyCode::PageUp);
+        }
+        for _ in 0..60 {
+            let s = screen(app);
+            if s.rows().get(s.selected).is_some_and(|r| r.key == key) {
+                return;
+            }
+            tap(app, KeyCode::Char('j'));
+        }
     }
     panic!("no row {key}");
+}
+
+/// The screen's status set to `reply`'s, as a poll would bring it.
+pub(super) fn set_status(app: &mut App, reply: ProfileReply) {
+    let ProfileReply::Status(st) = reply else {
+        unreachable!()
+    };
+    screen_mut(app).status = Some(st);
+}
+
+pub(super) fn keys_of(app: &App) -> Vec<String> {
+    screen(app).rows().into_iter().map(|r| r.key).collect()
 }
 
 #[test]
@@ -203,7 +246,7 @@ fn c_b_p_opens_on_the_selected_project_and_asks_three_things() {
     );
     assert_eq!(tagged(&effects).len(), 3, "every request is tagged");
     let s = screen(&app);
-    assert_eq!((s.dir.clone(), s.tab), (dir(), ProfileTab::Status));
+    assert_eq!(s.dir, dir());
     assert!(app.keymap.screen_mode());
     // Bare keys go to the screen, never to the PTY.
     assert!(tap(&mut app, KeyCode::Char('q')).is_empty());
@@ -254,76 +297,10 @@ fn no_project_toasts() {
     assert_eq!(app.toast_text(), Some("leave the plan review first (esc)"));
 }
 
-/// Decision 34: one `Status` a second while the detection runs, never two in flight;
-/// none after `Esc`; none once `Ready`, which fetches the proposal once.
-#[test]
-fn a_running_detection_polls_once_a_second() {
-    let mut app = open_app();
-    let ids = open(&mut app);
-    let t0 = Instant::now();
-    let at = |tenths: u64| t0 + Duration::from_millis(100 * tenths);
-    // Nothing runs yet: no poll.
-    assert_eq!(statuses(&app.screens_tick(at(30))), 0);
-    reply(&mut app, ids[0], status(Some(ProposalState::Scouting)));
-    let mut sent = Vec::new();
-    for tick in 1..=10 {
-        let effects = app.screens_tick(at(tick));
-        if statuses(&effects) > 0 {
-            sent.push((tick, tagged(&effects)[0].0));
-        }
-    }
-    assert_eq!(sent.len(), 1, "one per second: {sent:?}");
-    assert_eq!(sent[0].0, 10);
-    // Unanswered: three more seconds send nothing.
-    for tick in 11..=40 {
-        assert_eq!(
-            statuses(&app.screens_tick(at(tick))),
-            0,
-            "in flight at {tick}"
-        );
-    }
-    // Answered, still running: the next one goes.
-    reply(&mut app, sent[0].1, status(Some(ProposalState::Verifying)));
-    let effects = app.screens_tick(at(41));
-    assert_eq!(statuses(&effects), 1);
-    let id = tagged(&effects)[0].0;
-    // Ready: the proposal is fetched once, and the polling stops.
-    let effects = reply(&mut app, id, status(Some(ProposalState::Ready)));
-    assert_eq!(
-        profile_requests(&effects),
-        vec![ProfileRequest::Show {
-            dir: dir(),
-            proposed: true
-        }]
-    );
-    for tick in 42..=80 {
-        assert_eq!(statuses(&app.screens_tick(at(tick))), 0, "ready at {tick}");
-    }
-    // A proposal already ready at open was asked for by the open: nothing more.
-    let mut app = open_app();
-    let ids = open(&mut app);
-    assert!(reply(&mut app, ids[0], status(Some(ProposalState::Ready))).is_empty());
-    // Esc stops it too.
-    let mut app = open_app();
-    let ids = open(&mut app);
-    reply(&mut app, ids[0], status(Some(ProposalState::Preparing)));
-    tap(&mut app, KeyCode::Esc);
-    for tick in 1..=30 {
-        assert!(app.screens_tick(at(tick)).is_empty());
-    }
-    // `on_tick` drives it: a Status once a second has passed since the last.
-    let mut app = open_app();
-    let ids = open(&mut app);
-    reply(&mut app, ids[0], status(Some(ProposalState::Scouting)));
-    assert_eq!(statuses(&app.on_tick()), 0);
-    screen_mut(&mut app).status_sent_at = Some(Instant::now() - Duration::from_secs(2));
-    assert_eq!(statuses(&app.on_tick()), 1);
-}
-
 /// Decision 35: `d` opens the toggles, both off; the page's `y` sends `Detect`.
 #[test]
 fn detect_asks_its_toggles_then_sends() {
-    let (mut app, _) = ready_app();
+    let (mut app, _) = stored_app();
     assert!(tap(&mut app, KeyCode::Char('d')).is_empty());
     assert_eq!(
         screen(&app).page,
@@ -377,137 +354,202 @@ fn detect_asks_its_toggles_then_sends() {
     assert_eq!(screen(&app).message.as_deref(), Some("detection started"));
 }
 
-/// Decision 35: `c` shows `Shown.toml` exactly, and only `y` sends it back.
+/// Decision 29: `o` expands a verified command's output tail; a reply for a closed
+/// screen changes nothing.
 #[test]
-fn c_on_a_ready_proposal_shows_the_exact_toml_and_y_confirms_it() {
+fn o_expands_a_checks_tail_and_a_late_reply_is_harmless() {
     let mut app = open_app();
     let ids = open(&mut app);
-    // Not ready: nothing to confirm.
-    tap(&mut app, KeyCode::Char('c'));
-    assert_eq!(screen(&app).page, None);
-    reply(&mut app, ids[0], status(Some(ProposalState::Ready)));
-    let toml = "check = \"cargo test\"  \n\n# protected: built-in .git/** + no extras\n# \
-                verification 2026-10-01 10:00 (confined)\n";
-    reply(
-        &mut app,
-        ids[2],
-        ProfileReply::Shown {
-            source: ProfileSource::None,
-            toml: toml.into(),
-            meta: None,
-            verification: None,
-            dropped: vec![],
-        },
-    );
-    tap(&mut app, KeyCode::Char('c'));
-    assert!(matches!(
-        &screen(&app).page,
-        Some(ProfilePage::Confirm { toml: t, .. }) if t == toml
-    ));
-    assert!(tap(&mut app, KeyCode::Enter).is_empty(), "y only");
-    assert_eq!(app.toast_text(), Some("press y to confirm"));
-    let effects = tap(&mut app, KeyCode::Char('y'));
-    assert_eq!(
-        profile_requests(&effects),
-        vec![ProfileRequest::Confirm {
-            dir: dir(),
-            shown: Some(toml.into())
-        }]
-    );
-}
-
-#[test]
-fn x_rejects_the_proposal_after_y() {
-    let (mut app, _) = ready_app();
-    assert!(tap(&mut app, KeyCode::Char('x')).is_empty());
-    assert_eq!(screen(&app).page, Some(ProfilePage::Reject));
-    assert!(tap(&mut app, KeyCode::Enter).is_empty());
-    assert_eq!(app.toast_text(), Some("press y to reject proposal"));
-    let effects = tap(&mut app, KeyCode::Char('y'));
-    assert_eq!(
-        profile_requests(&effects),
-        vec![ProfileRequest::Reject { dir: dir() }]
-    );
-}
-
-#[test]
-fn p_switches_stored_and_proposal() {
-    let (mut app, _) = ready_app();
-    tap(&mut app, KeyCode::Tab);
-    assert_eq!(screen(&app).tab, ProfileTab::Profile);
-    assert!(!screen(&app).proposed);
-    let check_mark = |app: &App| {
-        let rows = screen(app).rows();
-        rows.iter().find(|r| r.key == "check").unwrap().mark
-    };
-    assert_eq!(check_mark(&app), None);
-    tap(&mut app, KeyCode::Char('p'));
-    assert!(screen(&app).proposed);
-    assert_eq!(check_mark(&app), Some(crate::profile_view::Mark::Changed));
-    tap(&mut app, KeyCode::Char('p'));
-    assert!(!screen(&app).proposed);
-    tap(&mut app, KeyCode::BackTab);
-    assert_eq!(screen(&app).tab, ProfileTab::Status);
-}
-
-/// Preflight F26: Enter on a proposal alert opens this screen on the proposal.
-#[test]
-fn enter_on_a_proposal_alert_opens_the_profile_screen() {
-    let mut app = super::alerts::every_app();
-    let key = AlertKey::Proposal("/r/shop".into());
-    prefix(&mut app);
-    tap(&mut app, KeyCode::Char('a'));
-    let mut effects = vec![];
-    for _ in 0..20 {
-        let on = app.alerts_focus.as_ref().and_then(|f| f.selected.clone());
-        if on.as_ref() == Some(&key) {
-            effects = tap(&mut app, KeyCode::Enter);
-            break;
-        }
-        tap(&mut app, KeyCode::Char('j'));
-    }
-    let shop = PathBuf::from("/r/shop");
-    assert_eq!(
-        profile_requests(&effects),
-        vec![
-            ProfileRequest::Status { dir: shop.clone() },
-            ProfileRequest::Show {
-                dir: shop.clone(),
-                proposed: false
-            },
-            ProfileRequest::Show {
-                dir: shop.clone(),
-                proposed: true
-            },
-        ]
-    );
-    let s = screen(&app);
-    assert_eq!(s.dir, shop);
-    assert_eq!(s.tab, ProfileTab::Profile);
-    assert!(s.proposed);
-    assert_eq!(app.alerts_focus, None);
-    assert_eq!(app.toast_text(), None);
-}
-
-/// Enter on a verified command expands its output tail; a reply for a closed screen
-/// changes nothing.
-#[test]
-fn enter_expands_a_checks_tail_and_a_late_reply_is_harmless() {
-    let mut app = open_app();
-    let ids = open(&mut app);
+    reply(&mut app, ids[0], status(None));
     let mut reply_shown = shown(&stored_profile(), vec![]);
     if let ProfileReply::Shown { verification, .. } = &mut reply_shown {
         *verification = Some(verification_of("cargo test"));
     }
     reply(&mut app, ids[1], reply_shown);
     select(&mut app, "check");
-    tap(&mut app, KeyCode::Enter);
+    tap(&mut app, KeyCode::Char('o'));
     assert_eq!(screen(&app).expanded.as_deref(), Some("check"));
-    tap(&mut app, KeyCode::Enter);
+    tap(&mut app, KeyCode::Char('o'));
+    assert_eq!(screen(&app).expanded, None);
+    // A row without a check has no output.
+    select(&mut app, "source");
+    tap(&mut app, KeyCode::Char('o'));
     assert_eq!(screen(&app).expanded, None);
     tap(&mut app, KeyCode::Esc);
     assert!(reply(&mut app, ids[2], shown(&stored_profile(), vec![])).is_empty());
     assert!(app.screen.is_none());
+}
+
+/// Decision 27: Tab, `s`, `c` and `p` are gone: on the profile and on the card they
+/// change nothing and send nothing.
+#[test]
+fn no_tab_no_s_no_c_no_p() {
+    for (mut app, _) in [stored_app(), ready_app()] {
+        let before = screen(&app).clone();
+        for code in [
+            KeyCode::Tab,
+            KeyCode::BackTab,
+            KeyCode::Char('s'),
+            KeyCode::Char('c'),
+            KeyCode::Char('p'),
+        ] {
+            assert!(tap(&mut app, code).is_empty(), "{code:?}");
+            assert_eq!(*screen(&app), before, "{code:?}");
+        }
+        assert_eq!(app.toast_text(), None);
+    }
+}
+
+/// Decision 29: `a` opens and folds Advanced; the selection stays on its row, or on the
+/// Advanced line when its row folds away.
+#[test]
+fn a_toggles_advanced_and_keeps_the_selection_on_its_key() {
+    let (mut app, _) = stored_app();
+    assert!(!screen(&app).advanced);
+    assert!(screen(&app).rows().iter().all(|r| !r.advanced), "folded");
+    assert!(keys_of(&app).contains(&ADVANCED_ROW.to_string()));
+    select(&mut app, "check");
+    assert!(tap(&mut app, KeyCode::Char('a')).is_empty());
+    assert!(screen(&app).advanced);
+    let s = screen(&app);
+    assert_eq!(s.rows()[s.selected].key, "check");
+    for key in ["full_shards", "module_names", "env.RUST_LOG", "hub"] {
+        assert!(keys_of(&app).contains(&key.to_string()), "{key}");
+    }
+    select(&mut app, "full_shards");
+    tap(&mut app, KeyCode::Char('a'));
+    assert!(!screen(&app).advanced);
+    let s = screen(&app);
+    assert_eq!(
+        s.rows()[s.selected].key,
+        ADVANCED_ROW,
+        "its row folded away"
+    );
+    // The main sections come first, then the Advanced line, then what it holds.
+    tap(&mut app, KeyCode::Char('a'));
+    let keys = keys_of(&app);
+    let at = |k: &str| keys.iter().position(|x| x == k).unwrap();
+    assert!(at("setup") < at("check") && at("check") < at("source"));
+    assert!(at("delivery.mode") < at(ADVANCED_ROW));
+    assert!(at(ADVANCED_ROW) < at("build_check"));
+    assert!(
+        at("env.RUST_LOG") < at(crate::profile_view::ENV_ADD),
+        "the add row last"
+    );
+}
+
+/// Decision 29: Enter on the Advanced line toggles it.
+#[test]
+fn enter_on_advanced_toggles_it() {
+    let (mut app, _) = stored_app();
+    select(&mut app, ADVANCED_ROW);
+    assert!(tap(&mut app, KeyCode::Enter).is_empty());
+    assert!(screen(&app).advanced);
+    assert_eq!(screen(&app).page, None);
+    let s = screen(&app);
+    assert_eq!(s.rows()[s.selected].key, ADVANCED_ROW);
+    tap(&mut app, KeyCode::Enter);
+    assert!(!screen(&app).advanced);
+}
+
+/// Decision 30: Enter on a row opens its page; Esc closes it.
+#[test]
+fn enter_on_a_row_opens_its_page() {
+    let (mut app, _) = stored_app();
+    select(&mut app, "source");
+    assert!(tap(&mut app, KeyCode::Enter).is_empty());
+    assert_eq!(
+        screen(&app).page,
+        Some(ProfilePage::Row {
+            key: "source".into(),
+            scroll: 0
+        })
+    );
+    tap(&mut app, KeyCode::Esc);
+    assert_eq!(screen(&app).page, None);
+    assert!(app.screen.is_some());
+}
+
+/// Decisions 30 and 32: Enter on an unreadable profile shows the file's text exactly.
+#[test]
+fn enter_on_an_unreadable_profile_shows_its_text() {
+    let text = "check = \"cargo test\n[[broken\n  trailing  \n";
+    let mut app = open_app();
+    let ids = open(&mut app);
+    reply(
+        &mut app,
+        ids[0],
+        status_with(None, |st| {
+            st.unparseable = Some("expected `]`".into());
+            st.unreadable_text = Some(text.into());
+        }),
+    );
+    let refused = |m: &str| ProfileReply::Refused { message: m.into() };
+    reply(&mut app, ids[1], refused("the profile does not parse"));
+    reply(&mut app, ids[2], refused("no proposal for /p/shop"));
+    assert!(screen(&app).rows().is_empty());
+    assert!(tap(&mut app, KeyCode::Enter).is_empty());
+    assert_eq!(
+        screen(&app).page,
+        Some(ProfilePage::RawText {
+            text: text.into(),
+            scroll: 0
+        })
+    );
+}
+
+/// Decision 29: `x` only while a review proposal exists; an `Edit`-origin proposal (a
+/// row edit of the stored profile) is not one.
+#[test]
+fn x_is_offered_only_with_a_review_proposal() {
+    let (mut app, _) = stored_app();
+    assert!(!screen(&app).review_proposal());
+    assert!(tap(&mut app, KeyCode::Char('x')).is_empty());
+    assert_eq!(screen(&app).page, None);
+    let edit_origin = status_with(Some(ProposalState::Verifying), |st| {
+        if let Some(p) = st.proposal.as_mut() {
+            p.origin = proto::ProposalOrigin::Edit {
+                keys: vec!["check".into()],
+            };
+        }
+    });
+    set_status(&mut app, edit_origin);
+    assert!(!screen(&app).review_proposal());
+    tap(&mut app, KeyCode::Char('x'));
+    assert_eq!(screen(&app).page, None);
+    // A detection under way is one.
+    set_status(&mut app, status(Some(ProposalState::Scouting)));
+    assert!(screen(&app).review_proposal());
+    tap(&mut app, KeyCode::Char('x'));
+    assert_eq!(screen(&app).page, Some(ProfilePage::Discard));
+}
+
+/// Decision 30: `d` with no stored profile is `set up`; with one, `detect again`.
+#[test]
+fn d_without_a_stored_profile_is_set_up() {
+    let mut app = open_app();
+    let ids = open(&mut app);
+    reply(
+        &mut app,
+        ids[0],
+        status_with(None, |st| {
+            st.source = ProfileSource::None;
+            st.confirmed_at = None;
+        }),
+    );
+    let refused = |m: &str| ProfileReply::Refused { message: m.into() };
+    reply(&mut app, ids[1], refused("no stored profile for /p/shop"));
+    reply(&mut app, ids[2], refused("no proposal for /p/shop"));
+    assert!(screen(&app).rows().is_empty(), "the status line alone");
+    tap(&mut app, KeyCode::Char('d'));
+    assert!(matches!(
+        screen(&app).page,
+        Some(ProfilePage::Detect { .. })
+    ));
+    assert_eq!(screen(&app).detect_title(), "set up");
+    let (mut app, _) = stored_app();
+    tap(&mut app, KeyCode::Char('d'));
+    assert_eq!(screen(&app).detect_title(), "detect again");
 }
 
 /// A check record for `command`, passed in 4 s, with a two-line tail.

@@ -83,6 +83,9 @@ mod plan_review_edges;
 #[path = "../app_tests/alerts.rs"]
 mod alerts;
 
+#[path = "../app_tests/alerts_setup.rs"]
+mod alerts_setup;
+
 #[path = "../app_tests/alerts_focus.rs"]
 mod alerts_focus;
 
@@ -133,6 +136,18 @@ mod form_brief;
 
 #[path = "../app_tests/profile_screen_views.rs"]
 mod profile_screen_views;
+
+#[path = "../app_tests/profile_card.rs"]
+mod profile_card;
+
+#[path = "../app_tests/profile_row_actions.rs"]
+mod profile_row_actions;
+
+#[path = "../app_tests/profile_screen_review.rs"]
+mod profile_screen_review;
+
+#[path = "../app_tests/alerts_setup_edges.rs"]
+mod alerts_setup_edges;
 
 #[path = "../app_tests/polish/mod.rs"]
 mod polish;

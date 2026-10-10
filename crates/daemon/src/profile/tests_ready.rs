@@ -67,7 +67,7 @@ pub(super) fn repo(dir: &Path, name: &str) -> PathBuf {
 }
 
 /// A service wired as the daemon wires it, on `dir`'s data directory.
-fn service(dir: &Path) -> Arc<ProfileService> {
+pub(super) fn service(dir: &Path) -> Arc<ProfileService> {
     let socket = dir.join("d.sock");
     let data = dir.join("data");
     let mut config = ManagerConfig::for_tests(socket.clone(), "/bin/sh".into());
@@ -103,7 +103,7 @@ impl Rig {
         }
     }
 
-    fn repo_dir(&self, project: &Path) -> PathBuf {
+    pub(super) fn repo_dir(&self, project: &Path) -> PathBuf {
         super::repo_dir(&self.data, project)
     }
 
@@ -137,9 +137,22 @@ impl Rig {
                 value: Some("[\"src/*\"]".into()),
                 yes: false,
                 unconfined_checks: false,
+                anyway: false,
+                on_proposal: false,
             })
             .await;
         assert!(matches!(reply, ProfileReply::Done { .. }), "{reply:?}");
+    }
+
+    /// A `Ready` review proposal (origin `Detect`) written and noted, as a detection's
+    /// `Ready` write leaves it.
+    fn review(&self, project: &Path) -> ProposalRecord {
+        let ready = record(project, ProposalState::Ready, 1_790_000_000);
+        let dir = self.repo_dir(project);
+        std::fs::create_dir_all(&dir).unwrap();
+        store::save_proposal(&dir, &ready).unwrap();
+        self.profiles.note_proposal(project, Some(&ready));
+        ready
     }
 
     fn ready(&self) -> (u64, Vec<(PathBuf, u64)>) {
@@ -157,7 +170,7 @@ impl Rig {
     }
 }
 
-fn record(project: &Path, state: ProposalState, updated_at: u64) -> ProposalRecord {
+pub(super) fn record(project: &Path, state: ProposalState, updated_at: u64) -> ProposalRecord {
     ProposalRecord {
         project: project.to_path_buf(),
         state,
@@ -174,6 +187,7 @@ fn record(project: &Path, state: ProposalState, updated_at: u64) -> ProposalReco
         trusted_project: Vec::new(),
         unconfined_checks: false,
         auto_confirm: false,
+        edit: None,
     }
 }
 
@@ -185,9 +199,7 @@ async fn a_ready_proposal_is_listed_and_a_confirm_removes_it() {
     let (before, listed) = rig.ready();
     assert!(listed.is_empty());
 
-    rig.edit(&project).await;
-    let written = rig.on_disk(&project).expect("the edit wrote a proposal");
-    assert_eq!(written.state, ProposalState::Ready);
+    let written = rig.review(&project);
     let (listed_at, listed) = rig.ready();
     assert_eq!(listed, vec![(project.clone(), written.updated_at)]);
     assert_ne!(
@@ -213,8 +225,7 @@ async fn a_ready_proposal_is_listed_and_a_confirm_removes_it() {
 async fn a_rejected_proposal_is_removed() {
     let rig = Rig::new();
     let project = repo(rig.dir.path(), "app");
-    rig.store_profile(&project);
-    rig.edit(&project).await;
+    rig.review(&project);
     let (listed_at, listed) = rig.ready();
     assert_eq!(listed.len(), 1);
 
@@ -238,8 +249,7 @@ async fn a_rejected_proposal_is_removed() {
 async fn a_new_proposal_replaces_a_ready_one() {
     let rig = Rig::new();
     let project = repo(rig.dir.path(), "app");
-    rig.store_profile(&project);
-    rig.edit(&project).await;
+    rig.review(&project);
     let (listed_at, listed) = rig.ready();
     assert_eq!(listed.len(), 1);
     // A later ready proposal is listed with its own time.
@@ -256,6 +266,20 @@ async fn a_new_proposal_replaces_a_ready_one() {
     let (replaced_at, listed) = rig.ready();
     assert!(listed.is_empty(), "{listed:?}");
     assert_ne!(replaced_at, later_at);
+}
+
+/// Milestone 9.10 decision 22: an edit of the stored profile (origin `Edit`) is shown on
+/// its row, never as "review how anthrex will work here": it is not listed, even `Ready`.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_edit_proposal_is_not_a_review() {
+    let rig = Rig::new();
+    let project = repo(rig.dir.path(), "app");
+    rig.store_profile(&project);
+    rig.edit(&project).await;
+    let written = rig.on_disk(&project).expect("the edit wrote a proposal");
+    assert_eq!(written.state, ProposalState::Ready);
+    assert!(matches!(written.origin, ProposalOrigin::Edit { .. }));
+    assert!(rig.ready().1.is_empty(), "{:?}", rig.ready());
 }
 
 /// A daemon restart rebuilds the list from disk: a `Ready` proposal is listed with its

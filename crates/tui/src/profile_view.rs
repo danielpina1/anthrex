@@ -1,7 +1,6 @@
 //! Milestone 9.0.6 decision 35: the Profile screen's view of a `RepoProfile`, pure.
-//! The groups (Interfaces "Profile groups", and milestone 9.2's `delivery`), one row per
-//! key with its value, its
-//! verification record and, on the proposal view, its mark against the stored profile;
+//! Milestone 9.10 decision 24's sections, one row per key in their order with its value,
+//! its verification record and, against the stored profile, its mark and old value;
 //! the check cell; each key's editor kind; and the TOML literal an edit sends, which
 //! `apply_edit`'s `parse_value` reads back exactly (`daemon/src/profile/proposal.rs:193`).
 //! No I/O: values are read through `toml::Value`, the same table the daemon edits.
@@ -10,63 +9,77 @@ use crate::theme::{Glyph, glyph};
 use proto::{CommandCheck, ProfileVerification, RepoProfile};
 use std::collections::BTreeSet;
 
-/// The groups and their keys, in order. The environment group's `env` is one row per
-/// `env.<NAME>` (preflight F28), then a row to add one. Milestone 9.2 decision 3's
-/// `delivery` group edits the `[delivery]` table's two keys (task M9.2.15).
-const GROUPS: [(&str, &[&str]); 5] = [
+/// Decision 24: the sections of the one-page Profile screen, in order: the title,
+/// whether it sits inside Advanced, and its keys (`env` is the environment section's
+/// add row; each `env.<NAME>` row joins it).
+pub const SECTIONS: [(&str, bool, &[&str]); 11] = [
     (
-        "commands",
-        &[
-            "setup",
-            "check",
-            "check_timeout_secs",
-            "single_test",
-            "test_passed",
-            "sample_test",
-            "output_filter",
-            "filter_prefixes",
-        ],
+        "How anthrex checks your work",
+        false,
+        &["setup", "check", "single_test"],
     ),
     (
-        "tiers",
+        "Your repo",
+        false,
+        &["source", "test_paths", "generated", "protected"],
+    ),
+    ("Delivery", false, &["delivery.mode"]),
+    (
+        "testing tiers",
+        true,
         &[
             "build_check",
             "module_test",
             "module_tests",
             "module_graph",
             "module_names",
-            "toolchain_id",
+            "full_triggers",
             "slow_tests",
             "timing_tests",
-            "full_triggers",
-            "full_shards",
             "skip_markers",
+            "full_shards",
+            "toolchain_id",
         ],
     ),
+    ("output filter", true, &["output_filter", "filter_prefixes"]),
+    ("environment", true, &["env"]),
+    ("timeouts", true, &["check_timeout_secs"]),
+    ("test result pattern", true, &["test_passed", "sample_test"]),
+    ("shared code area", true, &["hub"]),
     (
-        "paths",
-        &[
-            "modules",
-            "source",
-            "hub",
-            "generated",
-            "protected",
-            "manifests",
-            "test_paths",
-            "languages",
-            "conventions",
-        ],
+        "repo details",
+        true,
+        &["languages", "modules", "manifests", "conventions"],
     ),
-    ("delivery", &["delivery.mode", "delivery.remote"]),
-    ("environment", &["env"]),
+    ("delivery remote", true, &["delivery.remote"]),
 ];
 
-/// Interfaces "Profile groups".
-pub fn groups() -> &'static [(&'static str, &'static [&'static str])] {
-    &GROUPS
+/// Decision 24: [`SECTIONS`].
+pub fn sections() -> &'static [(&'static str, bool, &'static [&'static str])] {
+    &SECTIONS
 }
 
-/// The key of the environment group's last row, which adds a variable.
+/// Whether `key`'s row sits inside Advanced.
+pub fn in_advanced(key: &str) -> bool {
+    section_of(key).1
+}
+
+/// The section of `key` and whether it sits inside Advanced (`env.<NAME>` is the
+/// environment section's).
+fn section_of(key: &str) -> (&'static str, bool) {
+    let key = if key.starts_with("env.") {
+        ENV_ADD
+    } else {
+        key
+    };
+    SECTIONS
+        .iter()
+        .find(|(_, _, keys)| keys.contains(&key))
+        .map(|(title, advanced, _)| (*title, *advanced))
+        .unwrap_or(("", false))
+}
+
+/// The key of the environment section's last row, which adds a variable.
 pub const ENV_ADD: &str = "env";
 
 /// A proposal row against the stored profile.
@@ -135,7 +148,14 @@ pub fn kind_of(key: &str) -> Kind {
 /// One row of the Profile tab.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Row {
-    pub group: &'static str,
+    /// Decision 24: the section's title.
+    pub section: &'static str,
+    /// Decision 24: the plain label.
+    pub label: String,
+    /// Whether the row sits inside Advanced.
+    pub advanced: bool,
+    /// The stored value this row is shown against (with `against`), as displayed.
+    pub old: Option<String>,
     /// The `RepoProfile` key, `env.<NAME>`, or [`ENV_ADD`].
     pub key: String,
     /// The value as shown (a list's items joined with `, `); `None` when unset.
@@ -145,6 +165,18 @@ pub struct Row {
     /// The verification record of this row's command, when it ran this command.
     pub check: Option<CommandCheck>,
 }
+
+/// The verified command keys, in the screen's order: [`check_of`] answers for each.
+pub const VERIFIED_KEYS: [&str; 8] = [
+    "setup",
+    "check",
+    "single_test",
+    "build_check",
+    "module_test",
+    "module_tests",
+    "module_graph",
+    "toolchain_id",
+];
 
 /// The verification record of a verified command key (`ProfileVerification`'s eight).
 pub fn check_of<'a>(v: &'a ProfileVerification, key: &str) -> Option<&'a CommandCheck> {
@@ -201,10 +233,11 @@ fn env_names(table: &toml::Table) -> BTreeSet<String> {
         .unwrap_or_default()
 }
 
-/// Every row of `profile`, group by group. With `against` (the proposal view), each
-/// row is marked against that stored profile, and an environment entry only it has is
-/// listed too (removed). A verified command carries its record while the record ran
-/// the row's command.
+/// Every row of `profile`, section by section in decision 24's order (each
+/// `env.<NAME>` before the environment section's add row). With `against` (the stored
+/// profile), each row is marked against it and carries its old value, and an
+/// environment entry only it has is listed too (removed). A verified command carries
+/// its record while the record ran the row's command.
 pub fn rows(
     profile: &RepoProfile,
     verification: Option<&ProfileVerification>,
@@ -213,49 +246,72 @@ pub fn rows(
     let table = table_of(profile);
     let other = against.map(table_of);
     let mut out = Vec::new();
-    for (group, keys) in groups() {
-        let mut keys: Vec<String> = keys.iter().map(|k| k.to_string()).collect();
-        if *group == "environment" {
-            let mut names = env_names(&table);
-            if let Some(other) = &other {
-                names.extend(env_names(other));
+    for (_, _, keys) in sections() {
+        for key in keys.iter() {
+            if *key == ENV_ADD {
+                let mut names = env_names(&table);
+                if let Some(other) = &other {
+                    names.extend(env_names(other));
+                }
+                for name in names {
+                    out.push(row(
+                        &table,
+                        other.as_ref(),
+                        verification,
+                        format!("env.{name}"),
+                    ));
+                }
             }
-            keys = names.into_iter().map(|n| format!("env.{n}")).collect();
-        }
-        for key in keys {
-            let value = value_in(&table, &key);
-            let mark = other
-                .as_ref()
-                .and_then(|other| match (&value, value_in(other, &key)) {
-                    (Some(_), None) => Some(Mark::Added),
-                    (None, Some(_)) => Some(Mark::Removed),
-                    (Some(a), Some(b)) if *a != b => Some(Mark::Changed),
-                    _ => None,
-                });
-            let shown = value.as_ref().map(display);
-            let check = verification
-                .and_then(|v| check_of(v, &key))
-                .filter(|c| Some(&c.command) == shown.as_ref())
-                .cloned();
-            out.push(Row {
-                group,
-                key,
-                value: shown,
-                mark,
-                check,
-            });
-        }
-        if *group == "environment" {
-            out.push(Row {
-                group,
-                key: ENV_ADD.to_string(),
-                value: None,
-                mark: None,
-                check: None,
-            });
+            out.push(row(&table, other.as_ref(), verification, key.to_string()));
         }
     }
     out
+}
+
+/// One row of `key` (the add row for [`ENV_ADD`], which has no value).
+fn row(
+    table: &toml::Table,
+    other: Option<&toml::Table>,
+    verification: Option<&ProfileVerification>,
+    key: String,
+) -> Row {
+    let (section, advanced) = section_of(&key);
+    let label = crate::profile_words::label(&key);
+    if key == ENV_ADD {
+        return Row {
+            section,
+            label,
+            advanced,
+            old: None,
+            key,
+            value: None,
+            mark: None,
+            check: None,
+        };
+    }
+    let value = value_in(table, &key);
+    let before = other.and_then(|other| value_in(other, &key));
+    let mark = other.and_then(|_| match (&value, &before) {
+        (Some(_), None) => Some(Mark::Added),
+        (None, Some(_)) => Some(Mark::Removed),
+        (Some(a), Some(b)) if a != b => Some(Mark::Changed),
+        _ => None,
+    });
+    let shown = value.as_ref().map(display);
+    let check = verification
+        .and_then(|v| check_of(v, &key))
+        .filter(|c| Some(&c.command) == shown.as_ref())
+        .cloned();
+    Row {
+        section,
+        label,
+        advanced,
+        old: before.as_ref().map(display),
+        key,
+        value: shown,
+        mark,
+        check,
+    }
 }
 
 /// Interfaces "Profile check cell": `✓ 0 · 4s`, `✗ 101 · 12s`, `✗ timed out · 600s`;
@@ -271,12 +327,40 @@ pub fn check_cell(c: &CommandCheck, ascii: bool) -> String {
     format!("{mark} {how} {dot} {}s", c.secs)
 }
 
+/// Decision 28: the card's check cell, `✓ 12s` / `✗ 3m10s` (ASCII `+` / `x`).
+pub fn card_cell(c: &CommandCheck, ascii: bool) -> String {
+    let mark = glyph(if c.ok { Glyph::Passed } else { Glyph::Failed }, ascii);
+    format!("{mark} {}", crate::profile_words::took(c.secs))
+}
+
+/// The changes card's rows: only those marked against the stored profile.
+pub fn changed(rows: Vec<Row>) -> Vec<Row> {
+    rows.into_iter().filter(|r| r.mark.is_some()).collect()
+}
+
 /// The text an editor of `key` starts from: a list one item per line.
 pub fn edit_text(profile: &RepoProfile, key: &str) -> String {
     match value_in(&table_of(profile), key) {
         Some(toml::Value::Array(items)) => items.iter().map(display).collect::<Vec<_>>().join("\n"),
         Some(value) => display(&value),
         None => String::new(),
+    }
+}
+
+/// Final review C-I1: a row edit's `value` as a row shows it, read as the daemon's
+/// `parse_value` reads it (`v = <value>` when that parses as one TOML value, else the
+/// text as typed); an environment value as typed, since it is stored unparsed; an unset
+/// `—`.
+pub fn tried_value(key: &str, value: Option<&str>) -> String {
+    let Some(value) = value else {
+        return "—".to_string();
+    };
+    if key.starts_with("env.") {
+        return value.to_string();
+    }
+    match toml::from_str::<toml::Table>(&format!("v = {value}")) {
+        Ok(table) if table.len() == 1 => table.get("v").map_or(value.to_string(), display),
+        _ => value.to_string(),
     }
 }
 

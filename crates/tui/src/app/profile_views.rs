@@ -1,19 +1,22 @@
 //! The Profile screen's view requests over time (decision 34, final review minor 2):
 //! the 1 s tick that polls the status while a detection runs and asks again for a view
 //! no reply will come for, the failure a view shows when its request expired or was not
-//! sent, and whether a late view still fills the screen. Split from
+//! sent, and whether a late view still fills the screen; and the replies that fill the
+//! views (moved here from `app/profile_screen.rs` in milestone 9.10.8, rule 8). Split from
 //! `app/profile_screen.rs` by responsibility (`AGENTS.md` hard rule 8). Pure: the clock
 //! is the tick's `now`.
 
-use super::{POLL_EVERY, ProfileAsk, Side};
+use super::{POLL_EVERY, ProfileAsk, Shown, Side};
 use crate::app::replies::PendingWhat;
+use crate::app::runs::{capped, first_line_and_more};
 use crate::app::screens::Screen;
-use crate::app::{App, Effect};
+use crate::app::{App, Effect, ToastLevel};
+use proto::{ProfileReply, RunReply};
 use std::time::Instant;
 
 impl App {
-    /// Decision 34's poll: while a detection runs, one `Status` a second, never two in
-    /// flight. Nothing once the screen is closed or the proposal is past verifying.
+    /// Decision 34's poll: while a detection runs, or a row edit is checked (milestone
+    /// 9.10 decision 31), one `Status` a second, never two in flight. Nothing once the screen is closed or the proposal is past verifying.
     /// Minor 2: a view no reply will come for (`status_failed`, a `Failed` side) is asked
     /// again the same way, once a second and one at a time.
     pub(in crate::app) fn profile_tick(&mut self, now: Instant) -> Vec<Effect> {
@@ -28,7 +31,10 @@ impl App {
         };
         let status = !s.status_id.is_some_and(|id| self.replies.contains(id))
             && due(s.status_sent_at)
-            && (s.in_progress() || (s.status.is_none() && s.status_failed.is_some()));
+            && (s.in_progress()
+                || s.row_checking()
+                || s.drain_until.is_some_and(|until| now < until)
+                || (s.status.is_none() && s.status_failed.is_some()));
         let sides: Vec<bool> = [false, true]
             .into_iter()
             .filter(|&proposed| {
@@ -107,6 +113,188 @@ impl App {
         match &self.screen {
             Some(Screen::Profile(s)) => id.is_some() && s.show_id[usize::from(proposed)] == id,
             _ => true,
+        }
+    }
+
+    /// `route_reply`'s profile arm. A reply to a profile request of ours applies to the
+    /// screen still open on its project; one whose screen closed, or a late one, is
+    /// shown as a toast when it reports an outcome (decision 16), and dropped when it is
+    /// a view.
+    pub(in crate::app) fn route_profile_reply(&mut self, reply: &RunReply) -> Option<Vec<Effect>> {
+        let RunReply::Profile { reply, request_id } = reply else {
+            return None;
+        };
+        let pending = request_id.and_then(|id| self.replies.peek(id).cloned());
+        let (dir, ask) = match pending {
+            Some(PendingWhat::Profile { dir, ask }) => (dir, ask),
+            Some(_) => return None,
+            None => {
+                // A late view (its entry expired) fills the open screen still loading
+                // on it, else is dropped (decision 16, minor 2); a late outcome shown.
+                let late = request_id.and_then(|id| self.replies.expired_view(id).cloned());
+                match late.zip(*request_id) {
+                    Some((PendingWhat::Profile { dir, ask }, id))
+                        if self.profile_awaits(&dir, ask, id) =>
+                    {
+                        return Some(self.apply_profile_reply(ask, reply));
+                    }
+                    Some(_) => {}
+                    None if request_id.is_some() => self.toast_profile_outcome(reply),
+                    None => {}
+                }
+                return Some(vec![]);
+            }
+        };
+        self.replies.take(*request_id);
+        // Decision 37: a `Show` that is no longer its side's latest (a re-fetch went
+        // out after it) describes an older state; the re-fetch's reply fills the side.
+        if let ProfileAsk::Show { proposed } = ask
+            && !self.profile_latest_show(proposed, *request_id)
+        {
+            return Some(vec![]);
+        }
+        if self.profile_dir().as_ref() != Some(&dir) {
+            if !matches!(ask, ProfileAsk::Status | ProfileAsk::Show { .. }) {
+                self.toast_profile_outcome(reply);
+            }
+            return Some(vec![]);
+        }
+        Some(self.apply_profile_reply(ask, reply))
+    }
+
+    fn toast_profile_outcome(&mut self, reply: &ProfileReply) {
+        match reply {
+            ProfileReply::Done { message } => self.toast_at(ToastLevel::Info, capped(message)),
+            ProfileReply::Refused { message } => {
+                let text = first_line_and_more(message).unwrap_or_else(|| "profile refused".into());
+                self.toast_at(ToastLevel::Error, text);
+            }
+            _ => {}
+        }
+    }
+
+    fn apply_profile_reply(&mut self, ask: ProfileAsk, reply: &ProfileReply) -> Vec<Effect> {
+        let Some(s) = self.profile_screen_mut() else {
+            return vec![];
+        };
+        match (ask, reply) {
+            (ProfileAsk::Status, ProfileReply::Status(status)) => {
+                let was_running = s.in_progress();
+                // A row edit whose check ends changed its side (decision 15): the stored
+                // profile for an `Edit`-origin record, else the review proposal.
+                let checked = s.row_checking().then(|| !s.review_proposal());
+                let failed_before = s.failed_row_edit().map(|e| e.key.clone());
+                s.status = Some(status.clone());
+                // Final review M7: a ✗ that arrives on a key inside Advanced opens it,
+                // so its row, and its `s` and `r`, show.
+                if let Some(key) = s.failed_row_edit().map(|e| e.key.clone())
+                    && Some(&key) != failed_before.as_ref()
+                    && crate::profile_view::in_advanced(&key)
+                {
+                    s.advanced = true;
+                }
+                s.status_failed = None;
+                if status.proposal.is_none() {
+                    s.proposal = Side::Absent("no proposal".into());
+                }
+                let mut sides = Vec::new();
+                // Decision 34: leaving the running states (for `Ready`, or `Failed`:
+                // minor 1) fetches the proposal once; the old one is not shown meanwhile.
+                if was_running && !s.in_progress() && status.proposal.is_some() {
+                    s.proposal = Side::Loading;
+                    sides.push(true);
+                }
+                match checked.filter(|_| !s.row_checking()) {
+                    Some(true) => sides.push(false),
+                    Some(false) if !sides.contains(&true) && status.proposal.is_some() => {
+                        sides.push(true)
+                    }
+                    _ => {}
+                }
+                let now = Instant::now();
+                let effects = sides
+                    .into_iter()
+                    .flat_map(|proposed| self.profile_show(proposed, now))
+                    .collect();
+                self.profile_note_saved();
+                effects
+            }
+            (
+                ProfileAsk::Show { proposed },
+                ProfileReply::Shown {
+                    toml,
+                    verification,
+                    dropped,
+                    ..
+                },
+            ) => {
+                let shown = Shown {
+                    toml: toml.clone(),
+                    profile: toml::from_str(toml).ok(),
+                    verification: verification.clone(),
+                    dropped: dropped.clone(),
+                };
+                *s.side_mut(proposed) = Side::Ready(Box::new(shown));
+                self.profile_note_saved();
+                vec![]
+            }
+            (ProfileAsk::Show { proposed }, ProfileReply::Refused { message }) => {
+                *s.side_mut(proposed) = Side::Absent(message.clone());
+                vec![]
+            }
+            (_, ProfileReply::Refused { message }) => {
+                // A refused `Status` is not asked again (minor 2's retry is for silence).
+                s.status_failed = None;
+                s.error = Some(message.clone());
+                s.message = None;
+                s.saving = None;
+                // Final review M5: what was refused may have changed meanwhile (another
+                // client's edit, a re-detection): the views are asked again, so the
+                // next Enter sends what the card then shows.
+                match ask {
+                    ProfileAsk::Confirm
+                    | ProfileAsk::Edit
+                    | ProfileAsk::RevertEdit
+                    | ProfileAsk::Discard => self.profile_fetch_all(Instant::now()),
+                    _ => vec![],
+                }
+            }
+            (ProfileAsk::Detect, ProfileReply::Done { message }) => {
+                s.message = Some(message.clone());
+                s.error = None;
+                self.profile_status(Instant::now())
+            }
+            (_, ProfileReply::Done { message }) => {
+                s.message = Some(message.clone());
+                s.error = None;
+                // Final review D-I2: the goals that waited start now; one that cannot
+                // is recorded a moment later, and the poll brings it to the screen.
+                if ask == ProfileAsk::Confirm
+                    && s.status.as_ref().is_some_and(|st| !st.queued.is_empty())
+                {
+                    s.drain_until = Some(Instant::now() + super::DRAIN_WATCH);
+                }
+                match (ask, s.saving.as_mut()) {
+                    (ProfileAsk::Edit, Some(saving)) => saving.done = true,
+                    _ => s.saving = None,
+                }
+                self.profile_fetch_all(Instant::now())
+            }
+            _ => vec![],
+        }
+    }
+
+    /// Decision 31: whether the watched edit ended, once the latest status and its
+    /// side's latest view are both back (`ProfileScreen::note_saved`).
+    fn profile_note_saved(&mut self) {
+        let Some(Screen::Profile(s)) = &self.screen else {
+            return;
+        };
+        let side = s.saving.as_ref().map_or(0, |v| usize::from(v.on_proposal));
+        let out = |id: Option<u64>| id.is_some_and(|id| self.replies.contains(id));
+        let settled = !out(s.status_id) && !out(s.show_id[side]);
+        if let Some(s) = self.profile_screen_mut() {
+            s.note_saved(settled);
         }
     }
 }

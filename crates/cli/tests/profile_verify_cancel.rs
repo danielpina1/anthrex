@@ -90,6 +90,8 @@ fn edit(repo: &Path, value: &str) -> ProfileRequest {
         value: Some(value.into()),
         yes: false,
         unconfined_checks: true,
+        anyway: false,
+        on_proposal: false,
     }
 }
 

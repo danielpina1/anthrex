@@ -380,6 +380,7 @@ fn proposal(project: &Path) -> ProposalRecord {
         trusted_project: Vec::new(),
         unconfined_checks: false,
         auto_confirm: true,
+        edit: None,
     }
 }
 

@@ -107,6 +107,7 @@ pub(super) fn a_proposal() -> ProposalRecord {
         trusted_project: vec![".codex/config.toml".into()],
         unconfined_checks: true,
         auto_confirm: true,
+        edit: None,
     }
 }
 

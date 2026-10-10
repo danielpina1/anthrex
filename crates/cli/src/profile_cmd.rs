@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 
 use clap::{Args, Subcommand};
 use proto::{
-    ClientMsg, DaemonMsg, ProfileReply, ProfileRequest, ProfileStatus, ProposalState, RunReply,
-    RunRequest,
+    ClientMsg, DaemonMsg, ProfileReply, ProfileRequest, ProfileStatus, ProposalOrigin,
+    ProposalRecord, ProposalState, RowEditState, RunReply, RunRequest,
 };
 
 use crate::client::CliClient;
@@ -45,13 +45,14 @@ enum ProfileCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Store the ready proposal
-    Confirm {
+    /// Use the ready proposal: store it, then start any queued goals
+    #[command(alias = "confirm")]
+    Use {
         /// Do not ask first
         #[arg(long)]
         yes: bool,
     },
-    /// Stop a detection and delete the proposal
+    /// Stop a detection and delete the proposal (and any goals waiting for it)
     Reject,
     /// Correct one value of the stored profile (a new proposal)
     Edit {
@@ -66,6 +67,9 @@ enum ProfileCommand {
         /// Store it as soon as verification passes
         #[arg(long)]
         yes: bool,
+        /// Store it once verification has run, even if a check fails (implies --yes)
+        #[arg(long)]
+        anyway: bool,
         /// Where this platform cannot confine the verification, run it unconfined anyway
         #[arg(long)]
         unconfined_checks: bool,
@@ -75,10 +79,15 @@ enum ProfileCommand {
 /// Runs one `anthrex profile` command; any error is printed as it is and exits 1.
 pub async fn main(args: ProfileArgs, socket: PathBuf, dir: Option<PathBuf>) -> anyhow::Result<()> {
     if let Err(error) = dispatch(args.command, &socket, dir).await {
-        eprintln!("{error}");
+        eprintln!("{}", error_text(&error));
         std::process::exit(1);
     }
     Ok(())
+}
+
+/// Final review M10: an error as printed, its daemon text sanitised.
+fn error_text(error: &anyhow::Error) -> String {
+    crate::run_cmd::printable(&error.to_string())
 }
 
 async fn request(client: &mut CliClient, request: ProfileRequest) -> anyhow::Result<ProfileReply> {
@@ -96,12 +105,15 @@ async fn request(client: &mut CliClient, request: ProfileRequest) -> anyhow::Res
 
 /// `Done` prints its message; `Refused` is the command's error.
 fn done(reply: ProfileReply) -> anyhow::Result<()> {
+    println!("{}", done_text(reply)?);
+    Ok(())
+}
+
+/// `Done`'s message, or `Refused`'s as the error, each sanitised (final review M10).
+fn done_text(reply: ProfileReply) -> anyhow::Result<String> {
     match reply {
-        ProfileReply::Done { message } => {
-            println!("{message}");
-            Ok(())
-        }
-        ProfileReply::Refused { message } => anyhow::bail!(message),
+        ProfileReply::Done { message } => Ok(crate::run_cmd::printable(&message)),
+        ProfileReply::Refused { message } => anyhow::bail!(crate::run_cmd::printable(&message)),
         other => anyhow::bail!("unexpected reply: {other:?}"),
     }
 }
@@ -120,7 +132,10 @@ async fn dispatch(
             if json {
                 println!("{}", serde_json::to_string_pretty(&status)?);
             } else {
-                print!("{}", status_text(&status));
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_secs());
+                print!("{}", status_text(&status, now));
             }
             Ok(())
         }
@@ -142,7 +157,7 @@ async fn dispatch(
             let reply = request(&mut client, ProfileRequest::Show { dir, proposed }).await?;
             show(reply, json)
         }
-        ProfileCommand::Confirm { yes } => {
+        ProfileCommand::Use { yes } => {
             let shown = request(
                 &mut client,
                 ProfileRequest::Show {
@@ -172,20 +187,35 @@ async fn dispatch(
             value,
             unset: _,
             yes,
+            anyway,
             unconfined_checks,
         } => done(
             request(
                 &mut client,
-                ProfileRequest::Edit {
-                    dir,
-                    key,
-                    value,
-                    yes,
-                    unconfined_checks,
-                },
+                edit_request(dir, key, value, yes, anyway, unconfined_checks),
             )
             .await?,
         ),
+    }
+}
+
+/// `profile edit`'s request; `--anyway` implies `--yes` (decision 37).
+fn edit_request(
+    dir: PathBuf,
+    key: String,
+    value: Option<String>,
+    yes: bool,
+    anyway: bool,
+    unconfined_checks: bool,
+) -> ProfileRequest {
+    ProfileRequest::Edit {
+        dir,
+        key,
+        value,
+        yes: yes || anyway,
+        unconfined_checks,
+        anyway,
+        on_proposal: false,
     }
 }
 
@@ -204,16 +234,19 @@ async fn status(client: &mut CliClient, dir: &Path) -> anyhow::Result<ProfileSta
 }
 
 fn show(reply: ProfileReply, json: bool) -> anyhow::Result<()> {
+    print!("{}", show_text(reply, json)?);
+    Ok(())
+}
+
+/// What `show` prints: the TOML sanitised (final review M10: its comments carry the
+/// scout's commands), or the JSON (escaped by `serde_json`), or a `Done`'s message.
+fn show_text(reply: ProfileReply, json: bool) -> anyhow::Result<String> {
     match reply {
-        ProfileReply::Shown { toml, .. } if !json => {
-            print!("{toml}");
-            Ok(())
-        }
+        ProfileReply::Shown { toml, .. } if !json => Ok(crate::run_cmd::printable(&toml)),
         shown @ ProfileReply::Shown { .. } => {
-            println!("{}", serde_json::to_string_pretty(&shown)?);
-            Ok(())
+            Ok(format!("{}\n", serde_json::to_string_pretty(&shown)?))
         }
-        other => done(other),
+        other => done_text(other).map(|text| format!("{text}\n")),
     }
 }
 
@@ -241,29 +274,51 @@ fn minute(unix: u64) -> String {
     at.get(..16).unwrap_or(&at).to_string()
 }
 
-/// `profile status`'s text (the brief's CLI section).
-pub fn status_text(status: &ProfileStatus) -> String {
-    let mut out = format!("profile: {}\n", status.project.display());
+/// A daemon-supplied string as one terminal line (goals, reasons, labels, paths).
+fn one(text: &str) -> String {
+    crate::run_cmd::printable(&proto::safe_text::one_line(text))
+}
+
+/// `profile status`'s text (decision 38): the project, the status line, today's lines,
+/// then the waiting and dropped goals. `now` is Unix seconds, read once by the caller.
+/// Every daemon-supplied string goes through `printable`.
+pub fn status_text(status: &ProfileStatus, now: u64) -> String {
+    crate::run_cmd::printable(&status_body(status, now))
+}
+
+fn status_body(status: &ProfileStatus, now: u64) -> String {
+    let mut out = format!("profile: {}\n", one(&status.project.display().to_string()));
+    out.push_str(&format!(
+        "  {}\n",
+        one(&tui::profile_words::status_line(status, now))
+    ));
     match (status.confirmed_at, &status.unparseable) {
-        (_, Some(problem)) => out.push_str(&format!("  stored: does not parse: {problem}\n")),
+        (_, Some(problem)) => {
+            out.push_str(&format!("  stored: does not parse: {}\n", one(problem)));
+        }
         (Some(at), None) => out.push_str(&format!(
             "  stored: yes, confirmed {} ({})\n",
             minute(at),
-            status.repo_dir.join("profile.toml").display()
+            one(&status.repo_dir.join("profile.toml").display().to_string())
         )),
         (None, None) => out.push_str("  stored: no\n"),
     }
     if !status.stale.is_empty() {
         out.push_str(&format!(
             "  stale: {} changed since it was confirmed\n",
-            status.stale.join(", ")
+            status
+                .stale
+                .iter()
+                .map(|f| one(f))
+                .collect::<Vec<_>>()
+                .join(", ")
         ));
     }
     match &status.proposal {
         None => out.push_str("  detection: none\n"),
         Some(record) => match &record.state {
             ProposalState::Failed { reason } => {
-                out.push_str(&format!("  detection: failed: {reason}\n"));
+                out.push_str(&format!("  detection: failed: {}\n", one(reason)));
             }
             state => {
                 let mut line = format!(
@@ -272,12 +327,15 @@ pub fn status_text(status: &ProfileStatus) -> String {
                     minute(record.updated_at).get(11..).unwrap_or_default()
                 );
                 if let (Some(id), Some(window)) = (&record.scout_id, record.window_id) {
-                    line.push_str(&format!(" (scout {id}, window {window})"));
+                    line.push_str(&format!(" (scout {}, window {window})", one(id)));
                 }
                 out.push_str(&line);
                 out.push('\n');
             }
         },
+    }
+    if let Some(line) = status.proposal.as_ref().and_then(edit_line) {
+        out.push_str(&line);
     }
     if status.verify_confined {
         out.push_str("  verification: confined, as runs are\n");
@@ -286,5 +344,49 @@ pub fn status_text(status: &ProfileStatus) -> String {
             "  verification: unconfined (this platform cannot confine it, or worker_sandbox is off)\n",
         );
     }
+    for queued in &status.queued {
+        out.push_str(&format!("  waiting: {}\n", one(&queued.goal)));
+    }
+    for dropped in &status.dropped_goals {
+        out.push_str(&format!(
+            "  dropped goal \"{}\": {}\n",
+            one(&dropped.goal),
+            one(&dropped.reason)
+        ));
+    }
     out
 }
+
+/// Final review C-I2: the proposal's row edit as the screen shows it (its key, the
+/// value it tried, `checking` or its ✗ with the reason and what to do), so a user sent
+/// to `profile status` by an edit's reply sees how it ended.
+fn edit_line(record: &ProposalRecord) -> Option<String> {
+    let edit = record.edit.as_ref()?;
+    let what = match &edit.value {
+        Some(value) => format!(
+            "{} = {}",
+            one(&edit.key),
+            one(&tui::profile_view::tried_value(&edit.key, Some(value)))
+        ),
+        None => format!("unset {}", one(&edit.key)),
+    };
+    let line = match &edit.state {
+        RowEditState::Verifying => format!("  edit: {what}, checking\n"),
+        RowEditState::Failed { reason, .. } => {
+            let next = if matches!(record.origin, ProposalOrigin::Edit { .. }) {
+                "save it anyway with --anyway, or anthrex profile reject"
+            } else {
+                "not in the proposal; anthrex profile use stores the proposal without it"
+            };
+            format!(
+                "  edit: {what} failed its check: {} ({next})\n",
+                one(reason)
+            )
+        }
+    };
+    Some(line)
+}
+
+#[cfg(test)]
+#[path = "profile_cmd_tests.rs"]
+mod tests;

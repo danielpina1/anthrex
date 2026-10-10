@@ -55,6 +55,38 @@ pub enum Stored {
     Absent,
 }
 
+/// Milestone 9.10 decision 32: the most of an unreadable profile file's text the
+/// status sends.
+pub const UNREADABLE_TEXT_MAX: usize = 64 * 1024;
+/// What ends a text cut at [`UNREADABLE_TEXT_MAX`].
+const UNREADABLE_CUT: &str = "\n… (cut at 64 KiB)";
+
+/// Decision 32: the text of the file `path` (the one [`Stored::Unparseable`] names),
+/// at most [`UNREADABLE_TEXT_MAX`] bytes cut at a character boundary and then marked;
+/// `None` when it cannot be read. The cap holds after invalid bytes are replaced (each
+/// grows to three; task 3 review minor 2). Blocking; called only for an unparseable
+/// profile.
+pub fn load_text(path: &Path) -> Option<String> {
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .and_then(|file| {
+            file.take(UNREADABLE_TEXT_MAX as u64 + 1)
+                .read_to_end(&mut bytes)
+        })
+        .ok()?;
+    let mut text = String::from_utf8_lossy(&bytes).into_owned();
+    let cut = text.len() > UNREADABLE_TEXT_MAX;
+    if cut {
+        let mut end = UNREADABLE_TEXT_MAX;
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        text.truncate(end);
+        text.push_str(UNREADABLE_CUT);
+    }
+    Some(text)
+}
+
 /// Makes every temp name of this process distinct.
 static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -124,7 +156,13 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
 pub fn sweep_leftovers(repo_dir: &Path) -> io::Result<()> {
     sweep_named(
         repo_dir,
-        &[PROFILE_FILE, META_FILE, PROPOSAL_FILE, DETECTION_FILE],
+        &[
+            PROFILE_FILE,
+            META_FILE,
+            PROPOSAL_FILE,
+            DETECTION_FILE,
+            super::queue::QUEUE_FILE,
+        ],
     )
 }
 

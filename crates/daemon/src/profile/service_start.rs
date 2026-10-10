@@ -3,6 +3,7 @@
 //! project settings a scout would run unasked), then the registration, the first
 //! `proposal.json` and the background task.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use proto::{ProposalOrigin, ProposalRecord, ProposalState, Route, Runtime};
@@ -98,6 +99,21 @@ impl ProfileService {
             return Err(already_running(&pre.project, &state));
         }
         self.confinement_refusal(unconfined_checks)?;
+        // Task 5 re-review: a goal's set-up is for a repository with no profile; one
+        // stored since the goal looked needs none (`detect` and `Auto` re-detect a
+        // stored one on purpose).
+        if origin == ProposalOrigin::Goal {
+            let dir = self.repo_dir(&pre.project);
+            let stored =
+                blocking(move || Ok(matches!(store::load(&dir), store::Stored::Found { .. })))
+                    .await?;
+            if stored {
+                return Err(format!(
+                    "{} has a stored profile now; the goal needs no set-up",
+                    pre.project.display()
+                ));
+            }
+        }
         let (trusted, codex_config, route) = self.scout_checks(pre, trust_project).await?;
         let Some((generation, token)) = self.register(&pre.project) else {
             return Err(already_running(&pre.project, &ProposalState::Preparing));
@@ -119,6 +135,7 @@ impl ProfileService {
             trusted_project: trusted,
             unconfined_checks,
             auto_confirm: false,
+            edit: None,
         };
         self.save_if_current(generation, &record).await;
         let job = super::service_run::Job {
@@ -128,9 +145,31 @@ impl ProfileService {
             record,
             codex_config,
             route: Some(route),
+            anyway: false,
         };
         tokio::spawn(self.clone().detect_in_background(job));
         Ok(())
+    }
+
+    /// Final review M3: whether work is registered for `project`, perhaps before its
+    /// first write (memory only).
+    pub fn registered(&self, project: &Path) -> bool {
+        crate::lock(&self.table).active.contains_key(project)
+    }
+
+    /// `register`, for the driver's tests.
+    #[cfg(test)]
+    pub(crate) fn register_for_tests(
+        &self,
+        project: &Path,
+    ) -> Option<(u64, tokio_util::sync::CancellationToken)> {
+        self.register(project)
+    }
+
+    /// `unregister`, for the driver's tests.
+    #[cfg(test)]
+    pub(crate) fn unregister_for_tests(&self, project: &Path, generation: u64) {
+        self.unregister(project, generation);
     }
 
     /// M8a's `start_refusal` for verification (decision 9, ruling R-T10-1): a platform
@@ -193,6 +232,7 @@ impl ProfileService {
             trusted_project: Vec::new(),
             unconfined_checks: false,
             auto_confirm: false,
+            edit: None,
         };
         let _writes = self.writes.lock().await;
         // Review m5: a detection that registered meanwhile keeps its proposal.

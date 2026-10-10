@@ -25,6 +25,29 @@ pub const GOAL_REQUEST_TIMEOUT: Duration = super::RUN_START_TIMEOUT
 pub const CONTINUE_REQUEST_TIMEOUT: Duration =
     daemon::run::chain::CONTINUE_START_BOUND.saturating_add(Duration::from_secs(30));
 
+/// Milestone 9.10 decision 39: `run start --goal` exits with this when the goal was
+/// queued for its repository's profile. The first code after clap's usage error (2); no
+/// other command uses it.
+pub(crate) const EXIT_QUEUED: i32 = 3;
+
+/// The goal waits for its repository's profile (decision 39): not an error of the
+/// daemon's, but a script expecting a run id must stop, so it fails loudly. `main`
+/// downcasts it, prints it on stderr and exits [`EXIT_QUEUED`].
+#[derive(Debug)]
+pub(crate) struct Queued(pub(crate) String);
+
+impl std::fmt::Display for Queued {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "queued: {} waits for the repository profile (anthrex profile); no run started yet",
+            super::status::printable(&self.0)
+        )
+    }
+}
+
+impl std::error::Error for Queued {}
+
 /// `run start --goal`: on the fast path the run id on stdout and triage's message on
 /// stderr, and so on the plan and large paths with the planned message (milestone 9
 /// decision 26); any refusal is the command's error (exit 1). `orchestrator` is
@@ -52,8 +75,10 @@ pub(super) async fn start_goal(
         None => None,
     };
     let options = (orchestrator, delivery, design);
+    let queued = Queued(goal.clone());
     let request = goal_request(goal, dir, flags, options, continue_from);
     match runs.request(request).await? {
+        RunReply::Queued { .. } => Err(queued.into()),
         RunReply::Triaged {
             run_id: Some(run_id),
             message,
@@ -245,8 +270,23 @@ mod tests {
     use proto::RunRequest;
 
     use super::super::{RunCommand, request_timeout};
-    use super::GOAL_REQUEST_TIMEOUT;
+    use super::{EXIT_QUEUED, GOAL_REQUEST_TIMEOUT, Queued};
     use std::time::Duration;
+
+    /// Decision 39: the exact stderr line, with control characters replaced in the
+    /// goal, and the documented exit code.
+    #[test]
+    fn a_queued_goal_fails_with_its_own_line_and_code() {
+        assert_eq!(EXIT_QUEUED, 3);
+        let error: anyhow::Error = Queued("add a flag\u{1b}[31m".into()).into();
+        assert!(error.downcast_ref::<Queued>().is_some());
+        let line = error.to_string();
+        assert!(!line.contains('\u{1b}'), "{line:?}");
+        assert_eq!(
+            line,
+            "queued: add a flag [31m waits for the repository profile (anthrex profile); no run started yet"
+        );
+    }
 
     /// Whole-branch review C, m-2: the `dismissed` line prints the value the daemon
     /// stored, not the one fetched before the request.

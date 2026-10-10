@@ -33,6 +33,7 @@ pub fn reply_timeout(request: &RunRequest) -> Duration {
         RunRequest::Profile(
             ProfileRequest::Detect { .. }
             | ProfileRequest::Edit { .. }
+            | ProfileRequest::RevertEdit { .. }
             | ProfileRequest::Confirm { .. },
         ) => LONG_REPLY_TIMEOUT,
         _ => REPLY_TIMEOUT,

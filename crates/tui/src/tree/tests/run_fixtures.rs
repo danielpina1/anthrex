@@ -180,6 +180,7 @@ pub(crate) fn snapshot(now: u64, runs: Vec<RunInfo>) -> RunsSnapshot {
         now,
         proposals: Vec::new(),
         idle_orchestrators: Vec::new(),
+        queued_goals: Vec::new(),
     }
 }
 

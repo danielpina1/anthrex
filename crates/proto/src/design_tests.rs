@@ -299,6 +299,7 @@ fn design_types_round_trip() {
         now: 1_700_000_800,
         proposals: Vec::new(),
         idle_orchestrators: Vec::new(),
+        queued_goals: Vec::new(),
     }));
 }
 

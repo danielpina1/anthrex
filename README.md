@@ -198,7 +198,8 @@ You watch it all in the **run view** (`C-b T`, then a run): the plan as a graph 
 
 - **Rounds.** `anthrex run iterate <run> "<request>"` (or the action menu) asks the orchestrator to plan a new round of a complete run; a design run amends its spec first.
 - **Chains.** `anthrex run start --goal ... --continue <run>` plans a next goal with the same orchestrator, which keeps its context.
-- **Repository profile.** `anthrex profile detect` has a read-only scout propose the repository's check and test commands, verifies them, and stores them only after you confirm (`anthrex profile confirm`).
+- **Repository profile.** How anthrex builds, checks and tests a repository. You do not set it up first: a first goal in a repository with no profile waits while a read-only scout proposes the check and test commands and anthrex verifies them (the Alerts box shows `setting up anthrex`, then `review how anthrex will work here`). Enter opens one review card, and **Use this** stores the profile and starts the waiting goals; `anthrex profile use` (or its alias `anthrex profile confirm`) does the same from the CLI. `anthrex run start --goal` there exits with status 3 and nothing on stdout, since no run has started yet. `anthrex profile detect` sets a repository up, or detects again, without a goal.
+- **Profile screen.** `C-b P` is one page: a status line (`Ready · verified 2h ago`, `Needs review`, `Out of date — … changed`, `Not set up — press d to set up`), then How anthrex checks your work, Your repo and Delivery, in plain labels with each key dimmed beside it, and `Advanced ▸` folded (`a` opens it). `e` edits a row: a command is checked once, then saved on ✓; on ✗ the row says why, `o` shows the output, `s` saves it anyway and `r` reverts. On the review card the same edit changes only the proposal until **Use this**. From the CLI, `anthrex profile edit <key> <value> --yes` stores an edit once its check passes, and `--anyway` stores it whatever the check finds. Edits wait while a run is live in the repository.
 - **History.** Every run is recorded. `anthrex run stats` summarises it by task class, and new runs start from what the history learned: size thresholds, concurrency and a run estimate. Settings (`C-b S`) shows and edits the models each role runs (below) and the limits.
 
 ## Configuration
@@ -249,7 +250,7 @@ ci_fix_max = 2
 review_fix_max = 3
 ```
 
-Other tables: `[conversation]` (the conversation view's limits and runtime badges), `[panes]`, and under `[orchestrator]`: `budget`, `review`, `claude`, `deciders`, `scouts`, `onboarding`, `metering`, `planners` and `tuning`. The delivery mode (`local` or `pr`) and remote are per repository, in its profile: `anthrex profile edit`.
+Other tables: `[conversation]` (the conversation view's limits and runtime badges), `[panes]`, and under `[orchestrator]`: `budget`, `review`, `claude`, `deciders`, `scouts`, `onboarding`, `metering`, `planners` and `tuning`. `[orchestrator.onboarding] auto` decides only whether a stale profile is detected again on its own; a goal in a repository with no profile sets it up either way. The delivery mode (`local` or `pr`) and remote are per repository, in its profile: `anthrex profile edit`.
 
 ### Models
 
@@ -310,7 +311,7 @@ Environment variables:
 | `anthrex kill <TARGET>` | Kill a window's process group (SIGHUP, then SIGTERM, then SIGKILL). |
 | `anthrex rm <TARGET> [--worktree [--force]]` | Kill and forget a window; optionally remove its worktree (the branch is kept). |
 | `anthrex daemon start [--foreground] \| stop \| status` | Manage the background daemon. |
-| `anthrex profile status \| detect \| show \| confirm \| reject \| edit` | Detect, show, confirm and correct the repository's profile. |
+| `anthrex profile status \| detect \| show \| use \| reject \| edit` | Detect, show, use (store; `confirm` is its alias) and correct the repository's profile; `edit --anyway` stores an edit whatever its check finds. |
 | `anthrex run <subcommand>` | Start, watch and finish orchestrated runs (below). |
 
 `anthrex run` subcommands:

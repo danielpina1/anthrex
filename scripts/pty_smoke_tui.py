@@ -1,8 +1,8 @@
 """The TUI end-to-end stage for the PTY smoke test (milestone 9.0.6, task 16): stage 11t.
 
 `scripts/pty-smoke.py` imports `tui_stage` and calls it with its own `PtyProc`, `BIN`,
-`run_cmd` and `fail`, after stage 11g (`tuning_stage`) and stage 11k (`design_stage`, which
-runs on its own daemon), so every `anthrex` here runs
+`run_cmd` and `fail`, after stage 11g (`tuning_stage`), stage 11k (`design_stage`, which
+runs on its own daemon) and stage 11l (`profile_stage`), so every `anthrex` here runs
 with that script's isolated `ENV`: `ANTHREX_SOCKET`, `ANTHREX_DATA_DIR` and
 `ANTHREX_CONFIG` under `/tmp` (the config under the pid-named directory
 `/tmp/anthrex-smoke-data-<pid>/`), and `fake-agent` as both runtimes and as the decider.

@@ -3,16 +3,16 @@
 //! the entry Enter preselects (9.0.6 decision 17). `ui/alerts_view.rs` draws the view.
 //! Pure: no I/O.
 
-use super::alerts::{AlertKey, StageAlert, alerts};
+use super::alerts::{AlertKey, StageAlert, alerts, setup_state};
 use super::{App, Effect};
 use crate::actions_request::ActionTarget;
 use crate::keymap::Command;
 use crate::tree::NodeKey;
 use crossterm::event::{KeyCode, KeyEvent};
-use proto::{ActionInfo, ActionKind, BlockReason, RunInfo, WindowKind};
+use proto::{ActionInfo, ActionKind, BlockReason, RunInfo, SetupState, WindowKind};
 
 /// The node an alert's menu opens on: its run, or its blocked task; none for a
-/// proposal, which has no run. An orchestrator alert's node is its run.
+/// proposal or a set-up, which have no run. An orchestrator alert's node is its run.
 pub(crate) fn alert_node(key: &AlertKey) -> Option<(String, ActionTarget)> {
     match key {
         AlertKey::Orchestrator(run)
@@ -31,7 +31,7 @@ pub(crate) fn alert_node(key: &AlertKey) -> Option<(String, ActionTarget)> {
             ..
         } => Some((run.clone(), ActionTarget::Run)),
         AlertKey::Stage { run, stage, .. } => Some((run.clone(), ActionTarget::Stage(*stage))),
-        AlertKey::Proposal(_) => None,
+        AlertKey::Proposal(_) | AlertKey::Setup(_) => None,
     }
 }
 
@@ -59,13 +59,14 @@ pub(crate) fn alert_actions(app: &App, key: &AlertKey) -> Vec<ActionInfo> {
 }
 
 /// The kind Enter selects in the menu, by priority (9.0.5 decision 18, 9.0.6 decision
-/// 17): none where Enter opens no menu (an orchestrator, a proposal).
+/// 17): none where Enter opens no menu (an orchestrator, a proposal, a set-up).
 pub(crate) fn preselected(app: &App, key: &AlertKey) -> Option<ActionKind> {
     match key {
         AlertKey::Orchestrator(_)
         | AlertKey::OrchestratorAsks(_)
         | AlertKey::OrchestratorStuck(_)
-        | AlertKey::Proposal(_) => None,
+        | AlertKey::Proposal(_)
+        | AlertKey::Setup(_) => None,
         // Milestone 9.6 decision 34: a brainstorm or spec gate's document is reviewed on
         // the gate screen; a plan gate (a design run's too) on the plan review.
         AlertKey::Gate(run) => Some(
@@ -99,14 +100,19 @@ pub(crate) fn preselected(app: &App, key: &AlertKey) -> Option<ActionKind> {
 }
 
 /// What Enter's hint names: the entry the menu selects (the preselection where listed,
-/// else the first), `focus` for an orchestrator, `open profile` for a proposal. Raw:
-/// the hint line sanitises it.
+/// else the first), `focus` for an orchestrator, `open profile` for a proposal or a
+/// set-up, `retry` for a failed set-up (milestone 9.10 decision 34). Raw: the hint
+/// line sanitises it.
 pub(crate) fn enter_label(app: &App, key: &AlertKey) -> String {
     match key {
         AlertKey::Orchestrator(_)
         | AlertKey::OrchestratorAsks(_)
         | AlertKey::OrchestratorStuck(_) => "focus".to_owned(),
         AlertKey::Proposal(_) => "open profile".to_owned(),
+        AlertKey::Setup(project) => match setup_state(app, project) {
+            Some(SetupState::Failed { .. }) => "retry".to_owned(),
+            _ => "open profile".to_owned(),
+        },
         _ => {
             let items = menu(app, key);
             let at = preselected(app, key)
@@ -254,7 +260,13 @@ impl App {
             | AlertKey::OrchestratorAsks(run_id)
             | AlertKey::OrchestratorStuck(run_id) => self.enter_orchestrator(run_id),
             // Preflight F26: the Profile screen on that project's proposal.
-            AlertKey::Proposal(project) => self.open_profile_on(project.clone(), true),
+            AlertKey::Proposal(project) => self.open_profile_on(project.clone()),
+            // Milestone 9.10 decision 34: a failed set-up retries; one under way opens
+            // the Profile screen.
+            AlertKey::Setup(project) => match setup_state(self, project) {
+                Some(SetupState::Failed { .. }) => self.retry_setup(project),
+                _ => self.open_profile_on(project.clone()),
+            },
             _ => match alert_node(&key) {
                 Some(node) => {
                     let kind = preselected(self, &key);
@@ -284,11 +296,13 @@ impl App {
     }
 
     /// `o`: the run view on the alert's run with its task selected (the root for a run
-    /// alert); a proposal opens the Profile screen, as Enter. An open conversation
+    /// alert); a proposal or a set-up opens the Profile screen. An open conversation
     /// closes, so the run view is what the main pane shows.
     pub(crate) fn open_alert_node(&mut self, key: AlertKey) -> Vec<Effect> {
         let (run, task) = match key {
-            AlertKey::Proposal(project) => return self.open_profile_on(project, true),
+            AlertKey::Proposal(project) | AlertKey::Setup(project) => {
+                return self.open_profile_on(project);
+            }
             AlertKey::Blocked { run, task } => (run, Some(task)),
             other => match alert_node(&other) {
                 Some((run, _)) => (run, None),

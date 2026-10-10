@@ -244,6 +244,16 @@ pub enum ProfileRequest {
         value: Option<String>,
         yes: bool,
         unconfined_checks: bool,
+        /// Milestone 9.10 decision 18: store or apply even when the check fails.
+        #[serde(default)]
+        anyway: bool,
+        /// Decision 15: edit the ready review proposal, not the stored profile.
+        #[serde(default)]
+        on_proposal: bool,
+    },
+    /// Milestone 9.10 decision 19 (appended last): drop a failed row edit.
+    RevertEdit {
+        dir: PathBuf,
     },
 }
 
@@ -333,6 +343,15 @@ pub enum RunReply {
         #[serde(default)]
         request_id: Option<u64>,
     },
+    /// Milestone 9.10 decision 12 (appended last): the goal waits for its repository's
+    /// profile.
+    Queued {
+        goal_id: String,
+        project: PathBuf,
+        message: String,
+        #[serde(default)]
+        request_id: Option<u64>,
+    },
 }
 
 impl RunReply {
@@ -393,6 +412,7 @@ impl RunReply {
             | RunReply::Stats { request_id, .. }
             | RunReply::TaskDetail { request_id, .. }
             | RunReply::Settings { request_id, .. }
+            | RunReply::Queued { request_id, .. }
             | RunReply::Doc { request_id, .. } => *request_id = id,
             RunReply::Snapshot(_) => {}
         }
@@ -412,6 +432,7 @@ impl RunReply {
             | RunReply::Stats { request_id, .. }
             | RunReply::TaskDetail { request_id, .. }
             | RunReply::Settings { request_id, .. }
+            | RunReply::Queued { request_id, .. }
             | RunReply::Doc { request_id, .. } => *request_id,
             RunReply::Snapshot(_) => None,
         }

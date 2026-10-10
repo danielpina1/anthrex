@@ -33,7 +33,10 @@ use proto::{
 };
 use tokio_util::sync::CancellationToken;
 
+use super::row_edit::is_review;
+use super::service_edit::EditRequest;
 use super::store::{self, Stored};
+use super::verify::CheckCounter;
 use crate::headless::argv::CliCaps;
 use crate::manager::WindowManager;
 use crate::run::confine;
@@ -43,6 +46,10 @@ use crate::scout::service::ScoutService;
 /// Decision 11: the reason a detection the daemon's restart interrupted failed.
 pub const RESTART_REASON: &str =
     "the daemon restarted during detection; run anthrex profile detect";
+
+/// Milestone 9.10: why a row edit the daemon's restart interrupted failed.
+pub const EDIT_RESTART_REASON: &str =
+    "the daemon restarted while the edit was being checked; edit it again";
 
 /// Decision 7: an automatic re-detection does not start within this long of a failed
 /// one.
@@ -87,6 +94,8 @@ pub(super) struct Active {
     pub(super) token: CancellationToken,
     /// The scout this proposal started, or is about to start.
     pub(super) scout_id: Option<String>,
+    /// Milestone 9.10 decision 10: its verification's progress.
+    pub(super) counter: Arc<CheckCounter>,
 }
 
 #[derive(Default)]
@@ -102,6 +111,15 @@ pub(super) struct Table {
     pub(super) ready: BTreeMap<PathBuf, u64>,
     /// Moves on every change to `ready`, so the run service publishes it once.
     pub(super) ready_generation: u64,
+    /// Milestone 9.10 decision 4: each project's goal queue, as its file holds it.
+    pub(super) queued: BTreeMap<PathBuf, super::queue::GoalQueue>,
+    /// Decision 10: each project's proposal state, as `note_proposal` last saw it.
+    pub(super) states: BTreeMap<PathBuf, ProposalState>,
+    /// Decision 10: moves on every `note_proposal` and every change to `queued`.
+    pub(super) setup_generation: u64,
+    /// Final review I1: the projects a drain is starting goals for, one drain each;
+    /// their goals are not listed as waiting for a set-up. Changed under `writes`.
+    pub(super) draining: std::collections::BTreeSet<PathBuf>,
 }
 
 /// See the module doc.
@@ -116,6 +134,11 @@ pub struct ProfileService {
     live_runs: Mutex<Option<LiveRuns>>,
     /// Milestone 9.2 decision 15: the daemon's code host, for detection (`delivery.rs`).
     pub(super) host: std::sync::OnceLock<Arc<dyn crate::host::CodeHost>>,
+    /// Milestone 9.10 decision 10: one tick per verified command, shared by every
+    /// `CheckCounter`; it only grows.
+    pub(super) progress_ticks: Arc<AtomicU64>,
+    /// Decision 6: starts a drained goal (`set_goal_starter`).
+    pub(super) starter: Mutex<Option<super::service_queue::GoalStarter>>,
 }
 
 /// Decision 37: the ids of the runs live in a project (`RunService::live_runs_in`).
@@ -194,6 +217,8 @@ impl ProfileService {
             next_generation: AtomicU64::new(1),
             live_runs: Mutex::new(None),
             host: std::sync::OnceLock::new(),
+            progress_ticks: Arc::new(AtomicU64::new(0)),
+            starter: Mutex::new(None),
         })
     }
 
@@ -279,7 +304,21 @@ impl ProfileService {
                 value,
                 yes,
                 unconfined_checks,
-            } => self.edit(dir, key, value, yes, unconfined_checks).await,
+                anyway,
+                on_proposal,
+            } => {
+                let request = EditRequest {
+                    dir,
+                    key,
+                    value,
+                    yes,
+                    unconfined_checks,
+                    anyway,
+                    on_proposal,
+                };
+                self.edit(request).await
+            }
+            ProfileRequest::RevertEdit { dir } => self.revert_edit(dir).await,
         };
         answered.unwrap_or_else(|message| ProfileReply::Refused { message })
     }
@@ -314,9 +353,22 @@ impl ProfileService {
                 generation,
                 token: token.clone(),
                 scout_id: None,
+                counter: Arc::new(CheckCounter {
+                    ticks: self.progress_ticks.clone(),
+                    ..CheckCounter::default()
+                }),
             },
         );
         Some((generation, token))
+    }
+
+    /// Decision 10: `generation`'s counter for `project`, while it owns the work.
+    pub(super) fn counter(&self, project: &Path, generation: u64) -> Option<Arc<CheckCounter>> {
+        crate::lock(&self.table)
+            .active
+            .get(project)
+            .filter(|active| active.generation == generation)
+            .map(|active| active.counter.clone())
     }
 
     /// Ends `generation`'s registration for `project`, if it is still the current one.
@@ -356,12 +408,21 @@ impl ProfileService {
 
     /// Records what `project`'s `proposal.json` now holds, called only after the write
     /// (`Some`) or the delete (`None`) succeeded, and by `restore` for what it loaded.
-    /// Memory only, never across an `.await`.
+    /// Memory only, never across an `.await`. Every call moves `setup_generation` and
+    /// records the state (milestone 9.10 decision 10).
     pub(super) fn note_proposal(&self, project: &Path, record: Option<&ProposalRecord>) {
+        // Milestone 9.10 decision 22: only a review proposal is listed (an alert).
         let ready = record
-            .filter(|record| record.state == ProposalState::Ready)
+            .filter(|record| record.state == ProposalState::Ready && is_review(record))
             .map(|record| record.updated_at);
         let mut table = crate::lock(&self.table);
+        table.setup_generation += 1;
+        match record {
+            Some(record) => table
+                .states
+                .insert(project.to_path_buf(), record.state.clone()),
+            None => table.states.remove(project),
+        };
         let changed = match ready {
             Some(at) => table.ready.insert(project.to_path_buf(), at) != Some(at),
             None => table.ready.remove(project).is_some(),
@@ -432,6 +493,8 @@ pub fn wire(
         },
     );
     profiles.set_host(runs.host());
+    // Milestone 9.10 decision 6: a drained goal starts through the run service.
+    profiles.set_goal_starter(runs.queued_starter());
     // Decision 37: a weak handle, since the run service holds this one (`Adaptation`).
     let weak = Arc::downgrade(runs);
     profiles.set_live_runs(Arc::new(move |project: &Path| {
@@ -482,6 +545,7 @@ mod tests {
             trusted_project: Vec::new(),
             unconfined_checks: false,
             auto_confirm: false,
+            edit: None,
         }
     }
 

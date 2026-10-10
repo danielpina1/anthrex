@@ -26,8 +26,12 @@ pub mod delivery;
 pub mod proposal;
 mod proposal_delivery;
 mod proposal_tiers;
+pub mod queue;
 pub mod resolve;
+mod row_edit;
 pub mod service;
+mod service_edit;
+pub mod service_queue;
 mod service_requests;
 mod service_restore;
 pub mod service_run;
@@ -106,9 +110,29 @@ mod tests;
 #[cfg(test)]
 mod tests_delivery;
 #[cfg(test)]
+mod tests_edit;
+#[cfg(test)]
+mod tests_edit_anyway;
+#[cfg(test)]
+mod tests_edit_proposal;
+#[cfg(test)]
 mod tests_installed;
 #[cfg(test)]
 mod tests_live_runs;
+#[cfg(test)]
+mod tests_progress;
+#[cfg(test)]
+mod tests_queue;
+#[cfg(test)]
+mod tests_queue_drain;
+#[cfg(test)]
+mod tests_queue_drain_race;
+#[cfg(test)]
+mod tests_queue_order;
+#[cfg(test)]
+mod tests_queue_restore;
+#[cfg(test)]
+mod tests_queue_service;
 #[cfg(test)]
 mod tests_ready;
 #[cfg(test)]

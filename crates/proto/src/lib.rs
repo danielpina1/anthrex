@@ -142,7 +142,16 @@
 /// `OrchestratorInfo.{stuck, ask, handled, handled_total}`, `BlockInfo.user_only`,
 /// `RunInfo.halt_user_only`, `DeliveryAlert.user_only`, `FullInfo.accepted`. Derivation:
 /// 19 at `lib.rs:140` before this change (milestone 9.8); 19 + 1 = 20.
-pub const PROTO_VERSION: u32 = 20;
+///
+/// Milestone 9.10 bumps this to 21: `QueuedGoalInfo`, `SetupState`, `CheckProgress`,
+/// `RowEdit`, `RowEditState`, `DroppedGoal`, `ProposalRecord.edit`,
+/// `ProfileStatus.{queued, checking, verified_at, unreadable_text, dropped_goals}`,
+/// `ProfileRequest::Edit.{anyway, on_proposal}`, `ProfileRequest::RevertEdit`,
+/// `RunReply::Queued` and `RunsSnapshot.queued_goals`, each new field defaulted (and
+/// left out while empty, bar the two `Edit` flags) so an older `run.json`, proposal and
+/// snapshot still load. Derivation: 20 at `lib.rs:145` before this change (milestone
+/// 9.9); 20 + 1 = 21.
+pub const PROTO_VERSION: u32 = 21;
 
 /// `skip_serializing_if` for a `u32` count that is left out while zero.
 pub(crate) fn is_zero_u32(n: &u32) -> bool {
@@ -226,9 +235,10 @@ pub use orch::{
 // compile error to catch it.
 pub use planner::{PlannerInfo, PlannerState};
 pub use profile::{
-    CommandCheck, DroppedCommand, ModuleNames, OutputFilter, ProfileMeta, ProfileSource,
-    ProfileStatus, ProfileVerification, ProposalAlertInfo, ProposalOrigin, ProposalRecord,
-    ProposalState, RepoProfile,
+    CheckProgress, CommandCheck, DroppedCommand, DroppedGoal, ModuleNames, OutputFilter,
+    ProfileMeta, ProfileSource, ProfileStatus, ProfileVerification, ProposalAlertInfo,
+    ProposalOrigin, ProposalRecord, ProposalState, QueuedGoalInfo, RepoProfile, RowEdit,
+    RowEditState, SetupState,
 };
 pub use rounds::*;
 pub use run::{
@@ -274,6 +284,10 @@ mod delivery_actions_tests;
 mod adapt_tests;
 
 #[cfg(test)]
+#[path = "profile_tests.rs"]
+mod profile_tests;
+
+#[cfg(test)]
 #[path = "orch_tests.rs"]
 mod orch_tests;
 
@@ -292,8 +306,8 @@ mod orch_first_tests;
 #[cfg(test)]
 mod tests {
     #[test]
-    fn proto_version_is_twenty() {
-        assert_eq!(super::PROTO_VERSION, 20);
+    fn proto_version_is_twenty_one() {
+        assert_eq!(super::PROTO_VERSION, 21);
     }
 
     #[test]

@@ -307,6 +307,7 @@ fn every_run_request_and_reply_round_trips() {
         now: 1_700_000_900,
         proposals: Vec::new(),
         idle_orchestrators: Vec::new(),
+        queued_goals: Vec::new(),
     };
 
     let requests = vec![

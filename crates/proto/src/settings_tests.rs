@@ -174,9 +174,11 @@ fn settings_variants_are_appended_last() {
     );
     let replies = variant_names::<RunReply>();
     // Milestone 9.6 appends `Doc` after `Settings` (`design_tests.rs`).
-    assert_eq!(replies.last().map(String::as_str), Some("Doc"));
-    assert_eq!(replies[replies.len() - 2], "Settings");
-    assert_eq!(replies[replies.len() - 3], "TaskDetail");
+    // Milestone 9.10 appends `Queued` after `Doc` (`profile_tests.rs`).
+    assert_eq!(replies.last().map(String::as_str), Some("Queued"));
+    assert_eq!(replies[replies.len() - 2], "Doc");
+    assert_eq!(replies[replies.len() - 3], "Settings");
+    assert_eq!(replies[replies.len() - 4], "TaskDetail");
 }
 
 #[test]

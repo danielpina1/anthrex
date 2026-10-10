@@ -640,6 +640,63 @@ milestone's bounds:
 | The start's repository `models.toml` read (`MODELS_READ_BOUND`) | `crates/daemon/src/run/driver/build_models.rs` (production) | 5 s, then the global table and a log line | One small file read on `spawn_blocking`. No test waits on the bound. | **Recorded.** No test bound. |
 | `run_e2e_model_roles.rs` | `crates/cli/tests/` | the harness's `RUN_WAIT` and `ORCH_WAIT` (and `RUN_WAIT * 3` for the run with a sub-planner, a race, a pair and a research task, as `run_e2e_large`'s epic runs) | The harness's own rows above. Measured: the three tests together 15 to 16 s. | **Recorded.** |
 
+### Recorded, from M9.10.4 (2026-10-10)
+
+The goal queue's service tests (`crates/daemon/src/profile/tests_queue_service.rs`). Measured: the sixteen `profile::tests_queue*` tests together 0.5 s; after fix round 1, the 23 together 0.75 to 1.3 s. Each `until` waits on the in-memory state it asserts (memory is updated after the file), so no assert races a later step; `a_detections_ready_stores_for_a_queued_yes_goal` awaits a real verification with no wall-clock bound of its own.
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| The drain waits (`a_queued_goal_waits_and_a_confirm_starts_it`, `a_failed_start_is_dropped_with_its_reason`, `after_ready_stores_…`, `restore_keeps_the_queue_and_drains_…`, `restore_drops_a_goal_whose_directory_is_gone`; fix round 1: `tests_queue_order.rs`'s `until` calls, including the wait for the reject's hold of `writes`) | `daemon/src/profile/tests_queue_service.rs` (`REQUEST_WAIT`, shared by `tests_queue_order.rs`) | 75 s, a deadline loop every 20 ms | A spawned drain: the `writes` mutex (held by nothing else once the request has answered), the queue file written on `spawn_blocking`, a test starter that answers at once, and at restore one `is_dir` per goal and one `store::load`. No git, no agent, no scheduler slot. The bound is the CLI harness's `REQUEST_WAIT`; a hang guard. | **Recorded.** |
+
+### Recorded, from M9.10.5 (2026-10-10)
+
+A goal with no profile is queued (`crates/cli/tests/profile_queue.rs`, `crates/daemon/src/run/driver/goal_queue_tests.rs`). Measured: the eight end-to-end tests together 7 s; the two driver tests together 1 s.
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| `wait_pushed` (`e2e_a_failed_set_up_keeps_the_queue_and_retry_detects_again`, `e2e_a_queued_goal_reaches_the_snapshot_while_setting_up`) | `cli/tests/profile_queue.rs` | `REQUEST_WAIT` (75 s), a deadline loop every 20 ms over what the watcher received | The queue write and the next 1 s tick's push for `Reading`; for `Failed`, the onboarding checkout's prepare and discard (4 git calls at `git_timeout_secs = 5`, 20 s), `fake-agent`'s spawn and its startup failure, the failed record's write, and one tick: about 25 s at worst. Measured about 1 s. A hang guard. | **Recorded.** |
+| `wait_one_run` | `cli/tests/profile_queue.rs` | `RUN_WAIT` (300 s) after `use`; `PROFILE_WAIT + RUN_WAIT` for a `--yes` goal, which sets up first | After a store the drain is spawned at once; the start is any goal's (`GOAL_WAIT`, 140 s, "Recorded, from M8b"). With `--yes` the whole detection comes first (`PROFILE_WAIT`). A hang guard, polled every 200 ms. | **Recorded.** |
+| `e2e_a_goal_with_yes_waits_for_review_when_a_command_was_dropped`: nothing stored one poll after `Ready` | `cli/tests/profile_queue.rs` | 200 ms, then asserts no run, the goal still queued and no stored profile | A negative check: `after_ready` runs in the task that wrote `Ready`, and a wrong store would be one `confirm_record` (a few small writes) and the queue's take-out, milliseconds. A longer window would only slow the test. | **Recorded.** |
+| `onboarding_auto_off_still_sets_up_a_goal`: the set-up fails (`SETTLE`) | `daemon/src/run/driver/goal_queue_tests.rs` | 120 s, a deadline loop every 20 ms | The onboarding checkout's prepare and discard (4 git calls at the test's `git_timeout_secs = 5`, 20 s) and a scout whose binary does not exist, failing at spawn. Measured under 1 s. A hang guard. | **Recorded.** |
+
+### Recorded, from M9.10.6 (2026-10-10)
+
+Row edits (`crates/daemon/src/profile/tests_edit.rs`, `tests_edit_proposal.rs`; `crates/cli/tests/profile_edit_rows.rs`). Measured: the eighteen daemon tests together 3.4 to 4 s; the two end-to-end tests together 1.3 to 1.5 s. Every wait polls the state it then asserts, and an outcome written in two steps (the store's `profile.toml`, then the proposal's delete) is waited on at its last step.
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| `wait` for a row edit's ✓ or ✗ (every test that verifies) | `daemon/src/profile/tests_edit.rs` (`PROFILE_WAIT`, shared by `tests_edit_proposal.rs`) | 300 s, a deadline loop every 20 ms | One verification, as `tests_progress.rs`'s `STATUS_WAIT` (M9.10.3): the verification checkout's prepare and discard (a handful of git calls at the default `git_timeout_secs = 60`) and the commands (`true`, `false`, `exit 3`, or `sleep 2 && true`). Measured 1 to 3 s. A hang guard. | **Recorded.** |
+| `use_this_waits_for_a_proposal_edit_being_checked`: the `Confirm` lands while the check runs | `daemon/src/profile/tests_edit_proposal.rs` | the check sleeps 2 s | The `Confirm` and the `use_ready` call follow the edit's reply at once (two requests, a file read each); the job is registered before the reply, so they see it running unless the checkout's prepare and the 2 s sleep finished first. The positive half (the `Confirm` after the check ends) waits with `PROFILE_WAIT`. | **Recorded.** |
+| `a_failing_command_edit_is_held_failed`: the held ✗ is not stored (fix round M4) | `daemon/src/profile/tests_edit.rs` | `work_ended` (`PROFILE_WAIT`), then `HELD_WINDOW` (300 ms) polled every 20 ms | A negative check. A wrongful store is one `confirm_record` (a few small file writes) in the verification's own task, before it unregisters; `work_ended` waits for the unregister, so the store would already be on disk, and the window only adds margin. A longer window would only slow the test. The "store on ✗ without `--anyway`" mutant fails it 3 of 3. | **Recorded.** |
+| `e2e_edit_anyway_stores_a_failing_check`, `e2e_edit_yes_still_needs_a_pass` | `cli/tests/profile_edit_rows.rs` | `PROFILE_WAIT` (300 s) | One detection to `Ready`, then one edit's verification: the M8b.11 row's derivation. | **Recorded.** |
+
+### Recorded, from M9.10.12 (2026-10-10)
+
+A first goal sets the profile up end to end (`crates/cli/tests/profile_cli_tui.rs`) and smoke stage 11l (`scripts/pty_smoke_profile.py`). Measured: the three runnable `profile_cli_tui` tests together about 6 s; stage 11l alone on a fresh daemon about 5 s (the set-up about 1 s).
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| `e2e_tui_queued_goal_review_and_use_this` (and the ignored row-edit test): the goal form's tagged `StartGoal` reply | `cli/tests/profile_cli_tui.rs` | `GOAL_WAIT` (140 s) | `run start --goal`'s reply in a test ("Recorded, from M8b"); a queued reply is a subset of it (the model checks, `goal_ready` and the detection's start). | **Recorded.** |
+| `wait_review`: the snapshot lists the review proposal | `cli/tests/profile_cli_tui.rs` | `PROFILE_WAIT` (300 s), a deadline loop every 200 ms over `List`, failing at once on a `Failed` set-up | M8b.11's row: one detection to `Ready`. | **Recorded.** Measured about 2 s. |
+| `the_goal_completes`: the drained goal's run is listed, then completes | `cli/tests/profile_cli_tui.rs` | `RUN_WAIT` (300 s) each, polled every 200 ms, failing at once on a dropped goal | As `profile_queue.rs::wait_one_run` after `use` (M9.10.5's row), then one task path. | **Recorded.** |
+| `wait_stored_new_check`: an edit with `yes: true` is stored | `cli/tests/profile_cli_tui.rs` | `PROFILE_WAIT` (300 s), polled every 200 ms | The edit's verification (M8b.11's row). | **Recorded.** |
+| Stage 11l: `run start --goal`'s queued exit | `scripts/pty_smoke_profile.py` | `GOAL_CMD_TIMEOUT` (1300 s, imported from stage 11d) | `run start --goal`'s own worst case, 1228.25 s (stage 11d's row). | **Recorded.** |
+| Stage 11l: the review alert in the Alerts box (`SETUP_WAIT`) | `scripts/pty_smoke_profile.py` | `5200s` | `PROFILE_WAIT`'s derivation with the smoke daemon's defaults (it reads no `[orchestrator]` table): `scouts.timeout_secs` 900 s + one verified command (`check`) at `onboarding.verify_timeout_secs` 1800 s + at most 40 engine git calls at `git_timeout_secs` 60 s (2400 s) = 5100 s, rounded up. A hang guard; a failed set-up (`profile status --json`, asked every 5 s) fails the stage at once. | **Recorded.** Measured a few seconds. |
+| Stage 11l: each key's frame (the Alerts view's ` ALERTS ` mode, each `j` to the review alert, ` PROFILE ` and the review's project, the tree, its filter and the run's node, the Profile screen's project after `C-b P`, the screen and the tree closing) (`SCREEN_WAIT`) and the detach (`DETACH_WAIT`) | the same | `10s`; `5s` | Stage 11t's rows, imported: one client frame, nothing waits on the daemon. | **Recorded.** |
+| Stage 11l: the card's title and first section, and `Ready · verified` (`CARD_WAIT`) | the same | `45s` | The screen's `Status`/`Show` replies, which the client gives up on at `REPLY_TIMEOUT` (30 s, `crates/tui/src/app/replies.rs`), + 15 s, as stage 11t's `SETTINGS_LOAD_WAIT`. | **Recorded.** |
+| Stage 11l: after **Use this**, `run status --json` lists the goal's run | the same | `GOAL_CMD_TIMEOUT` (1300 s), polled every 0.5 s | The store and the drain are spawned at once; the drained start is any goal's start (stage 11d's derivation). | **Recorded.** |
+| Stage 11l: the run's completion and its accept | the same | `RUN_WAIT` (300 s); `ACCEPT_CMD_TIMEOUT` (900 s) | Stage 11c's constants, imported: one task path, and `run accept`'s 668.25 s. | **Recorded.** |
+
+### Recorded, from the M9.10 final review fixes (daemon, 2026-10-10)
+
+The drain taken one goal at a time (`crates/daemon/src/profile/tests_queue_drain.rs`), restore's unreadable files (`tests_queue_restore.rs`), a Save anyway's time (`tests_edit_anyway.rs`), the count at its total (`tests_progress.rs`), and a profile change on a due publish (`run/driver/orch_tests.rs`). Measured: the three drain tests together 0.3 s; the four restore tests 0.2 s.
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| `status_reports_checking_while_verifying` and its `wait_status` (`STATUS_WAIT`; task 3 review minor 3: no row until now) | `daemon/src/profile/tests_progress.rs` | 300 s, a deadline loop every 20 ms | One stored-profile edit's verification: the verification checkout's prepare and discard (a handful of git calls at the default `git_timeout_secs = 60`) and the command, which sleeps 2 s. `PROFILE_WAIT`'s shape (M8b.11's row). Measured: the test takes about 2.3 s. | **Recorded.** A hang guard. |
+| The drain tests' `until` (`a_drain_cut_short_…`: the first start, then the restarted service's two starts; `a_restored_starting_goal_…`: the waiting goal's start and the file without `starting`) | `daemon/src/profile/tests_queue_drain.rs` | `REQUEST_WAIT` (75 s, from `tests_queue_service.rs`), every 20 ms | Each step is a few small queue-file writes on `spawn_blocking` under `writes` and a test starter that answers at once (or never, for the start a stop cuts short); no git, no agent. | **Recorded.** A hang guard. The never-answering start is the property under test: nothing waits on it. |
+| `a_profile_change_moves_the_revision_on_a_due_publish`: the due tick's push | `daemon/src/run/driver/orch_tests.rs` | 10 s | One `on_tick`: a snapshot and one publish, as `a_proposal_change_publishes_on_the_next_tick`'s bound beside it. | **Recorded.** A hang guard. |
+
 ### Fixed, from M9.5.8's flake fix (ruling F-1, 2026-10-03)
 
 | Test | File | Bound | Derivation | Status |
