@@ -12,7 +12,9 @@ use std::time::Duration;
 
 use daemon::profile::service::RESTART_REASON;
 use daemon::run::driver::{INTERRUPT_GRACE, RETIRE_AFTER};
-use proto::{ProfileSource, ProfileStatus, ProposalOrigin, ProposalState, ScoutState};
+use proto::{
+    ProfileSource, ProfileStatus, ProposalOrigin, ProposalState, RowEditState, ScoutState,
+};
 use serde_json::{Value, json};
 
 use support::run_adapt::{PROFILE_LINES, PROFILE_WAIT};
@@ -331,8 +333,9 @@ fn e2e_detection_in_progress_at_restart_is_failed_and_cleaned() {
 }
 
 /// Ruling R-T10-1: a verification that cannot run (here its checkout cannot be made,
-/// because a file stands where the checkouts' directory goes) fails the proposal with
-/// its reason.
+/// because a file stands where the checkouts' directory goes) fails with its reason.
+/// Milestone 9.10 decision 17: for a row edit that is the edit's ✗, and the proposal
+/// stays `Ready` (it was a `Failed` proposal before).
 #[test]
 fn e2e_a_verification_that_cannot_run_fails_the_proposal() {
     let h = harness(&[]);
@@ -345,12 +348,13 @@ fn e2e_a_verification_that_cannot_run_fails_the_proposal() {
     std::fs::write(&runs, "not a directory").unwrap();
     ok(h.profile(&["edit", "check", "sh check.sh && true"]));
     let status = h.wait_profile("the edit to settle", settled, PROFILE_WAIT);
-    match state(&status) {
-        Some(ProposalState::Failed { reason }) => assert!(
+    assert_eq!(state(&status), Some(&ProposalState::Ready));
+    match status.proposal.and_then(|r| r.edit).map(|e| e.state) {
+        Some(RowEditState::Failed { reason, .. }) => assert!(
             reason.starts_with("could not prepare the verification checkout: "),
             "{reason}"
         ),
-        other => panic!("expected a failed proposal, got {other:?}"),
+        other => panic!("expected a failed row edit, got {other:?}"),
     }
     std::fs::remove_file(&runs).unwrap();
 }

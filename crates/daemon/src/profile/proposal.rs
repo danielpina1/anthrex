@@ -258,9 +258,22 @@ pub fn apply_edit(
             table.remove(field);
         }
     }
-    let edited: RepoProfile = toml::Value::Table(table)
-        .try_into()
-        .map_err(|e: toml::de::Error| format!("{key}: {}", e.message()))?;
+    let as_typed = |table: toml::Table| -> Result<RepoProfile, String> {
+        toml::Value::Table(table)
+            .try_into()
+            .map_err(|e: toml::de::Error| format!("{key}: {}", e.message()))
+    };
+    // Milestone 9.10.6: `edit check false` is the command `false`, not a boolean, when
+    // the field takes text; the first error stands when the text does not fit either.
+    let edited = match (as_typed(table.clone()), value, env_name) {
+        (Ok(edited), _, _) => edited,
+        (Err(error), Some(text), None) => {
+            let mut table = table;
+            table.insert(field.to_string(), toml::Value::String(text.to_string()));
+            as_typed(table).map_err(|_| error)?
+        }
+        (Err(error), _, _) => return Err(error),
+    };
     if let Some(builtin) = edited
         .protected
         .iter()

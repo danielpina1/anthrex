@@ -151,17 +151,3 @@ fn e2e_run_start_help_documents_exit_3() {
         "{help}"
     );
 }
-
-/// Needs the daemon's row edits (M9.10.6): `--anyway` stores a check that fails.
-#[test]
-#[ignore = "needs M9.10.6"]
-fn e2e_edit_anyway_stores_a_failing_check() {
-    let h = harness();
-    h.onboarding_report(1, json!({"check": "sh check.sh"}));
-    ok(h.profile(&["detect"]));
-    h.wait_profile("the proposal", ready, PROFILE_WAIT);
-    ok(h.profile_input(&["use", "--yes"], ""));
-    ok(h.profile(&["edit", "check", "false", "--anyway"]));
-    let shown = ok(h.profile(&["show"]));
-    assert!(shown.contains("check = \"false\""), "{shown}");
-}

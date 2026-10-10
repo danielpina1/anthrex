@@ -10,10 +10,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use proto::{ProfileMeta, ProposalOrigin, ProposalRecord, ProposalState, RepoProfile, ScoutKind};
+use proto::{
+    DroppedCommand, ProfileMeta, ProfileVerification, ProposalOrigin, ProposalRecord,
+    ProposalState, RepoProfile, ScoutKind,
+};
 use tokio_util::sync::CancellationToken;
 
 use super::proposal::{apply_verification, from_findings};
+use super::row_edit::settle_row_edit;
 use super::service::{ProfileService, blocking, next_scout_secs};
 use super::store;
 use super::verify::{self, VerifyJob};
@@ -39,10 +43,12 @@ pub(super) struct Job {
     /// The onboarding scout's route, picked at the start over what was installed then
     /// (milestone 9.5 rulings RL-2, I6); `None` for a job that starts no scout.
     pub(super) route: Option<proto::Route>,
+    /// Milestone 9.10 decision 18: a row edit applied whatever its check finds.
+    pub(super) anyway: bool,
 }
 
 /// How a phase ended short of `Ready`.
-enum Stop {
+pub(super) enum Stop {
     Failed(String),
     /// Rejected: the proposal is the user's to delete, nothing is written.
     Cancelled,
@@ -120,7 +126,7 @@ impl ProfileService {
     /// The detection marker (`store::DETECTION_FILE`), before any checkout is made: a
     /// restart then always knows the project to salvage into, even after `reject`
     /// deleted `proposal.json` (task 11 re-review, C1).
-    async fn mark(&self, project: &Path) -> Result<(), Stop> {
+    pub(super) async fn mark(&self, project: &Path) -> Result<(), Stop> {
         let (dir, p) = (self.repo_dir(project), project.to_path_buf());
         blocking(move || store::save_detection(&dir, &p).map_err(|e| e.to_string()))
             .await
@@ -129,7 +135,7 @@ impl ProfileService {
 
     /// Removes the marker once neither detection checkout is left; a checkout the work
     /// could not discard keeps it, for the next start.
-    async fn unmark(&self, project: &Path) {
+    pub(super) async fn unmark(&self, project: &Path) {
         let left: Vec<(PathBuf, PathBuf)> = [super::ONBOARDING_CHECKOUT, super::VERIFY_CHECKOUT]
             .iter()
             .map(|name| self.checkout(project, name))
@@ -356,44 +362,26 @@ impl ProfileService {
         if !self.advance(job, ProposalState::Verifying).await {
             return Err(Stop::Cancelled);
         }
-        let findings = from_findings(&proposed);
-        let pre = job.pre.clone();
-        let repo_dir = self.repo_dir(&pre.project);
-        let config = &self.ctx.orchestrator;
-        let confine = verify::confine_spec(config, &repo_dir, &pre, &self.ctx.daemon_socket);
-        // Decision 10: the commands `run_commands` will run, before any of them does.
-        let counter = self.counter(&pre.project, job.generation);
-        if let Some(counter) = &counter {
-            counter.done.store(0, Ordering::Relaxed);
-            counter
-                .total
-                .store(verify::planned(&findings), Ordering::Relaxed);
-        }
-        let verify_job = VerifyJob {
-            git: self.ctx.git.clone(),
-            pre: pre.clone(),
-            repo_dir,
-            worktrees_root: self.ctx.worktrees_root.clone(),
-            profile: findings.clone(),
-            confine,
-            timeout: std::time::Duration::from_secs(config.onboarding.verify_timeout_secs),
-            git_timeout: self.git_timeout(),
-            sched: self.ctx.scheduler.clone(),
-            token: job.token.clone(),
-            counter,
+        let (findings, pre) = (from_findings(&proposed), job.pre.clone());
+        // Milestone 9.10 decision 17: a row edit's verification that cannot run is its ✗.
+        let verified = match self.run_verification(job, &findings).await {
+            Err(Stop::Failed(reason)) if job.record.edit.is_some() => Err(reason),
+            verified => Ok(verified?),
         };
-        let verified = verify::verify(&self.ctx.git_queue, verify_job)
-            .await
-            .map_err(Stop::Failed)?;
-        let (mut profile, dropped) =
-            apply_verification(&findings, &verified.verification, &pre.root);
-        // Milestone 9.2 decision 3; an edit keeps the stored table the user chose.
-        if !matches!(job.record.origin, ProposalOrigin::Edit { .. }) {
-            profile.delivery = super::delivery::detected(self.code_host(), pre.root.clone()).await;
+        match verified {
+            Ok((mut profile, verification, dropped)) => {
+                // Milestone 9.2 decision 3; an edit keeps the stored table the user chose.
+                if !matches!(job.record.origin, ProposalOrigin::Edit { .. }) {
+                    let root = pre.root.clone();
+                    profile.delivery = super::delivery::detected(self.code_host(), root).await;
+                }
+                job.record.profile = Some(profile);
+                job.record.verification = Some(verification);
+                job.record.dropped = dropped;
+                settle_row_edit(&mut job.record, None);
+            }
+            Err(reason) => settle_row_edit(&mut job.record, Some(reason)),
         }
-        job.record.profile = Some(profile);
-        job.record.verification = Some(verified.verification);
-        job.record.dropped = dropped;
         if !self.advance(job, ProposalState::Ready).await {
             return Err(Stop::Cancelled);
         }
@@ -401,10 +389,15 @@ impl ProfileService {
         if !matches!(job.record.origin, ProposalOrigin::Edit { .. }) && job.record.edit.is_none() {
             self.after_ready(&pre.project).await;
         }
-        if job.record.auto_confirm && self.may_auto_confirm(&job.record) {
+        // Decision 18: `--anyway` stores the edit as typed whatever its check found.
+        let anyway = job.anyway && job.record.edit.is_some();
+        if job.record.auto_confirm && (anyway || self.may_auto_confirm(&job.record)) {
             let _writes = self.writes.lock().await;
             if self.current(&pre.project, job.generation) {
-                let record = job.record.clone();
+                let mut record = job.record.clone();
+                if anyway {
+                    record.profile = record.proposed.clone();
+                }
                 let (dir, project) = (self.repo_dir(&pre.project), pre.project.clone());
                 match blocking(move || confirm_record(&dir, &project, &record)).await {
                     Ok(_) => self.note_proposal(&pre.project, None),
@@ -420,7 +413,47 @@ impl ProfileService {
     /// human confirming it. This implies decision 10's "nothing the edit touched was
     /// dropped".
     fn may_auto_confirm(&self, record: &ProposalRecord) -> bool {
-        matches!(record.origin, ProposalOrigin::Edit { .. }) && record.dropped.is_empty()
+        matches!(record.origin, ProposalOrigin::Edit { .. })
+            && record.dropped.is_empty()
+            && record.edit.is_none()
+    }
+
+    /// Milestone 9.10 decision 15: verifying `profile` (with `job`'s progress counter),
+    /// shared by `verify_phase` and a proposal row edit's `verify_row_edit`.
+    pub(super) async fn run_verification(
+        &self,
+        job: &Job,
+        profile: &RepoProfile,
+    ) -> Result<(RepoProfile, ProfileVerification, Vec<DroppedCommand>), Stop> {
+        let pre = job.pre.clone();
+        let repo_dir = self.repo_dir(&pre.project);
+        let config = &self.ctx.orchestrator;
+        let confine = verify::confine_spec(config, &repo_dir, &pre, &self.ctx.daemon_socket);
+        // Decision 10: the commands `run_commands` will run, before any of them does.
+        let counter = self.counter(&pre.project, job.generation);
+        if let Some(counter) = &counter {
+            counter.done.store(0, Ordering::Relaxed);
+            let total = verify::planned(profile);
+            counter.total.store(total, Ordering::Relaxed);
+        }
+        let verify_job = VerifyJob {
+            git: self.ctx.git.clone(),
+            pre: pre.clone(),
+            repo_dir,
+            worktrees_root: self.ctx.worktrees_root.clone(),
+            profile: profile.clone(),
+            confine,
+            timeout: std::time::Duration::from_secs(config.onboarding.verify_timeout_secs),
+            git_timeout: self.git_timeout(),
+            sched: self.ctx.scheduler.clone(),
+            token: job.token.clone(),
+            counter,
+        };
+        let verified = verify::verify(&self.ctx.git_queue, verify_job)
+            .await
+            .map_err(Stop::Failed)?;
+        let (profile, dropped) = apply_verification(profile, &verified.verification, &pre.root);
+        Ok((profile, verified.verification, dropped))
     }
 }
 

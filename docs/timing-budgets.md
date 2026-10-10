@@ -659,6 +659,16 @@ A goal with no profile is queued (`crates/cli/tests/profile_queue.rs`, `crates/d
 | `e2e_a_goal_with_yes_waits_for_review_when_a_command_was_dropped`: nothing stored one poll after `Ready` | `cli/tests/profile_queue.rs` | 200 ms, then asserts no run, the goal still queued and no stored profile | A negative check: `after_ready` runs in the task that wrote `Ready`, and a wrong store would be one `confirm_record` (a few small writes) and the queue's take-out, milliseconds. A longer window would only slow the test. | **Recorded.** |
 | `onboarding_auto_off_still_sets_up_a_goal`: the set-up fails (`SETTLE`) | `daemon/src/run/driver/goal_queue_tests.rs` | 120 s, a deadline loop every 20 ms | The onboarding checkout's prepare and discard (4 git calls at the test's `git_timeout_secs = 5`, 20 s) and a scout whose binary does not exist, failing at spawn. Measured under 1 s. A hang guard. | **Recorded.** |
 
+### Recorded, from M9.10.6 (2026-10-10)
+
+Row edits (`crates/daemon/src/profile/tests_edit.rs`, `tests_edit_proposal.rs`; `crates/cli/tests/profile_edit_rows.rs`). Measured: the eighteen daemon tests together 3.4 to 4 s; the two end-to-end tests together 1.3 to 1.5 s. Every wait polls the state it then asserts, and an outcome written in two steps (the store's `profile.toml`, then the proposal's delete) is waited on at its last step.
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| `wait` for a row edit's ✓ or ✗ (every test that verifies) | `daemon/src/profile/tests_edit.rs` (`PROFILE_WAIT`, shared by `tests_edit_proposal.rs`) | 300 s, a deadline loop every 20 ms | One verification, as `tests_progress.rs`'s `STATUS_WAIT` (M9.10.3): the verification checkout's prepare and discard (a handful of git calls at the default `git_timeout_secs = 60`) and the commands (`true`, `false`, `exit 3`, or `sleep 2 && true`). Measured 1 to 3 s. A hang guard. | **Recorded.** |
+| `use_this_waits_for_a_proposal_edit_being_checked`: the `Confirm` lands while the check runs | `daemon/src/profile/tests_edit_proposal.rs` | the check sleeps 2 s | The `Confirm` and the `use_ready` call follow the edit's reply at once (two requests, a file read each); the job is registered before the reply, so they see it running unless the checkout's prepare and the 2 s sleep finished first. The positive half (the `Confirm` after the check ends) waits with `PROFILE_WAIT`. | **Recorded.** |
+| `e2e_edit_anyway_stores_a_failing_check`, `e2e_edit_yes_still_needs_a_pass` | `cli/tests/profile_edit_rows.rs` | `PROFILE_WAIT` (300 s) | One detection to `Ready`, then one edit's verification: the M8b.11 row's derivation. | **Recorded.** |
+
 ### Fixed, from M9.5.8's flake fix (ruling F-1, 2026-10-03)
 
 | Test | File | Bound | Derivation | Status |

@@ -129,6 +129,7 @@ impl ProfileService {
             record,
             codex_config,
             route: Some(route),
+            anyway: false,
         };
         tokio::spawn(self.clone().detect_in_background(job));
         Ok(())

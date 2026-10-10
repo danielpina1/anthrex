@@ -124,15 +124,12 @@ fn e2e_tui_profile_edit_waits_for_a_live_run() {
 
     // Decision 37: refused with the daemon's own text, which the screen's error row
     // shows; nothing is proposed.
-    let project = h.profile_status().project;
     let reply = screen(&h, 1, edit(&h, "check", NEW_CHECK), REQUEST_WAIT);
+    // Milestone 9.10 decision 20's text.
     assert_eq!(
         reply,
         ProfileReply::Refused {
-            message: format!(
-                "run {run} is live in {}; edit the profile once it finishes (runs keep the profile they started with)",
-                project.display()
-            )
+            message: "finish or cancel the run in this repo to change its profile".into()
         }
     );
     assert_eq!(h.profile_status().proposal, None);

@@ -33,6 +33,8 @@ use proto::{
 };
 use tokio_util::sync::CancellationToken;
 
+use super::row_edit::is_review;
+use super::service_edit::EditRequest;
 use super::store::{self, Stored};
 use super::verify::CheckCounter;
 use crate::headless::argv::CliCaps;
@@ -44,6 +46,10 @@ use crate::scout::service::ScoutService;
 /// Decision 11: the reason a detection the daemon's restart interrupted failed.
 pub const RESTART_REASON: &str =
     "the daemon restarted during detection; run anthrex profile detect";
+
+/// Milestone 9.10: why a row edit the daemon's restart interrupted failed.
+pub const EDIT_RESTART_REASON: &str =
+    "the daemon restarted while the edit was being checked; edit it again";
 
 /// Decision 7: an automatic re-detection does not start within this long of a failed
 /// one.
@@ -295,10 +301,21 @@ impl ProfileService {
                 value,
                 yes,
                 unconfined_checks,
-                // Milestone 9.10.6 reads `anyway` and `on_proposal`.
-                ..
-            } => self.edit(dir, key, value, yes, unconfined_checks).await,
-            ProfileRequest::RevertEdit { .. } => Err("not implemented until M9.10.6".to_string()),
+                anyway,
+                on_proposal,
+            } => {
+                let request = EditRequest {
+                    dir,
+                    key,
+                    value,
+                    yes,
+                    unconfined_checks,
+                    anyway,
+                    on_proposal,
+                };
+                self.edit(request).await
+            }
+            ProfileRequest::RevertEdit { dir } => self.revert_edit(dir).await,
         };
         answered.unwrap_or_else(|message| ProfileReply::Refused { message })
     }
@@ -391,8 +408,9 @@ impl ProfileService {
     /// Memory only, never across an `.await`. Every call moves `setup_generation` and
     /// records the state (milestone 9.10 decision 10).
     pub(super) fn note_proposal(&self, project: &Path, record: Option<&ProposalRecord>) {
+        // Milestone 9.10 decision 22: only a review proposal is listed (an alert).
         let ready = record
-            .filter(|record| record.state == ProposalState::Ready)
+            .filter(|record| record.state == ProposalState::Ready && is_review(record))
             .map(|record| record.updated_at);
         let mut table = crate::lock(&self.table);
         table.setup_generation += 1;

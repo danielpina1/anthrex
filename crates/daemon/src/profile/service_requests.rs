@@ -34,13 +34,8 @@ pub(super) fn no_stored(project: &Path) -> String {
     )
 }
 
-/// Milestone 9.0.6 decision 37: an edit waits for the runs live in its project.
-pub fn live_run(run: &str, project: &Path) -> String {
-    format!(
-        "run {run} is live in {}; edit the profile once it finishes (runs keep the profile they started with)",
-        project.display()
-    )
-}
+/// Milestone 9.10 decision 20: every row edit waits for the runs live in its project.
+pub const LIVE_RUN: &str = "finish or cancel the run in this repo to change its profile";
 
 /// Refused while a rejected detection still cleans up.
 pub(super) fn stopping(project: &Path) -> String {

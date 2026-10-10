@@ -8,10 +8,12 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use proto::{AgentRole, ProposalOrigin, ProposalRecord, ProposalState};
+use proto::{AgentRole, ProposalOrigin, ProposalRecord, ProposalState, RowEditState};
 
 use super::queue::{self, GoalQueue};
-use super::service::{ProfileService, RESTART_REASON, auto_allowed, blocking, in_progress};
+use super::service::{
+    EDIT_RESTART_REASON, ProfileService, RESTART_REASON, auto_allowed, blocking, in_progress,
+};
 use super::store::{self, Stored};
 use crate::run::driver::unix_now;
 use crate::run::git::checkout_repo_dir;
@@ -190,11 +192,22 @@ impl ProfileService {
             // Decision 10 (M9.0.5): the ready list is rebuilt from disk, loaded off the
             // table's lock above; an interrupted proposal fails below, so is not ready.
             self.note_proposal(&record.project, Some(&record));
-            if in_progress(&record.state) {
+            // Milestone 9.10.6: a row edit being checked is failed as well.
+            let checking = matches!(&record.edit, Some(e) if e.state == RowEditState::Verifying);
+            if in_progress(&record.state) || checking {
                 let mut failed = record;
-                failed.state = ProposalState::Failed {
-                    reason: RESTART_REASON.to_string(),
-                };
+                if in_progress(&failed.state) {
+                    failed.state = ProposalState::Failed {
+                        reason: RESTART_REASON.to_string(),
+                    };
+                }
+                if let Some(edit) = failed.edit.as_mut().filter(|_| checking) {
+                    edit.state = RowEditState::Failed {
+                        reason: EDIT_RESTART_REASON.to_string(),
+                        tail: String::new(),
+                        secs: 0,
+                    };
+                }
                 failed.updated_at = unix_now();
                 let (dir, written) = (repo_dir.to_path_buf(), failed.clone());
                 let saved = blocking(move || {

@@ -28,6 +28,7 @@ mod proposal_delivery;
 mod proposal_tiers;
 pub mod queue;
 pub mod resolve;
+mod row_edit;
 pub mod service;
 mod service_edit;
 pub mod service_queue;
@@ -108,6 +109,10 @@ pub fn summary(profile: &RepoProfile) -> String {
 mod tests;
 #[cfg(test)]
 mod tests_delivery;
+#[cfg(test)]
+mod tests_edit;
+#[cfg(test)]
+mod tests_edit_proposal;
 #[cfg(test)]
 mod tests_installed;
 #[cfg(test)]

@@ -12,7 +12,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use proto::{ProposalOrigin, QueuedGoalInfo};
+use proto::{ProposalOrigin, QueuedGoalInfo, RowEditState};
 
 use super::queue::{self, GoalQueue, MAX_QUEUED, QueuedGoal};
 use super::service::{ProfileService, blocking};
@@ -214,6 +214,14 @@ impl ProfileService {
                 && record.dropped.is_empty();
             if unattended && !review {
                 return Err(format!("the proposal for {} needs a review", p.display()));
+            }
+            // Milestone 9.10.6: never while a row edit of the proposal is being checked.
+            if let Some(edit) = record
+                .edit
+                .as_ref()
+                .filter(|e| e.state == RowEditState::Verifying)
+            {
+                return Err(super::row_edit::still_checking(&edit.key));
             }
             ready_profile(&record)?;
             confirm_record(&dir, &p, &record)

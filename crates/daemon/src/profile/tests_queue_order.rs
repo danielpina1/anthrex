@@ -222,6 +222,7 @@ async fn a_detections_ready_stores_for_a_queued_yes_goal() {
         record,
         codex_config: Vec::new(),
         route: None,
+        anyway: false,
     };
     rig.profiles.clone().verify_in_background(job).await;
     assert!(
