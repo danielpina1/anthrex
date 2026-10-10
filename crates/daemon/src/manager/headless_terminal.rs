@@ -69,14 +69,30 @@ impl WindowManager {
         records(&crate::lock(&self.inner))
     }
 
-    /// A fresh feed receiver and every [`TerminalRecord`], under one hold of the lock
-    /// every feed send is made under: an event applied before is in the records, one
-    /// applied after is on the receiver, and none is in both.
+    /// After `old` lagged: a fresh feed receiver, every signal `old` still retained, in
+    /// order, and every [`TerminalRecord`], all under one hold of the lock every feed
+    /// send is made under. An event applied before the cut is in the records (and in the
+    /// retained signals, if it was not lost), one applied after is on the fresh receiver
+    /// only. Draining `old` is memory only: no send can happen while the lock is held.
     pub fn signals_and_terminal_events(
         &self,
-    ) -> (broadcast::Receiver<WindowSignal>, Vec<TerminalRecord>) {
+        old: &mut broadcast::Receiver<WindowSignal>,
+    ) -> (
+        broadcast::Receiver<WindowSignal>,
+        Vec<WindowSignal>,
+        Vec<TerminalRecord>,
+    ) {
         let inner = crate::lock(&self.inner);
-        (self.signals.subscribe(), records(&inner))
+        let mut retained = Vec::new();
+        loop {
+            match old.try_recv() {
+                Ok(signal) => retained.push(signal),
+                // Lost again before the lock was taken: the records cover it.
+                Err(broadcast::error::TryRecvError::Lagged(_)) => {}
+                Err(_) => break,
+            }
+        }
+        (self.signals.subscribe(), retained, records(&inner))
     }
 }
 

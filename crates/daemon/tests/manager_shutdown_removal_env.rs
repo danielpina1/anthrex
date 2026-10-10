@@ -31,8 +31,24 @@ fn real_git() -> PathBuf {
     PathBuf::from(String::from_utf8(out.stdout).unwrap().trim())
 }
 
+/// The test's own setup and checks, as AGENTS.md rule 11 asks of every git: no
+/// optional locks, an outer git's repository variables removed, no system or signing
+/// configuration, and an identity of its own (CI has none).
 fn git(git: &Path, dir: &Path, args: &[&str]) -> String {
-    let out = Command::new(git)
+    let mut command = Command::new(git);
+    for name in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_COMMON_DIR",
+        "GIT_INDEX_FILE",
+        "GIT_PREFIX",
+    ] {
+        command.env_remove(name);
+    }
+    let out = command
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .arg("--no-optional-locks")
+        .args(["-c", "commit.gpgsign=false"])
         .arg("-C")
         .arg(dir)
         .args([

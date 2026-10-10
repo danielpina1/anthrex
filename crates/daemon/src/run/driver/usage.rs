@@ -157,11 +157,12 @@ impl UsageSink for RunService {
 }
 
 impl RunService {
-    /// The event loop's `Msg::Usage`: one `OrchestratorUsage` step per pending run.
-    pub(super) async fn drain_usage(self: &Arc<Self>) {
+    /// The event loop's `Msg::Usage`: one `OrchestratorUsage` step per pending run, each
+    /// isolated as every event is (milestone 9.11 decision 8; fix round 1, D8-I1).
+    pub(super) async fn drain_usage(self: &Arc<Self>, gate: &super::event_loop::LoopGate) {
         for (run_id, usage) in self.metered.take() {
-            self.handle(EventKind::OrchestratorUsage { run_id, usage })
-                .await;
+            let kind = EventKind::OrchestratorUsage { run_id, usage };
+            self.handle_isolated(kind, gate).await;
         }
     }
 }

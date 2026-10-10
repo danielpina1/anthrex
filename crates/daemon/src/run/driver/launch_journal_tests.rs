@@ -149,6 +149,10 @@ async fn a_spawned_sessions_pid_is_journaled_while_stopping() {
         .iter()
         .find(|w| w.name == "launch-1")
         .expect("the session's window");
+    // The session this test started is killed and removed on every path out (D9-M2), by
+    // its own handle: its `ProcessStarted` may not have been applied yet, and `remove`
+    // signals only a child it knows is alive.
+    let _session = Session(s.manager.clone(), window.id);
     let pid = s.manager.headless_pid(window.id);
     assert!(pid.is_some(), "the stand-in is running");
     assert_eq!(
@@ -161,10 +165,15 @@ async fn a_spawned_sessions_pid_is_journaled_while_stopping() {
         started.elapsed()
     );
     no_op_done(&mut engine);
-    // The session this test started, by its own handle (its `ProcessStarted` may not
-    // have been applied yet, and `remove` signals only a child it knows is alive).
-    s.manager.headless_kill(window.id).unwrap();
-    s.manager.remove(window.id).unwrap();
+}
+
+struct Session(Arc<WindowManager>, u32);
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        let _ = self.0.headless_kill(self.1);
+        let _ = self.0.remove(self.1);
+    }
 }
 
 /// Pinning: a launch that failed while the daemon stops is still not journaled.

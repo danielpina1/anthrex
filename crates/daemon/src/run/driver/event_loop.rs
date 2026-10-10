@@ -15,6 +15,9 @@ use super::{Msg, RunService, guard, translate, unix_now};
 use crate::headless::SessionEvent;
 use crate::manager::{TerminalRecord, WindowSignal, WindowSignalKind};
 
+/// The loop's gate, shared with each event's own task (`RunService::loop_gate`).
+pub(super) type LoopGate = Option<Arc<tokio::sync::OwnedMutexGuard<()>>>;
+
 impl RunService {
     /// The event loop's body: each message in turn, until `Stop` or the channel closes.
     /// `gate` is held for the loop's whole life (`RunService::loop_gate`).
@@ -31,7 +34,7 @@ impl RunService {
         while let Some(msg) = rx.recv().await {
             match msg {
                 Msg::Event(kind) => service.handle_isolated(kind, &gate).await,
-                Msg::Usage => service.drain_usage().await,
+                Msg::Usage => service.drain_usage(&gate).await,
                 Msg::Stop(ack) => {
                     service.stop_now().await;
                     let _ = ack.send(());
@@ -47,11 +50,7 @@ impl RunService {
     /// event's kind, and a caller still waiting is told [`guard::EFFECTS_PANICKED`] (its
     /// step had been committed; a panic in the step itself is answered inside `handle`).
     /// The spawn is the unwind boundary: no `catch_unwind` around an `.await`.
-    async fn handle_isolated(
-        self: &Arc<Self>,
-        kind: EventKind,
-        gate: &Option<Arc<tokio::sync::OwnedMutexGuard<()>>>,
-    ) {
+    pub(super) async fn handle_isolated(self: &Arc<Self>, kind: EventKind, gate: &LoopGate) {
         let reply = guard::reply_of(&kind);
         let event = guard::kind_name(&kind);
         let (service, gate) = (self.clone(), gate.clone());
@@ -67,7 +66,10 @@ impl RunService {
         }
         let panic = guard::panic_text(error.into_panic().as_ref());
         tracing::error!(event, %panic, "the run engine panicked carrying out an event; the event is dropped");
-        let waiting = reply.and_then(|id| crate::lock(&self.replies).remove(&id));
+        let Some(id) = reply else { return };
+        // D8-M1: its record-reply mapping goes with it (`effects::RunWrites`).
+        crate::lock(&self.writes.record_replies).remove(&id);
+        let waiting = crate::lock(&self.replies).remove(&id);
         if let Some(tx) = waiting {
             let _ = tx.send(Err(guard::EFFECTS_PANICKED.to_string()));
         }
@@ -84,6 +86,8 @@ impl RunService {
             // Decision 8 (B3): a step whose effects could not be prepared at all is put
             // back with them, so memory never holds a step whose saves did not run.
             match guard::step_prepared(&mut state, Event { now, kind }, now) {
+                // Both read the stepped state only; `prepare` is pure on it, so their
+                // running after it changes nothing (D8-M2).
                 Ok(ready) => {
                     self.metered.refresh_live(&state);
                     self.release_ended_orchestrators(&state);
@@ -133,9 +137,12 @@ impl RunService {
                     vec![signal]
                 }
                 Err(broadcast::error::RecvError::Lagged(missed)) => {
-                    let (fresh, records) = self.manager.signals_and_terminal_events();
+                    // D9-I1: what the old receiver still retained is drained at the same
+                    // cut, so a lag loses only what overflowed.
+                    let (fresh, retained, records) =
+                        self.manager.signals_and_terminal_events(&mut signals);
                     signals = fresh;
-                    let caught_up = forwarded.catch_up(&records);
+                    let caught_up = forwarded.catch_up(retained, &records);
                     let caught = caught_up.len();
                     tracing::warn!(
                         missed,
@@ -184,13 +191,28 @@ impl Forwarded {
         }
     }
 
-    /// The signals a lag hid, from the manager's `records`: for each process, its last
-    /// turn end when the manager applied more than were forwarded (the turn ends in
-    /// between are coalesced into it), then its exit when that was not forwarded. Each
-    /// is noted, so it is never sent twice; processes the manager no longer records are
-    /// forgotten.
-    pub(super) fn catch_up(&mut self, records: &[TerminalRecord]) -> Vec<WindowSignal> {
-        let mut out = Vec::new();
+    /// After a lag: the signals the feed still `retained`, in order and noted, then, from
+    /// the manager's `records` (taken at the same cut), each process's last turn end when
+    /// the manager applied more than were forwarded (the lost ones in between are
+    /// coalesced into it), and its exit when that was not forwarded. A process whose
+    /// turn end was retained already has its newest one (nothing came after the cut), so
+    /// its count is only brought level. Nothing is sent twice; processes the manager no
+    /// longer records are forgotten.
+    pub(super) fn catch_up(
+        &mut self,
+        retained: Vec<WindowSignal>,
+        records: &[TerminalRecord],
+    ) -> Vec<WindowSignal> {
+        let mut ended_here = HashSet::new();
+        for signal in &retained {
+            self.note(signal);
+            if let (WindowSignalKind::Session(SessionEvent::TurnEnded { .. }), Some(pid)) =
+                (&signal.kind, signal.pid)
+            {
+                ended_here.insert((signal.window_id, pid));
+            }
+        }
+        let mut out = retained;
         let signal = |r: &TerminalRecord, event: &SessionEvent| WindowSignal {
             window_id: r.window_id,
             pid: Some(r.pid),
@@ -200,7 +222,9 @@ impl Forwarded {
             let seen = self.seen.entry((r.window_id, r.pid)).or_default();
             if r.turn_ends > seen.0 {
                 seen.0 = r.turn_ends;
-                out.extend(r.last_turn_end.as_ref().map(|e| signal(r, e)));
+                if !ended_here.contains(&(r.window_id, r.pid)) {
+                    out.extend(r.last_turn_end.as_ref().map(|e| signal(r, e)));
+                }
             }
             if let Some(exit) = r.exited.as_ref().filter(|_| !seen.1) {
                 seen.1 = true;
@@ -234,3 +258,7 @@ impl Drop for AbortOnDrop {
 #[cfg(test)]
 #[path = "event_loop_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "event_loop_lag_tests.rs"]
+mod lag_tests;
