@@ -287,7 +287,8 @@ pub(super) fn tool(
     }
     // Milestone 9.9 decision 19: the orchestrator's own window called a tool: it acts.
     if call.role == Orchestrator {
-        super::orch_stall::acted(run, now);
+        let seq = super::orch_stall::last_seq(run);
+        super::orch_stall::acted(run, seq, now);
     }
     let parsed = match parse_call(call.role, &call.tool, &call.args) {
         Ok(parsed) => parsed,
