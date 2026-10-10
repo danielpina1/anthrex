@@ -321,3 +321,31 @@ fn a_file_edited_after_it_was_read_is_noticed() {
         Some(CHANGED_SINCE_LOADED)
     );
 }
+
+/// Milestone 9.11 decision 33 (E4): a `config.toml` that links to a file not yet created
+/// stays a link; the save creates the link's target.
+#[cfg(unix)]
+#[test]
+fn a_dangling_config_link_stays_a_link() {
+    let dir = tempfile::tempdir().unwrap();
+    let link = dir.path().join("config.toml");
+    // Relative, so the target is resolved against the link's own directory.
+    std::os::unix::fs::symlink("real.toml", &link).unwrap();
+    let mut doc = doc_of(&crate::load(&link).0.orchestrator);
+    doc.limits.max_writers = 5;
+    assert_eq!(
+        changed_since_loaded(&link, &crate::load(&link).0.orchestrator),
+        None
+    );
+    save(&link, &doc, &AtomicBool::new(false)).unwrap();
+    assert!(
+        std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "the link was replaced by a file"
+    );
+    let real = std::fs::read_to_string(dir.path().join("real.toml")).unwrap();
+    assert!(real.contains("max_writers = 5"), "{real}");
+    assert_eq!(entries(dir.path()), ["config.toml", "real.toml"]);
+}

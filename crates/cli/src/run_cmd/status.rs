@@ -359,11 +359,11 @@ pub fn base_moved_question(base: &str, info: &BaseMovedInfo) -> String {
 pub(super) mod tests;
 
 /// Whole-branch re-review N4: a model-written reason on one status line, with every
-/// control character (a newline, an escape) shown as a space.
+/// control character (a newline, an escape) shown as a space. Milestone 9.11 decision 33
+/// (D7): `proto::safe_text::one_line`, so every hidden format character (a bidi control,
+/// a zero-width joiner) is dropped too.
 pub(super) fn one_line(text: &str) -> String {
-    text.chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .collect()
+    proto::safe_text::one_line(text)
 }
 
 /// M9.14 review fixes, item 3: a daemon's reply or refusal, which may echo what the user
@@ -386,3 +386,7 @@ mod tests_patterns;
 #[cfg(test)]
 #[path = "status_tests_orch.rs"]
 mod tests_orch;
+
+#[cfg(test)]
+#[path = "status_tests_text.rs"]
+mod tests_text;

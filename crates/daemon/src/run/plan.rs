@@ -27,6 +27,10 @@ pub const BUILTIN_PROTECTED: &[&str] = &[
     ".codex/**",
     "**/CLAUDE.md",
     "**/AGENTS.md",
+    // Milestone 9.11 decision 33 (D6): the agents' override, local and shared files.
+    "**/AGENTS.override.md",
+    "**/CLAUDE.local.md",
+    ".agents/**",
 ];
 
 /// `check_timeout_secs` when neither the plan nor the config sets it: the spec's 30
@@ -568,3 +572,7 @@ pub fn random_suffix() -> u16 {
 #[cfg(test)]
 #[path = "plan_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "plan_tests_protected.rs"]
+mod tests_protected;

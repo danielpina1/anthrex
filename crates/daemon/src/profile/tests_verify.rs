@@ -377,7 +377,7 @@ output_filter = "failures-only"
 [env]
 RUST_LOG = "debug"
 
-# protected: built-in .claude/**, .mcp.json, .codex/**, **/CLAUDE.md, **/AGENTS.md + .cursor/**
+# protected: built-in .claude/**, .mcp.json, .codex/**, **/CLAUDE.md, **/AGENTS.md, **/AGENTS.override.md, **/CLAUDE.local.md, .agents/** + .cursor/**
 # verification 2026-09-21 14:13 (confined)
 #   setup        ok     3s   cargo fetch
 #   check        ok   214s   cargo build --workspace
@@ -408,14 +408,14 @@ RUST_LOG = "debug"
     assert_eq!(
         show_text(&profile, Some(&v), &[]),
         "check = \"cargo build --workspace\"\noutput_filter = \"failures-only\"\n\n\
-         # protected: built-in .claude/**, .mcp.json, .codex/**, **/CLAUDE.md, **/AGENTS.md + no extras\n\
+         # protected: built-in .claude/**, .mcp.json, .codex/**, **/CLAUDE.md, **/AGENTS.md, **/AGENTS.override.md, **/CLAUDE.local.md, .agents/** + no extras\n\
          # verification 1970-01-01 00:00 (unconfined)\n\
          #   check        fail   1s   cargo build --workspace\n"
     );
     assert_eq!(
         show_text(&profile, None, &[]),
         "check = \"cargo build --workspace\"\noutput_filter = \"failures-only\"\n\n\
-         # protected: built-in .claude/**, .mcp.json, .codex/**, **/CLAUDE.md, **/AGENTS.md + no extras\n"
+         # protected: built-in .claude/**, .mcp.json, .codex/**, **/CLAUDE.md, **/AGENTS.md, **/AGENTS.override.md, **/CLAUDE.local.md, .agents/** + no extras\n"
     );
 }
 

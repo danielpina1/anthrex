@@ -310,7 +310,7 @@ test_paths = ["**/tests/**"]
 full_shards = 2
 toolchain_id = "sh toolchain.sh"
 
-# protected: built-in .claude/**, .mcp.json, .codex/**, **/CLAUDE.md, **/AGENTS.md + no extras
+# protected: built-in .claude/**, .mcp.json, .codex/**, **/CLAUDE.md, **/AGENTS.md, **/AGENTS.override.md, **/CLAUDE.local.md, .agents/** + no extras
 # verification 1970-01-01 00:00 (unconfined)
 #   build_check  fail   2s   sh build.sh
 #   module_graph ok     2s   sh graph.sh
