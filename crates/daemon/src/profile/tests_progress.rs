@@ -148,7 +148,8 @@ async fn status_reports_checking_while_verifying() {
             key: "check".into(),
             value: Some("sh -c 'sleep 2; true'".into()),
             yes: false,
-            unconfined_checks: false,
+            // Off macOS no sandbox confines a check; this test is not about that.
+            unconfined_checks: !cfg!(target_os = "macos"),
             anyway: false,
             on_proposal: false,
         })
