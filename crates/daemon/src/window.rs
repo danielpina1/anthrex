@@ -334,13 +334,16 @@ impl Window {
     pub fn nudge(&self) -> anyhow::Result<()> {
         let (cols, rows) = self.size();
         let other = if rows < u16::MAX { rows + 1 } else { rows - 1 };
-        for rows in [other, rows] {
-            self.master.resize(PtySize {
-                rows,
-                cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            })?;
+        let size = |rows| PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+        self.master.resize(size(other))?;
+        // The PTY must not stay a row off the parser: the restore is tried twice.
+        if self.master.resize(size(rows)).is_err() {
+            self.master.resize(size(rows))?;
         }
         Ok(())
     }

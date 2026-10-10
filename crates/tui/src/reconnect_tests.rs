@@ -211,8 +211,10 @@ async fn reconnect_now_supersedes_an_in_flight_automatic_attempt() {
     // SAFETY: see above.
     unsafe { std::env::remove_var("ANTHREX_DATA_DIR") };
 
-    // Let the fresh attempt finish on its own (the stub never binds the socket, so it
-    // eventually times out) so nothing of this test's outlives it.
+    // The stub never binds the socket, so the attempt polls for up to
+    // `ENSURE_DAEMON_SOCKET_WAIT` (10 s since milestone 9.11's decision 31); it is given
+    // 5 s here and is otherwise cancelled when the runtime drops at the end of the test.
+    // The stub exits as soon as it has logged, so nothing of this test's outlives it.
     if let Some(inflight) = driver.inflight.take() {
         let _ = tokio::time::timeout(Duration::from_secs(5), inflight).await;
     }

@@ -57,11 +57,20 @@ fn daemon_stop_returns_with_a_blocking_task_stuck() {
         .unwrap();
     let mut daemon = KillOnDrop(child);
 
-    // The socket appears once the daemon has bound; the same bound the client's own
-    // start waits (`ENSURE_DAEMON_SOCKET_WAIT`, decision 31).
+    // The socket appears once the daemon has bound, and the pid file just after it
+    // (`lifecycle::run` writes it after binding); the same bound the client's own start
+    // waits (`ENSURE_DAEMON_SOCKET_WAIT`, decision 31) covers both.
     let socket = dir.path().join("daemon.sock");
+    let pid_file = dir.path().join("data/daemon.pid");
+    let read_pid =
+        || -> Option<u32> { std::fs::read_to_string(&pid_file).ok()?.trim().parse().ok() };
     let deadline = Instant::now() + tui::spawn::ENSURE_DAEMON_SOCKET_WAIT;
-    while !socket.exists() {
+    let pid = loop {
+        if socket.exists()
+            && let Some(pid) = read_pid()
+        {
+            break pid;
+        }
         assert!(
             daemon.0.try_wait().unwrap().is_none(),
             "the daemon exited before binding: {}",
@@ -73,12 +82,7 @@ fn daemon_stop_returns_with_a_blocking_task_stuck() {
             std::fs::read_to_string(dir.path().join("daemon.log")).unwrap_or_default()
         );
         std::thread::sleep(Duration::from_millis(10));
-    }
-    let pid: u32 = std::fs::read_to_string(dir.path().join("data/daemon.pid"))
-        .unwrap()
-        .trim()
-        .parse()
-        .unwrap();
+    };
     assert_eq!(pid, daemon.0.id(), "the pid file names another process");
 
     let started = Instant::now();
@@ -101,4 +105,21 @@ fn daemon_stop_returns_with_a_blocking_task_stuck() {
         );
         std::thread::sleep(Duration::from_millis(10));
     }
+
+    // The early-exit path still ran `run`'s own cleanup: no socket, no pid file, and the
+    // lifetime lock free for the next daemon.
+    assert!(
+        !socket.exists(),
+        "the stopped daemon left its socket behind"
+    );
+    assert!(
+        !pid_file.exists(),
+        "the stopped daemon left its pid file behind"
+    );
+    assert!(
+        daemon::lockfile::try_claim(&dir.path().join("data"))
+            .unwrap()
+            .is_some(),
+        "the stopped daemon's lifetime lock is still held"
+    );
 }

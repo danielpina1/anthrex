@@ -53,7 +53,7 @@ async fn only_one_racing_ensure_daemon_call_spawns_a_child() {
     });
 
     // The spawn decision happens right at the top of `ensure_daemon`, long before its
-    // own 3s socket-poll — so the invocation count settles almost immediately. Wait
+    // own socket poll ends — so the invocation count settles almost immediately. Wait
     // with a deadline loop for the first line to land (AGENTS.md hard rule 6), then
     // hold for a further bounded window to give a second, buggy spawn a real chance to
     // show up before declaring success.
@@ -84,8 +84,10 @@ async fn only_one_racing_ensure_daemon_call_spawns_a_child() {
          child, not both (and not zero): {contents:?}"
     );
 
-    // Both calls eventually give up on their own (the stub never binds the socket);
-    // let them finish so nothing of this test's outlives it.
+    // The stub never binds the socket, so each call polls for up to
+    // `ENSURE_DAEMON_SOCKET_WAIT` (10 s since milestone 9.11's decision 31). They are given
+    // 5 s more here and are otherwise cancelled when the runtime drops at the end of the
+    // test; nothing of theirs outlives it (the stub exits as soon as it has logged).
     let _ = tokio::time::timeout(Duration::from_secs(5), a).await;
     let _ = tokio::time::timeout(Duration::from_secs(5), b).await;
 }

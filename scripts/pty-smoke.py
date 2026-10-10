@@ -230,11 +230,14 @@ DAEMON_STOP_CMD_TIMEOUT = 40.0
 WORKTREE_CMD_TIMEOUT = 90.0
 
 # Milestone 9.11's decision 31: an attach banner a fresh `anthrex` client draws once it
-# has a daemon. The client's own start runs `ensure_daemon` first when no daemon is up
-# (stage 1, and any stage after the daemon stopped): `SPAWN_HANDOFF_GRACE` 0.25s +
-# `ENSURE_DAEMON_SOCKET_WAIT` 10s (`crates/tui/src/spawn.rs`, 3s before decision 31),
-# then its handshake (`HANDSHAKE_TIMEOUT` 5s) = 15.25s, above `wait_for`'s default of
-# 10s that these waits used to fall through to. 20s, about 30% over.
+# has a daemon. Only stage 1 attaches with no daemon up; there the client's own start
+# runs `ensure_daemon` first: `SPAWN_HANDOFF_GRACE` 0.25s + `ENSURE_DAEMON_SOCKET_WAIT`
+# 10s (`crates/tui/src/spawn.rs`, 3s before decision 31), then its handshake
+# (`HANDSHAKE_TIMEOUT` 5s) = 15.25s, above `wait_for`'s default of 10s. 20s, about 30%
+# over. The other nine sites attach with a daemon already up, where `ensure_daemon`
+# returns at its first connect and the legal worst case is the 5s handshake; they use
+# the same constant for uniformity, not because they can pay the 15.25s. Do not lower
+# them back to the default without re-checking that a daemon is up at each.
 ATTACH_WAIT = 20.0
 
 # final-gate finding F2a: `run_worktree_form_stage` (W2, below `run_worktree_cli_stage`,
@@ -1615,20 +1618,24 @@ def main():
         "DISCONNECTED", label="disconnected badge after the daemon stopped under the client"
     )
     run_cmd(["daemon", "start"])
-    # Milestone 9.11's decision 31: was 10s, the brief's own literal bound, raised to
-    # `RECONNECT_WAIT` (20s) because what it races, below, grew from ~5s to ~12.25s. The
-    # 10s was not derived from a single constant, and in particular it is *not* "five attempts at RETRY_INTERVAL"
+    # Milestone 9.11's decision 31's stream: was 10s, the brief's own literal bound, now
+    # `RECONNECT_WAIT` (20s), derived below. The 10s was not derived from a single
+    # constant, and in particular it is *not* "five attempts at RETRY_INTERVAL"
     # (fix-wave-11 review, Minor: that was this comment's previous, wrong
     # justification). The client's actual legal retry budget is RETRY_WINDOW, 30s
     # (crates/tui/src/reconnect.rs) — the ceiling after which the client gives up
     # retrying automatically; RETRY_INTERVAL, 2s (same file), only says how often it
     # tries within that window, and citing it alone understates how long a legitimate
-    # reconnect is allowed to take by 3x. What this bound actually races is
-    # `ensure_daemon`'s own socket-wait deadline (SPAWN_HANDOFF_GRACE 0.25s +
-    # ENSURE_DAEMON_SOCKET_WAIT 10s since decision 31, 3s before; crates/tui/src/spawn.rs)
-    # plus about one more RETRY_INTERVAL (2s) — 12.25s, not RETRY_WINDOW's full 30s.
-    # RECONNECT_WAIT is 20s, about 60% over that and still inside RETRY_WINDOW; the old
-    # 10s held with room to spare in every run measured, including under deliberate CPU
+    # reconnect is allowed to take by 3x. The clock starts after `daemon start` has
+    # returned, so the socket is already up, and automatic reconnect attempts never call
+    # `ensure_daemon` (they pass `daemon_exe: None`, crates/tui/src/reconnect.rs). What
+    # this bound races is therefore the wait for the next attempt (RETRY_INTERVAL, 2s)
+    # plus that attempt's handshake (HANDSHAKE_TIMEOUT, 5s, crates/proto/src/lib.rs) plus
+    # one frame and a redraw: about 7.1s, not RETRY_WINDOW's full 30s. RECONNECT_WAIT is
+    # 20s, well over that and still inside RETRY_WINDOW. (The automatic retries stop
+    # RETRY_WINDOW after the link drops; `daemon stop`'s 19s worst case plus
+    # `daemon start`'s 10.25s now nearly fills that window, though only at worst-case
+    # timings on both.) The old 10s held with room to spare in every run measured, including under deliberate CPU
     # contention, but a daemon slow enough to miss it would still be legitimately
     # retrying inside its documented 30s RETRY_WINDOW — a false failure in this
     # script, not a real bug in the client.
