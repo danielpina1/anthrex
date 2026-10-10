@@ -105,7 +105,9 @@ pub(in crate::run::driver) struct GoalReady {
 pub(in crate::run::driver) enum GoalNotReady {
     Refused(String),
     NoProfile {
-        pre: Preflight,
+        // Boxed: `Preflight` is large, and clippy's result_large_err (1.99) refuses an
+        // `Err` variant this big.
+        pre: Box<Preflight>,
         proposal: Option<ProposalState>,
     },
 }
@@ -155,7 +157,10 @@ impl RunService {
                 return Err(unparseable(&path, &error).into());
             }
             Effective::Absent { proposal } => {
-                return Err(GoalNotReady::NoProfile { pre, proposal });
+                return Err(GoalNotReady::NoProfile {
+                    pre: Box::new(pre),
+                    proposal,
+                });
             }
         };
         // Milestone 9.2 decision 17: preflight before triage, so a refusal costs no
@@ -211,7 +216,7 @@ impl RunService {
             // Decision 12: the goal waits for the profile.
             Err(GoalNotReady::NoProfile { pre, proposal }) => {
                 let start = NoProfileStart {
-                    pre,
+                    pre: *pre,
                     proposal,
                     goal,
                     dir,
