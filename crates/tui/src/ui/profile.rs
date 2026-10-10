@@ -4,8 +4,8 @@
 //! per key (the bar, the label, the value, the check cell in one column, the key dimmed
 //! at the right; under 60 columns the key column goes, then the cells), the `Advanced`
 //! line; below the list, the selected row's hint or its ✗ line, and the daemon's last
-//! text. A page draws as a kit dialog over it, and the screen's border is then muted
-//! (9.0.6 decision 5). Every string a profile, a check, the scout or the daemon wrote
+//! text (the status line and the footer are `profile_status.rs`). A page draws as a kit
+//! dialog over it, and the screen's border is then muted (9.0.6 decision 5). Every string a profile, a check, the scout or the daemon wrote
 //! passes `safe_text`; the whole is folded with `theme::fold` in ASCII. Pure: `&App` in.
 
 use crate::app::profile_screen::{ADVANCED_ROW, ProfileScreen, Shown, Side};
@@ -15,13 +15,12 @@ use crate::profile_words;
 use crate::safe_text::{multi_line, one_line};
 use crate::theme::{Glyph, Palette, Role, dot, ellipsis, fold, glyph, role};
 use crate::ui::kit::{self, Hint, cut, wrap_words};
-use proto::{ProposalOrigin, ProposalState, RowEditState};
+use proto::RowEditState;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
-use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 /// The label's columns (a longer label pushes its value right by what it overflows).
@@ -71,6 +70,7 @@ pub(crate) fn hints(s: &ProfileScreen) -> Vec<Hint> {
         vec![
             ("⏎", "use this"),
             ("e", "edit"),
+            ("u", "unset"),
             ("a", "advanced"),
             ("o", "output"),
             ("x", "discard"),
@@ -120,61 +120,6 @@ pub(super) fn plain(text: &str, p: Palette) -> String {
 /// `text` padded with spaces to `width` columns.
 pub(super) fn pad(text: &str, width: usize) -> String {
     format!("{text}{}", " ".repeat(width.saturating_sub(text.width())))
-}
-
-/// `text` cut to its last `max` columns, starting with the ellipsis when cut.
-fn cut_left(text: &str, max: usize, ell: &str) -> String {
-    if text.width() <= max {
-        return text.to_string();
-    }
-    let room = max.saturating_sub(ell.width());
-    let mut kept = Vec::new();
-    let mut used = 0;
-    for g in text.graphemes(true).rev() {
-        if used + g.width() > room {
-            break;
-        }
-        used += g.width();
-        kept.push(g);
-    }
-    kept.reverse();
-    if max >= ell.width() {
-        format!("{ell}{}", kept.concat())
-    } else {
-        kept.concat()
-    }
-}
-
-/// Decision 23's role for a status line: `Done` ready, `Working` setting up or
-/// re-checking, `Attention` review and out of date, `Failed` unreadable.
-fn status_role(line: &str) -> Role {
-    if line.starts_with("Can't") {
-        Role::Failed
-    } else if line.starts_with("Setting up") || line.ends_with("re-checking") {
-        Role::Working
-    } else if line.starts_with("Needs review") || line.starts_with("Out of date") {
-        Role::Attention
-    } else if line.starts_with("Ready") {
-        Role::Done
-    } else {
-        Role::Muted
-    }
-}
-
-/// The first row: the status line, right-aligned, cut from its left.
-fn status_line(app: &App, s: &ProfileScreen, width: usize, p: Palette) -> Line<'static> {
-    let (text, r) = match (&s.status, &s.status_failed) {
-        (Some(status), _) => {
-            let line = profile_words::status_line(status, app.run_now());
-            (plain(&line, p), status_role(&line))
-        }
-        // No reply will come for the last `Status` (minor 2): why, until one does.
-        (None, Some(why)) => (plain(why, p), Role::Failed),
-        (None, None) => (format!("loading{}", ellipsis(p)), Role::Muted),
-    };
-    let text = cut_left(&text, width, ellipsis(p));
-    let lead = " ".repeat(width.saturating_sub(text.width()));
-    Line::from(vec![Span::raw(lead), Span::styled(text, role(r, p))])
 }
 
 /// What a row draws, before layout.
@@ -303,14 +248,15 @@ fn output_of(s: &ProfileScreen, row: &Row) -> Option<String> {
     row.check.as_ref().map(|c| c.tail.clone())
 }
 
-/// `Advanced ▸     <summary>` folded, `Advanced ▾` open (decision 29).
-fn advanced_line(
+/// `Advanced ▸     <summary>` folded, `Advanced ▾` open (decision 29). Too narrow for
+/// the summary beside its head, the summary goes whole on the lines below it.
+fn advanced_lines(
     s: &ProfileScreen,
     selected: bool,
     keys: bool,
     width: usize,
     p: Palette,
-) -> Line<'static> {
+) -> Vec<Line<'static>> {
     let bar = if selected {
         glyph(Glyph::Selection, p.ascii)
     } else {
@@ -327,15 +273,23 @@ fn advanced_line(
         Span::styled(bar.to_string(), role(kit::bar_role(keys), p)),
         Span::styled(head.clone(), Style::default().add_modifier(Modifier::BOLD)),
     ];
-    if !summary.is_empty() {
-        let room = width.saturating_sub(1 + head.width() + 5);
-        spans.push(Span::raw("     "));
-        spans.push(Span::styled(
-            cut(summary, room, ellipsis(p)),
-            role(Role::Muted, p),
-        ));
+    let muted = role(Role::Muted, p);
+    if summary.is_empty() {
+        return vec![Line::from(spans)];
     }
-    Line::from(spans)
+    if 1 + head.width() + 5 + summary.width() <= width {
+        spans.push(Span::raw("     "));
+        spans.push(Span::styled(summary, muted));
+        return vec![Line::from(spans)];
+    }
+    let mut out = vec![Line::from(spans)];
+    let parts = wrap_words(summary, width.saturating_sub(3).max(1));
+    out.extend(
+        parts
+            .into_iter()
+            .map(|l| Line::styled(format!("   {l}"), muted)),
+    );
+    out
 }
 
 /// The listed rows' lines (section heads, rows, outputs, the Advanced line), and the
@@ -376,7 +330,7 @@ fn list_lines(
         let selected = i == s.selected;
         if row.key == ADVANCED_ROW {
             at = if selected { out.len() } else { at };
-            out.push(advanced_line(s, selected, keys, width, p));
+            out.extend(advanced_lines(s, selected, keys, width, p));
             section = "";
             continue;
         }
@@ -444,38 +398,6 @@ fn hint_line(s: &ProfileScreen, width: usize, p: Palette) -> Option<Line<'static
     Some(Line::styled(format!("   {text}"), role(r, p)))
 }
 
-/// Decision 23: a failed set-up's reason, the screen's error row.
-fn setup_failure(s: &ProfileScreen) -> Option<String> {
-    let proposal = s.status.as_ref()?.proposal.as_ref()?;
-    match (&proposal.state, &proposal.origin) {
-        (_, ProposalOrigin::Edit { .. }) => None,
-        (ProposalState::Failed { reason }, _) => Some(format!("setting up failed: {reason}")),
-        _ => None,
-    }
-}
-
-/// The daemon's last text: a refusal (or a failed set-up) in `Failed`, a `Done` muted.
-fn footer(s: &ProfileScreen, width: usize, p: Palette) -> Vec<Line<'static>> {
-    let (text, r) = match (&s.error, setup_failure(s), &s.message) {
-        (Some(e), _, _) => (e.clone(), Role::Failed),
-        (None, Some(failed), _) => (failed, Role::Failed),
-        (None, None, Some(m)) => (m.clone(), Role::Muted),
-        _ => return vec![],
-    };
-    let w = width.max(1);
-    let mut lines = wrap_words(&plain(&text, p), w);
-    if lines.len() > 3 {
-        lines.truncate(3);
-        // What is cut is marked (principle 6).
-        let last = format!("{} {}", lines[2], ellipsis(p));
-        lines[2] = cut(&last, w, ellipsis(p));
-    }
-    lines
-        .into_iter()
-        .map(|l| Line::styled(l, role(r, p)))
-        .collect()
-}
-
 /// The screen's parts: its fixed head (the status line, the card's title), its list
 /// (scrolled), the selected line's index in it, and its fixed foot (the hint line,
 /// the daemon's text).
@@ -496,8 +418,12 @@ fn body(app: &App, s: &ProfileScreen, width: u16) -> Body {
     }
     let (list, at) = list_lines(app, s, w, p);
     let mut foot = Vec::new();
+    // The hint line's two rows are kept while a row has none (the Advanced line), so
+    // the list window does not move as the selection does.
     if let Some(line) = hint_line(s, w, p) {
         foot.extend([Line::default(), line]);
+    } else if listed(s).is_some() && !s.rows().is_empty() {
+        foot.extend([Line::default(), Line::default()]);
     }
     foot.extend(footer(s, w, p));
     Body {
@@ -553,6 +479,9 @@ pub fn render(frame: &mut Frame, app: &App, s: &ProfileScreen, area: Rect) {
 
 #[path = "profile_card.rs"]
 mod card;
+#[path = "profile_status.rs"]
+mod status;
+use status::{footer, status_line};
 #[path = "profile_pages.rs"]
 mod pages;
 pub(crate) use pages::list_width;

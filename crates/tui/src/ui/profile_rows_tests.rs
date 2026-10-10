@@ -5,6 +5,7 @@
 use super::tests::{
     SIZES, app_with_profile, interior, record, screen_mut, screen_text, select, sp_app, status_of,
 };
+use crate::app::App;
 use crate::app::profile_screen::ProfileScreen;
 use crate::theme::{Role, role};
 use crate::ui::audit;
@@ -148,6 +149,7 @@ fn hints_follow_the_view() {
         words(&[
             ("⏎", "use this"),
             ("e", "edit"),
+            ("u", "unset"),
             ("a", "advanced"),
             ("o", "output"),
             ("x", "discard"),
@@ -229,5 +231,67 @@ fn a_cut_refusal_is_marked() {
     assert!(
         !text.contains("word …") && text.contains("short refusal"),
         "{text}"
+    );
+}
+
+/// M9.10.9 fix round 1 (review minor 3): the footer's precedence. The daemon's last
+/// text (a refusal, else a `Done` such as `saved <label>`) comes first, then a failed
+/// set-up's reason on its own lines: neither hides the other.
+#[test]
+fn the_footer_shows_the_last_text_then_a_failed_set_up() {
+    let mut app = sp_app(false);
+    let s = screen_mut(&mut app);
+    s.status = Some(status_of(
+        true,
+        Some(ProposalState::Failed {
+            reason: "the scout timed out".into(),
+        }),
+    ));
+    s.message = Some("saved check".into());
+    for (w, h) in SIZES {
+        let rows = interior(&audit::draw(&app, w, h), false).rows;
+        let at = |t: &str| rows.iter().position(|r| r.contains(t));
+        let (saved, failed) = (at("saved check"), at("setting up failed: the scout"));
+        assert!(saved.is_some() && failed.is_some(), "{}", rows.join("\n"));
+        assert!(saved < failed, "{}", rows.join("\n"));
+    }
+    screen_mut(&mut app).error = Some("finish or cancel the run".into());
+    let text = screen_text(&app, 120, 40);
+    assert!(text.contains("finish or cancel the run"), "{text}");
+    assert!(text.contains("setting up failed: the scout"), "{text}");
+}
+
+/// M9.10.9 fix round 1 (review minor 4): at 80x24 the folded Advanced summary is not
+/// cut; it goes under its head when the line is too narrow.
+#[test]
+fn the_advanced_summary_is_whole_at_80x24() {
+    for ascii in [false, true] {
+        let app = sp_app(ascii);
+        let rows = interior(&audit::draw(&app, 80, 24), ascii).rows;
+        let summary = crate::profile_words::ADVANCED_SUMMARY;
+        assert!(
+            rows.iter().any(|r| r.contains(summary)),
+            "{ascii}\n{}",
+            rows.join("\n")
+        );
+    }
+}
+
+/// M9.10.9 fix round 1 (review minor 5): the hint line's rows are kept while the
+/// selection is on a row without a hint, so the list window does not jump.
+#[test]
+fn the_list_window_keeps_its_height_without_a_hint() {
+    let mut app = sp_app(false);
+    let height = |app: &mut App, key: &str| {
+        select(app, key);
+        let Some(crate::app::screens::Screen::Profile(s)) = &app.screen else {
+            unreachable!()
+        };
+        crate::ui::profile::body_lines(app, s, 78).len()
+    };
+    let with_hint = height(&mut app, "check");
+    assert_eq!(
+        height(&mut app, crate::app::profile_screen::ADVANCED_ROW),
+        with_hint
     );
 }

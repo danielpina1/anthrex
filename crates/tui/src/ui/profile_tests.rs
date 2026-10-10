@@ -281,14 +281,18 @@ fn the_screen_at_80x24_and_120x40() {
                 "Advanced {fold_mark}     {}",
                 crate::profile_words::ADVANCED_SUMMARY
             );
-            let cut = &advanced[..advanced.find(", environment").unwrap()];
-            let line = rows
+            let at = rows
                 .iter()
-                .find(|r| r.contains("Advanced"))
+                .position(|r| r.contains("Advanced"))
                 .expect("Advanced");
-            assert!(line.starts_with(&format!(" {cut}")), "{w}x{h}: {line}");
+            let line = &rows[at];
             if w >= 120 {
                 assert_eq!(line, &format!(" {advanced}"));
+            } else {
+                // Too narrow beside its head: the summary whole, on the next line.
+                assert_eq!(line, &format!(" Advanced {fold_mark}"));
+                let summary = crate::profile_words::ADVANCED_SUMMARY;
+                assert_eq!(rows[at + 1], format!("   {summary}"));
             }
             // Each key in the right column, dimmed; the cells in one column.
             let advanced_at = rows.iter().position(|r| r.contains("Advanced")).unwrap();

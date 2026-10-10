@@ -51,13 +51,13 @@ fn hard_wrap(line: &str, width: usize) -> Vec<String> {
     out
 }
 
-/// A page's title, whether it is destructive, its body and its hint line.
 /// The editor's list area width in a terminal `width` wide, which its Up and Down
 /// move by; a one-line value is 7 columns narrower (milestone 9.0.7 decision 35).
 pub(crate) fn list_width(width: u16) -> u16 {
     width.min(kit::DIALOG_MAX).saturating_sub(4)
 }
 
+/// A page's title, whether it is destructive, its body and its hint line.
 fn page_parts(
     s: &ProfileScreen,
     page: &ProfilePage,

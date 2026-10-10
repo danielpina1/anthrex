@@ -207,7 +207,7 @@ fn hostile_text_never_reaches_a_drawn_row() {
     let mut proposal = sp_profile();
     proposal.check = Some(format!("new {evil}"));
     proposal.env = BTreeMap::from([(format!("N{evil}"), "1".to_string())]);
-    for view in 0..3 {
+    for view in 0..5 {
         let mut app = sp_app(false);
         let s = screen_mut(&mut app);
         s.stored = shown(stored.clone(), sp_verification(), vec![]);
@@ -223,7 +223,33 @@ fn hostile_text_never_reaches_a_drawn_row() {
             s.stored = shown(proposal.clone(), sp_verification(), vec![]);
             s.advanced = true;
         }
+        if view == 3 {
+            // A ✗ row edit's reason (the hint line) and tail (`o`), selected.
+            let mut r = super::tests::record(
+                ProposalState::Ready,
+                proto::ProposalOrigin::Edit {
+                    keys: vec!["check".into()],
+                },
+            );
+            r.edit = Some(proto::RowEdit {
+                key: "check".into(),
+                value: Some(evil.into()),
+                state: proto::RowEditState::Failed {
+                    reason: evil.into(),
+                    tail: evil.into(),
+                    secs: 3,
+                },
+            });
+            st.proposal = Some(r);
+            s.selected = 1;
+            s.expanded = Some("check".into());
+        }
         s.status = Some(st);
+        if view == 4 {
+            // No status yet, and no reply will come: the no-reply text is the line.
+            s.status = None;
+            s.status_failed = Some(evil.into());
+        }
         for (w, h) in SIZES {
             let buffer = audit::draw(&app, w, h);
             for row in audit::rows(&buffer) {

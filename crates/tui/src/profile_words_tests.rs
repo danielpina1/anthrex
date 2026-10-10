@@ -274,3 +274,45 @@ fn setup_texts() {
         "setting up failed: no network"
     );
 }
+
+/// M9.10.9 fix round 1 (review minor 2): each status line's tone comes from the status,
+/// not from its words, one per rule of decision 23.
+#[test]
+fn every_status_line_has_its_tone() {
+    let tone = |s: &ProfileStatus| status_line_tone(s, NOW).1;
+    let auto = || ProposalOrigin::Auto { stale: Vec::new() };
+    let unreadable = ProfileStatus {
+        unparseable: Some("bad".into()),
+        ..stored(60)
+    };
+    let cases = [
+        (status(), StatusTone::NotSetUp),
+        (unreadable, StatusTone::Unreadable),
+        (
+            with(status(), ProposalState::Scouting, ProposalOrigin::Detect),
+            StatusTone::Working,
+        ),
+        (
+            with(status(), ProposalState::Verifying, ProposalOrigin::Goal),
+            StatusTone::Working,
+        ),
+        (
+            with(status(), ProposalState::Ready, ProposalOrigin::Detect),
+            StatusTone::Attention,
+        ),
+        (
+            with(stale(&["a"], stored(60)), ProposalState::Scouting, auto()),
+            StatusTone::Working,
+        ),
+        (
+            with(stale(&["a"], stored(60)), ProposalState::Ready, auto()),
+            StatusTone::Attention,
+        ),
+        (stale(&["a"], stored(60)), StatusTone::Attention),
+        (stored(60), StatusTone::Ready),
+    ];
+    for (s, want) in cases {
+        assert_eq!(tone(&s), want, "{}", status_line(&s, NOW));
+        assert_eq!(status_line_tone(&s, NOW).0, status_line(&s, NOW));
+    }
+}

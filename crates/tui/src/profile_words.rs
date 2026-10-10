@@ -41,10 +41,30 @@ fn files(stale: &[String]) -> String {
     }
 }
 
+/// What a status line says, for its colour (decision 23): unreadable, setting up or
+/// re-checking, needing review or out of date, ready, or not set up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatusTone {
+    Unreadable,
+    Working,
+    Attention,
+    Ready,
+    NotSetUp,
+}
+
 /// Decision 23: the one status line; the first rule that matches wins.
 pub fn status_line(status: &ProfileStatus, now: u64) -> String {
+    status_line_tone(status, now).0
+}
+
+/// Decision 23: the status line and its tone, both from the same rule.
+pub fn status_line_tone(status: &ProfileStatus, now: u64) -> (String, StatusTone) {
+    use StatusTone::*;
     if status.unparseable.is_some() {
-        return "Can't read the profile file — ⏎ shows it".to_string();
+        return (
+            "Can't read the profile file — ⏎ shows it".into(),
+            Unreadable,
+        );
     }
     let stored = status.source == ProfileSource::Stored;
     let out_of_date = || format!("Out of date — {} changed", files(&status.stale));
@@ -56,35 +76,40 @@ pub fn status_line(status: &ProfileStatus, now: u64) -> String {
         match &p.state {
             ProposalState::Preparing | ProposalState::Scouting | ProposalState::Verifying => {
                 if stored && !status.stale.is_empty() {
-                    return format!("{} · re-checking", out_of_date());
+                    return (format!("{} · re-checking", out_of_date()), Working);
                 }
-                return match (&p.state, status.checking) {
+                let line = match (&p.state, status.checking) {
                     (ProposalState::Verifying, Some(c)) => {
                         format!("Setting up… checking commands ({}/{})", c.done, c.total)
                     }
                     (ProposalState::Verifying, None) => "Setting up… checking commands".into(),
                     _ => "Setting up… reading the repo".to_string(),
                 };
+                return (line, Working);
             }
             ProposalState::Ready => {
                 if stored && !status.stale.is_empty() {
-                    return format!("{} · review the changes", out_of_date());
+                    return (format!("{} · review the changes", out_of_date()), Attention);
                 }
-                return "Needs review — anthrex has a proposal".to_string();
+                return ("Needs review — anthrex has a proposal".into(), Attention);
             }
             ProposalState::Failed { .. } => {}
         }
     }
     if stored {
         if !status.stale.is_empty() {
-            return format!("{} · press d to check again", out_of_date());
+            return (
+                format!("{} · press d to check again", out_of_date()),
+                Attention,
+            );
         }
-        return match status.verified_at.or(status.confirmed_at) {
+        let line = match status.verified_at.or(status.confirmed_at) {
             Some(at) => format!("Ready · verified {} ago", age(now.saturating_sub(at))),
             None => "Ready".to_string(),
         };
+        return (line, Ready);
     }
-    "Not set up — press d to set up".to_string()
+    ("Not set up — press d to set up".into(), NotSetUp)
 }
 
 /// Decision 24's labels: the plain name of a key (`env.NAME` is `NAME`).

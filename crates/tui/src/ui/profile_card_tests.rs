@@ -51,17 +51,16 @@ fn the_fresh_card_at_80x24_and_120x40() {
                 "Advanced {mark}     {}",
                 crate::profile_words::ADVANCED_SUMMARY
             );
+            // Too narrow for the summary beside its head: whole, on the next line.
             let advanced = if 1 + advanced.chars().count() > iw {
-                let ell = f("…");
-                let kept: String = advanced
-                    .chars()
-                    .take(iw - 1 - ell.chars().count())
-                    .collect();
-                format!(" {kept}{ell}")
+                vec![
+                    format!(" Advanced {mark}"),
+                    format!("   {}", crate::profile_words::ADVANCED_SUMMARY),
+                ]
             } else {
-                format!(" {advanced}")
+                vec![format!(" {advanced}")]
             };
-            let want = [
+            let mut want = vec![
                 format!("{status:>iw$}"),
                 String::new(),
                 " anthrex learned how to work in this repo".into(),
@@ -109,11 +108,13 @@ fn the_fresh_card_at_80x24_and_120x40() {
                     "",
                     room = iw - 49
                 ),
-                advanced,
+            ];
+            want.extend(advanced);
+            want.extend([
                 f(" couldn't verify: build check (cargo clippy) — timed out after 600s"),
                 String::new(),
                 f("   setup — how anthrex prepares a fresh checkout before any check"),
-            ];
+            ]);
             assert_eq!(
                 &i.rows[..want.len()],
                 &want[..],
