@@ -147,7 +147,9 @@ Every command starts with the prefix, `C-b` by default (`prefix` in the config).
 
 Inside a view, bare keys act on it. In the tree and the overview: `j`/`k` move, `h`/`l` go to the parent or child, Enter focuses an agent or opens a run, Space folds, `/` filters, `.` opens the actions for the selected run, stage or task, and `i` toggles the inspector. The help (`C-b ?`) lists the keys of every view: the run view, the plan review, the document gates, the alerts, the conversation, the forms, Profile and Settings.
 
-The mouse works too: click a sidebar row to focus it; the wheel scrolls, or is forwarded to programs that use the mouse. Because the client captures the mouse, use your terminal's Shift-drag to select text.
+The mouse works too: click a sidebar row to focus it; the wheel scrolls, or is forwarded to programs that use the mouse. Because the client captures the mouse, use your terminal's Shift-drag to select text. The wheel follows the program in the focused window: a program that turned mouse reporting on gets the wheel in the encoding it asked for (SGR, X10 or UTF-8); a full-screen program without it (`less`, `man`) gets Up and Down arrows, as xterm's alternate scroll does; anywhere else the wheel scrolls the client's scrollback.
+
+**Pasting.** A paste never reaches the focused program with a paste marker (`ESC [200~` or `ESC [201~`) inside its text: anthrex removes them before it adds its own. Where a paste ends is your terminal's call. anthrex receives the paste already cut at the first end marker the terminal sends and cannot join it back, so anything the terminal sends after that marker arrives as typed input. anthrex relies on the terminal to strip or escape an end marker inside the pasted text, as xterm, iTerm2, kitty, WezTerm, Alacritty, Ghostty and VTE-based terminals do.
 
 ## The orchestrator
 
@@ -180,6 +182,8 @@ flowchart LR
 5. **Deliver.** In `local` mode, `anthrex run accept` merges the finished run into your base branch. In `pr` mode, each stage of the plan becomes a stacked pull request; CI failures and review comments from people with write access become fix tasks. anthrex never merges, approves or enables auto-merge: you do.
 
 You watch it all in the **run view** (`C-b T`, then a run): the plan as a graph of tasks by stage, each task's rounds, and an inspector for the selected task. **Alerts** (`C-b a`) collect everything waiting for you, and Enter takes you to it. While a run's orchestrator is alive it handles its run's blocked tasks, halts, held or red stages and delivery problems itself (it retries, overrides, resumes, approves holds and accepts red stages, each with a reason), so what reaches you is an approval or acceptance, a profile proposal, a problem only you can fix (such as a full disk or a logged-out CLI), a question the orchestrator asks with `ask_user` (answer it with `1`-`9`, or in its window), or an orchestrator that has stalled or exited, which hands you back everything it held. What it resolved stays visible quietly as `orchestrator handled N`, with each action and its reason in the run view's inspector.
+
+The run view, the runs tree and `anthrex run status` list every live run and the 50 newest finished runs, newest by start time. Older finished runs stay on disk, untouched, and leave the list; a run id that matches none of the listed runs says `no run matches '<run>' (only the 50 most recent finished runs are listed)` once the list is full.
 
 <img src="docs/images/task-inspector.svg" alt="The run view with a running task selected: its inspector shows the pipeline from done to merge, its acceptance test, brief, owned files, worker, dependencies, budget, retries and route">
 
@@ -290,11 +294,19 @@ Environment variables:
 | `ANTHREX_SOCKET`, `ANTHREX_DATA_DIR`, `ANTHREX_CONFIG` | Override the socket, the data directory and the config file. |
 | `ANTHREX_GIT=off` | Disable the git watcher and probes. |
 | `ANTHREX_LOG=debug` | Raise the daemon's log level. |
+| `ANTHREX_CHECK_ENV_PASS=NPM_TOKEN,GH_TOKEN` | Read from the daemon's own environment: the token variables checks may still see (below). |
 
 | File | macOS | Linux |
 |------|-------|-------|
 | socket | `$TMPDIR/anthrex-<uid>/daemon.sock` | `$XDG_RUNTIME_DIR/anthrex/daemon.sock` |
 | log, state, runs, worktrees | `~/Library/Application Support/anthrex/` | `~/.local/share/anthrex/` |
+
+### Environment and isolation
+
+- **Your own agent windows keep your environment.** A `claude` or `codex` window you start yourself (`C-b c`, `anthrex new`) inherits the environment of the shell that started the daemon, as a shell would, `CLAUDE_CODE_*`, `MCP_*` and `OTEL_*` included. That covers `CLAUDE_CODE_CHILD_SESSION`, which turns Claude Code's transcript saving off, and Claude Code's messaging socket (`CLAUDE_CODE_MESSAGING_SOCKET` and its token): a daemon started from inside a Claude Code session hands them to every window you open. Start the daemon from a plain shell if you do not want that. anthrex's own sessions (the orchestrator, workers, reviewers, scouts and deciders) do not inherit them.
+- **Checks do not see your tokens.** anthrex runs checks, proofs, `setup` and tier steps without these variables from the daemon's environment: `GITHUB_TOKEN`, `GH_TOKEN`, `GH_ENTERPRISE_TOKEN`, `GITLAB_TOKEN`, `NPM_TOKEN`, `NODE_AUTH_TOKEN`, `PYPI_TOKEN`, `CARGO_REGISTRY_TOKEN`, `HF_TOKEN`, `DOCKER_PASSWORD`, and every variable starting with `AWS_`, `AZURE_`, `GOOGLE_APPLICATION_CREDENTIALS`, `CLOUDSDK_` or `DIGITALOCEAN_`. If a check needs one, list it, comma-separated, in `ANTHREX_CHECK_ENV_PASS` in the daemon's own environment, then restart the daemon: `ANTHREX_CHECK_ENV_PASS=NPM_TOKEN,GH_TOKEN anthrex daemon start`. Only exact names are passed. A check that fails for a missing token says so in its own output. Agent sessions are not affected.
+- **`worker_sandbox = false` gives workers your full power.** An unsandboxed worker runs as you: it can read the arguments and environment of any of your processes, so it can act as any anthrex session, including approving its own task's review. Keep the default, `true`, unless you trust every worker with that.
+- **What a crash can leave running.** When the daemon restarts after a crash, it stops a leftover agent session only when anthrex itself recorded the session's process id (in the run's file or its journal) and the process's arguments name the session. Two kinds are not found, because finding them would mean inspecting processes anthrex did not start, which it never does: **Codex's first process** (its arguments carry no session id) and **a process that left its session's process group with `setsid`**. Such a process also keeps its sandbox grant, the files its worker was allowed to write, for as long as the daemon runs, even after its task has moved on. After a crash, check `ps` for leftover `codex` processes or processes a worker detached.
 
 ## CLI reference
 
