@@ -360,11 +360,8 @@ fn the_restart_waits_for_the_first_scout_to_claim_its_script() {
         |s| s.proposal.as_ref().is_some_and(|r| r.window_id.is_some()),
         PROFILE_WAIT,
     );
+    // The restart must come after the first scout's claim (it panics otherwise).
     wait_claimed(&h, "scout-onboarding-1", CLAIM_WAIT + SCOUT_STALL);
-    assert!(
-        claimed(&h, "scout-onboarding-1"),
-        "the first scout claimed its script before the restart"
-    );
     h.restart_daemon(&[]);
     ok(h.profile(&["detect"]));
     wait_claimed(&h, "scout-onboarding-2", CLAIM_WAIT);
@@ -374,12 +371,20 @@ fn the_restart_waits_for_the_first_scout_to_claim_its_script() {
 /// The injected stall of the first scout's start in the test above.
 const SCOUT_STALL: Duration = Duration::from_secs(5);
 
-/// From a scout's window being up to its script claimed: `fake-agent`'s exec (a first
-/// exec on macOS, ~0.44 s, serialised with the first execs of this file's parallel
-/// tests: eight at once finish by 3.5 s, `docs/timing-budgets.md`, "Measured primitive
-/// costs"), then its `git rev-parse` under `GIT_TIMEOUT` (5 s, `fake-agent/src/roles.rs`),
-/// then one `create_new`; plus 10 s of wall-clock slack.
-const CLAIM_WAIT: Duration = Duration::from_secs(4 + 5 + 10);
+/// Concurrent first execs of `fake-agent` in this file's parallel tests: ~0.44 s each,
+/// serialised, eight at once finishing by 3.5 s (`docs/timing-budgets.md`, "Measured
+/// primitive costs"), rounded up.
+const FIRST_EXECS: Duration = Duration::from_secs(4);
+/// `fake-agent`'s `GIT_TIMEOUT` for the `git rev-parse` before it claims
+/// (`fake-agent/src/roles.rs`; a binary crate, so coupled by this comment).
+const FAKE_AGENT_GIT_TIMEOUT: Duration = Duration::from_secs(5);
+/// Wall-clock slack, as the harness's other derived bounds use.
+const WALL_CLOCK_SLACK: Duration = Duration::from_secs(10);
+/// From a scout's window being up to its script claimed: its exec, its `git
+/// rev-parse`, then one `create_new`.
+const CLAIM_WAIT: Duration = FIRST_EXECS
+    .saturating_add(FAKE_AGENT_GIT_TIMEOUT)
+    .saturating_add(WALL_CLOCK_SLACK);
 
 /// Whether `fake-agent` has claimed the script `<name>.jsonl`.
 fn claimed(h: &RunHarness, name: &str) -> bool {
@@ -396,7 +401,7 @@ fn wait_claimed(h: &RunHarness, name: &str, within: Duration) {
     while !claimed(h, name) {
         assert!(
             Instant::now() < deadline,
-            "{name} was not claimed within {within:?}\n{}",
+            "{name} was not claimed within {within:?} (a restart must follow the claim)\n{}",
             h.log_tail()
         );
         std::thread::sleep(Duration::from_millis(50));

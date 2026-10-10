@@ -22,6 +22,9 @@ fn the_same_instant_gets_two_files() {
 
 /// A leftover that already has the next names (a recycled pid's, say) is stepped over:
 /// `AlreadyExists` takes the next sequence number, within `GRAPH_FILE_TRIES`.
+/// Not a fails-before test of C1: the old names had no sequence, so these planted
+/// names could not match and it passed on the old code too. It pins the retry
+/// relative to the sequence scheme: a sequence without the retry fails it.
 #[test]
 fn a_leftover_with_the_next_name_is_stepped_over() {
     let tmp = tempfile::tempdir().unwrap();
