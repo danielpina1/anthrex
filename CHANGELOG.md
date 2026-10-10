@@ -8,8 +8,8 @@ release is a pre-release and any release may change behaviour or the protocol.
 ## [Unreleased]
 
 The protocol version is now 21 (19 for model roles, 20 for orchestrator-first alerts, 21
-for the simple repository profile): a client needs a daemon of the same release. Stop the old daemon (`anthrex daemon stop`)
-after upgrading.
+for the simple repository profile): a client needs a daemon of the same release. Stop
+the old daemon (`anthrex daemon stop`) after upgrading.
 
 ### Added
 
@@ -22,8 +22,8 @@ after upgrading.
   triaged against the repository as it is when it starts. With `--yes`, the goal stores
   the profile itself as soon as every command checks out (a dropped command still waits
   for your review). A set-up that fails keeps the queue and offers **Retry**;
-  discarding the proposal drops the waiting goals, and `anthrex profile status` lists
-  what waits and what was dropped. `anthrex run start --goal` in such a repository
+  discarding the proposal drops the waiting goals, and `anthrex profile status` and the
+  Profile screen list what waits and what was dropped. `anthrex run start --goal` in such a repository
   exits with status 3 and prints nothing on stdout (on stderr: `queued: <goal> waits
   for the repository profile (anthrex profile); no run started yet`), so a script that
   expects a run id stops.
@@ -33,9 +33,11 @@ after upgrading.
   shows only the rows that changed, `old → new`. `⏎` **Use this**, `e` edit a row, `x`
   discard, `esc` later (the proposal, its alert and the waiting goals stay).
 - **Row edits.** Editing a command on the Profile screen checks it once: on ✓ it is
-  saved at once (`saved <label>`); on ✗ the row shows why, with `o` for its output, `s`
-  to save it anyway and `r` to revert. The same works on the review card, where the
-  edit changes only the proposal until **Use this**. Edits stay refused while a run is
+  saved at once (`saved <label>`); on ✗ the row shows the value that failed
+  (`old → tried ✗`) and why, with `o` for its output, `s` to save it anyway and `r` to
+  revert. The same works on the review card, where the edit changes only the proposal
+  until **Use this**; a failed one is named under the card, since **Use this** leaves
+  it out. `anthrex profile status` prints the edit, its state and its reason. Edits stay refused while a run is
   live in the repository (`finish or cancel the run in this repo to change its
   profile`).
 - **`anthrex profile use`** stores the ready proposal and starts any waiting goals;
