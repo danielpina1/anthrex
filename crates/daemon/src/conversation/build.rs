@@ -30,7 +30,9 @@ pub(super) fn apply(
     draft.runtime = runtime;
     // Milestone 9.11 decision 34 (A16): after a missed `SessionStart`, the first hook with a
     // transcript teaches it, as a `SessionStart` of unknown source would (read at its end).
-    let learned = !matches!(hook.kind, HookKind::SessionStart)
+    // The root only: a sub-agent's hook carries the main file, which only the root reads.
+    let learned = draft.agent_id.is_none()
+        && !matches!(hook.kind, HookKind::SessionStart)
         && draft.transcript_path.is_none()
         && hook.transcript_path.is_some()
         && session_start(draft, hook, None);

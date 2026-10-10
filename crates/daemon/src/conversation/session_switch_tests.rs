@@ -321,3 +321,22 @@ fn a_hook_after_a_missed_session_start_teaches_the_transcript_path() {
         "the same path again is no new session"
     );
 }
+
+/// Stream X review X-M4: only the root conversation learns a transcript. A sub-agent's
+/// hook carries the main session's path; a no-op one (a `Notification` that is not a
+/// permission prompt) from an agent id never seen must not create a conversation (the
+/// F2 slot guard keeps an entry only when the hook changed it).
+#[test]
+fn a_sub_agents_hook_teaches_no_transcript_and_takes_no_slot() {
+    let mut set = ConversationSet::new(1, proto::Runtime::Claude);
+    apply(&mut set, &[prompt("first")]);
+    let before = set.keys();
+    let mut note = super::tests::hook(crate::hooks::HookKind::Notification);
+    note.agent_id = Some("agent-never-seen".into());
+    note.session_id = Some("sess-A".into());
+    note.transcript_path = Some("/t/a.jsonl".into());
+    apply(&mut set, &[note]);
+    assert_eq!(set.keys(), before, "a no-op sub-agent hook took a slot");
+    assert_eq!(set.transcript_path(), None);
+    assert!(!set.take_at_end());
+}
