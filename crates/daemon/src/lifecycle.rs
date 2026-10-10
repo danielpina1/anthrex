@@ -28,6 +28,13 @@ pub struct DaemonOptions {
 /// enough to cover a `daemon stop` immediately followed by a start (decision 24).
 pub const LOCK_WAIT: Duration = Duration::from_secs(5);
 
+/// `<data_dir>/daemon.spawning`: written by a client's `ensure_daemon`
+/// (`crates/tui/src/spawn.rs`) under its claim of the lifetime lock, just before it spawns
+/// a daemon, and removed by that daemon once it holds the lock. While it is fresh, another
+/// client that wins the claim in the gap between the two knows a daemon is already on its
+/// way and spawns none (M9.11.28's fix round, S28-I1).
+pub const SPAWN_MARKER: &str = "daemon.spawning";
+
 /// Creates the socket directory (mode 0700) and removes a stale socket file.
 /// Fails if a live daemon answers on the socket, or if the directory belongs to
 /// somebody else.
@@ -223,6 +230,9 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
             );
         }
     };
+    // The spawn this daemon may have come from is complete: the lock is ours, so a
+    // client that wins a claim from now on has no spawn in flight to wait for.
+    let _ = std::fs::remove_file(opts.data_dir.join(SPAWN_MARKER));
     let _log_guard = init_logging(&opts.data_dir)?;
 
     // Decision 12: loaded once, on `spawn_blocking`, before the socket is bound, so the

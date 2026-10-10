@@ -119,6 +119,88 @@ enum Claim {
     Unknown,
 }
 
+/// How long a spawn marker (`daemon::lifecycle::SPAWN_MARKER`) stands for a daemon still
+/// on its way to its lock: `PRE_BIND_ALLOWANCE`, the same allowance a daemon's start is
+/// given. A daemon that took longer, or died before its lock, no longer holds back a
+/// client that wins the claim after it; a second daemon spawned then yields to the first
+/// once either binds (`DaemonLock::acquire_or_yield`).
+const SPAWN_MARKER_FRESH: Duration = PRE_BIND_ALLOWANCE;
+
+/// Whether a client's spawn is in flight: the marker exists and is younger than
+/// `SPAWN_MARKER_FRESH`. A clock that went backwards reads as fresh.
+fn spawn_in_flight(data_dir: &Path) -> bool {
+    std::fs::metadata(data_dir.join(daemon::lifecycle::SPAWN_MARKER))
+        .and_then(|meta| meta.modified())
+        .map(|written| {
+            std::time::SystemTime::now()
+                .duration_since(written)
+                .map_or(true, |age| age < SPAWN_MARKER_FRESH)
+        })
+        .unwrap_or(false)
+}
+
+/// Decides, once, whether this caller spawns (blocking: it touches the filesystem). A won
+/// claim with a fresh spawn marker is read as contended: the marker's writer won the same
+/// claim a moment ago, and its daemon has not taken the lock yet.
+fn claim(data_dir: &Path) -> Claim {
+    if std::fs::create_dir_all(data_dir).is_err() {
+        return Claim::Unknown;
+    }
+    match daemon::lockfile::try_claim(data_dir) {
+        Ok(Some(_)) if spawn_in_flight(data_dir) => Claim::Contended,
+        Ok(Some(lock)) => Claim::Won(lock),
+        Ok(None) => Claim::Contended,
+        Err(_) => Claim::Unknown,
+    }
+}
+
+/// Claims and, unless the claim is contended, spawns. `Ok(true)` when this call spawned a
+/// daemon (the caller then never claims again), `Ok(false)` when the lock or a fresh spawn
+/// marker says somebody else has it.
+async fn start_once(exe: &Path, data_dir: &Path) -> anyhow::Result<bool> {
+    let dir = data_dir.to_path_buf();
+    let claim = tokio::task::spawn_blocking(move || claim(&dir))
+        .await
+        .unwrap_or(Claim::Unknown);
+    match claim {
+        Claim::Contended => return Ok(false),
+        Claim::Unknown => {
+            // final-gate finding F3: `spawn_detached` was called inline here, on the
+            // tokio worker running this async fn — an AGENTS.md hard rule 2 violation:
+            // `open_stderr_sink` does `create_dir_all`, a `RotatingFile::open`, up to
+            // `LOG_KEEP` renames and a second `open`, all ahead of the fork/exec itself.
+            // `exe` is cloned to an owned `PathBuf` because `spawn_blocking`'s closure
+            // must be `'static`.
+            let exe = exe.to_path_buf();
+            tokio::task::spawn_blocking(move || spawn_detached(&exe))
+                .await
+                .map_err(|error| anyhow::anyhow!("daemon spawn failed: {error}"))??;
+        }
+        Claim::Won(lock) => {
+            let exe = exe.to_path_buf();
+            let marker = data_dir.join(daemon::lifecycle::SPAWN_MARKER);
+            tokio::task::spawn_blocking(move || {
+                // Written under the claim, before the spawn: a client that wins the claim
+                // after this one drops it, but before the child takes it, sees the marker.
+                std::fs::write(&marker, std::process::id().to_string())?;
+                spawn_detached(&exe)
+            })
+            .await
+            .map_err(|error| anyhow::anyhow!("daemon spawn failed: {error}"))??;
+            // Give the just-spawned child a real chance to reach its own acquire
+            // before releasing: `docs/timing-budgets.md` measured a plain `anthrex`
+            // binary spawn at a 39ms median / 85ms max (idle) — this is several times
+            // that, not a tight bound, since the cost of being wrong (a redundant
+            // second daemon) is much higher than the cost of a slightly slower start
+            // for the one caller that won the race. The spawn marker covers a child
+            // slower than this.
+            tokio::time::sleep(SPAWN_HANDOFF_GRACE).await;
+            drop(lock);
+        }
+    }
+    Ok(true)
+}
+
 /// Connects if a daemon is running; otherwise starts one and waits up to
 /// [`ENSURE_DAEMON_SOCKET_WAIT`] (10 s) for its socket. `exe` is the binary to re-exec as the detached daemon — task M6.11 moved
 /// this out of an internal `std::env::current_exe()` call so a reconnect attempt
@@ -141,9 +223,12 @@ enum Claim {
 /// spawn closes that: any sibling that checks while this caller is still inside
 /// `spawn_detached` sees genuine contention and does not spawn.
 ///
-/// A caller that loses the claim spawns nothing and simply waits for the winner's
-/// socket in the loop below — exactly how it already waits for a daemon started for
-/// any other reason. A probe that fails for a reason *other* than contention falls
+/// A caller that loses the claim spawns nothing yet and waits for a socket in the loop
+/// below, claiming again on each pass (M9.11.28's fix round): the holder may be a daemon
+/// still stopping, with nothing on its way, and once its lock is free the first caller
+/// to claim it spawns. A caller that wins a claim while a fresh spawn marker
+/// ([`daemon::lifecycle::SPAWN_MARKER`]) says another caller's daemon has not taken the
+/// lock yet treats it as lost, so two waiting callers spawn one daemon. A probe that fails for a reason *other* than contention falls
 /// back to the old, unconditional behaviour — an unrelated I/O hiccup must never be
 /// read as "someone else has this covered," or nobody would ever spawn anything.
 /// `spawn_blocking`: this touches the filesystem (AGENTS.md hard rule 2), even though
@@ -168,56 +253,18 @@ pub async fn ensure_daemon(exe: &Path, socket: &Path) -> anyhow::Result<()> {
         return Ok(());
     }
     let data_dir = proto::paths::data_dir();
-    let claim = tokio::task::spawn_blocking(move || {
-        if std::fs::create_dir_all(&data_dir).is_err() {
-            return Claim::Unknown;
-        }
-        match daemon::lockfile::try_claim(&data_dir) {
-            Ok(Some(lock)) => Claim::Won(lock),
-            Ok(None) => Claim::Contended,
-            Err(_) => Claim::Unknown,
-        }
-    })
-    .await
-    .unwrap_or(Claim::Unknown);
-    match claim {
-        Claim::Contended => {}
-        Claim::Unknown => {
-            // final-gate finding F3: `spawn_detached` was called inline here, on the
-            // tokio worker running this async fn — the same AGENTS.md hard rule 2
-            // violation as the `create_dir_all`/`try_claim` call fifteen lines above,
-            // just introduced later on this branch: at the merge base, `spawn_detached`
-            // used `Stdio::null()` for every stream and touched no filesystem at all, so
-            // wrapping it was unnecessary then. `open_stderr_sink` (this branch) changed
-            // that — `create_dir_all`, a `RotatingFile::open` (another `create_dir_all`,
-            // an `open`, a `metadata`), up to `LOG_KEEP` renames, and a second `open`,
-            // all inline, ahead of the fork/exec itself — strictly more filesystem work
-            // than the call already wrapped above it. `exe` is cloned to an owned
-            // `PathBuf` because `spawn_blocking`'s closure must be `'static`.
-            let exe = exe.to_path_buf();
-            tokio::task::spawn_blocking(move || spawn_detached(&exe))
-                .await
-                .map_err(|error| anyhow::anyhow!("daemon spawn failed: {error}"))??;
-        }
-        Claim::Won(lock) => {
-            let exe_owned = exe.to_path_buf();
-            tokio::task::spawn_blocking(move || spawn_detached(&exe_owned))
-                .await
-                .map_err(|error| anyhow::anyhow!("daemon spawn failed: {error}"))??;
-            // Give the just-spawned child a real chance to reach its own acquire
-            // before releasing: `docs/timing-budgets.md` measured a plain `anthrex`
-            // binary spawn at a 39ms median / 85ms max (idle) — this is several times
-            // that, not a tight bound, since the cost of being wrong (a redundant
-            // second daemon) is much higher than the cost of a slightly slower start
-            // for the one caller that won the race.
-            tokio::time::sleep(SPAWN_HANDOFF_GRACE).await;
-            drop(lock);
-        }
-    }
     let deadline = Instant::now() + ENSURE_DAEMON_SOCKET_WAIT;
+    // M9.11.28's fix round (S28-I1): a contended claim is retried for as long as the
+    // socket has not appeared. A daemon that is still stopping holds the lock with no
+    // daemon on its way, so a client that only waited would wait for nothing; once that
+    // lock is free, the first client to claim it spawns, exactly as an uncontended start.
+    let mut spawned = start_once(exe, &data_dir).await?;
     while Instant::now() < deadline {
         if is_up(socket).await {
             return Ok(());
+        }
+        if !spawned {
+            spawned = start_once(exe, &data_dir).await?;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }

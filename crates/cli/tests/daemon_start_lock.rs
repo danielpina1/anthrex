@@ -1,32 +1,27 @@
-//! Decision 31 (B7, task M9.11.28): a client's daemon start waits out the daemon's own
-//! lock wait. `ensure_daemon` used to poll the socket for 3 s while a daemon may wait
-//! `LOCK_WAIT` (5 s) for its lifetime lock before it binds, so a client said "did not
-//! start" while the daemon came up a moment later.
+//! Decision 31 (B7, task M9.11.28): a client's daemon start waits out a daemon that is
+//! still stopping. `ensure_daemon` used to poll the socket for 3 s, and when it found the
+//! lifetime lock held (a stopping daemon tearing down) it spawned nothing at all, so a
+//! client alone behind a stopping daemon could never succeed, at 3 s or 10 s (stream S
+//! review, S28-I1). It now retries the claim while it waits and spawns once it wins.
 //!
-//! The reproduction holds the isolated data directory's lifetime lock, as a daemon still
-//! stopping does, and releases it after `LOCK_WAIT - 1 s`. `ensure_daemon` sees the lock
-//! held and spawns nothing (fix wave 10: a contended claim means somebody else is starting
-//! a daemon), so the daemon it waits for is the one queued behind the lock: a `daemon
-//! start --foreground` this test starts first, as another client's start would have. It
-//! binds once the lock is free, about 4 s in: past the old 3 s, inside the new wait.
-//!
-//! Every daemon here is isolated under a `/tmp` tempdir and is this test's own child,
-//! stopped with `daemon stop` and killed by its exact pid only if still alive at the end.
+//! Each reproduction holds the isolated data directory's lifetime lock, as a stopping
+//! daemon does, and releases it after `LOCK_WAIT - 1 s`; only `anthrex daemon start`
+//! runs behind it. Every daemon here is isolated under a `/tmp` tempdir and stopped with
+//! `daemon stop` through that tempdir's own socket (hard rule 1); nothing is signalled.
 mod support;
 
 use std::path::{Path, PathBuf};
-use std::process::{Child, Stdio};
 use std::time::{Duration, Instant};
 use support::{RunningCommand, isolated_command, tempdir};
 
-/// When the test gives the lock up: one second before a daemon queued behind it would
-/// give up on it itself (`LOCK_WAIT`, imported), so that daemon binds, and later than the
-/// old 3 s socket wait.
+/// When the test gives the lock up: one second before `LOCK_WAIT` (imported), the wait the
+/// brief sets for this reproduction, and later than the old 3 s socket wait.
 const HOLD: Duration = daemon::LOCK_WAIT.saturating_sub(Duration::from_secs(1));
 
-/// `anthrex daemon start`'s own legal worst case: `SPAWN_HANDOFF_GRACE` (0.25 s, private to
-/// `tui::spawn`, unpaid here since the claim is contended) + `ENSURE_DAEMON_SOCKET_WAIT`
-/// (imported), plus 10 s for the `anthrex` spawn and its exit on a loaded machine.
+/// `anthrex daemon start`'s own legal worst case: `ENSURE_DAEMON_SOCKET_WAIT` (imported),
+/// within which the claim, the spawn and `SPAWN_HANDOFF_GRACE` (0.25 s, private to
+/// `tui::spawn`) all fall, plus the grace once more in case the spawn starts at the very
+/// end, plus 10 s for the `anthrex` spawn and its exit on a loaded machine.
 const START_LIMIT: Duration = tui::spawn::ENSURE_DAEMON_SOCKET_WAIT
     .saturating_add(Duration::from_millis(250))
     .saturating_add(Duration::from_secs(10));
@@ -41,22 +36,16 @@ const STOP_LIMIT: Duration = proto::HANDSHAKE_TIMEOUT
     .saturating_add(Duration::from_secs(1 + 3 + 10))
     .saturating_add(Duration::from_secs(10));
 
-/// Stops this test's daemon through its own socket, then kills it by its exact pid if it
-/// is somehow still alive (hard rule 1: nothing of this test's survives it).
-struct Daemon<'a> {
-    dir: &'a Path,
-    child: Child,
-}
+/// Stops whatever daemon this test's `daemon start` left on the tempdir's socket, through
+/// that socket (`daemon stop` with the same isolated variables). A daemon that never came
+/// up has nothing to stop.
+struct StopOnDrop<'a>(&'a Path);
 
-impl Drop for Daemon<'_> {
+impl Drop for StopOnDrop<'_> {
     fn drop(&mut self) {
-        if self.child.try_wait().ok().flatten().is_none() {
-            let _ = RunningCommand::start(&mut isolated_command(self.dir, &["daemon", "stop"]))
+        if self.0.join("daemon.sock").exists() {
+            let _ = RunningCommand::start(&mut isolated_command(self.0, &["daemon", "stop"]))
                 .try_finish(STOP_LIMIT);
-        }
-        if self.child.try_wait().ok().flatten().is_none() {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
         }
     }
 }
@@ -64,8 +53,8 @@ impl Drop for Daemon<'_> {
 /// Runs `anthrex` once before the reproduction starts its clock. The first `anthrex` this
 /// test process spawns took 2.5-3 s to reach `main` on macOS (measured: `--version`
 /// 2.65 s and 2.53 s, the next spawn at once), the first-exec cost of "Measured primitive
-/// costs"; paid inside the reproduction it moves `daemon start`'s 3 s window past the
-/// lock's release, and the old wait passes by accident.
+/// costs"; paid inside the reproduction it moves `daemon start`'s window past the lock's
+/// release, and an old wait passes by accident.
 fn warm_up() {
     let warm = std::process::Command::new(support::ANTHREX)
         .arg("--version")
@@ -87,41 +76,79 @@ fn hold_the_lock(data: &Path) -> std::thread::JoinHandle<()> {
     })
 }
 
-#[test]
-fn a_start_behind_a_stopping_daemon_waits_for_it() {
-    let dir = tempdir();
-    warm_up();
-    let release = hold_the_lock(&dir.path().join("data"));
+/// `anthrex daemon start` behind the held lock, with the stderr probe on: every daemon
+/// process it (or its detached child) starts writes one probe line to
+/// `data/daemon.stderr.log` at the very top of `lifecycle::run`, before its lock.
+fn start_command(dir: &Path) -> RunningCommand {
+    RunningCommand::start(
+        isolated_command(dir, &["daemon", "start"]).env("ANTHREX_TEST_STDERR_PROBE", "1"),
+    )
+}
 
-    let log = std::fs::File::create(dir.path().join("daemon.log")).unwrap();
-    let child = isolated_command(dir.path(), &["daemon", "start", "--foreground"])
-        .stdin(Stdio::null())
-        .stdout(log.try_clone().unwrap())
-        .stderr(log)
-        .spawn()
-        .unwrap();
-    let _daemon = Daemon {
-        dir: dir.path(),
-        child,
-    };
-
-    let started = Instant::now();
-    let start = RunningCommand::start(&mut isolated_command(dir.path(), &["daemon", "start"]))
-        .finish(START_LIMIT);
+fn assert_started(dir: &Path, start: std::process::Output, started: Instant) {
     assert!(
         start.status.success(),
         "daemon start failed after {:?}: {}\n--- daemon log ---\n{}",
         started.elapsed(),
         String::from_utf8_lossy(&start.stderr),
-        std::fs::read_to_string(dir.path().join("daemon.log")).unwrap_or_default()
+        std::fs::read_to_string(dir.join("data/daemon.log")).unwrap_or_default()
     );
+}
 
-    let status = RunningCommand::start(&mut isolated_command(dir.path(), &["daemon", "status"]))
+fn assert_running(dir: &Path) {
+    let status = RunningCommand::start(&mut isolated_command(dir, &["daemon", "status"]))
         .finish(STATUS_LIMIT);
     let said = String::from_utf8_lossy(&status.stdout);
     assert!(
         status.status.success() && said.starts_with("running: version"),
         "the started daemon did not answer: {said}"
+    );
+}
+
+/// How many daemon processes ran in `dir`, counted by their probe lines.
+fn daemons_started(dir: &Path) -> usize {
+    std::fs::read_to_string(dir.join("data/daemon.stderr.log"))
+        .unwrap_or_default()
+        .matches("anthrex-test-stderr-probe")
+        .count()
+}
+
+#[test]
+fn a_start_behind_a_stopping_daemon_waits_for_it() {
+    let dir = tempdir();
+    let _stop = StopOnDrop(dir.path());
+    warm_up();
+    let release = hold_the_lock(&dir.path().join("data"));
+
+    let started = Instant::now();
+    let start = start_command(dir.path()).finish(START_LIMIT);
+    assert_started(dir.path(), start, started);
+    assert_running(dir.path());
+    assert_eq!(daemons_started(dir.path()), 1);
+    release.join().unwrap();
+}
+
+/// Two clients behind the same stopping daemon: both wait, both retry the claim, and the
+/// lock decides which one spawns. Exactly one daemon process ever starts (its probe line),
+/// and both clients report it running.
+#[test]
+fn two_starts_behind_a_stopping_daemon_spawn_one_daemon() {
+    let dir = tempdir();
+    let _stop = StopOnDrop(dir.path());
+    warm_up();
+    let release = hold_the_lock(&dir.path().join("data"));
+
+    let started = Instant::now();
+    let first = start_command(dir.path());
+    let second = start_command(dir.path());
+    assert_started(dir.path(), first.finish(START_LIMIT), started);
+    assert_started(dir.path(), second.finish(START_LIMIT), started);
+    assert_running(dir.path());
+    assert_eq!(
+        daemons_started(dir.path()),
+        1,
+        "{}",
+        std::fs::read_to_string(dir.path().join("data/daemon.stderr.log")).unwrap_or_default()
     );
     release.join().unwrap();
 }
