@@ -1,0 +1,445 @@
+//! Milestone 9.11 decision 4 (A2, A4): a worker's waiting messages are carried into
+//! its next session, never dropped. Rung 2 appends them to its hand-over; rung 3,
+//! rung 4 and a lane out leave them in the outbox (a blocked task holds its mail), and
+//! `run retry`'s fresh session takes them; a failed resume carries its in-flight ones.
+
+use proto::{LaneState, MessageKind, RaceLane, TaskState};
+use serde_json::json;
+
+use super::control::retry;
+use super::dispatch::edit;
+use super::fixture::*;
+use super::gates::only_op;
+use super::holds::answer;
+use super::race::{claim, lane};
+use super::race_crown::crowned;
+use super::race_end::b_out;
+use super::race_lanes::proof;
+use super::turns::{exited, killed_exit, queue, working_on};
+use super::worker_messages::msg;
+use crate::run::contract::{answer_message, handover_prompt};
+use crate::run::engine::{AgentSignal, Effect, EventKind, OpKind, OpResult};
+use crate::run::orch::contract::notes_section;
+
+/// Room for every tool call and minute a test makes, so no budget rung interferes.
+const ROOMY: &str = "[task.budget]\ntool_calls = 1000\nminutes = 1000";
+
+fn args() -> serde_json::Value {
+    json!({"summary": "did it", "test": "a::works", "red": "abcdef1"})
+}
+
+/// A `task_done` from `window` whose check fails (a generated file outside the task's
+/// `owns`): one done-gate failure, its text in the tool's reply (`told`).
+pub(super) fn done_fails(fx: &mut Fixture, window: u32) -> Vec<Effect> {
+    let effects = fx.tool(window, "task_done", args());
+    let (op, _) = ops_in(&effects, "VerifyDone")[0].clone();
+    let mut result = fx.clean_check("t1");
+    if let OpResult::DoneChecked {
+        generated_outside_owns,
+        ..
+    } = &mut result
+    {
+        *generated_outside_owns = vec!["Cargo.lock".into()];
+    }
+    fx.done(op, result)
+}
+
+/// A working `t1` whose done gate can fail (its profile names a generated file), on
+/// `extra`'s budget; its window, its first turn open.
+pub(super) fn working_generated(extra: &str) -> (Fixture, u32) {
+    let profile = PROFILE.replace("setup = ", "generated = [\"Cargo.lock\"]\nsetup = ");
+    let mut fx = Fixture::new(&plan_with(&profile, &[task("t1", "S", "a", extra)]));
+    fx.ready(true);
+    let window = fx.launch_all()[0].1;
+    assert!(fx.task("t1").rounds[0].turn_open);
+    (fx, window)
+}
+
+/// The replaced session in `window` exits and its diff is answered: the fresh
+/// session's `CreateWindow` first turn.
+pub(super) fn fresh_first_turn(fx: &mut Fixture, window: u32) -> String {
+    let effects = killed_exit(fx, window);
+    let (op, _) = only_op(&effects, "DiffSoFar");
+    let effects = fx.done(
+        op,
+        OpResult::Diff {
+            stat: String::new(),
+            patch: String::new(),
+        },
+    );
+    let (_, kind) = only_op(&effects, "CreateWindow");
+    let OpKind::CreateWindow { first_turn, .. } = kind else {
+        unreachable!()
+    };
+    first_turn
+}
+
+/// The texts waiting in the outbox for `address`, not yet delivered.
+fn waiting(fx: &Fixture, address: &str) -> Vec<String> {
+    (fx.run().outbox.iter())
+        .filter(|m| m.task_id == address && m.delivered_at.is_none())
+        .map(|m| m.text.clone())
+        .collect()
+}
+
+#[test]
+fn an_undelivered_answer_reaches_the_rung_2_hand_over() {
+    let (mut fx, window) = working_generated(ROOMY);
+    edit(&mut fx, vec![answer("use the users table")]);
+    let text = answer_message("use the users table");
+    assert_eq!(waiting(&fx, "t1"), vec![text.clone()], "the turn is open");
+    done_fails(&mut fx, window);
+    done_fails(&mut fx, window);
+    assert_eq!(fx.task("t1").rung, 2);
+    let first_turn = fresh_first_turn(&mut fx, window);
+    assert!(first_turn.ends_with(&format!("\n\n{text}")), "{first_turn}");
+    assert_eq!(first_turn.matches(&text).count(), 1, "{first_turn}");
+    assert!(fx.run().outbox.is_empty(), "{:#?}", fx.run().outbox);
+}
+
+#[test]
+fn a_budget_wrap_up_reaches_the_rung_2_hand_over() {
+    // Five tool calls reach the soft budget (the wrap-up, queued while the turn is
+    // open); the two `task_done` calls make seven, under the hard 7.5.
+    let (mut fx, window) = working_generated("[task.budget]\ntool_calls = 5\nminutes = 1000");
+    for _ in 0..5 {
+        fx.signal(
+            window,
+            AgentSignal::ToolUse {
+                name: "Bash".into(),
+                target: None,
+            },
+        );
+    }
+    let queued = waiting(&fx, "t1");
+    assert_eq!(queued.len(), 1, "the wrap-up: {queued:#?}");
+    let wrap_up = queued[0].clone();
+    done_fails(&mut fx, window);
+    done_fails(&mut fx, window);
+    assert_eq!((fx.task("t1").rung, fx.task("t1").budget_exceeded), (2, 0));
+    let first_turn = fresh_first_turn(&mut fx, window);
+    assert!(
+        first_turn.ends_with(&format!("\n\n{wrap_up}")),
+        "{first_turn}"
+    );
+    assert!(fx.run().outbox.is_empty(), "{:#?}", fx.run().outbox);
+}
+
+#[test]
+fn a_message_already_in_the_notes_is_not_appended_twice() {
+    let (mut fx, window) = working_generated(ROOMY);
+    edit(
+        &mut fx,
+        vec![msg(&["t1"], MessageKind::Info, "the schema moved")],
+    );
+    assert_eq!(waiting(&fx, "t1").len(), 1, "queued while the turn is open");
+    done_fails(&mut fx, window);
+    done_fails(&mut fx, window);
+    let first_turn = fresh_first_turn(&mut fx, window);
+    let task = fx.task("t1");
+    let notes = notes_section(&task.orch.messages);
+    assert!(notes.contains("the schema moved"), "{notes}");
+    let reason = format!(
+        "the done gate failed again: {}",
+        task.failure_log[1].lines().next().unwrap()
+    );
+    let expected = handover_prompt(fx.run(), task, &reason, "", "", "", &notes);
+    assert_eq!(first_turn, expected, "no appended second copy");
+    assert!(fx.run().outbox.is_empty(), "{:#?}", fx.run().outbox);
+}
+
+#[test]
+fn an_answer_to_a_task_blocked_mis_sized_waits_for_the_retry() {
+    let (mut fx, window) = working_generated(ROOMY);
+    done_fails(&mut fx, window);
+    done_fails(&mut fx, window);
+    fresh_first_turn(&mut fx, window);
+    let second = fx.complete_windows()[0].1;
+    edit(&mut fx, vec![answer("keep the old API")]);
+    let text = answer_message("keep the old API");
+    assert_eq!(waiting(&fx, "t1"), vec![text.clone()], "the turn is open");
+    done_fails(&mut fx, second);
+    let t1 = fx.task("t1");
+    assert_eq!((t1.state, t1.rung), (TaskState::Blocked, 3));
+    assert_eq!(waiting(&fx, "t1"), vec![text.clone()], "held while blocked");
+    killed_exit(&mut fx, second);
+    assert_eq!(
+        waiting(&fx, "t1"),
+        vec![text.clone()],
+        "held after the exit"
+    );
+
+    let effects = retry(&mut fx, "t1");
+    let (op, _) = only_op(&effects, "DiffSoFar");
+    let effects = fx.done(
+        op,
+        OpResult::Diff {
+            stat: String::new(),
+            patch: String::new(),
+        },
+    );
+    let (_, kind) = only_op(&effects, "CreateWindow");
+    let OpKind::CreateWindow { first_turn, .. } = kind else {
+        unreachable!()
+    };
+    assert!(first_turn.ends_with(&format!("\n\n{text}")), "{first_turn}");
+    assert!(fx.run().outbox.is_empty(), "{:#?}", fx.run().outbox);
+}
+
+#[test]
+fn rung_4_and_a_lane_out_keep_the_mail() {
+    // Rung 4: the M ceiling (150 tool calls, decision 40) is reached with a message
+    // waiting for the open turn.
+    let (mut fx, window) = working_on("");
+    fx.task_mut("t1").spent_total.tool_calls = 148;
+    queue(&mut fx, "stop at the parser");
+    for _ in 0..2 {
+        fx.signal(
+            window,
+            AgentSignal::ToolUse {
+                name: "Bash".into(),
+                target: None,
+            },
+        );
+    }
+    let t1 = fx.task("t1");
+    assert_eq!((t1.state, t1.rung), (TaskState::Blocked, 4));
+    assert_eq!(waiting(&fx, "t1"), vec!["stop at the parser".to_string()]);
+
+    // The last lane's second gate failure takes it out of its race (rung 2 in its
+    // view) and it is adopted (decision 20): a message queued while its claim was in
+    // the proof gate becomes the task's, and the fresh session after the crown takes it.
+    let (mut fx, a, _) = b_out();
+    let effects = claim(&mut fx, RaceLane::A, a, HEAD);
+    let (op, _) = only_op(&effects, "Proof");
+    fx.done(op, proof(false));
+    let effects = claim(&mut fx, RaceLane::A, a, HEAD);
+    let (op, _) = only_op(&effects, "Proof");
+    queue(&mut fx, "the lexer is shared");
+    let text = "the lexer is shared".to_string();
+    assert_eq!(waiting(&fx, "t1.a"), vec![text.clone()]);
+    let effects = fx.done(op, proof(false));
+    assert_eq!(lane(&fx, RaceLane::A).state, LaneState::Adopted);
+    assert_eq!(lane(&fx, RaceLane::A).gates.rung, 2);
+    assert_eq!(
+        waiting(&fx, "t1.a"),
+        vec![text.clone()],
+        "the lane keeps it"
+    );
+    let (op, _) = only_op(&effects, "CrownRacer");
+    crowned(&mut fx, op, HEAD);
+    let first_turn = fresh_first_turn(&mut fx, a);
+    assert!(first_turn.ends_with(&format!("\n\n{text}")), "{first_turn}");
+    assert!(fx.run().outbox.is_empty(), "{:#?}", fx.run().outbox);
+}
+
+#[test]
+fn a_failed_resume_keeps_an_in_flight_wrap_up() {
+    // The soft budget's wrap-up is queued while the first turn is open, then delivered
+    // when it closes: `Deliver` sent, its turn taken and closed, no `Delivered` yet.
+    let (mut fx, window) = working_on("[task.budget]\ntool_calls = 5\nminutes = 1000");
+    for _ in 0..5 {
+        fx.signal(
+            window,
+            AgentSignal::ToolUse {
+                name: "Bash".into(),
+                target: None,
+            },
+        );
+    }
+    let wrap_up = waiting(&fx, "t1");
+    assert_eq!(wrap_up.len(), 1, "{wrap_up:#?}");
+    let wrap_up = wrap_up[0].clone();
+    let effects = fx.turn_completed(window);
+    let in_flight: Vec<u64> = (effects.iter())
+        .find_map(|e| match e {
+            Effect::Deliver { message_ids, .. } => Some(message_ids.clone()),
+            _ => None,
+        })
+        .expect("the wrap-up is delivered");
+    assert!(waiting(&fx, "t1").is_empty(), "in flight, not waiting");
+    // The wrap-up's turn ends; its `Delivered` has not come.
+    fx.turn_completed(window);
+
+    // The process exits between turns; a second message goes out as a resume.
+    exited(&mut fx, window);
+    queue(&mut fx, "[anthrex] the parser moved");
+    let effects = fx.tick();
+    let (op, kind) = only_op(&effects, "ResumeSession");
+    let OpKind::ResumeSession { message, .. } = kind else {
+        unreachable!()
+    };
+    assert_eq!(message, "[anthrex] the parser moved");
+
+    // The resume fails: the fresh session's first turn carries both, each once, in
+    // queue order.
+    let effects = fx.done(
+        op,
+        OpResult::ResumeFailed {
+            error: "no such session".into(),
+        },
+    );
+    let (op, _) = only_op(&effects, "DiffSoFar");
+    let effects = fx.done(
+        op,
+        OpResult::Diff {
+            stat: String::new(),
+            patch: String::new(),
+        },
+    );
+    let (_, kind) = only_op(&effects, "CreateWindow");
+    let OpKind::CreateWindow { first_turn, .. } = kind else {
+        unreachable!()
+    };
+    let tail = format!("\n\n{wrap_up}\n\n[anthrex] the parser moved");
+    assert!(first_turn.ends_with(&tail), "{first_turn}");
+    assert_eq!(first_turn.matches(&wrap_up).count(), 1, "{first_turn}");
+    assert_eq!(first_turn.matches("the parser moved").count(), 1);
+    assert!(fx.run().outbox.is_empty(), "{:#?}", fx.run().outbox);
+
+    // The wrap-up's late failed `Delivered` finds nothing to queue again.
+    fx.complete_windows();
+    let before = fx.task("t1").rounds.clone();
+    fx.next(EventKind::Delivered {
+        run_id: RUN_ID.into(),
+        message_ids: in_flight,
+        ok: false,
+        error: Some("the window is gone".into()),
+    });
+    assert!(fx.run().outbox.is_empty(), "{:#?}", fx.run().outbox);
+    assert_eq!(fx.task("t1").rounds, before);
+}
+
+/// Stream E review I1: a fresh session the window limit refused keeps its `append`
+/// (`turns_fixes::a_refused_fresh_launch_keeps_its_messages`); the user's retry of the
+/// blocked task carries it into the session it starts, not a blank one.
+#[test]
+fn a_retry_keeps_what_a_refused_fresh_session_carried() {
+    let (mut fx, window) = working_on("[task.budget]\ntool_calls = 1\nminutes = 1000");
+    for _ in 0..2 {
+        fx.signal(
+            window,
+            AgentSignal::ToolUse {
+                name: "Bash".into(),
+                target: None,
+            },
+        );
+    }
+    assert_eq!(fx.task("t1").rung, 2);
+    let created = fx.run().windows_created;
+    fx.run_mut().limits.max_windows = created;
+    queue(&mut fx, "[anthrex] X");
+    let effects = killed_exit(&mut fx, window);
+    let (op, _) = only_op(&effects, "DiffSoFar");
+    let effects = fx.done(
+        op,
+        OpResult::Diff {
+            stat: String::new(),
+            patch: String::new(),
+        },
+    );
+    assert!(ops_in(&effects, "CreateWindow").is_empty(), "refused");
+    let t1 = fx.task("t1");
+    assert_eq!(t1.state, TaskState::Blocked);
+    let append = t1.fresh_session.as_ref().and_then(|f| f.append.clone());
+    let append = append.expect("kept for a retry");
+    assert!(append.ends_with("\n\n[anthrex] X"), "{append}");
+
+    fx.run_mut().limits.max_windows = created + 4;
+    let effects = retry(&mut fx, "t1");
+    let (op, _) = only_op(&effects, "DiffSoFar");
+    let effects = fx.done(
+        op,
+        OpResult::Diff {
+            stat: String::new(),
+            patch: String::new(),
+        },
+    );
+    let (_, kind) = only_op(&effects, "CreateWindow");
+    let OpKind::CreateWindow { first_turn, .. } = kind else {
+        unreachable!()
+    };
+    assert!(
+        first_turn.ends_with(&format!("\n\n{append}")),
+        "{first_turn}"
+    );
+    assert_eq!(first_turn.matches("[anthrex] X").count(), 1, "{first_turn}");
+    assert!(
+        first_turn.contains("retried it"),
+        "the retry's reason: {first_turn}"
+    );
+}
+
+/// Stream E re-review N1, then the double stall it found: a stall at its interrupt's
+/// deadline takes rung 2 (the session killed, the queued nudge and message in the
+/// fresh session's `append`); the run is paused and resumed before the killed process
+/// exits. `restore::resume_worker` leaves the round being killed alone: one stall, one
+/// escalation, and the messages reach the session that starts, once.
+#[test]
+fn a_resume_before_a_killed_rounds_exit_stalls_it_once() {
+    let (mut fx, window) = working_on(ROOMY);
+    let quiet = fx.task("t1").rounds[0].last_event;
+    fx.send(quiet + 601, EventKind::Tick);
+    queue(&mut fx, "[anthrex] keep the parser");
+    fx.send(quiet + 632, EventKind::Tick);
+    let t1 = fx.task("t1");
+    assert_eq!((t1.rung, t1.stalls, t1.failures), (2, 1, 1));
+    let (route, from) = (t1.route.clone(), t1.escalated_from.clone());
+    let append = t1.fresh_session.as_ref().and_then(|f| f.append.clone());
+    let append = append.expect("the first rung 2 carried the mail");
+    assert!(append.ends_with("[anthrex] keep the parser"), "{append}");
+
+    edit(&mut fx, vec![proto::PlanEdit::Pause]);
+    super::control::resume(&mut fx);
+    let t1 = fx.task("t1");
+    assert_eq!((t1.stalls, t1.failures), (1, 1), "one stall");
+    assert_eq!(
+        (&t1.route, &t1.escalated_from),
+        (&route, &from),
+        "one escalation"
+    );
+    let kept = t1.fresh_session.as_ref().and_then(|f| f.append.clone());
+    assert_eq!(kept.as_deref(), Some(append.as_str()), "the append is kept");
+
+    let first_turn = fresh_first_turn(&mut fx, window);
+    assert!(
+        first_turn.ends_with(&format!("\n\n{append}")),
+        "{first_turn}"
+    );
+    assert_eq!(first_turn.matches("keep the parser").count(), 1);
+}
+
+/// Re-review N1, pinned on its own (no path reaches it once a resume leaves a killed
+/// round alone): a rung 2 that meets a fresh session already decided keeps what that
+/// one carries, the new reason replacing only its reason. The fixture is built by hand:
+/// a kept fresh session beside a live round.
+#[test]
+fn a_rung_2_keeps_a_decided_fresh_sessions_append() {
+    let (mut fx, window) = working_on(ROOMY);
+    queue(&mut fx, "[anthrex] the lexer is shared");
+    fx.task_mut("t1").fresh_session = Some(crate::run::model::FreshSession {
+        reason: "an earlier reason".into(),
+        append: Some("[anthrex] decided earlier".into()),
+    });
+    let quiet = fx.task("t1").rounds[0].last_event;
+    fx.send(quiet + 601, EventKind::Tick);
+    fx.send(quiet + 632, EventKind::Tick);
+    let fresh = fx.task("t1").fresh_session.clone().expect("rung 2");
+    assert!(
+        fresh.reason.starts_with("the last session stalled"),
+        "{}",
+        fresh.reason
+    );
+    let append = fresh.append.expect("carried");
+    assert!(
+        append.starts_with("[anthrex] decided earlier\n\n"),
+        "{append}"
+    );
+    assert!(append.contains("[anthrex] the lexer is shared"), "{append}");
+    assert_eq!(
+        fresh_first_turn(&mut fx, window)
+            .matches("decided earlier")
+            .count(),
+        1
+    );
+}

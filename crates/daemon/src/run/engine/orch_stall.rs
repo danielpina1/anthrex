@@ -8,8 +8,8 @@ use proto::{OrchestratorStuck, RunState};
 use super::requests::log;
 use crate::run::model::Run;
 
-/// The orchestrator's note seq now: what `acted` marks as answered.
-fn last_seq(run: &Run) -> u64 {
+/// The orchestrator's note seq now: what a tool call marks as answered.
+pub(super) fn last_seq(run: &Run) -> u64 {
     run.orch
         .orchestrator
         .as_ref()
@@ -58,10 +58,12 @@ pub(super) fn tick(run: &mut Run, now: u64) {
     );
 }
 
-/// The orchestrator called a tool or read the digest: every note so far is answered,
-/// and the clock stops until a newer one arrives.
-pub(super) fn acted(run: &mut Run, now: u64) {
-    run.orch.acted_seq = last_seq(run);
+/// The orchestrator acted, answering the notes up to `seq`: a tool call answers every
+/// note so far (`seq` is the last), a digest read only the notes it returned (milestone
+/// 9.11 decision 6). The clock stops; the post-step [`pass`] starts it again when a
+/// newer note is left.
+pub(super) fn acted(run: &mut Run, seq: u64, now: u64) {
+    run.orch.acted_seq = run.orch.acted_seq.max(seq.min(last_seq(run)));
     run.orch.waiting_since = None;
     if run.orch.stalled_at.take().is_some() {
         log(run, now, "the orchestrator is acting again");

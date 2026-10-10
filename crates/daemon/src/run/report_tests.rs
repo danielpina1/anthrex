@@ -80,6 +80,7 @@ fn round(role: AgentRole, session: u32, turns: u32, tool_calls: u32, denials: u3
         lane: None,
         environment_failed: false,
         startup_failure: None,
+        sandbox_note: None,
     }
 }
 

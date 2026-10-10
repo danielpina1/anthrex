@@ -185,6 +185,10 @@ pub struct AgentRound {
     /// the reason its exit records. Cleared when the next process starts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub startup_failure: Option<String>,
+    /// Milestone 9.11 decision 7: the round's first sandbox-failed command's note, until
+    /// the task's next block, stall or failure names it (`rounds::with_sandbox_note`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox_note: Option<String>,
 }
 
 impl AgentRound {

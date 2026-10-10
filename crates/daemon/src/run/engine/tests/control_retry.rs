@@ -89,7 +89,10 @@ fn retry_resets_counts_and_starts_a_fresh_session_at_rung_2() {
     };
     let why = format!("the user retried it (it was blocked(mis_sized): {text})");
     let expected = handover_prompt(fx.run(), fx.task("t1"), &why, &stat, &patch, "", "");
-    assert_eq!(first_turn, expected, "no stale append");
+    // Milestone 9.11 decision 4 (stream E review I1): the retry's reason replaces the
+    // kept fresh session's, but the messages it carried are not dropped.
+    let expected = format!("{expected}\n\n[anthrex] stale message");
+    assert_eq!(first_turn, expected, "the kept append, once");
     assert_eq!(fx.task("t1").session, 2);
     fx.complete_windows();
     assert_alive(&fx);
