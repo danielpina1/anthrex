@@ -37,13 +37,21 @@ const STOP_LIMIT: Duration = proto::HANDSHAKE_TIMEOUT
     .saturating_add(Duration::from_secs(10));
 
 /// Stops whatever daemon this test's `daemon start` left on the tempdir's socket, through
-/// that socket (`daemon stop` with the same isolated variables). A daemon that never came
-/// up has nothing to stop.
+/// that socket (`daemon stop` with the same isolated variables). On a failure path the
+/// detached daemon may still be on its way to binding (stream S re-review N4), so a
+/// missing socket is waited for, at most `ENSURE_DAEMON_SOCKET_WAIT` (what the client
+/// itself allows a start), before the guard concludes nothing came up; a passing test
+/// finds the socket at once.
 struct StopOnDrop<'a>(&'a Path);
 
 impl Drop for StopOnDrop<'_> {
     fn drop(&mut self) {
-        if self.0.join("daemon.sock").exists() {
+        let socket = self.0.join("daemon.sock");
+        let deadline = Instant::now() + tui::spawn::ENSURE_DAEMON_SOCKET_WAIT;
+        while !socket.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        if socket.exists() {
             let _ = RunningCommand::start(&mut isolated_command(self.0, &["daemon", "stop"]))
                 .try_finish(STOP_LIMIT);
         }

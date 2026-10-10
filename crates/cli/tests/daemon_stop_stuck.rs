@@ -106,8 +106,10 @@ fn daemon_stop_returns_with_a_blocking_task_stuck() {
         std::thread::sleep(Duration::from_millis(10));
     }
 
-    // The early-exit path still ran `run`'s own cleanup: no socket, no pid file, and the
-    // lifetime lock free for the next daemon.
+    // The early-exit path still ran `run`'s own cleanup: no socket and no pid file. (The
+    // lifetime lock is free too, but that follows from the reaped process, whose flock
+    // died with it, so it pins nothing of `run`'s; it is kept as the next daemon's
+    // precondition.)
     assert!(
         !socket.exists(),
         "the stopped daemon left its socket behind"
