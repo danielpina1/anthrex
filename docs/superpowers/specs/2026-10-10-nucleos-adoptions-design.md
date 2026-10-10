@@ -1,6 +1,6 @@
 # Adoptions from nucleos: hardening, build economy, lessons and brakes
 
-Date: 2026-10-10. Status: approved in conversation, section by section; briefs M9.12–M9.15 implement
+Date: 2026-10-10. Status: approved in conversation, section by section; briefs M9.13–M9.16 implement
 it.
 
 ## 1. Origin and goal
@@ -27,7 +27,7 @@ subscription window or one session's context.
 
 | # | Decision |
 |---|---|
-| U1 | Four milestones, in order: 9.12 hardening, 9.13 build economy, 9.14 lessons, 9.15 brakes. One spec and four briefs, reviewed once; then build each with subagent-driven TDD. Milestone 9.11 (Stabilization, protocol 21, another stream of work) lands first; these start after it merges, so 9.12 is protocol 22, 9.13 is 23, 9.14 is 24, 9.15 is 25. |
+| U1 | Six milestones, in order, after 9.11 Stabilization (another stream of work, protocol 21): 9.12 dev speed and structure (protocol unchanged), 9.13 hardening (22), 9.14 build economy (23), 9.15 lessons (24), 9.16 brakes (25), 9.17 plan and review quality (26). One spec and the briefs, reviewed by the user; each built with subagent-driven TDD by the implementer session, self-merged on green CI. Every milestone that adds a `Run` field bumps Stabilization's `RUN_FORMAT` (its decision 36). |
 | U2 | Orchestrator autonomy stays as 9.9 set it, except for the **retry cap** and the **untrusted-text downgrade**. Rejected: shadow mode per op class; a run or chain spending allowance (M9.3 D5 stands). |
 | U3 | A task may change a gate script only when its `owns` names the file exactly; the user approves that with the plan, and that file is not pinned for that run. |
 | U4 | The untrusted-text flag is sticky for the orchestrator session; there is no clear command. A fresh session starts clean. |
@@ -41,8 +41,12 @@ subscription window or one session's context.
 | U12 | The global hold stops new sessions only; merges and delivery continue. |
 | U13 | The orchestrator hands off to a fresh session at the next goal when its context reaches 80% of the window or 300,000 tokens, whichever comes first (0 disables). A Codex orchestrator hands off too when its rollout gives a fill. |
 | U14 | A knowledge graph page in the TUI, Obsidian-style: lessons as dots around module hubs, with search, an inspector and removal (§4). |
+| U15 | Dev speed and structure (§6) runs first, before hardening, so every later milestone builds and tests faster. |
+| U16 | Pin the Rust toolchain at 1.99 in `rust-toolchain.toml`; a toolchain bump is its own deliberate commit. |
+| U17 | While a runtime is quota-braked, a fresh session whose role row's fallback is on the other, unbraked runtime launches that fallback (§5). |
+| U18 | Plan and review quality (§7) is adopted. Not adopted: `--fallback-model` for overload, a per-model stats table, a third runtime, a learned router, presets, a workflow library, persona agents, a deliberating review council. |
 
-## 2. Hardening (9.12)
+## 2. Hardening (9.13)
 
 **Finding.** The orchestrator's `override` skips the protected-file check entirely
 (`engine/done.rs` `spill_exempt`), and the merge queue checks nothing, so since 9.9 an orchestrator
@@ -68,7 +72,7 @@ changed `pull_request` workflow runs with the repository's secrets.
   the user's "do it" executes as the user; `approve_hold` is refused. The flag follows the session
   to the chain's next goal.
 
-## 3. Build economy (9.13)
+## 3. Build economy (9.14)
 
 - **Target-directory pool.** Exclusive leases from checkout creation to removal, with affinity to
   the directory a checkout built last. On an owner change the workspace's own path packages are
@@ -83,7 +87,7 @@ changed `pull_request` workflow runs with the repository's secrets.
 - **Per-module cache key.** Module test steps key on an inputs id over the files of the step's module
   closure plus every file in no module; the build step and tier 3 keep the tree id.
 
-## 4. Lessons (9.14)
+## 4. Lessons (9.15)
 
 - **Failure signatures**, model-free: normalised gate output, at most three decisive lines,
   hashed and recorded on the task record. A signature in two or more runs within 14 days is a known
@@ -106,7 +110,7 @@ changed `pull_request` workflow runs with the repository's secrets.
   approve or reject a proposal. Opened with `g` from the Profile screen's Lessons page; the daemon
   sends nodes and edges.
 
-## 5. Brakes (9.15)
+## 5. Brakes (9.16)
 
 - **Context handoff.** Fill is read from the orchestrator's own transcript tail (the last turn's
   usage), off the lock and bounded. At the goal boundary, at or above the U13 threshold, the next
@@ -117,10 +121,45 @@ changed `pull_request` workflow runs with the repository's secrets.
   runtime stops; in-flight work finishes. It releases at the window's reset or on a fresh reading
   under the threshold, never merely because readings stopped; with no reading it fails open with one
   notice.
+- **Cross-runtime failover** (U17). While one runtime is braked, a fresh session (never a resumed
+  one) whose role row's fallback model is on the other runtime, and that runtime is not braked,
+  starts on the fallback; a reviewer never receives the author's model this way. The run's attention
+  line names the switch.
 - **Global hold.** `anthrex hold on|off|status` and `C-b H`, persisted, visible as a status-bar
   badge; it refuses new sessions, goals, continues and iterates and changes no run state.
 
-## 6. Out of scope
+## 6. Dev speed and structure (9.12)
+
+The second pass measured anthrex: 8 crates, about 7,500 tests, about 190 integration-test binaries;
+`daemon` is 293k lines and `tui` (109k) depends on it for about fifteen constants and helpers.
+
+- **cargo-nextest** for the workspace (doctests stay on `cargo test --doc`), with a slow-timeout that
+  ends a hung test after ten minutes, a test group of bounded width for PTY, real-git and real-daemon
+  tests, timing tests run alone, and no retries. nucleos measured 37 → 15.5 minutes on the same
+  change. Every bound in `docs/timing-budgets.md` is re-derived under the new concurrency.
+- **The TUI off the daemon**: a small shared crate holds what both need, so an engine edit no longer
+  rebuilds the TUI and its tests.
+- **One integration-test binary per crate** for `daemon` and `cli`, except tests that need a process
+  of their own, each with its reason.
+- **A checked engine-purity rule**: a test fails when `run/engine/**` imports async runtime, file
+  system, process, thread or clock APIs.
+- **CI gates**: a non-blocking dependency audit and secret scan, and a leak check that fails when an
+  `anthrex daemon` or `fake-agent` process, or an anthrex temporary directory, survives the suite.
+- **Toolchain pinned** (U16) and **`CARGO_MANIFEST_DIR` guarded** in every test that uses it, before
+  9.14's shared build directories can hand one checkout's test binary to another.
+
+## 7. Plan and review quality (9.17)
+
+- The reviewer prompt carries the run goal and the out-of-scope list; a reviewer can file a finding
+  with target `brief`, which reaches the orchestrator as a task note instead of bouncing the worker.
+- Every plan summary lists **Decided for you** (each question the goal left open, with the answer
+  chosen) and **Out of scope**; the plan gate shows both and reviewers receive the second.
+- Planner contracts gain a rule: tasks that take the next number from a shared sequence (migration
+  numbers, version constants, registries) own that registry, so they are serialised.
+- `add_task` takes an optional `replaces`, so history and statistics judge a re-planned task's
+  outcome by its replacement, not as a failure.
+
+## 8. Out of scope
 
 nucleos's lexical classifier, departments and council, git queue, devtime, spec-to-code map,
 embeddings, and its mail, calendar, voice and browser pillars. Secret redaction for PR bodies is a
