@@ -215,6 +215,10 @@ impl ProfileService {
             if unattended && !review {
                 return Err(format!("the proposal for {} needs a review", p.display()));
             }
+            // Decision 15 (M9.10.6 fix round I1): never a held ✗ of the stored profile.
+            if let Some(refusal) = super::row_edit::refuse_held(&record) {
+                return Err(refusal);
+            }
             // Milestone 9.10.6: never while a row edit of the proposal is being checked.
             if let Some(edit) = record
                 .edit

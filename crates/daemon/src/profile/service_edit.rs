@@ -160,7 +160,7 @@ impl ProfileService {
                 )
             } else {
                 format!(
-                    "{shown}; verifying (anthrex profile status), then confirm with anthrex profile confirm"
+                    "{shown}; verifying (anthrex profile status); once it passes, confirm with anthrex profile confirm; if it fails, save it anyway with --anyway or discard it with anthrex profile reject"
                 )
             });
         }

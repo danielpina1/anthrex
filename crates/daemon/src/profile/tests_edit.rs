@@ -78,6 +78,25 @@ pub(super) async fn wait(what: &str, mut check: impl FnMut() -> bool) {
     }
 }
 
+/// Waits until `project`'s work has ended (it can be registered again), so whatever it
+/// was going to write is written.
+pub(super) async fn work_ended(rig: &Rig, project: &Path) {
+    wait("the work to end", || {
+        rig.profiles
+            .register(project)
+            .is_some_and(|(generation, _)| {
+                rig.profiles.unregister(project, generation);
+                true
+            })
+    })
+    .await;
+}
+
+/// How long a held ✗ is watched for a store that must not come: the store would be
+/// one `confirm_record` (a few small file writes) in the same task, before the work
+/// ends, so milliseconds; `work_ended` already waited past it.
+const HELD_WINDOW: Duration = Duration::from_millis(300);
+
 pub(super) fn stored(rig: &Rig, project: &Path) -> Option<(RepoProfile, ProfileMeta)> {
     match store::load(&rig.repo_dir(project)) {
         Stored::Found { profile, meta, .. } => Some((profile, meta)),
@@ -225,8 +244,121 @@ async fn a_failing_command_edit_is_held_failed() {
         }
         other => panic!("{other:?}"),
     }
-    assert_eq!(stored_check(&rig, &project).as_deref(), Some("true"));
+    // Fix round M4: held, not stored, for as long as the work could still store it.
+    work_ended(&rig, &project).await;
+    let deadline = Instant::now() + HELD_WINDOW;
+    while Instant::now() < deadline {
+        assert_eq!(stored_check(&rig, &project).as_deref(), Some("true"));
+        assert!(failed(edit_state(&rig, &project)), "the ✗ stays held");
+        tokio::time::sleep(POLL).await;
+    }
     assert!(rig.profiles.ready_proposals().1.is_empty(), "not an alert");
+}
+
+/// Fix round I1 (decision 15): a held ✗ of the stored profile is never stored, not by
+/// `profile confirm`/`use` nor by a `--yes` goal's use; the refusal names the way out.
+/// The edit's own reply no longer sends the user to `confirm` unconditionally.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_held_failed_edit_is_never_confirmed() {
+    let rig = Rig::new();
+    let project = repo(rig.dir.path(), "app");
+    rig.store_profile(&project);
+    let mut request = edit(&project, "check", Some("false"));
+    if let ProfileRequest::Edit { yes, .. } = &mut request {
+        *yes = false;
+    }
+    let message = done(rig.profiles.request(request).await);
+    assert_eq!(
+        message,
+        "proposed: check = false; verifying (anthrex profile status); once it passes, confirm \
+         with anthrex profile confirm; if it fails, save it anyway with --anyway or discard \
+         it with anthrex profile reject"
+    );
+    wait("the edit's ✗", || failed(edit_state(&rig, &project))).await;
+    work_ended(&rig, &project).await;
+    let held = rig.on_disk(&project).unwrap();
+    let way_out = "the edit of check failed its check; save it anyway (s, or anthrex profile \
+                   edit check false --anyway) or revert it (r, or anthrex profile reject)";
+    let confirm = ProfileRequest::Confirm {
+        dir: project.clone(),
+        shown: None,
+    };
+    assert_eq!(refused(rig.profiles.request(confirm).await), way_out);
+    assert_eq!(
+        rig.profiles.use_ready(&project).await,
+        Err(way_out.to_string())
+    );
+    assert_eq!(stored_check(&rig, &project).as_deref(), Some("true"));
+    assert_eq!(rig.on_disk(&project), Some(held));
+}
+
+/// Fix round I1: the way out quotes a value the shell would split, and names `--unset`.
+#[test]
+fn the_way_out_is_a_command_to_paste() {
+    use super::row_edit::held_failed;
+    assert_eq!(
+        held_failed("check", Some("sh it's.sh")),
+        "the edit of check failed its check; save it anyway (s, or anthrex profile edit \
+         check 'sh it'\\''s.sh' --anyway) or revert it (r, or anthrex profile reject)"
+    );
+    assert_eq!(
+        held_failed("setup", None),
+        "the edit of setup failed its check; save it anyway (s, or anthrex profile edit \
+         setup --unset --anyway) or revert it (r, or anthrex profile reject)"
+    );
+}
+
+/// Fix round M5: an edit of the stored profile the restart interrupted is failed whole,
+/// its row edit too; it can be reverted, and it is never confirmed.
+#[tokio::test(flavor = "multi_thread")]
+async fn restore_fails_an_interrupted_stored_profile_edit() {
+    let rig = Rig::new();
+    let project = repo(rig.dir.path(), "app");
+    rig.store_profile(&project);
+    let mut checking = record(&project, ProposalState::Verifying, 1_790_000_000);
+    checking.origin = ProposalOrigin::Edit {
+        keys: vec!["check".into()],
+    };
+    checking.profile = None;
+    checking.proposed = Some(RepoProfile {
+        check: Some("true && true".into()),
+        ..Default::default()
+    });
+    checking.edit = Some(RowEdit {
+        key: "check".into(),
+        value: Some("true && true".into()),
+        state: RowEditState::Verifying,
+    });
+    put(&rig, &checking);
+    let profiles = super::tests_ready::service(rig.dir.path());
+    profiles.restore().await;
+    let restored = rig.on_disk(&project).unwrap();
+    assert_eq!(
+        restored.state,
+        ProposalState::Failed {
+            reason: super::service::RESTART_REASON.to_string()
+        }
+    );
+    assert_eq!(
+        restored.edit.map(|e| e.state),
+        Some(RowEditState::Failed {
+            reason: super::service::EDIT_RESTART_REASON.to_string(),
+            tail: String::new(),
+            secs: 0,
+        })
+    );
+    let confirm = ProfileRequest::Confirm {
+        dir: project.clone(),
+        shown: None,
+    };
+    assert_eq!(
+        refused(profiles.request(confirm).await),
+        super::row_edit::held_failed("check", Some("true && true"))
+    );
+    let message = done(profiles.request(revert(&project)).await);
+    assert_eq!(message, "reverted check; the profile is unchanged");
+    assert_eq!(rig.on_disk(&project), None);
+    assert_eq!(stored_check(&rig, &project).as_deref(), Some("true"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -377,4 +509,11 @@ fn a_command_that_reads_as_a_toml_value_is_text() {
         refused.unwrap_err(),
         "check_timeout_secs: invalid type: boolean `true`, expected u64"
     );
+    // Fix round M1: only a boolean or a number is retried as text.
+    let (edited, _) = super::proposal::apply_edit(&stored, "check", Some("3")).unwrap();
+    assert_eq!(edited.check.as_deref(), Some("3"));
+    for value in ["[\"cargo\", \"test\"]", "{ a = 1 }"] {
+        let refused = super::proposal::apply_edit(&stored, "check", Some(value));
+        assert!(refused.is_err(), "{value}: {refused:?}");
+    }
 }

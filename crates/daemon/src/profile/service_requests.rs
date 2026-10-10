@@ -6,9 +6,11 @@ use std::sync::Arc;
 
 use proto::{
     ProfileReply, ProfileSource, ProfileStatus, ProposalOrigin, ProposalRecord, ProposalState,
+    RowEditState,
 };
 
 use super::proposal::show_text;
+use super::row_edit::{refuse_held, still_checking};
 use super::service::{
     ProfileService, already_running, auto_allowed, blocking, in_progress, state_label,
 };
@@ -244,6 +246,11 @@ impl ProfileService {
         let _writes = self.writes.lock().await;
         let active = crate::lock(&self.table).active.contains_key(&project);
         if active {
+            // M9.10.6 fix round (M2): a proposal row edit being checked says so.
+            let checking = self.load(&project).await?.1.and_then(|r| r.edit);
+            if let Some(edit) = checking.filter(|e| e.state == RowEditState::Verifying) {
+                return Err(still_checking(&edit.key));
+            }
             return Err(match self.running(&project).await {
                 Some(state) => already_running(&project, &state),
                 None => stopping(&project),
@@ -255,6 +262,10 @@ impl ProfileService {
                 project.display()
             )
         })?;
+        // Decision 15 (fix round I1): a held ✗ of the stored profile is never stored.
+        if let Some(refusal) = refuse_held(&record) {
+            return Err(refusal);
+        }
         let profile = ready_profile(&record)?;
         // Review m3: only the proposal the user was shown is stored.
         let current = show_text(&profile, record.verification.as_ref(), &record.dropped);

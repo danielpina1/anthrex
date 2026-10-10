@@ -265,14 +265,22 @@ pub fn apply_edit(
     };
     // Milestone 9.10.6: `edit check false` is the command `false`, not a boolean, when
     // the field takes text; the first error stands when the text does not fit either.
-    let edited = match (as_typed(table.clone()), value, env_name) {
-        (Ok(edited), _, _) => edited,
-        (Err(error), Some(text), None) => {
+    // Fix round M1: only a value that parsed as a boolean or a number is retried.
+    let scalar = table.get(field).is_some_and(|v| {
+        env_name.is_none()
+            && matches!(
+                v,
+                toml::Value::Boolean(_) | toml::Value::Integer(_) | toml::Value::Float(_)
+            )
+    });
+    let edited = match (as_typed(table.clone()), value.filter(|_| scalar)) {
+        (Ok(edited), _) => edited,
+        (Err(error), Some(text)) => {
             let mut table = table;
             table.insert(field.to_string(), toml::Value::String(text.to_string()));
             as_typed(table).map_err(|_| error)?
         }
-        (Err(error), _, _) => return Err(error),
+        (Err(error), _) => return Err(error),
     };
     if let Some(builtin) = edited
         .protected

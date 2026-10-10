@@ -4,9 +4,9 @@
 
 use proto::{CommandCheck, ProfileRequest, ProposalOrigin, ProposalState, RowEdit, RowEditState};
 
-use super::service::already_running;
 use super::tests_edit::{
     edit, edit_state, failed, put, refused, revert, review, stored, stored_check, wait, with,
+    work_ended,
 };
 use super::tests_queue::goal;
 use super::tests_queue_service::{done, recorder};
@@ -163,9 +163,10 @@ async fn use_this_waits_for_a_proposal_edit_being_checked() {
         dir: project.clone(),
         shown: None,
     };
+    // Fix round M2 (the controller's ruling over the brief's `already_running` text).
     assert_eq!(
         refused(rig.profiles.request(confirm.clone()).await),
-        already_running(&project, &ProposalState::Ready)
+        "the edit of check is still being checked; wait for it"
     );
     // Nor does a `--yes` goal's store take it (decision 9's `use_ready`).
     assert_eq!(
@@ -173,15 +174,7 @@ async fn use_this_waits_for_a_proposal_edit_being_checked() {
         Err("the edit of check is still being checked; wait for it".to_string())
     );
     wait("the check to end", || edit_state(&rig, &project).is_none()).await;
-    wait("the work to end", || {
-        rig.profiles
-            .register(&project)
-            .is_some_and(|(generation, _)| {
-                rig.profiles.unregister(&project, generation);
-                true
-            })
-    })
-    .await;
+    work_ended(&rig, &project).await;
     done(rig.profiles.request(confirm).await);
     assert_eq!(
         stored_check(&rig, &project).as_deref(),

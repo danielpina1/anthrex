@@ -216,3 +216,40 @@ pub(super) fn proposal_outcome(
     }
     Some(record)
 }
+
+/// Fix round I1 (decision 15): why a held ✗ of the stored profile is not stored, and the
+/// way out, in the screen and as a command to paste.
+pub(super) fn held_failed(key: &str, value: Option<&str>) -> String {
+    let value = match value {
+        Some(value) => shell_word(value),
+        None => "--unset".to_string(),
+    };
+    format!(
+        "the edit of {key} failed its check; save it anyway (s, or anthrex profile edit \
+         {key} {value} --anyway) or revert it (r, or anthrex profile reject)"
+    )
+}
+
+/// `record`'s refusal of a store (`confirm`, `use_ready`): an edit of the stored profile
+/// whose row edit is held ✗. A review proposal's ✗ keeps its old value, so it may be
+/// used.
+pub(super) fn refuse_held(record: &ProposalRecord) -> Option<String> {
+    match &record.edit {
+        Some(RowEdit {
+            key,
+            value,
+            state: RowEditState::Failed { .. },
+        }) if !is_review(record) => Some(held_failed(key, value.as_deref())),
+        _ => None,
+    }
+}
+
+/// `text` as one POSIX shell word: as is when it holds only safe characters, else in
+/// single quotes.
+fn shell_word(text: &str) -> String {
+    let safe = |c: char| c.is_ascii_alphanumeric() || "_-./=:,@+%".contains(c);
+    if !text.is_empty() && text.chars().all(safe) {
+        return text.to_string();
+    }
+    format!("'{}'", text.replace('\'', "'\\''"))
+}
