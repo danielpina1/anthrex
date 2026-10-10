@@ -2144,6 +2144,8 @@ From the stream G review and its fix round 1.
 - **`restore_owner_access` on a system whose `fchmodat` cannot honour `AT_SYMLINK_NOFOLLOW` (fix round 1, I5).** glibc before 2.32 (or a newer one without `/proc` on a kernel before 6.6) refuses to open up a directory locked with no owner access; the removal fails and the checkout is kept. A descriptor-only change (`O_PATH` plus `/proc/self/fd`) was not taken: the milestone's verification forbids `/proc/` in new daemon code, and where `fchmodat2`'s `AT_EMPTY_PATH` exists glibc already honours the flag.
 - **The production Linux watcher has not run outside CI (I6).** nexus1 was unreachable from the implementer's machine on 2026-10-10 (`ssh: connect to host 192.168.0.199 port 22: Operation timed out`, and no reply to ping); the PR's ubuntu job is its first run. Stress `git::watch` and `git_registry*` there before a release that depends on it.
 
+- **An empty nested repository blocks its checkout's removal** (stream G followup 3): today's salvage fails on a nested repository with no commit (`git add -A`: `'<dir>/' does not have a commit checked out`), so such a checkout can be neither salvaged nor removed without the user's help.
+
 ### Stream P
 
 - **The `Orphan` and `ps` test helpers are copied** (about 90 lines) from `daemon/tests/run_journal/sessions.rs` into `daemon/tests/reconcile_journal_pid.rs`. Move them into `daemon/tests/support/` (stream C's file during 9.11, so not done there).
@@ -2184,6 +2186,8 @@ From the stream X review and the M9.11.33b review.
 - **The profile service's `blocking` helper has no timeout** (33b review m4, pre-existing; `crates/daemon/src/profile/service.rs`'s `blocking`, which wraps `spawn_blocking`). A stalled file write or fsync holds the project's `writes` lock indefinitely, and hard rule 2 asks for a timeout. `save_if_current`'s failure branch adds a second untimed call. Fix direction: a bound on each call. It needs care, because the write can still land after the timeout fires, so memory must be noted from what the file holds afterwards.
 - **A failed proposal save still reports `true`** (33b review m7, pre-existing; `profile/service_run.rs`'s `save_if_current`). The detection carries on to `after_ready` and unregisters while `proposal.json` stays at its last saved state (for example `Verifying`). `running()` then reports it in progress until a restart's `restore` fails it.
 - **Write-then-note and delete-then-note paths keep a short reverse gap** (33b review m6). In `service_edit.rs`'s `save_over` and `verify_row_edit`, the file's `updated_at` can run ahead of the snapshot. In `store_ready` and `reject`, the snapshot can list a ready proposal for one write after the file shows it stored or gone. No reader acts on it today. It matters only if a client starts keying on `updated_at`.
+- **A failed proposal write can move the ready and set-up generations twice** (33b review m2, not applied): a client can see a `Ready` alert appear and then be withdrawn, and a failed reload after it falls back to `None`. Restoring the exact earlier memory needs the table's previous entries kept across the write (more code in `service.rs`).
+- **The skip text for a hand-edited `format` still says "written by a newer anthrex"** (33b review m5, not applied): a `null` or `"2"` format is skipped with decision 36's template, which names a newer anthrex though none wrote it.
 
 ### Stream C
 

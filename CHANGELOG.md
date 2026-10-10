@@ -143,11 +143,14 @@ Stabilization (milestone 9.11), no new features. The protocol is unchanged (21).
   first. Before, a long-lived daemon with many finished runs stopped sending runs to its
   clients at all. Older runs stay on disk, untouched (A1).
 - **A worker's waiting messages survive its replacement.** A session replaced at rung 2,
-  a task blocked at rung 3 or 4, a race lane that ran out and a retried task keep their
-  queued messages for the next session, which gets each one once (A2).
+  a task blocked at rung 3 or 4, the last race lane (the one adopted after the other ran
+  out) and a retried task keep their queued messages for the next session, which gets
+  each one once. A lane stopped while the other lane races on still drops its own (A2).
 - **A failed resume keeps a message that was delivered but not yet confirmed** (A4).
 - **A task checkout deleted by hand is salvaged.** Its commits are imported from its
-  repository and kept under a salvage ref before the repository is removed (A3).
+  repository and kept under a salvage ref before the repository is removed. One window
+  is left: if the daemon dies inside that removal, the restore can still remove the
+  repository without salvaging it (A3).
 - **The orchestrator can no longer cancel or split a task blocked for you**; it gets the
   refusal `retry` already gave (A5).
 - **A queued goal that could not start raises an alert**, `could not start "<goal>":
@@ -201,19 +204,21 @@ Stabilization (milestone 9.11), no new features. The protocol is unchanged (21).
 - **`profile status` no longer shows a proposal ready before the client does**: the
   daemon notes it in memory before it writes it.
 
-**Flaky tests** (each fixed at its root cause, with a deterministic reproduction where one
-exists)
+**Flaky tests** (each with a reproduction that failed before its fix where one could be
+built; see the two exceptions noted below)
 
 - The module-graph capture file never collides; two tier jobs in one instant no longer
   fall back to a full run (C1, E1).
 - The restart-endpoint test reads the endpoint once it is written, not once the file
   exists (C3).
-- The Codex question rig warms its stand-in and waits for the whole screen (C4).
+- The Codex question rig warms its stand-in and waits for the whole screen (C4). The
+  warm-up matches the observed failures but could not be reproduced by injection.
 - Git test bounds include the watcher's arming, which has no bound of its own (C6, C10).
 - The persisted session id test waits for a record that holds one (C7).
 - A zombie no longer counts as a live process in the headless-session tests (C8).
 - The profile queue's restart test waits for the first scout to claim its script (C14).
-- The wake first-turn rig warms its stand-in before any window starts.
+- The wake first-turn rig warms its stand-in before any window starts. Its stress run
+  passed 239 of 240 copies; the one failure, in `status_codex`, is unattributed.
 - A Linux test that re-ran itself under the wrong name, and so ran nothing and passed,
   now runs its body.
 
