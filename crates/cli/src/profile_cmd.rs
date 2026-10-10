@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 
 use clap::{Args, Subcommand};
 use proto::{
-    ClientMsg, DaemonMsg, ProfileReply, ProfileRequest, ProfileStatus, ProposalState, RunReply,
-    RunRequest,
+    ClientMsg, DaemonMsg, ProfileReply, ProfileRequest, ProfileStatus, ProposalOrigin,
+    ProposalRecord, ProposalState, RowEditState, RunReply, RunRequest,
 };
 
 use crate::client::CliClient;
@@ -52,7 +52,7 @@ enum ProfileCommand {
         #[arg(long)]
         yes: bool,
     },
-    /// Stop a detection and delete the proposal
+    /// Stop a detection and delete the proposal (and any goals waiting for it)
     Reject,
     /// Correct one value of the stored profile (a new proposal)
     Edit {
@@ -79,10 +79,15 @@ enum ProfileCommand {
 /// Runs one `anthrex profile` command; any error is printed as it is and exits 1.
 pub async fn main(args: ProfileArgs, socket: PathBuf, dir: Option<PathBuf>) -> anyhow::Result<()> {
     if let Err(error) = dispatch(args.command, &socket, dir).await {
-        eprintln!("{error}");
+        eprintln!("{}", error_text(&error));
         std::process::exit(1);
     }
     Ok(())
+}
+
+/// Final review M10: an error as printed, its daemon text sanitised.
+fn error_text(error: &anyhow::Error) -> String {
+    crate::run_cmd::printable(&error.to_string())
 }
 
 async fn request(client: &mut CliClient, request: ProfileRequest) -> anyhow::Result<ProfileReply> {
@@ -100,12 +105,15 @@ async fn request(client: &mut CliClient, request: ProfileRequest) -> anyhow::Res
 
 /// `Done` prints its message; `Refused` is the command's error.
 fn done(reply: ProfileReply) -> anyhow::Result<()> {
+    println!("{}", done_text(reply)?);
+    Ok(())
+}
+
+/// `Done`'s message, or `Refused`'s as the error, each sanitised (final review M10).
+fn done_text(reply: ProfileReply) -> anyhow::Result<String> {
     match reply {
-        ProfileReply::Done { message } => {
-            println!("{message}");
-            Ok(())
-        }
-        ProfileReply::Refused { message } => anyhow::bail!(message),
+        ProfileReply::Done { message } => Ok(crate::run_cmd::printable(&message)),
+        ProfileReply::Refused { message } => anyhow::bail!(crate::run_cmd::printable(&message)),
         other => anyhow::bail!("unexpected reply: {other:?}"),
     }
 }
@@ -226,16 +234,19 @@ async fn status(client: &mut CliClient, dir: &Path) -> anyhow::Result<ProfileSta
 }
 
 fn show(reply: ProfileReply, json: bool) -> anyhow::Result<()> {
+    print!("{}", show_text(reply, json)?);
+    Ok(())
+}
+
+/// What `show` prints: the TOML sanitised (final review M10: its comments carry the
+/// scout's commands), or the JSON (escaped by `serde_json`), or a `Done`'s message.
+fn show_text(reply: ProfileReply, json: bool) -> anyhow::Result<String> {
     match reply {
-        ProfileReply::Shown { toml, .. } if !json => {
-            print!("{toml}");
-            Ok(())
-        }
+        ProfileReply::Shown { toml, .. } if !json => Ok(crate::run_cmd::printable(&toml)),
         shown @ ProfileReply::Shown { .. } => {
-            println!("{}", serde_json::to_string_pretty(&shown)?);
-            Ok(())
+            Ok(format!("{}\n", serde_json::to_string_pretty(&shown)?))
         }
-        other => done(other),
+        other => done_text(other).map(|text| format!("{text}\n")),
     }
 }
 
@@ -323,6 +334,9 @@ fn status_body(status: &ProfileStatus, now: u64) -> String {
             }
         },
     }
+    if let Some(line) = status.proposal.as_ref().and_then(edit_line) {
+        out.push_str(&line);
+    }
     if status.verify_confined {
         out.push_str("  verification: confined, as runs are\n");
     } else {
@@ -343,119 +357,36 @@ fn status_body(status: &ProfileStatus, now: u64) -> String {
     out
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use proto::{DroppedGoal, ProfileSource, QueuedGoalInfo, SetupState};
-
-    fn status() -> ProfileStatus {
-        ProfileStatus {
-            project: PathBuf::from("/work/app"),
-            repo_dir: PathBuf::from("/data/repos/app"),
-            source: ProfileSource::Stored,
-            confirmed_at: Some(900),
-            stale: Vec::new(),
-            unparseable: None,
-            proposal: None,
-            scout: None,
-            verify_confined: true,
-            queued: Vec::new(),
-            checking: None,
-            verified_at: Some(940),
-            unreadable_text: None,
-            dropped_goals: Vec::new(),
+/// Final review C-I2: the proposal's row edit as the screen shows it (its key, the
+/// value it tried, `checking` or its ✗ with the reason and what to do), so a user sent
+/// to `profile status` by an edit's reply sees how it ended.
+fn edit_line(record: &ProposalRecord) -> Option<String> {
+    let edit = record.edit.as_ref()?;
+    let what = match &edit.value {
+        Some(value) => format!(
+            "{} = {}",
+            one(&edit.key),
+            one(&tui::profile_view::tried_value(&edit.key, Some(value)))
+        ),
+        None => format!("unset {}", one(&edit.key)),
+    };
+    let line = match &edit.state {
+        RowEditState::Verifying => format!("  edit: {what}, checking\n"),
+        RowEditState::Failed { reason, .. } => {
+            let next = if matches!(record.origin, ProposalOrigin::Edit { .. }) {
+                "save it anyway with --anyway, or anthrex profile reject"
+            } else {
+                "not in the proposal; anthrex profile use stores the proposal without it"
+            };
+            format!(
+                "  edit: {what} failed its check: {} ({next})\n",
+                one(reason)
+            )
         }
-    }
-
-    fn queued(goal: &str) -> QueuedGoalInfo {
-        QueuedGoalInfo {
-            id: "q1".into(),
-            project: PathBuf::from("/work/app"),
-            goal: goal.into(),
-            queued_at: 950,
-            yes: false,
-            trust_project: false,
-            unconfined_checks: false,
-            setup: SetupState::NeedsReview,
-        }
-    }
-
-    #[test]
-    fn status_text_has_the_status_line_second() {
-        let mut s = status();
-        s.queued = vec![queued("add a")];
-        s.dropped_goals = vec![DroppedGoal {
-            goal: "add b".into(),
-            reason: "the profile was rejected".into(),
-            at: 960,
-        }];
-        let text = status_text(&s, 1000);
-        let lines: Vec<&str> = text.lines().collect();
-        assert_eq!(lines[0], "profile: /work/app");
-        assert_eq!(lines[1], "  Ready · verified 1m ago");
-        assert!(lines[2].starts_with("  stored: yes, confirmed "), "{text}");
-        assert!(text.contains("  detection: none\n"), "{text}");
-        assert!(text.contains("  verification: confined, as runs are\n"));
-        let tail = &lines[lines.len() - 2..];
-        assert_eq!(tail[0], "  waiting: add a");
-        assert_eq!(
-            tail[1],
-            "  dropped goal \"add b\": the profile was rejected"
-        );
-    }
-
-    #[test]
-    fn status_text_draws_daemon_text_safely() {
-        let mut s = status();
-        s.project = PathBuf::from("/work/\u{1b}[31mapp");
-        s.stale = vec!["a\u{1b}[2Jb".into(), "x\ny".into()];
-        s.queued = vec![queued("go\n  stored: forged\u{1b}]0;t\u{7}\u{202e}")];
-        s.dropped_goals = vec![DroppedGoal {
-            goal: "g\r\n  waiting: forged".into(),
-            reason: "r\u{1b}[0m\nline".into(),
-            at: 1,
-        }];
-        s.unparseable = Some("bad\u{1b}[1m toml".into());
-        let text = status_text(&s, 1000);
-        assert!(
-            !text.chars().any(|c| c.is_control() && c != '\n'),
-            "{text:?}"
-        );
-        assert!(!text.contains('\u{202e}'), "{text:?}");
-        // A goal or reason cannot start a line of its own.
-        for line in text.lines() {
-            assert!(
-                !line.starts_with("  stored: forged") && !line.starts_with("  waiting: forged"),
-                "{text:?}"
-            );
-        }
-        assert_eq!(
-            text.lines().filter(|l| l.starts_with("  waiting:")).count(),
-            1
-        );
-    }
-
-    #[test]
-    fn edit_anyway_sends_the_request_with_yes() {
-        let request = edit_request(
-            PathBuf::from("/work/app"),
-            "check".into(),
-            Some("false".into()),
-            false,
-            true,
-            false,
-        );
-        assert_eq!(
-            request,
-            ProfileRequest::Edit {
-                dir: PathBuf::from("/work/app"),
-                key: "check".into(),
-                value: Some("false".into()),
-                yes: true,
-                unconfined_checks: false,
-                anyway: true,
-                on_proposal: false,
-            }
-        );
-    }
+    };
+    Some(line)
 }
+
+#[cfg(test)]
+#[path = "profile_cmd_tests.rs"]
+mod tests;

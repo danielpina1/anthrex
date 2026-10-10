@@ -76,6 +76,16 @@ fn e2e_edit_yes_still_needs_a_pass() {
     );
     let record = status.proposal.unwrap();
     assert_eq!(record.state, ProposalState::Ready);
+    // Final review C-I2: `profile status` says how the edit ended.
+    let text = ok(h.profile(&["status"]));
+    assert!(
+        text.contains("  edit: check = false failed its check: "),
+        "{text}"
+    );
+    assert!(
+        text.contains("(save it anyway with --anyway, or anthrex profile reject)"),
+        "{text}"
+    );
     let shown = ok(h.profile(&["show"]));
     assert!(shown.contains("check = \"sh check.sh\""), "{shown}");
     let out = ok(h.profile(&["reject"]));

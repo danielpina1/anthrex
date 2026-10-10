@@ -126,6 +126,12 @@ fn e2e_edit_anyway_is_in_the_help() {
         use_help.contains("Use the ready proposal: store it, then start any queued goals"),
         "{use_help}"
     );
+    // Final review M8: `reject` says it drops the waiting goals too.
+    assert!(
+        use_help
+            .contains("Stop a detection and delete the proposal (and any goals waiting for it)"),
+        "{use_help}"
+    );
 }
 
 #[test]
