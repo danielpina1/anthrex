@@ -221,12 +221,11 @@ impl RunService {
         if roots.worktree.is_some() && roots.project != joined.project {
             return Err(other_project(&joined.chain, &joined.project));
         }
-        let flags = (next.trust_project, next.unconfined_checks);
         // Milestone 9.10 decision 13: a continued goal never waits in a queue.
         let GoalReady {
             profile, frozen, ..
         } = match self
-            .goal_ready(&next.goal, &next.dir, flags, next.delivery)
+            .goal_ready(&next.goal, &next.dir, next.unconfined_checks, next.delivery)
             .await
         {
             Ok(ready) => ready,

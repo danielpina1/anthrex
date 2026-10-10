@@ -118,14 +118,12 @@ impl From<String> for GoalNotReady {
 
 impl RunService {
     /// Decision 22's steps 1 and 2, and the delivery's preflight (milestone 9.2
-    /// decision 17), in that order, each refusal as `run start --goal` words it. The
-    /// trust flag is the caller's, for the set-up of a goal with no profile (milestone
-    /// 9.10 decision 12).
+    /// decision 17), in that order, each refusal as `run start --goal` words it.
     pub(in crate::run::driver) async fn goal_ready(
         &self,
         goal: &str,
         dir: &Path,
-        (_, unconfined_checks): (bool, bool),
+        unconfined_checks: bool,
         delivery: Option<DeliveryMode>,
     ) -> Result<GoalReady, GoalNotReady> {
         // Review m2: a blank goal never spends a triage call.
@@ -196,7 +194,10 @@ impl RunService {
             return refused(format!("orchestrator.effort: {problem}"));
         }
         let flags = (trust_project, unconfined_checks);
-        let (ready, stored) = match self.goal_ready(&goal, &dir, flags, delivery).await {
+        let (ready, stored) = match self
+            .goal_ready(&goal, &dir, unconfined_checks, delivery)
+            .await
+        {
             Ok(ready) => (ready, String::new()),
             Err(GoalNotReady::Refused(message)) => return refused(message),
             // Milestone 9.10 decision 9: a `--yes` goal stores a ready proposal at once.

@@ -76,6 +76,7 @@ fn wait_one_run(h: &RunHarness, wait: Duration) -> String {
             assert_eq!(snapshot.runs.len(), 1, "{:?}", snapshot.runs);
             return run.run_id.clone();
         }
+        never_started(h);
         assert!(
             Instant::now() < deadline,
             "no run for the queued goal within {wait:?}\n{}",
@@ -83,6 +84,28 @@ fn wait_one_run(h: &RunHarness, wait: Duration) -> String {
         );
         std::thread::sleep(Duration::from_millis(200));
     }
+}
+
+/// Fails at once, from the repository's state, when the goal can no longer start (fix
+/// round 1, m4): it was dropped, or its set-up failed while it waits.
+fn never_started(h: &RunHarness) {
+    let status = h.profile_status();
+    assert!(
+        status.dropped_goals.is_empty(),
+        "the goal was dropped: {:?}\n{}",
+        status.dropped_goals,
+        h.log_tail()
+    );
+    let failed = status
+        .proposal
+        .as_ref()
+        .is_some_and(|p| matches!(p.state, ProposalState::Failed { .. }));
+    assert!(
+        !failed || status.queued.is_empty(),
+        "the set-up failed: {:?}\n{}",
+        status.proposal.map(|p| p.state),
+        h.log_tail()
+    );
 }
 
 /// The run for `add a` merged its task.
@@ -328,6 +351,34 @@ fn e2e_a_queued_goal_reaches_the_snapshot_while_setting_up() {
         g.goal == "add a" && g.setup == SetupState::Reading
     });
     // The hanging scout is stopped, and its goal dropped (decision 8).
+    let rejected = ok(h.profile(&["reject"]));
+    assert!(rejected.contains("; dropped 1 queued goal"), "{rejected}");
+}
+
+/// Fix round 1 (the review's unverified item): a hostile goal's queued line on stderr
+/// goes through `status::printable`; no control character reaches the terminal.
+#[test]
+fn e2e_a_queued_goals_hostile_text_is_printable() {
+    let h = harness();
+    h.onboarding_script(1, &[hang()]);
+    let goal = "add a\u{1b}]0;owned\u{7}\u{1b}[2J and\rmore";
+    let out = h.start_goal(goal, &[]);
+    assert_eq!(out.status.code(), Some(3), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "");
+    let line = stderr(&out);
+    assert!(
+        !line
+            .chars()
+            .any(|c| c == '\u{1b}' || c == '\u{7}' || c == '\r'),
+        "{line:?}"
+    );
+    assert_eq!(
+        line.trim_end(),
+        format!(
+            "queued: {} waits for the repository profile (anthrex profile); no run started yet",
+            proto::safe_text::multi_line(goal)
+        )
+    );
     let rejected = ok(h.profile(&["reject"]));
     assert!(rejected.contains("; dropped 1 queued goal"), "{rejected}");
 }

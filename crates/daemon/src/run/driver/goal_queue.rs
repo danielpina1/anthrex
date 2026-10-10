@@ -36,6 +36,11 @@ pub(in crate::run::driver) struct NoProfileStart {
     ),
 }
 
+/// Fix round 1, I2: why a drained goal could not start when its repository has no
+/// stored profile after all (removed between the store and the drain). Recorded as
+/// the goal's drop; the goal is never queued again from a drain.
+pub(crate) const NO_PROFILE_AT_DRAIN: &str = "the repository has no stored profile any more; start the goal again (anthrex run start --goal)";
+
 /// The project's short name in messages: its directory's name.
 fn name(project: &Path) -> String {
     project.file_name().map_or_else(
@@ -153,15 +158,39 @@ impl RunService {
             delivery,
             design,
         };
-        match profiles.queue_goal(queued).await {
-            Ok(info) => RunReply::Queued {
+        match profiles.queue_goal(queued.clone()).await {
+            Ok(Some(info)) => RunReply::Queued {
                 message: queued_message(&info.project, proposal.as_ref(), yes),
                 goal_id: info.id,
                 project: info.project,
                 request_id: None,
             },
+            // Fix round 1, I1: stored (and drained) since `goal_ready` looked.
+            Ok(None) => self.start_with_profile(queued).await,
             Err(refusal) => refused(refusal),
         }
+    }
+
+    /// A goal whose repository has a stored profile now (a drained goal, or one whose
+    /// profile was stored while it was being queued): `goal_ready` and decision 22's
+    /// steps 3 to 6, never the queue. With no profile after all it is refused with
+    /// [`NO_PROFILE_AT_DRAIN`] (fix round 1, I2), so a drain never queues a goal again
+    /// nor starts a set-up.
+    async fn start_with_profile(&self, goal: QueuedGoal) -> RunReply {
+        let ready = match self
+            .goal_ready(&goal.goal, &goal.dir, goal.unconfined_checks, goal.delivery)
+            .await
+        {
+            Ok(ready) => ready,
+            Err(GoalNotReady::Refused(message)) => return refused(message),
+            Err(GoalNotReady::NoProfile { .. }) => {
+                return refused(NO_PROFILE_AT_DRAIN.to_string());
+            }
+        };
+        let flags = (goal.trust_project, goal.unconfined_checks);
+        let choices = (goal.orchestrator, goal.design);
+        self.start_ready(goal.goal, goal.dir, flags, goal.yes, choices, ready)
+            .await
     }
 
     /// Decision 9: a `--yes` goal and a ready review proposal: the proposal is stored
@@ -183,7 +212,7 @@ impl RunService {
             "stored the proposed profile for {} (--yes); ",
             name(&pre.project)
         );
-        match self.goal_ready(goal, dir, flags, delivery).await {
+        match self.goal_ready(goal, dir, flags.1, delivery).await {
             Ok(ready) => Ok((ready, stored)),
             Err(GoalNotReady::Refused(message)) => Err(format!("{stored}{message}")),
             Err(GoalNotReady::NoProfile { .. }) => Err(format!(
@@ -195,20 +224,16 @@ impl RunService {
     /// Decision 6: a drained goal started with its stored request; `Ok` is the run id,
     /// `Err` the refusal, which the drain records as a drop.
     pub(crate) async fn start_queued_goal(&self, goal: QueuedGoal) -> Result<String, String> {
-        let flags = (goal.trust_project, goal.unconfined_checks);
-        let choices = (goal.orchestrator, goal.delivery, goal.design);
-        match self
-            .start_goal(goal.goal, goal.dir, flags, goal.yes, choices)
-            .await
-        {
+        // The model and effort checks passed when the goal was queued (decision 6).
+        match self.start_with_profile(goal).await {
             RunReply::Triaged {
                 run_id: Some(run_id),
                 ..
             } => Ok(run_id),
             RunReply::Triaged { message, .. } | RunReply::Refused { message, .. } => Err(message),
-            // The profile went away before the drain: the goal waits again, under a new
-            // id, so it is not a drop.
-            RunReply::Queued { goal_id, .. } => Ok(goal_id),
+            // Fix round 1, I2: never a queue id reported as a run (`start_with_profile`
+            // does not queue; this arm only keeps the match total).
+            RunReply::Queued { .. } => Err(NO_PROFILE_AT_DRAIN.to_string()),
             other => Err(format!(
                 "unexpected reply to a queued goal's start: {other:?}"
             )),

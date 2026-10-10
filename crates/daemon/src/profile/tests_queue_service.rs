@@ -101,7 +101,8 @@ async fn a_queued_goal_waits_and_a_confirm_starts_it() {
         .profiles
         .queue_goal(goal(&project, "add a flag", false))
         .await
-        .unwrap();
+        .unwrap()
+        .expect("queued");
     assert_eq!(queued.setup, SetupState::NeedsReview);
     let listed = rig.profiles.queued_goals();
     assert_eq!(listed.len(), 1, "{listed:?}");
@@ -443,4 +444,19 @@ async fn status_gives_the_queued_goals_the_shown_proposals_set_up() {
     let status = status(&rig.profiles, &project).await;
     assert_eq!(status.queued.len(), 1);
     assert_eq!(status.queued[0].setup, SetupState::NeedsReview);
+}
+
+/// Fix round 1, I1: `queue_goal` after a store (and its drain) that happened since the
+/// caller found no profile does not leave the goal waiting behind the stored profile.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_goal_is_not_queued_behind_a_stored_profile() {
+    let rig = Rig::new();
+    let project = repo(rig.dir.path(), "app");
+    rig.store_profile(&project);
+    let _ = rig
+        .profiles
+        .queue_goal(goal(&project, "add a flag", false))
+        .await;
+    assert!(rig.profiles.queued_goals().is_empty());
+    assert!(!rig.repo_dir(&project).join(QUEUE_FILE).exists());
 }

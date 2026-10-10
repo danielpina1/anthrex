@@ -104,10 +104,21 @@ impl ProfileService {
 
     /// Decision 5: `goal` queued for its project; `Err` is the refusal (the queue is
     /// full, or its file could not be written).
-    pub async fn queue_goal(&self, goal: QueuedGoal) -> Result<QueuedGoalInfo, String> {
+    ///
+    /// `Ok(None)`: the repository has a profile file now (fix round 1, I1: a store and
+    /// its drain ran since the caller found none). Nothing is queued, since no drain
+    /// would come for it; the caller starts the goal at once. Checked under `writes`,
+    /// which every store and every drain's take-out also hold.
+    pub async fn queue_goal(&self, goal: QueuedGoal) -> Result<Option<QueuedGoalInfo>, String> {
         let project = goal.project.clone();
         {
             let _writes = self.writes.lock().await;
+            let dir = self.repo_dir(&project);
+            let absent =
+                blocking(move || Ok(matches!(store::load(&dir), store::Stored::Absent))).await?;
+            if !absent {
+                return Ok(None);
+            }
             let mut queue = self.queue_of(&project);
             if queue.goals.len() >= MAX_QUEUED {
                 return Err(queue_full(&project));
@@ -116,10 +127,12 @@ impl ProfileService {
             self.put_queue(&project, queue).await?;
         }
         let listed = self.queued_goals();
-        Ok(listed
-            .into_iter()
-            .find(|info| info.id == goal.id)
-            .unwrap_or_else(|| queue::info(&goal, &proto::SetupState::Reading)))
+        Ok(Some(
+            listed
+                .into_iter()
+                .find(|info| info.id == goal.id)
+                .unwrap_or_else(|| queue::info(&goal, &proto::SetupState::Reading)),
+        ))
     }
 
     /// The snapshot's list; memory only, one short hold of the table.

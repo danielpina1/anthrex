@@ -4,7 +4,8 @@
 //! real profile service wired as the daemon wires it; the agents' binaries are paths
 //! that do not exist, so no agent runs.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use proto::run_wire::request;
@@ -14,7 +15,8 @@ use tokio_util::sync::CancellationToken;
 use super::super::CONTINUE_NEEDS_PROFILE;
 use crate::launch::LaunchGate;
 use crate::manager::{ManagerConfig, WindowManager};
-use crate::profile::service::Effective;
+use crate::profile::queue::{QUEUE_FILE, QueuedGoal};
+use crate::profile::service::{Effective, ProfileService};
 use crate::run::driver::delivery::tests::git;
 use crate::run::driver::orch::chain_goal::tests::{ANSWER, ChainRig, PREV};
 use crate::run::driver::{RunContext, RunService};
@@ -63,27 +65,29 @@ const GIT_TIMEOUT_SECS: u64 = 5;
 /// `GIT_TIMEOUT_SECS`, 20 s) and the scout's failed spawn; under a second here.
 const SETTLE: Duration = Duration::from_secs(120);
 
-/// Decision 12 (R): with `[orchestrator.onboarding] auto = false` a goal with no
-/// profile is still queued, and its explicit set-up starts.
-#[tokio::test(flavor = "multi_thread")]
-async fn onboarding_auto_off_still_sets_up_a_goal() {
-    let dir = tempfile::tempdir().unwrap();
-    let root = repo(dir.path());
-    let data = dir.path().join("data");
-    let socket = dir.path().join("d.sock");
+/// A run service and its profile service, wired as the daemon wires them over a
+/// scratch data directory; every agent binary is a path that does not exist.
+struct Wired {
+    runs: Arc<RunService>,
+    profiles: Arc<ProfileService>,
+    data: PathBuf,
+    shutdown: CancellationToken,
+}
+
+fn wired(dir: &Path, mut orchestrator: config::Orchestrator) -> Wired {
+    let data = dir.join("data");
+    let socket = dir.join("d.sock");
     let mut manager = ManagerConfig::for_tests(socket.clone(), "/bin/sh".into());
     manager.claude_bin = "/nonexistent/anthrex-test/claude".into();
     manager.codex_bin = "/nonexistent/anthrex-test/codex".into();
     manager.decider_bin = Some("/nonexistent/anthrex-test/decider".into());
-    manager.worktrees_root = dir.path().join("worktrees");
+    manager.worktrees_root = dir.join("worktrees");
     manager.launch_gate = LaunchGate::open_already();
     let (manager, _events) = WindowManager::new(manager);
     let wiring = GitWiring::new(config::Git {
         enabled: false,
         ..config::Git::default()
     });
-    let mut orchestrator = config::Orchestrator::default();
-    orchestrator.onboarding.auto = false;
     orchestrator.git_timeout_secs = GIT_TIMEOUT_SECS;
     let ctx = RunContext::new(
         data.clone(),
@@ -93,9 +97,31 @@ async fn onboarding_auto_off_still_sets_up_a_goal() {
     );
     let runs = RunService::new(manager.clone(), ctx);
     let profiles = crate::profile::service::wire(&manager, &runs, &data, &socket, &orchestrator);
-    assert!(!profiles.onboarding_auto());
     let shutdown = CancellationToken::new();
     runs.spawn(shutdown.clone());
+    Wired {
+        runs,
+        profiles,
+        data,
+        shutdown,
+    }
+}
+
+/// Decision 12 (R): with `[orchestrator.onboarding] auto = false` a goal with no
+/// profile is still queued, and its explicit set-up starts.
+#[tokio::test(flavor = "multi_thread")]
+async fn onboarding_auto_off_still_sets_up_a_goal() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = repo(dir.path());
+    let mut orchestrator = config::Orchestrator::default();
+    orchestrator.onboarding.auto = false;
+    let Wired {
+        runs,
+        profiles,
+        data,
+        shutdown,
+    } = wired(dir.path(), orchestrator);
+    assert!(!profiles.onboarding_auto());
 
     let reply = runs
         .start_goal(
@@ -140,4 +166,83 @@ async fn onboarding_auto_off_still_sets_up_a_goal() {
     assert_eq!(profiles.queued_goals().len(), 1);
     shutdown.cancel();
     runs.stop().await;
+}
+
+/// A stored profile, as `profile use` leaves it, for `project`.
+fn store_profile(data: &Path, project: &Path) {
+    let repo_dir = crate::profile::repo_dir(data, project);
+    std::fs::create_dir_all(&repo_dir).unwrap();
+    let meta = proto::ProfileMeta {
+        confirmed_at: 1,
+        report: None,
+        verification: None,
+        fingerprint: std::collections::BTreeMap::new(),
+        edited_keys: Vec::new(),
+        project: Some(project.to_path_buf()),
+    };
+    crate::profile::store::save(&repo_dir, &proto::RepoProfile::default(), &meta).unwrap();
+}
+
+/// Fix round 1, I1: a store and its drain run between `goal_ready`'s read (no
+/// profile, a ready proposal) and the queue's append. The goal is not left waiting
+/// behind a stored profile: it starts at once, as any goal with a profile does.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_goal_queued_after_a_store_and_its_drain_starts_at_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = repo(dir.path());
+    let w = wired(dir.path(), config::Orchestrator::default());
+    let pre = crate::run::git::preflight("git".as_ref(), &root, ANSWER).unwrap();
+    // What `goal_ready` saw: no profile, a ready proposal.
+    let start = super::NoProfileStart {
+        pre: pre.clone(),
+        proposal: Some(ProposalState::Ready),
+        goal: "add a".into(),
+        dir: root.clone(),
+        flags: (false, true),
+        yes: false,
+        choices: (None, None, None),
+    };
+    // Meanwhile the proposal is stored and its (empty) queue drained.
+    store_profile(&w.data, &pre.project);
+    let reply = w.runs.queue_goal_start(start).await;
+    assert!(
+        !matches!(reply, RunReply::Queued { .. }),
+        "queued behind a stored profile: {reply:?}"
+    );
+    assert!(w.profiles.queued_goals().is_empty());
+    let repo_dir = crate::profile::repo_dir(&w.data, &pre.project);
+    assert!(!repo_dir.join(QUEUE_FILE).exists());
+    w.shutdown.cancel();
+    w.runs.stop().await;
+}
+
+/// Fix round 1, I2: a drained goal whose repository has no stored profile after all
+/// is a failed start, with a note; it is never re-queued, starts no set-up, and no
+/// queue id is reported as a run.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_drained_goal_with_no_profile_is_a_failed_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = repo(dir.path());
+    let w = wired(dir.path(), config::Orchestrator::default());
+    let pre = crate::run::git::preflight("git".as_ref(), &root, ANSWER).unwrap();
+    let goal = QueuedGoal {
+        id: crate::profile::queue::next_id(1),
+        project: pre.project.clone(),
+        dir: root.clone(),
+        goal: "add a".into(),
+        queued_at: 1,
+        yes: false,
+        trust_project: false,
+        unconfined_checks: true,
+        orchestrator: None,
+        delivery: None,
+        design: None,
+    };
+    let started = w.runs.start_queued_goal(goal).await;
+    assert_eq!(started, Err(super::NO_PROFILE_AT_DRAIN.to_string()));
+    assert!(w.profiles.queued_goals().is_empty());
+    let repo_dir = crate::profile::repo_dir(&w.data, &pre.project);
+    assert!(!repo_dir.join("proposal.json").exists(), "a set-up started");
+    w.shutdown.cancel();
+    w.runs.stop().await;
 }
