@@ -12,9 +12,16 @@
 //! `SIGTERM` goes to the process group when the pid leads it (as every headless session
 //! does) and it is not the daemon's own, else to the pid alone; after
 //! [`SESSION_KILL_GRACE`] a pid that still passes every check gets `SIGKILL`. A session
-//! whose pid was never recorded, or Codex's first turn (no id in its argv), is not
-//! found; the followups file carries the Codex marker.
+//! is found by its pid only.
+//!
+//! **The journal's pid (M9.11 decision 20, B6).** A live round with no recorded `pid`
+//! whose launching op has a journal `Done { Window { pid: Some(p), .. } }` (the line a
+//! spawn appends as soon as it returns, even while the daemon stops) is checked with
+//! `p`, exactly as a recorded pid is. The pid is still one the daemon's own launch
+//! recorded; nothing else is looked for. A session whose pid is in neither, or Codex's
+//! first turn (no id in its argv), is not found; the followups file carries both.
 
+use std::collections::BTreeMap;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
@@ -22,7 +29,8 @@ use proto::{RunRef, WindowInfo, WindowKind};
 
 use super::Reconciled;
 use crate::run::engine::{OpKind, OpResult};
-use crate::run::model::{PendingOp, Run};
+use crate::run::journal::JournalLine;
+use crate::run::model::{OpId, PendingOp, Run};
 
 /// The parent of a process whose parent died: init or launchd.
 pub const ORPHAN_PARENT: u32 = 1;
@@ -105,11 +113,16 @@ struct Candidate {
     id: String,
 }
 
-/// Decision 28's candidates: only rounds that have not ended and recorded a pid.
-fn candidates(run: &Run) -> Vec<Candidate> {
+/// Decision 28's candidates: only rounds that have not ended, with the pid the round
+/// recorded, else the one its launch's journal `Done` recorded (M9.11 decision 20).
+fn candidates(run: &Run, journal: &[JournalLine]) -> Vec<Candidate> {
+    let launched_pids = journal_pids(journal);
     let mut found = Vec::new();
     for round in run.tasks.iter().flat_map(|t| t.rounds.iter()) {
-        let Some(pid) = round.pid.filter(|pid| *pid > 1 && *pid <= i32::MAX as u32) else {
+        let pid = round
+            .pid
+            .or_else(|| launched_pids.get(&round.launch_op).copied().flatten());
+        let Some(pid) = pid.filter(|pid| *pid > 1 && *pid <= i32::MAX as u32) else {
             continue;
         };
         if round.ended {
@@ -132,6 +145,23 @@ fn candidates(run: &Run) -> Vec<Candidate> {
     found
 }
 
+/// The pid each op's last journal `Done` gives when it is a `Window` result (the last
+/// `Done` of an op wins, as reconcile replays it); `None` for an op whose last `Done`
+/// carries no pid.
+fn journal_pids(journal: &[JournalLine]) -> BTreeMap<OpId, Option<u32>> {
+    let mut pids = BTreeMap::new();
+    for line in journal {
+        if let JournalLine::Done { op, result } = line {
+            let pid = match result {
+                OpResult::Window { pid, .. } => *pid,
+                _ => None,
+            };
+            pids.insert(*op, pid);
+        }
+    }
+    pids
+}
+
 /// A candidate that passed every check, and how to signal it.
 struct Leftover {
     pid: u32,
@@ -139,15 +169,21 @@ struct Leftover {
     id: String,
 }
 
-/// Decision 28 (fix round 1, T21-I1): each live round's recorded pid is signalled only
-/// when it is alive, runs as this daemon's uid, was orphaned (its parent is
-/// `orphan_parent`: the old daemon, its parent, is dead), and its argv holds the
-/// session id as a whole element (or `--session-id=<id>`, `--resume=<id>`). No other
-/// process is ever examined. Returns what it did.
-pub(super) fn kill_leftovers(run: &Run, orphan_parent: u32, timeout: Duration) -> Vec<String> {
+/// Decision 28 (fix round 1, T21-I1): each live round's recorded pid (in `run.json`,
+/// else in `journal`, M9.11 decision 20) is signalled only when it is alive, runs as
+/// this daemon's uid, was orphaned (its parent is `orphan_parent`: the old daemon, its
+/// parent, is dead), and its argv holds the session id as a whole element (or
+/// `--session-id=<id>`, `--resume=<id>`). No other process is ever examined. Returns
+/// what it did.
+pub(super) fn kill_leftovers(
+    run: &Run,
+    journal: &[JournalLine],
+    orphan_parent: u32,
+    timeout: Duration,
+) -> Vec<String> {
     let mut notes = Vec::new();
     let mut leftovers = Vec::new();
-    for candidate in candidates(run) {
+    for candidate in candidates(run, journal) {
         if let Some(leftover) = qualifies(&candidate, orphan_parent, timeout) {
             signal(&leftover, libc::SIGTERM);
             notes.push(format!(
