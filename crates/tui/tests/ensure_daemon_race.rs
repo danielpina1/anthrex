@@ -24,7 +24,8 @@ async fn only_one_racing_ensure_daemon_call_spawns_a_child() {
     let marker = dir.path().join("invocations.log");
 
     // Stands in for the real `anthrex` binary: it never binds the socket (so both
-    // `ensure_daemon` calls run their full 3s poll and give up), it just records that
+    // `ensure_daemon` calls run their full poll, `ENSURE_DAEMON_SOCKET_WAIT` - 10s since
+    // milestone 9.11's decision 31, 3s before - and give up), it just records that
     // it was launched as `daemon start --foreground` — which is all this test needs to
     // count how many competing children actually got spawned.
     let script = dir.path().join("counting_daemon.sh");

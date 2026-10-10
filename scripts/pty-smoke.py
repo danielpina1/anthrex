@@ -213,18 +213,29 @@ DAEMON_STOP_CMD_TIMEOUT = 40.0
 # `crates/tui/src/spawn.rs`'s `ENSURE_DAEMON_SOCKET_WAIT`):
 #
 # - `anthrex new --worktree` (`main.rs`'s `Command::New`): calls `ensure_daemon` first
-#   (worst case `ENSURE_DAEMON_SOCKET_WAIT`, 3s, paid whenever the daemon is not yet up
-#   at that exact moment — a legal state, not a bug), then `CliClient::connect` (worst
-#   case `HANDSHAKE_TIMEOUT`, 5s), then `WORKTREE_REQUEST_TIMEOUT` (57s) for the reply —
-#   3 + 5 + 57 = **65s**.
+#   (worst case `SPAWN_HANDOFF_GRACE` 0.25s + `ENSURE_DAEMON_SOCKET_WAIT`, 10s since
+#   milestone 9.11's decision 31 (`daemon::LOCK_WAIT` 5s + `PRE_BIND_ALLOWANCE` 5s; it
+#   was 3s), paid whenever the daemon is not yet up at that exact moment — a legal
+#   state, not a bug), then `CliClient::connect` (worst case `HANDSHAKE_TIMEOUT`, 5s),
+#   then `WORKTREE_REQUEST_TIMEOUT` (57s) for the reply — 10.25 + 5 + 57 = **72.25s**
+#   (65.25s before decision 31).
 # - `anthrex rm --worktree` (`main.rs`'s `Command::Rm`): no `ensure_daemon` call (a
 #   removal never spawns a daemon), so just `CliClient::connect` (5s) +
 #   `WORKTREE_REQUEST_TIMEOUT` (57s) = **62s**.
 #
-# Both exceed the previous `timeout=60`. The bound below is the larger of the two (65s)
-# plus the same shape of margin `RESTART_CMD_TIMEOUT` / `DAEMON_STOP_CMD_TIMEOUT` carry
-# over their own worst cases above, rounded up to 90s.
+# Both exceed the previous `timeout=60`. The bound below is the larger of the two
+# (72.25s since decision 31) plus the same shape of margin `RESTART_CMD_TIMEOUT` /
+# `DAEMON_STOP_CMD_TIMEOUT` carry over their own worst cases above, rounded up to 90s
+# (about 25% over; it was 38% over the old 65.25s).
 WORKTREE_CMD_TIMEOUT = 90.0
+
+# Milestone 9.11's decision 31: an attach banner a fresh `anthrex` client draws once it
+# has a daemon. The client's own start runs `ensure_daemon` first when no daemon is up
+# (stage 1, and any stage after the daemon stopped): `SPAWN_HANDOFF_GRACE` 0.25s +
+# `ENSURE_DAEMON_SOCKET_WAIT` 10s (`crates/tui/src/spawn.rs`, 3s before decision 31),
+# then its handshake (`HANDSHAKE_TIMEOUT` 5s) = 15.25s, above `wait_for`'s default of
+# 10s that these waits used to fall through to. 20s, about 30% over.
+ATTACH_WAIT = 20.0
 
 # final-gate finding F2a: `run_worktree_form_stage` (W2, below `run_worktree_cli_stage`,
 # W1) drives the *same daemon create/remove operations* as `WORKTREE_CMD_TIMEOUT` above,
@@ -498,7 +509,12 @@ class PtyProc:
             pass
 
 
-def run_cmd(args, expect_ok=True, timeout=28, env=None):
+def run_cmd(args, expect_ok=True, timeout=38, env=None):
+    # Milestone 9.11's decision 31 raised `ENSURE_DAEMON_SOCKET_WAIT` from 3s to 10s
+    # (`daemon::LOCK_WAIT` 5s + `PRE_BIND_ALLOWANCE` 5s), taking `new`'s worst case from
+    # 20.25s to 27.25s (the chain below), which left 28 under 3% over it. 38 restores
+    # F2b's ~38% margin over 27.25s.
+    #
     # The launch gate (`crates/daemon/src/launch/gate.rs`) added `LAUNCH_GATE_WAIT` (5s)
     # to `CREATE_WINDOW_REPLY_TIMEOUT`, taking it 7s -> 12s and `new`'s worst case
     # 15.25s -> 20.25s. That put the previous default of 20 *below* the worst case it
@@ -517,12 +533,13 @@ def run_cmd(args, expect_ok=True, timeout=28, env=None):
     # actually allows. `new`'s own chain, every constant read from source:
     #
     #   ensure_daemon (SPAWN_HANDOFF_GRACE 0.25s, `crates/tui/src/spawn.rs`, +
-    #                  ENSURE_DAEMON_SOCKET_WAIT 3s, same file)              = 3.25s
+    #                  ENSURE_DAEMON_SOCKET_WAIT 10s, same file; 3s before
+    #                  milestone 9.11's decision 31)                       = 10.25s
     #   + CliClient::connect (HANDSHAKE_TIMEOUT 5s, `crates/proto/src/lib.rs`) =  5s
     #   + request_with_timeout (CREATE_WINDOW_REPLY_TIMEOUT 12s = LAUNCH_GATE_WAIT 5s +
     #       DETECT_TIMEOUT 5s + CREATE_REPLY_ALLOWANCE 2s, `crates/cli/src/client.rs`)
     #                                                                          = 12s
-    #                                                                  total   = 20.25s
+    #                                                                  total   = 27.25s
     #
     # Verified against `crates/cli/src/main.rs`'s `Command::New`, which calls exactly
     # this chain: `ensure_daemon`, then `connect`, then
@@ -536,9 +553,9 @@ def run_cmd(args, expect_ok=True, timeout=28, env=None):
     # Rust-side worst case each one has, rather than letting them silently fall through
     # to a default that was never sized for them (whole-branch-review m16 / this file's
     # own recurrence of timing-budgets class 1, at the Rust/Python language boundary).
-    # 20s clears `new`'s 15.25s worst case by the same ~30-40% margin this file uses
-    # elsewhere for a bound that must exceed what it wraps (`WORKTREE_CMD_TIMEOUT`'s 90s
-    # over its 65.25s worst case is a ~38% margin).
+    # 38s clears `new`'s 27.25s worst case by the same ~30-40% margin this file uses
+    # elsewhere for a bound that must exceed what it wraps (F2b's 20s over 15.25s;
+    # `WORKTREE_CMD_TIMEOUT`'s 90s over its 72.25s worst case is about 25%).
     #
     # fix-wave-12-re-review Major 2: `subprocess.run`'s own `timeout` raises
     # `TimeoutExpired` on expiry, which this used to leave uncaught — a bound exceeded
@@ -770,7 +787,7 @@ def run_worktree_form_stage(repo):
     print("== stage W2: form, dirty removal, force ==")
     branch = "smoke/form"
     proc = PtyProc([BIN])
-    proc.wait_for("agents", label="worktree-form attach banner")
+    proc.wait_for("agents", timeout=ATTACH_WAIT, label="worktree-form attach banner")
     proc.send(b"\x02c")
     proc.wait_for("new agent", label="new-agent form opened for the worktree stage")
     # Shell, Tab to Name, type it, Tab to Directory, clear the default and type the repo
@@ -1236,7 +1253,7 @@ def run_conversation_view_stage():
     run_cmd(["daemon", "start"])
     run_cmd(["new", "--runtime", "claude", "--name", "conv"])
     proc = PtyProc([BIN, "attach", "conv"])
-    proc.wait_for("agents", label="conversation-stage attach banner")
+    proc.wait_for("agents", timeout=ATTACH_WAIT, label="conversation-stage attach banner")
     proc.wait_for(CONVERSATION_TERMINAL_MARKER, label="conv's own terminal output")
 
     proc.send(b"\x02m")
@@ -1330,7 +1347,7 @@ def main():
 
     print("== stage 1: initial attach ==")
     proc = PtyProc([BIN])
-    proc.wait_for("agents", label="initial banner")
+    proc.wait_for("agents", timeout=ATTACH_WAIT, label="initial banner")
     proc.wait_for("no agents yet", label="empty sidebar hint")
     # Milestone 9.0.5: the Alerts box sits under the agent list, empty on a fresh daemon.
     proc.wait_for("no alerts", label="empty Alerts box")
@@ -1393,7 +1410,7 @@ def main():
 
     print("== stage 6: re-attach, verify persisted output, detach again ==")
     proc2 = PtyProc([BIN])
-    proc2.wait_for("agents", label="re-attach banner")
+    proc2.wait_for("agents", timeout=ATTACH_WAIT, label="re-attach banner")
     proc2.send(b"\x021")
     proc2.wait_for("smoke-42", label="smoke-42 visible again after focusing window 1")
     proc2.send(b"\x02d")
@@ -1408,7 +1425,7 @@ def main():
     # submits a claude/codex prompt instead of inserting a newline. `cat -v` renders the
     # ESC byte it actually receives as the two characters ^ and [.
     proc3 = PtyProc([BIN])
-    proc3.wait_for("agents", label="third attach banner")
+    proc3.wait_for("agents", timeout=ATTACH_WAIT, label="third attach banner")
     new_shell(proc3, "shell-3")
     proc3.send(b"stty -echo; printf '%s%s\\n' CAT_ READY; cat -v\r")
     proc3.wait_for("CAT_READY", label="cat -v readiness in focused shell-3")
@@ -1470,7 +1487,7 @@ def main():
 
     print("== stage 8b: a fake Claude turn reports working, tool, and done ==")
     proc4 = PtyProc([BIN, "attach", "shell-1"])
-    proc4.wait_for("agents", label="fourth attach banner")
+    proc4.wait_for("agents", timeout=ATTACH_WAIT, label="fourth attach banner")
     proc4.wait_for("smoke-42", label="shell-1 focused before fake Claude creation")
     created = run_cmd(["new", "--runtime", "claude", "--name", "fake-claude"])
     try:
@@ -1574,7 +1591,7 @@ def main():
     run_cmd(["restart", "kept"], timeout=RESTART_CMD_TIMEOUT)
 
     proc5 = PtyProc([BIN])
-    proc5.wait_for("agents", label="stage-10 attach banner")
+    proc5.wait_for("agents", timeout=ATTACH_WAIT, label="stage-10 attach banner")
     proc5.send(b"\x021")
     proc5.wait_for_focused_window("kept")
     proc5.send(b"echo back-$((1+1))\r")
@@ -1591,34 +1608,38 @@ def main():
 
     print("== stage 11: reconnect ==")
     proc6 = PtyProc([BIN])
-    proc6.wait_for("agents", label="stage-11 attach banner")
+    proc6.wait_for("agents", timeout=ATTACH_WAIT, label="stage-11 attach banner")
     proc6.wait_for("kept", label="'kept' listed on stage-11 attach")
     run_cmd(["daemon", "stop"], timeout=DAEMON_STOP_CMD_TIMEOUT)
     proc6.wait_for(
         "DISCONNECTED", label="disconnected badge after the daemon stopped under the client"
     )
     run_cmd(["daemon", "start"])
-    # 10s is the brief's own literal bound, kept verbatim — it is not derived from a
-    # single constant, and in particular it is *not* "five attempts at RETRY_INTERVAL"
+    # Milestone 9.11's decision 31: was 10s, the brief's own literal bound, raised to
+    # `RECONNECT_WAIT` (20s) because what it races, below, grew from ~5s to ~12.25s. The
+    # 10s was not derived from a single constant, and in particular it is *not* "five attempts at RETRY_INTERVAL"
     # (fix-wave-11 review, Minor: that was this comment's previous, wrong
     # justification). The client's actual legal retry budget is RETRY_WINDOW, 30s
     # (crates/tui/src/reconnect.rs) — the ceiling after which the client gives up
     # retrying automatically; RETRY_INTERVAL, 2s (same file), only says how often it
     # tries within that window, and citing it alone understates how long a legitimate
     # reconnect is allowed to take by 3x. What this bound actually races is
-    # `ensure_daemon`'s own ~3s socket-wait deadline (crates/tui/src/spawn.rs) plus
-    # about one more RETRY_INTERVAL — a realistic ~5s, not RETRY_WINDOW's full 30s.
-    # 10s held with room to spare in every run measured, including under deliberate
-    # CPU contention, but a daemon slow enough to miss it would still be legitimately
+    # `ensure_daemon`'s own socket-wait deadline (SPAWN_HANDOFF_GRACE 0.25s +
+    # ENSURE_DAEMON_SOCKET_WAIT 10s since decision 31, 3s before; crates/tui/src/spawn.rs)
+    # plus about one more RETRY_INTERVAL (2s) — 12.25s, not RETRY_WINDOW's full 30s.
+    # RECONNECT_WAIT is 20s, about 60% over that and still inside RETRY_WINDOW; the old
+    # 10s held with room to spare in every run measured, including under deliberate CPU
+    # contention, but a daemon slow enough to miss it would still be legitimately
     # retrying inside its documented 30s RETRY_WINDOW — a false failure in this
     # script, not a real bug in the client.
-    deadline = time.monotonic() + 10.0
+    RECONNECT_WAIT = 20.0
+    deadline = time.monotonic() + RECONNECT_WAIT
     screen = proc6.screen_text()
     while "DISCONNECTED" in screen or "kept" not in screen:
         if time.monotonic() >= deadline:
             fail(
                 "reconnect did not clear DISCONNECTED and keep 'kept' listed within "
-                f"10s:\n{screen}"
+                f"{RECONNECT_WAIT}s:\n{screen}"
             )
         proc6.read_available(timeout=0.2)
         screen = proc6.screen_text()
@@ -1646,7 +1667,7 @@ def main():
     # ~95-97% CPU with a normal-looking status bar, which this stage's sampling would
     # catch and a mere "is it still alive" check would not.
     proc6b = PtyProc([BIN])
-    proc6b.wait_for("agents", label="stage-11b attach banner")
+    proc6b.wait_for("agents", timeout=ATTACH_WAIT, label="stage-11b attach banner")
     proc6b.wait_for("kept", label="'kept' listed on stage-11b attach")
     run_cmd(["daemon", "stop"], timeout=DAEMON_STOP_CMD_TIMEOUT)
     link_lost_at = time.monotonic()
@@ -1802,7 +1823,7 @@ def main():
     # real event loop, so it never saw the hang. Only a real daemon, a real TUI and a
     # real PTY - this script - could have caught it.
     proc7 = PtyProc([BIN])
-    proc7.wait_for("agents", label="tui-quit attach banner")
+    proc7.wait_for("agents", timeout=ATTACH_WAIT, label="tui-quit attach banner")
     proc7.send(b"\x02Q")
     proc7.wait_for(
         "Stop the daemon and kill every agent?", label="stop-daemon confirmation modal"

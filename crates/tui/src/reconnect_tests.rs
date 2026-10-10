@@ -151,7 +151,8 @@ async fn reconnect_now_supersedes_an_in_flight_automatic_attempt() {
     // Stands in for the real `anthrex` binary: records that it was launched as
     // `daemon start --foreground`, which is the one observable proof that this
     // press's `daemon_exe` reached a real attempt, then exits without binding the
-    // socket (so `ensure_daemon`'s own poll just runs out its 3s budget harmlessly).
+    // socket (so `ensure_daemon`'s own poll just runs out its `ENSURE_DAEMON_SOCKET_WAIT`
+    // budget harmlessly: 10s since milestone 9.11's decision 31, 3s before).
     let marker = dir.path().join("started.log");
     let script = dir.path().join("fake_daemon.sh");
     testexec::write_executable(

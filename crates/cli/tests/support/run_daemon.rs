@@ -1,7 +1,8 @@
 //! The run harness's daemon, owned as a child process (M8a.24 fix round 1).
 //!
-//! `anthrex daemon start` detaches the daemon and gives up after the CLI's own 3 s
-//! (`ENSURE_DAEMON_SOCKET_WAIT`). Under load the daemon can bind its socket after that,
+//! `anthrex daemon start` detaches the daemon and gives up after the CLI's own
+//! `ENSURE_DAEMON_SOCKET_WAIT` (3 s then; 10 s since milestone 9.11's decision 31,
+//! still below this harness's bound). Under load the daemon can bind its socket after that,
 //! and a harness that trusted the CLI's failure left it running. So the harness starts
 //! `anthrex daemon start --foreground` itself (what the detached spawn runs), keeps the
 //! `Child`, and waits for the socket with its own bound. Whatever happens, the harness

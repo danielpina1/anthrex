@@ -20,15 +20,23 @@ async fn is_up(socket: &Path) -> bool {
 /// `ensure_daemon`'s doc comment for what this does and does not close.
 const SPAWN_HANDOFF_GRACE: Duration = Duration::from_millis(250);
 
+/// What `ensure_daemon`'s socket wait allows, beyond the daemon's own lock wait, for
+/// the work a daemon does between taking its lock and binding its socket: loading its
+/// state and config and restoring its windows and runs (decision 31). An allowance, not
+/// a bound on that work: the pre-bind loads are not bounded today (the followups file
+/// keeps that), and a daemon that takes longer is reported as not started while it
+/// still comes up.
+pub const PRE_BIND_ALLOWANCE: Duration = Duration::from_secs(5);
+
 /// How long `ensure_daemon` polls the socket after spawning (or finding) a daemon,
-/// before giving up. `pub`, not a bare literal at its one call site below, because
-/// whole-branch-review m19 found a test bound built from the exact number this
-/// evaluates to (`crates/cli/tests/codex_version.rs`'s `elapsed < Duration::from_secs(3)`,
-/// asserting a `daemon start` did not wait out a slow probe): that test's whole point
-/// *is* this wait, so a change here must change that assertion too, and a named,
-/// importable constant is what lets the compiler enforce that instead of two literals
-/// that can silently drift apart.
-pub const ENSURE_DAEMON_SOCKET_WAIT: Duration = Duration::from_secs(3);
+/// before giving up (decision 31, B7): the daemon's own `LOCK_WAIT` (5 s), which a
+/// daemon started right behind a stopping one waits out before it binds, plus
+/// `PRE_BIND_ALLOWANCE`. At 3 s, under `LOCK_WAIT`, a client said "did not start" while
+/// the daemon came up a moment later. `pub`, not a bare literal at its one call site
+/// below, because tests derive their own bounds from it (whole-branch-review m19), and
+/// a named, importable constant is what lets the compiler keep them in step.
+pub const ENSURE_DAEMON_SOCKET_WAIT: Duration =
+    daemon::LOCK_WAIT.saturating_add(PRE_BIND_ALLOWANCE);
 
 /// Opens `proto::paths::stderr_path()` for append, creating `data_dir` first if needed.
 /// A detached daemon has no terminal, and `logfile::RotatingFile` can only report a
@@ -111,8 +119,8 @@ enum Claim {
     Unknown,
 }
 
-/// Connects if a daemon is running; otherwise starts one and waits up to 3 s for its
-/// socket. `exe` is the binary to re-exec as the detached daemon — task M6.11 moved
+/// Connects if a daemon is running; otherwise starts one and waits up to
+/// [`ENSURE_DAEMON_SOCKET_WAIT`] (10 s) for its socket. `exe` is the binary to re-exec as the detached daemon — task M6.11 moved
 /// this out of an internal `std::env::current_exe()` call so a reconnect attempt
 /// (decision 32) can be driven with a fixed, test-supplied path instead of whatever
 /// binary happens to be running the test harness.

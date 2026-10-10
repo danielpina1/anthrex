@@ -23,18 +23,21 @@ import time
 RUN_WAIT = 300.0
 
 # Every `anthrex run` command but accept: `run start`'s legal worst case is
-# `ensure_daemon` (`SPAWN_HANDOFF_GRACE` 0.25 s + `ENSURE_DAEMON_SOCKET_WAIT` 3 s,
-# `crates/tui/src/spawn.rs`) + `HANDSHAKE_TIMEOUT` (5 s, `crates/proto/src/lib.rs`) +
-# `RUN_START_TIMEOUT` (585 s, `crates/cli/src/run_cmd.rs`: `RUN_REQUEST_TIMEOUT`'s
-# 180 s, the daemon's `PREFLIGHT_BOUND` of 365 s, 30 s and the start's tuning bound of
-# 10 s, task M9.2.12, the final fix wave's ahead count and M9.5's ruling T9-3)
-# = 593.25 s, above `run_cmd`'s default of 28 s. 600 s clears it by about 1%; every
+# `ensure_daemon` (`SPAWN_HANDOFF_GRACE` 0.25 s + `ENSURE_DAEMON_SOCKET_WAIT` 10 s,
+# `crates/tui/src/spawn.rs`: `daemon::LOCK_WAIT` 5 s + `PRE_BIND_ALLOWANCE` 5 s since
+# milestone 9.11's decision 31, 3 s before) + `HANDSHAKE_TIMEOUT` (5 s,
+# `crates/proto/src/lib.rs`) + `RUN_START_TIMEOUT` (585 s, `crates/cli/src/run_cmd.rs`:
+# `RUN_REQUEST_TIMEOUT`'s 180 s, the daemon's `PREFLIGHT_BOUND` of 365 s, 30 s and the
+# start's tuning bound of 10 s, task M9.2.12, the final fix wave's ahead count and
+# M9.5's ruling T9-3) = 600.25 s (593.25 s before decision 31, which put the old 600 s
+# under it), above `run_cmd`'s default of 38 s. 610 s clears it by about 1.6%; every
 # other run request waits only `RUN_REQUEST_TIMEOUT` (180 s).
-RUN_CMD_TIMEOUT = 600.0
+RUN_CMD_TIMEOUT = 610.0
 
 # `run accept` waits `FINISH_REQUEST_TIMEOUT` (`ACCEPT_MERGE_TIMEOUT` 600 s + 60 s,
-# `crates/cli/src/run_cmd.rs`) for its reply, so its legal worst case is 3.25 + 5 + 660
-# = 668.25 s, above `RUN_CMD_TIMEOUT`'s 600 s. 900 s clears it by about 35%.
+# `crates/cli/src/run_cmd.rs`) for its reply, so its legal worst case is 10.25 + 5 + 660
+# = 675.25 s (668.25 s before decision 31), above `RUN_CMD_TIMEOUT`'s 610 s. 900 s
+# clears it by about 33%.
 ACCEPT_CMD_TIMEOUT = 900.0
 
 # How often the stage polls `anthrex run status --json`.

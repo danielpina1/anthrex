@@ -277,7 +277,7 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     // consumes `config`, so the probe itself can run later — immediately before
     // `server::serve`, not here. Only decision 12's state-file load needs to precede the
     // bind; the probe was moved up alongside it by accident in an earlier change, and a
-    // `codex` that takes longer than `spawn::ensure_daemon`'s 3 s socket-wait (well inside
+    // `codex` that takes longer than `spawn::ensure_daemon`'s socket-wait (3 s then, well inside
     // the probe's own 5 s budget) made every auto-spawning entry point report a failed
     // start even though the daemon was starting up fine.
     let codex_bin = config.codex_bin.clone();
