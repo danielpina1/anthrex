@@ -198,6 +198,8 @@ pub struct App {
     /// closed dialog still waits on (its success clears that project's draft).
     pub goal_drafts: std::collections::BTreeMap<PathBuf, String>,
     goal_sent: Option<(u64, PathBuf, String)>,
+    /// Milestone 9.11 decision 22: the dropped queued goals' alerts, this session only.
+    pub(crate) dropped_goals: alerts::DroppedGoals,
 }
 
 impl App {
@@ -262,6 +264,7 @@ impl App {
             screen: None,
             goal_drafts: Default::default(),
             goal_sent: None,
+            dropped_goals: Default::default(),
             settings,
         }
     }

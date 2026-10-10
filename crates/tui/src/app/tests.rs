@@ -173,6 +173,9 @@ mod prefix_modal;
 #[path = "../app_tests/wheel.rs"]
 mod wheel;
 
+#[path = "../app_tests/dropped_goals.rs"]
+mod dropped_goals;
+
 fn win(id: u32, name: &str, status: Status) -> WindowInfo {
     WindowInfo {
         id,

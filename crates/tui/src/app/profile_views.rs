@@ -146,6 +146,11 @@ impl App {
             }
         };
         self.replies.take(*request_id);
+        // Milestone 9.11 decision 22: any status of a project may hold the drop of a
+        // goal that left its queue.
+        if let (ProfileAsk::Status, ProfileReply::Status(status)) = (ask, reply.as_ref()) {
+            self.note_profile_status(&dir, status);
+        }
         // Decision 37: a `Show` that is no longer its side's latest (a re-fetch went
         // out after it) describes an older state; the re-fetch's reply fills the side.
         if let ProfileAsk::Show { proposed } = ask
