@@ -131,10 +131,11 @@ fn objects_empty(objects: &Path) -> bool {
 
 /// Fix round 1 (I3): the git directory a submodule's `.git` file at `dot` names
 /// (`gitdir: <path>`, relative to `dir` or absolute), when it lies, lexically and with
-/// no link in any component below it, under the git directory of the checkout
-/// `worktree` (an engine pin's: no worker grant covers it on macOS, and the Linux grant
-/// denies its `modules/`), or under a linked checkout's common directory's `modules/`.
-/// `None` otherwise: the caller keeps the checkout.
+/// no link in any component below it, under the `modules/` of the checkout
+/// `worktree`'s git directory or of a linked checkout's common directory (fix round 2,
+/// n2: not the whole git directory, parts of which a worker grant covers). The lexical
+/// resolution drops every `..`, so the containment check sees the final path. `None`
+/// otherwise: the caller keeps the checkout.
 fn module_dir(worktree: &Path, dir: &Path, dot: &Path) -> Option<PathBuf> {
     use std::path::Component;
     let pin = crate::worktree::pinned::pinned(worktree).filter(|pin| pin.broken.is_none())?;
@@ -152,7 +153,7 @@ fn module_dir(worktree: &Path, dir: &Path, dot: &Path) -> Option<PathBuf> {
         }
     }
     let roots = [
-        Some(pin.git_dir.clone()),
+        Some(pin.git_dir.join("modules")),
         (!pin.standalone).then(|| pin.common_dir.join("modules")),
     ];
     let root = roots
@@ -178,15 +179,17 @@ const TEXT_CAP: u64 = 64 * 1024;
 const INDEX_CAP: u64 = 256 * 1024 * 1024;
 
 /// Fix round 1 (I4): `path` opened once, `O_RDONLY | O_NOFOLLOW | O_NONBLOCK |
-/// O_CLOEXEC`, and kept only when the opened descriptor is a regular file: a link, a
-/// FIFO or a device swapped in after any earlier look is refused, never followed,
-/// waited on or read.
+/// O_NOCTTY | O_CLOEXEC`, and kept only when the opened descriptor is a regular file: a
+/// link, a FIFO or a device swapped in after any earlier look is refused, never
+/// followed, waited on or read. Fix round 2 (N1): `O_NOCTTY`, because the daemon is a
+/// session leader with no controlling terminal, and opening a terminal without it
+/// would make that terminal the daemon's (as in `transcript/reader.rs`).
 fn open_plain(path: &Path) -> Option<std::fs::File> {
     use std::os::unix::fs::OpenOptionsExt;
     before_open(path);
     let file = std::fs::OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_NOCTTY | libc::O_CLOEXEC)
         .open(path)
         .ok()?;
     file.metadata().ok().filter(|meta| meta.is_file())?;
@@ -214,9 +217,15 @@ fn copy_plain(from: &Path, to: &Path, cap: u64) -> Result<(), String> {
     {
         return Ok(());
     }
+    use std::os::unix::fs::OpenOptionsExt;
     let file = open_plain(from).ok_or_else(|| format!("{} is not a plain file", from.display()))?;
-    let mut out =
-        std::fs::File::create(to).map_err(|err| format!("cannot write {}: {err}", to.display()))?;
+    // A new file in the daemon's own probe directory, never through a link.
+    let mut out = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NOCTTY | libc::O_CLOEXEC)
+        .open(to)
+        .map_err(|err| format!("cannot write {}: {err}", to.display()))?;
     let copied = std::io::copy(&mut file.take(cap + 1), &mut out)
         .map_err(|err| format!("cannot copy {}: {err}", from.display()))?;
     match copied > cap {
@@ -239,15 +248,38 @@ fn before_open(path: &Path) {
 /// A ref's name and the commit id it holds.
 type NamedId = (String, String);
 
+/// Fix round 2 (n3): the most entries the walk of a nested `refs/` and `worktrees/`
+/// visits; more counts as work.
+const ENTRY_CAP: usize = 10_000;
+
+/// Fix round 2 (N1): a worker-written ref name, kept only when it can be joined to the
+/// nested git directory without leaving it: under `refs/`, relative, and every
+/// component a plain name (no `..`, no `.`, no empty one).
+fn ref_name(name: &str) -> Option<&str> {
+    let plain =
+        !name.contains('\0') && (name.split('/')).all(|part| !matches!(part, "" | "." | ".."));
+    (name.starts_with("refs/") && plain).then_some(name)
+}
+
 /// The nested git directory `dot`'s `HEAD` commit (`None` when unborn) and every ref
 /// (loose and packed) naming a commit id, as `(name, id)`. `None` when something is
-/// not a plain file.
+/// not a plain file, a symbolic `HEAD` names something outside `refs/`, or there are
+/// more than [`ENTRY_CAP`] entries. Every path opened is `dot` joined with a fixed name,
+/// a name `read_dir` listed (one component) or a name [`ref_name`] accepted; the
+/// names in `packed-refs` are only compared, never opened, and the nested
+/// `commondir`, `alternates` and `config` are never read.
 fn nested_ids(dot: &Path) -> Option<(Option<String>, Vec<NamedId>)> {
     let text = plain_text(&dot.join("HEAD"))?;
     let mut ids = Vec::new();
     let mut pending = vec![dot.join("refs")];
+    let mut seen = 0usize;
+    let mut visit = || {
+        seen += 1;
+        (seen <= ENTRY_CAP).then_some(())
+    };
     while let Some(dir) = pending.pop() {
         for entry in std::fs::read_dir(&dir).ok()? {
+            visit()?;
             let entry = entry.ok()?;
             let kind = entry.file_type().ok()?;
             if kind.is_dir() {
@@ -268,6 +300,7 @@ fn nested_ids(dot: &Path) -> Option<(Option<String>, Vec<NamedId>)> {
         Err(_) => return None,
         Ok(entries) => {
             for entry in entries {
+                visit()?;
                 let name = entry.ok()?.file_name();
                 let head = plain_text(&dot.join("worktrees").join(&name).join("HEAD"))?;
                 let id = head.trim().to_string();
@@ -294,7 +327,7 @@ fn nested_ids(dot: &Path) -> Option<(Option<String>, Vec<NamedId>)> {
     let head = match text.trim().strip_prefix("ref:") {
         // A branch's tip is among `ids` already; an unborn branch has none.
         Some(name) => {
-            let name = name.trim();
+            let name = ref_name(name.trim())?;
             let loose = plain_text(&dot.join(name)).map(|t| t.trim().to_string());
             let packed = packed.lines().find_map(|line| {
                 line.split_once(' ')
@@ -448,5 +481,40 @@ mod tests {
         });
         let length = read.map(|text| text.map(|text| text.len()));
         assert_eq!(length, Some(None), "an oversized file was read");
+    }
+
+    /// Fix round 2 (N1): a `HEAD` naming a path outside the nested git directory `dot`
+    /// is never opened, and the repository reads as unreadable (work).
+    #[test]
+    fn a_head_escaping_the_git_directory_is_never_opened() {
+        use std::path::{Component, PathBuf};
+        use std::sync::{Arc, Mutex};
+        for target in [
+            "../../../../dev/null",
+            "/dev/null",
+            "refs/../../../dev/null",
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            let dot = tmp.path().join(".git");
+            std::fs::create_dir_all(dot.join("refs/heads")).unwrap();
+            std::fs::write(dot.join("HEAD"), format!("ref: {target}\n")).unwrap();
+            let opened: Arc<Mutex<Vec<PathBuf>>> = Arc::default();
+            let record = Arc::clone(&opened);
+            BEFORE_OPEN.with(|slot| {
+                *slot.borrow_mut() = Some(Box::new(move |p: &Path| {
+                    record.lock().unwrap().push(p.to_path_buf());
+                }))
+            });
+            let ids = super::nested_ids(&dot);
+            BEFORE_OPEN.with(|slot| *slot.borrow_mut() = None);
+            let escaped: Vec<PathBuf> = (opened.lock().unwrap().iter())
+                .filter(|p| {
+                    !p.starts_with(&dot) || p.components().any(|c| c == Component::ParentDir)
+                })
+                .cloned()
+                .collect();
+            assert_eq!(escaped, Vec::<PathBuf>::new(), "{target} was opened");
+            assert!(ids.is_none(), "{target} did not count as work: {ids:?}");
+        }
     }
 }

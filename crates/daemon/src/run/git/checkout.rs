@@ -368,3 +368,24 @@ pub(crate) fn remove(path: &Path, repo: &Repo) -> Result<(), String> {
     pinned::unpin(path);
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    /// Fix round 2 (n6): the frozen 0.1.x text, pinned to the literal bytes anthrex
+    /// 0.1.0 to 0.1.2 wrote, for both object formats.
+    #[test]
+    fn the_legacy_config_is_the_released_text() {
+        let base = "[core]\n\trepositoryformatversion = {F}\n\thooksPath = \"/c/hooks\"\n[include]\n\tpath = \"/c/config\"\n[core]\n\tbare = false\n\tworktree = \"/p\"\n\tlogAllRefUpdates = false\n[gc]\n\tauto = 0\n";
+        let (common, path) = (Path::new("/c"), Path::new("/p"));
+        assert_eq!(
+            super::config_v0_1(common, path, false),
+            base.replace("{F}", "0")
+        );
+        assert_eq!(
+            super::config_v0_1(common, path, true),
+            base.replace("{F}", "1") + "[extensions]\n\tobjectformat = sha256\n"
+        );
+    }
+}

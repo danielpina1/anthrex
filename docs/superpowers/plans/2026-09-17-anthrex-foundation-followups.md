@@ -2145,6 +2145,11 @@ From the stream G review and its fix round 1.
 - **The production Linux watcher has not run outside CI (I6).** nexus1 was unreachable from the implementer's machine on 2026-10-10 (`ssh: connect to host 192.168.0.199 port 22: Operation timed out`, and no reply to ping); the PR's ubuntu job is its first run. Stress `git::watch` and `git_registry*` there before a release that depends on it.
 
 - **An empty nested repository blocks its checkout's removal** (stream G followup 3): today's salvage fails on a nested repository with no commit (`git add -A`: `'<dir>/' does not have a commit checked out`), so such a checkout can be neither salvaged nor removed without the user's help.
+- **One `salvage_gone` with a `keep_head` flag (fix round 2, n7).** `salvage_gone_keeping` repeats `salvage_gone`'s `Pin` setup and runs `common_dir` and `head_file` a second time. Folding it into `salvage_gone` as a parameter would remove the duplication.
+- **A nested `.git` that git does not take for a repository is not a candidate (fix round 2).** One example is a `HEAD` whose `ref:` lies outside `refs/`.
+  - `ls-files --others` then recurses into the directory and skips `.git`, so only its working files are salvaged. Any commits in its object store go with the checkout.
+  - Git itself cannot open such a repository either.
+  - A walk for `.git` entries that keeps the checkout when any of them is unrecognised would close the gap.
 
 ### Stream P
 
