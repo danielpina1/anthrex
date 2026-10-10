@@ -133,6 +133,26 @@ pub(crate) fn config(common: &Path, path: &Path, sha256: bool) -> String {
     text
 }
 
+/// Milestone 9.11 fix round 1 (I1): the config text anthrex 0.1.0 to 0.1.2 wrote, frozen
+/// here, for both object formats. A checkout made by those releases still holds it;
+/// the pin check accepts it by exact equality, so an upgrade does not mark every
+/// in-flight checkout as tampered with, and the next [`ensure`] rewrites it to
+/// [`config`]. It differs from [`config`] only in lacking the identity include. Never
+/// derive it from [`config`]: a later change there must not widen what is accepted.
+pub(crate) fn config_v0_1(common: &Path, path: &Path, sha256: bool) -> String {
+    let format = if sha256 { "1" } else { "0" };
+    let mut text = format!(
+        "[core]\n\trepositoryformatversion = {format}\n\thooksPath = {}\n[include]\n\tpath = {}\n[core]\n\tbare = false\n\tworktree = {}\n\tlogAllRefUpdates = false\n[gc]\n\tauto = 0\n",
+        quoted(&common.join("hooks")),
+        quoted(&common.join("config")),
+        quoted(path),
+    );
+    if sha256 {
+        text.push_str("[extensions]\n\tobjectformat = sha256\n");
+    }
+    text
+}
+
 /// `path` as a git config value: quoted, with `"` and `\` escaped.
 fn quoted(path: &Path) -> String {
     let text = path.display().to_string();
