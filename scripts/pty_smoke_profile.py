@@ -76,6 +76,15 @@ CARD_WAIT = 45.0
 # Alerts box (`scripts/pty_smoke_design_fixtures.py`).
 SIDEBAR = 34
 
+# While waiting for the review alert, how often `profile status --json` is asked whether
+# the set-up failed (task 12 review M1: a failed set-up fails the stage at once, not
+# after `SETUP_WAIT`). Not a bound: one CLI request every 5 s.
+SETUP_CHECK_EVERY = 5.0
+
+# At most this many `j` presses in the Alerts view to reach the review alert (final
+# review M9: on the shared daemon an earlier stage's alert may come first).
+ALERT_STEPS = 30
+
 
 def _write(path, text):
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -126,6 +135,41 @@ def _until(proc, what, within, probe, fail):
             time.sleep(POLL)
 
 
+def _status_bar(proc):
+    """The client's status bar: the screen's last row."""
+    rows = proc.screen_text().rstrip("\n").splitlines()
+    return rows[-1] if rows else ""
+
+
+def _selected_alert(proc):
+    """The Alerts view's selected row from its `▌` bar (`P<p> <glyph> <who> <age>`),
+    whitespace-joined; "" with none."""
+    for row in proc.screen_text().splitlines():
+        at = row.find("▌P")
+        if at >= 0 and row[at + 2 : at + 3].isdigit():
+            return " ".join(row[at:].split())
+    return ""
+
+
+def _on_review(proc):
+    """The selection is a review alert: priority 4, and Enter opens the profile (a
+    set-up alert also says `open profile`, but at priority 3 or 5)."""
+    return _selected_alert(proc).startswith("▌P4") and "⏎ open profile" in _status_bar(proc)
+
+
+def _setup_failure(run_cmd, repo, fail):
+    """The set-up's failure reason from `profile status --json`, or None."""
+    status = run_cmd(["profile", "status", "--json", "--dir", repo], timeout=RUN_CMD_TIMEOUT)
+    try:
+        proposal = json.loads(status.stdout).get("proposal") or {}
+    except ValueError as error:
+        fail(f"`anthrex profile status --json` printed no status ({error}):\n{status.stdout}")
+    state = proposal.get("state")
+    if isinstance(state, dict) and state.get("state") == "failed":
+        return state.get("reason", "")
+    return None
+
+
 def _goal_runs(run_cmd, fail):
     result = run_cmd(["run", "status", "--json"], timeout=RUN_CMD_TIMEOUT)
     try:
@@ -170,13 +214,36 @@ def profile_stage(pty_proc, bin_path, run_cmd, fail, env):
         proc = pty_proc([bin_path])
         proc.wait_for("agents", timeout=SCREEN_WAIT, label="stage-11l attach banner")
         review = "review how anthrex will work here"
-        _until(proc, f"the alert {review!r}", SETUP_WAIT, lambda: review in _sidebar_alerts(proc), fail)
+        checked = [time.monotonic()]
+
+        def reviewed():
+            if review in _sidebar_alerts(proc):
+                return True
+            if time.monotonic() - checked[0] >= SETUP_CHECK_EVERY:
+                checked[0] = time.monotonic()
+                reason = _setup_failure(run_cmd, repo, fail)
+                if reason is not None:
+                    fail(f"stage 11l: the set-up failed: {reason}")
+            return False
+
+        _until(proc, f"the alert {review!r}", SETUP_WAIT, reviewed, fail)
         print("ok: the Alerts box asks for the review once the set-up is done")
 
+        # Final review M9: the Alerts view's own mode, then its review alert selected
+        # (an earlier stage's alert may be listed first on the shared daemon).
         proc.send(b"\x02a")
-        _until(proc, "the Alerts box focused", SCREEN_WAIT, lambda: review in _sidebar_alerts(proc), fail)
+        _until(proc, "the Alerts view's focus", SCREEN_WAIT, lambda: _status_bar(proc).startswith(" ALERTS "), fail)
+        for _ in range(ALERT_STEPS):
+            if _on_review(proc):
+                break
+            before = _selected_alert(proc)
+            proc.send(b"j")
+            _until(proc, "the next alert selected", SCREEN_WAIT, lambda: _selected_alert(proc) != before, fail)
+        else:
+            fail(f"stage 11l: no review alert within {ALERT_STEPS} rows of the Alerts view\n{proc.screen_text()}")
         proc.send(b"\r")
         proc.wait_for(" PROFILE ", timeout=SCREEN_WAIT, label="the Profile screen's badge")
+        proc.wait_for(f"profile · {os.path.basename(repo)}", timeout=SCREEN_WAIT, label="the review's project")
         proc.wait_for("anthrex learned how to work in this repo", timeout=CARD_WAIT, label="the card's title")
         proc.wait_for("How anthrex checks your work", timeout=CARD_WAIT, label="the card's first section")
         print("ok: Enter on the review alert opened the card")
