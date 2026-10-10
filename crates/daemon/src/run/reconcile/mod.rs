@@ -7,7 +7,8 @@
 //!   `NotStarted`.
 //!
 //! Before any of that, decision 28's leftover session processes are killed (only the
-//! recorded pids of live rounds, orphaned, same uid, the session id in their argv;
+//! pids of live rounds recorded in `run.json` or, failing that, in their launch's
+//! journal `Done` line; orphaned, same uid, the session id in their argv;
 //! `sessions.rs`), so nothing is still writing into a worktree while it is read.
 //!
 //! Does I/O (design decision 2), all of it **blocking**: `lifecycle::run` runs it before
@@ -91,7 +92,7 @@ pub fn reconcile_with_orphan_parent(
     timeout: Duration,
     orphan_parent: u32,
 ) -> Reconciliation {
-    let mut notes = sessions::kill_leftovers(run, orphan_parent, timeout);
+    let mut notes = sessions::kill_leftovers(run, journal, orphan_parent, timeout);
     let mut intents: BTreeSet<OpId> = BTreeSet::new();
     let mut dones: BTreeMap<OpId, &OpResult> = BTreeMap::new();
     for line in journal {
