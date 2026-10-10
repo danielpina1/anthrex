@@ -1,6 +1,6 @@
 # Adoptions from nucleos: hardening, build economy, lessons and brakes
 
-Date: 2026-10-10. Status: approved in conversation, section by section; briefs M9.11–M9.14 implement
+Date: 2026-10-10. Status: approved in conversation, section by section; briefs M9.12–M9.15 implement
 it.
 
 ## 1. Origin and goal
@@ -27,7 +27,7 @@ subscription window or one session's context.
 
 | # | Decision |
 |---|---|
-| U1 | Four milestones, in order: 9.11 hardening, 9.12 build economy, 9.13 lessons, 9.14 brakes. One spec and four briefs, reviewed once; then build each with subagent-driven TDD. Implementation starts after 9.10 (PR #53) merges, so 9.11 is protocol 22, 9.12 is 23, 9.13 is 24, 9.14 is 25. |
+| U1 | Four milestones, in order: 9.12 hardening, 9.13 build economy, 9.14 lessons, 9.15 brakes. One spec and four briefs, reviewed once; then build each with subagent-driven TDD. Milestone 9.11 (Stabilization, protocol 21, another stream of work) lands first; these start after it merges, so 9.12 is protocol 22, 9.13 is 23, 9.14 is 24, 9.15 is 25. |
 | U2 | Orchestrator autonomy stays as 9.9 set it, except for the **retry cap** and the **untrusted-text downgrade**. Rejected: shadow mode per op class; a run or chain spending allowance (M9.3 D5 stands). |
 | U3 | A task may change a gate script only when its `owns` names the file exactly; the user approves that with the plan, and that file is not pinned for that run. |
 | U4 | The untrusted-text flag is sticky for the orchestrator session; there is no clear command. A fresh session starts clean. |
@@ -42,7 +42,7 @@ subscription window or one session's context.
 | U13 | The orchestrator hands off to a fresh session at the next goal when its context reaches 80% of the window or 300,000 tokens, whichever comes first (0 disables). A Codex orchestrator hands off too when its rollout gives a fill. |
 | U14 | A knowledge graph page in the TUI, Obsidian-style: lessons as dots around module hubs, with search, an inspector and removal (§4). |
 
-## 2. Hardening (9.11)
+## 2. Hardening (9.12)
 
 **Finding.** The orchestrator's `override` skips the protected-file check entirely
 (`engine/done.rs` `spill_exempt`), and the merge queue checks nothing, so since 9.9 an orchestrator
@@ -68,7 +68,7 @@ changed `pull_request` workflow runs with the repository's secrets.
   the user's "do it" executes as the user; `approve_hold` is refused. The flag follows the session
   to the chain's next goal.
 
-## 3. Build economy (9.12)
+## 3. Build economy (9.13)
 
 - **Target-directory pool.** Exclusive leases from checkout creation to removal, with affinity to
   the directory a checkout built last. On an owner change the workspace's own path packages are
@@ -83,7 +83,7 @@ changed `pull_request` workflow runs with the repository's secrets.
 - **Per-module cache key.** Module test steps key on an inputs id over the files of the step's module
   closure plus every file in no module; the build step and tier 3 keep the tree id.
 
-## 4. Lessons (9.13)
+## 4. Lessons (9.14)
 
 - **Failure signatures**, model-free: normalised gate output, at most three decisive lines,
   hashed and recorded on the task record. A signature in two or more runs within 14 days is a known
@@ -106,7 +106,7 @@ changed `pull_request` workflow runs with the repository's secrets.
   approve or reject a proposal. Opened with `g` from the Profile screen's Lessons page; the daemon
   sends nodes and edges.
 
-## 5. Brakes (9.14)
+## 5. Brakes (9.15)
 
 - **Context handoff.** Fill is read from the orchestrator's own transcript tail (the last turn's
   usage), off the lock and bounded. At the goal boundary, at or above the U13 threshold, the next
