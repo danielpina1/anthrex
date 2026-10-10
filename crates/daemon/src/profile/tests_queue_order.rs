@@ -43,7 +43,7 @@ async fn a_goal_queued_while_a_reject_runs_is_kept() {
     });
     // Nothing else in this test takes `writes`, so a refused try is the reject's hold.
     until("the reject to hold writes", || {
-        rig.profiles.writes.try_lock().is_err()
+        rig.profiles.writes_for(&project).try_lock().is_err()
     })
     .await;
     let queued = rig

@@ -98,6 +98,36 @@ pub const OPENAI_CREDENTIALS: &[&str] = &[
     "OPENAI_BASE_URL",
 ];
 
+/// Milestone 9.11 decision 32 (D3): the user's cloud and registry tokens, removed from
+/// every engine command (checks, proofs, `setup`, tier steps), which run code the
+/// workers wrote. Sessions are unchanged. A name listed in [`CHECK_ENV_PASS`] is kept.
+pub const CHECK_SECRET_NAMES: &[&str] = &[
+    "GITHUB_TOKEN",
+    "GH_TOKEN",
+    "GH_ENTERPRISE_TOKEN",
+    "GITLAB_TOKEN",
+    "NPM_TOKEN",
+    "NODE_AUTH_TOKEN",
+    "PYPI_TOKEN",
+    "CARGO_REGISTRY_TOKEN",
+    "HF_TOKEN",
+    "DOCKER_PASSWORD",
+];
+
+/// ... and every inherited variable whose name starts with one of these.
+pub const CHECK_SECRET_PREFIXES: &[&str] = &[
+    "AWS_",
+    "AZURE_",
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "CLOUDSDK_",
+    "DIGITALOCEAN_",
+];
+
+/// Read from the daemon's own environment: comma-separated exact names of
+/// [`CHECK_SECRET_NAMES`] or [`CHECK_SECRET_PREFIXES`] variables that engine commands
+/// keep (`ANTHREX_CHECK_ENV_PASS=NPM_TOKEN,GH_TOKEN`). The one way to pass one through.
+pub const CHECK_ENV_PASS: &str = "ANTHREX_CHECK_ENV_PASS";
+
 /// Reserved families, matched on the upper-cased name, with the reason a profile may
 /// not set them.
 /// Why a start-up inlet is reserved.
@@ -261,6 +291,43 @@ mod tests {
             let name = format!("{prefix}ANYTHING");
             assert!(reserved_env(&name).is_some(), "{name} is not reserved");
         }
+    }
+
+    /// Milestone 9.11 decision 32: the check-secret lists name nothing the agent scrubs
+    /// already remove from every engine command, so nothing is listed twice.
+    #[test]
+    fn no_secret_name_is_a_scrubbed_agent_name() {
+        let scrubbed: Vec<&str> = SCRUBBED_NAMES
+            .iter()
+            .chain(API_CREDENTIALS)
+            .chain(OPENAI_CREDENTIALS)
+            .chain(&GIT_LOCATION_VARS)
+            .copied()
+            .collect();
+        for name in CHECK_SECRET_NAMES {
+            assert!(!scrubbed.contains(name), "{name} is listed twice");
+            assert!(
+                !SCRUBBED_PREFIXES.iter().any(|p| name.starts_with(p)),
+                "{name} is already scrubbed by prefix"
+            );
+            assert!(
+                !CHECK_SECRET_PREFIXES.iter().any(|p| name.starts_with(p)),
+                "{name} is already removed by a secret prefix"
+            );
+        }
+        for prefix in CHECK_SECRET_PREFIXES {
+            assert!(
+                !SCRUBBED_PREFIXES
+                    .iter()
+                    .any(|p| prefix.starts_with(p) || p.starts_with(prefix)),
+                "{prefix} overlaps an agent scrub prefix"
+            );
+            assert!(
+                !scrubbed.iter().any(|name| name.starts_with(prefix)),
+                "{prefix} covers a scrubbed name"
+            );
+        }
+        assert_eq!(CHECK_ENV_PASS, "ANTHREX_CHECK_ENV_PASS");
     }
 
     /// M9.1 real-CLI ruling 5: every agent session drops inherited `MCP_*` variables

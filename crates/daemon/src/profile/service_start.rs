@@ -234,7 +234,7 @@ impl ProfileService {
             auto_confirm: false,
             edit: None,
         };
-        let _writes = self.writes.lock().await;
+        let _writes = self.hold_writes(&pre.project).await;
         // Review m5: a detection that registered meanwhile keeps its proposal.
         if self.running(&pre.project).await.is_some() {
             return;

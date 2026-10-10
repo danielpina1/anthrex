@@ -2075,3 +2075,22 @@ What milestone 9.10 parked, each detailed in `docs/milestones/M9.10-simple-profi
 What stream E's review left open, each detailed under "Stream E notes" in `docs/milestones/M9.11-stabilization.md`.
 
 - **A message in flight to a session a rung kills is dropped** (review m5; needs a ruling): `ladder::kill_worker`'s `supersede` removes a task's delivered-but-unconfirmed outbox messages when rung 2, 3, 4 or a lane out stops its session, so a `Deliver` whose `Delivered { ok: false }` comes after the kill finds nothing to queue again, and its text never reaches the next session. Decision 4 carries in-flight texts only for a failed resume (`outbox::resumed`). The window is the `Deliver`'s round trip (normally milliseconds). Carrying them into the rung's fresh session (or keeping them, for a blocked task) would close it.
+
+## From milestone 9.11's stream X review (2026-10-10), for later
+
+- **More tokens are still visible to checks** (X-M5). Decision 32's list is binding for 9.11, so it was not widened. `crates/config/src/reserved_env.rs`'s `CHECK_SECRET_NAMES` and `CHECK_SECRET_PREFIXES` still let checks, proofs, `setup` and tier steps inherit at least:
+  - `SSH_AUTH_SOCK` (a check can push with the user's keys)
+  - `CI_JOB_TOKEN`, `GITLAB_PRIVATE_TOKEN`, `HOMEBREW_GITHUB_API_TOKEN`, `VERCEL_TOKEN`, `SENTRY_AUTH_TOKEN`, `GOOGLE_API_KEY`
+  - `KUBECONFIG`
+
+  Widening the list needs a ruling, since each name can break a user's check (`ANTHREX_CHECK_ENV_PASS` passes one back). `SSH_AUTH_SOCK` in particular is a socket, not a secret value.
+- **Token sums outside `TokenUsage::billable` still use plain addition** (X-M7). B8 made `billable()` saturate. These still use `+` or `+=`:
+  - `crates/daemon/src/run/engine/design_agents.rs:297`
+  - `crates/daemon/src/run/engine/design_reviewer.rs:244`
+  - `crates/daemon/src/run/engine/design_spend.rs:94`
+  - `crates/daemon/src/scout/machine.rs:318`
+
+  A huge or hostile usage report can overflow them: a panic in a debug build, a wrap in a release one. Fix direction: `saturating_add`, as `billable()` does.
+- **The profile service's `blocking` helper has no timeout** (33b review m4, pre-existing; `crates/daemon/src/profile/service.rs`'s `blocking`, which wraps `spawn_blocking`). A stalled file write or fsync holds the project's `writes` lock indefinitely, and hard rule 2 asks for a timeout. `save_if_current`'s failure branch adds a second untimed call. Fix direction: a bound on each call. It needs care, because the write can still land after the timeout fires, so memory must be noted from what the file holds afterwards.
+- **A failed proposal save still reports `true`** (33b review m7, pre-existing; `profile/service_run.rs`'s `save_if_current`). The detection carries on to `after_ready` and unregisters while `proposal.json` stays at its last saved state (for example `Verifying`). `running()` then reports it in progress until a restart's `restore` fails it.
+- **Write-then-note and delete-then-note paths keep a short reverse gap** (33b review m6). In `service_edit.rs`'s `save_over` and `verify_row_edit`, the file's `updated_at` can run ahead of the snapshot. In `store_ready` and `reject`, the snapshot can list a ready proposal for one write after the file shows it stored or gone. No reader acts on it today. It matters only if a client starts keying on `updated_at`.

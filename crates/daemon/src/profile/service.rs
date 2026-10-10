@@ -106,8 +106,8 @@ pub(super) struct Table {
     /// Stored profiles `restore` found, checked for staleness by `spawn` (re-review r1).
     pub(super) auto_at_start: Vec<(PathBuf, ProfileMeta)>,
     /// Milestone 9.0.5 decision 10: each project whose `proposal.json` is `Ready`, with
-    /// its `updated_at`, as the last successful write or delete left it. Memory only:
-    /// `restore` rebuilds it from disk.
+    /// its `updated_at`, as the last write or delete left it (a detection's save notes it
+    /// just before its write, M9.11.33b). Memory only: `restore` rebuilds it from disk.
     pub(super) ready: BTreeMap<PathBuf, u64>,
     /// Moves on every change to `ready`, so the run service publishes it once.
     pub(super) ready_generation: u64,
@@ -122,13 +122,17 @@ pub(super) struct Table {
     pub(super) draining: std::collections::BTreeSet<PathBuf>,
 }
 
+/// A hold of one repository's profile writes ([`ProfileService::hold_writes`]).
+pub(super) type WritesGuard = tokio::sync::OwnedMutexGuard<()>;
+
 /// See the module doc.
 pub struct ProfileService {
     pub(super) scouts: Arc<ScoutService>,
     pub(super) manager: Arc<WindowManager>,
     pub(super) ctx: ProfileContext,
     pub(super) table: Mutex<Table>,
-    pub(super) writes: tokio::sync::Mutex<()>,
+    /// Milestone 9.11 decision 35 (B11): one write lock per repository ([`Self::writes_for`]).
+    writes: Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>,
     next_generation: AtomicU64,
     /// Milestone 9.0.6 decision 37: the runs a profile edit waits for (`set_live_runs`).
     live_runs: Mutex<Option<LiveRuns>>,
@@ -137,6 +141,12 @@ pub struct ProfileService {
     /// Milestone 9.10 decision 10: one tick per verified command, shared by every
     /// `CheckCounter`; it only grows.
     pub(super) progress_ticks: Arc<AtomicU64>,
+    /// M9.11.33b's seam: when set, `save_if_current` stops between its two steps.
+    #[cfg(test)]
+    pub(super) ready_gap: Mutex<Option<super::service_run::GapHook>>,
+    /// The rollback's seam: when set, `save_if_current`'s write fails.
+    #[cfg(test)]
+    pub(super) fail_save: std::sync::atomic::AtomicBool,
     /// Decision 6: starts a drained goal (`set_goal_starter`).
     pub(super) starter: Mutex<Option<super::service_queue::GoalStarter>>,
 }
@@ -213,11 +223,15 @@ impl ProfileService {
             manager,
             ctx,
             table: Mutex::new(Table::default()),
-            writes: tokio::sync::Mutex::new(()),
+            writes: Mutex::default(),
             next_generation: AtomicU64::new(1),
             live_runs: Mutex::new(None),
             host: std::sync::OnceLock::new(),
             progress_ticks: Arc::new(AtomicU64::new(0)),
+            #[cfg(test)]
+            ready_gap: Mutex::new(None),
+            #[cfg(test)]
+            fail_save: std::sync::atomic::AtomicBool::new(false),
             starter: Mutex::new(None),
         })
     }
@@ -241,6 +255,17 @@ impl ProfileService {
 
     pub(super) fn repo_dir(&self, project: &Path) -> PathBuf {
         super::repo_dir(&self.ctx.data_dir, project)
+    }
+
+    /// `project`'s write lock; the table is held only to fetch it, never across an await.
+    pub(super) fn writes_for(&self, project: &Path) -> Arc<tokio::sync::Mutex<()>> {
+        let mut writes = crate::lock(&self.writes);
+        writes.entry(project.to_path_buf()).or_default().clone()
+    }
+
+    /// [`Self::writes_for`]`(project)` held until the guard drops.
+    pub(super) async fn hold_writes(&self, project: &Path) -> WritesGuard {
+        self.writes_for(project).lock_owned().await
     }
 
     pub(super) fn git_timeout(&self) -> Duration {
@@ -406,8 +431,9 @@ impl ProfileService {
         (table.ready_generation, list)
     }
 
-    /// Records what `project`'s `proposal.json` now holds, called only after the write
-    /// (`Some`) or the delete (`None`) succeeded, and by `restore` for what it loaded.
+    /// Records what `project`'s `proposal.json` holds: after a write (`Some`) or delete
+    /// (`None`), just before a detection's save writes it (M9.11.33b, which notes the file
+    /// back if the write fails), and by `restore` for what it loaded.
     /// Memory only, never across an `.await`. Every call moves `setup_generation` and
     /// records the state (milestone 9.10 decision 10).
     pub(super) fn note_proposal(&self, project: &Path, record: Option<&ProposalRecord>) {
@@ -429,28 +455,6 @@ impl ProfileService {
         };
         if changed {
             table.ready_generation += 1;
-        }
-    }
-
-    /// Saves `record` only while `generation` still owns its proposal, ordered against
-    /// `reject` by `writes`. `false`: the proposal was rejected, nothing was written.
-    pub(super) async fn save_if_current(&self, generation: u64, record: &ProposalRecord) -> bool {
-        let _writes = self.writes.lock().await;
-        if !self.current(&record.project, generation) {
-            return false;
-        }
-        let (dir, record) = (self.repo_dir(&record.project), record.clone());
-        let saved = record.clone();
-        match blocking(move || store::save_proposal(&dir, &record).map_err(|e| e.to_string())).await
-        {
-            Ok(()) => {
-                self.note_proposal(&saved.project, Some(&saved));
-                true
-            }
-            Err(error) => {
-                tracing::warn!(%error, "could not save a profile proposal");
-                true
-            }
         }
     }
 }

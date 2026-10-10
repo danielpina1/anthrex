@@ -166,7 +166,7 @@ impl ProfileService {
         }
         record.profile = Some(edited);
         record.verification = meta.verification;
-        let _writes = self.writes.lock().await;
+        let _writes = self.hold_writes(&project).await;
         let active = crate::lock(&self.table).active.contains_key(&project);
         if active {
             return Err(super::service_requests::stopping(&project));
@@ -199,7 +199,7 @@ impl ProfileService {
         key: &str,
         value: Option<&str>,
     ) -> Result<bool, String> {
-        let _writes = self.writes.lock().await;
+        let _writes = self.hold_writes(project).await;
         let (dir, p) = (self.repo_dir(project), project.to_path_buf());
         let (key, value) = (key.to_string(), value.map(str::to_string));
         let stored = blocking(move || {
@@ -304,7 +304,7 @@ impl ProfileService {
         expected: &ProposalRecord,
         next: &ProposalRecord,
     ) -> Result<(), String> {
-        let _writes = self.writes.lock().await;
+        let _writes = self.hold_writes(project).await;
         if let Some(refusal) = self.busy(project) {
             return Err(refusal);
         }
@@ -355,7 +355,7 @@ impl ProfileService {
         expected: &ProposalRecord,
         next: &ProposalRecord,
     ) -> Result<(u64, CancellationToken), String> {
-        let _writes = self.writes.lock().await;
+        let _writes = self.hold_writes(project).await;
         let Some((generation, token)) = self.register(project) else {
             return Err(self.busy(project).unwrap_or_else(|| changed(project)));
         };
@@ -380,7 +380,7 @@ impl ProfileService {
         self.unmark(&project).await;
         // The outcome and the end of the work under one hold of `writes`: whoever sees the
         // outcome there sees the work ended.
-        let _writes = self.writes.lock().await;
+        let _writes = self.hold_writes(&project).await;
         if let Some(record) = outcome.filter(|_| self.current(&project, generation)) {
             let (dir, written) = (self.repo_dir(&project), record.clone());
             let saved =
@@ -400,7 +400,7 @@ impl ProfileService {
         let project = self.project_of(dir).await?;
         // Asked before `writes` is taken: the callback runs with no lock of ours held.
         let live = !self.live_runs(&project).is_empty();
-        let _writes = self.writes.lock().await;
+        let _writes = self.hold_writes(&project).await;
         let repo_dir = self.repo_dir(&project);
         let loaded = blocking(move || store::load_proposal(&repo_dir)).await?;
         let Some(record) = loaded else {
