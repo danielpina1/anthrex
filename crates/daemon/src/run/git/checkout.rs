@@ -37,6 +37,11 @@ use crate::worktree::pinned::{self, PinAs};
 /// The marker, in [`Repo::engine`], that the checkout's files are in place.
 const READY: &str = "ready";
 
+/// Milestone 9.11 decision 15 (A15): the file, in [`Repo::engine`], holding the
+/// identity the user's repository resolves; the checkout's config includes it after
+/// the repository config ([`config`]), by a path relative to the git directory.
+const IDENTITY: &str = "identity";
+
 /// Where a checkout's repository and the engine's own files live.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Repo {
@@ -102,10 +107,13 @@ pub(crate) enum Kind<'a> {
 }
 
 /// The repository's config for the checkout at `path`. The user's repository config is
-/// included (after a default hooks path, which it may override), and then what the
-/// engine needs: not bare, the checkout as the work tree, no reflogs, no automatic gc.
-/// The format settings come first: git reads a repository's format from its own file
-/// only, never from an include.
+/// included (after a default hooks path, which it may override), then the identity the
+/// user's repository resolves (`../engine/identity`, [`identity`]: an `includeIf
+/// "gitdir:…"` in their config is evaluated against this git directory, where it never
+/// matches, milestone 9.11 decision 15), and then what the engine needs: not bare, the
+/// checkout as the work tree, no reflogs, no automatic gc. The format settings come
+/// first: git reads a repository's format from its own file only, never from an
+/// include.
 pub(crate) fn config(common: &Path, path: &Path, sha256: bool) -> String {
     let mut text = String::from("[core]\n");
     if sha256 {
@@ -114,7 +122,7 @@ pub(crate) fn config(common: &Path, path: &Path, sha256: bool) -> String {
         text.push_str("\trepositoryformatversion = 0\n");
     }
     text.push_str(&format!(
-        "\thooksPath = {}\n[include]\n\tpath = {}\n[core]\n\tbare = false\n\tworktree = {}\n\tlogAllRefUpdates = false\n[gc]\n\tauto = 0\n",
+        "\thooksPath = {}\n[include]\n\tpath = {}\n\tpath = ../engine/{IDENTITY}\n[core]\n\tbare = false\n\tworktree = {}\n\tlogAllRefUpdates = false\n[gc]\n\tauto = 0\n",
         quoted(&common.join("hooks")),
         quoted(&common.join("config")),
         quoted(path),
@@ -129,6 +137,41 @@ pub(crate) fn config(common: &Path, path: &Path, sha256: bool) -> String {
 fn quoted(path: &Path) -> String {
     let text = path.display().to_string();
     format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+/// Milestone 9.11 decision 15 (A15): `user.name` and `user.email` as the user's
+/// repository resolves them (`git config --get` in its git directory `common`, where
+/// their `includeIf "gitdir:…"` matches), as a config file; a key git cannot resolve
+/// is left out, so the checkout falls back to what its include gives, as before.
+fn identity(g: Git<'_>, common: &Path) -> String {
+    let mut text = String::new();
+    for key in ["name", "email"] {
+        let name = format!("user.{key}");
+        let args = [os("config"), os("--get"), os(&name)];
+        let value = match g.read(common, &args) {
+            Ok(output) if output.success => {
+                output.stdout.trim_end_matches(['\n', '\r']).to_string()
+            }
+            _ => continue,
+        };
+        if !value.is_empty() {
+            text.push_str(&format!("\t{key} = {}\n", value_quoted(&value)));
+        }
+    }
+    match text.is_empty() {
+        true => text,
+        false => format!("[user]\n{text}"),
+    }
+}
+
+/// A config value quoted, with `\`, `"`, newline and tab escaped.
+fn value_quoted(value: &str) -> String {
+    let escaped = value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\t', "\\t");
+    format!("\"{escaped}\"")
 }
 
 /// The checkout at `path` and its repository `repo`, made or repaired, and pinned:
@@ -187,6 +230,7 @@ pub(crate) fn ensure(
         "config",
         config(common, &path, sha256).as_bytes(),
     )?;
+    put(&engine, &engine, IDENTITY, identity(g, common).as_bytes())?;
     let alternates = format!("{}\n", common.join("objects").display());
     put_beneath(
         &git_dir,
