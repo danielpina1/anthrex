@@ -250,7 +250,7 @@ ci_fix_max = 2
 review_fix_max = 3
 ```
 
-Other tables: `[conversation]` (the conversation view's limits and runtime badges), `[panes]`, and under `[orchestrator]`: `budget`, `review`, `claude`, `deciders`, `scouts`, `onboarding`, `metering`, `planners` and `tuning`. `[orchestrator.onboarding] auto` decides only whether a stale profile is detected again on its own; a goal in a repository with no profile sets it up either way. The delivery mode (`local` or `pr`) and remote are per repository, in its profile: `anthrex profile edit`.
+Other tables: `[conversation]` (the conversation view's limits and runtime badges), `[panes]` (accepted for compatibility and ignored; split panes were dropped), and under `[orchestrator]`: `budget`, `review`, `claude`, `deciders`, `scouts`, `onboarding`, `metering`, `planners` and `tuning`. `[orchestrator.onboarding] auto` decides only whether a stale profile is detected again on its own; a goal in a repository with no profile sets it up either way. The delivery mode (`local` or `pr`) and remote are per repository, in its profile: `anthrex profile edit`.
 
 ### Models
 
@@ -377,7 +377,7 @@ The tests never run a real agent: they use `crates/fake-agent`. The smoke test r
 
 ## Roadmap
 
-[`docs/ROADMAP.md`](docs/ROADMAP.md) lists every milestone, its brief and its status. Split panes (milestone 7) are the one planned feature not built yet.
+[`docs/ROADMAP.md`](docs/ROADMAP.md) lists every milestone, its brief and its status.
 
 ## Contributing
 

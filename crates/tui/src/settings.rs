@@ -61,8 +61,8 @@ impl UiSettings {
                 .sidebar_width
                 .unwrap_or(crate::ui::DEFAULT_SIDEBAR_WIDTH),
             // Whole-branch-review Minor: `config::Panes::max` deliberately has no
-            // field here to receive it — M7 (split panes, deferred) is what will
-            // actually read it. A `panes_max` field threaded this far and read
+            // field here to receive it — nothing reads it (milestone 7, split
+            // panes, was dropped). A `panes_max` field threaded this far and read
             // nowhere is dead code by this milestone's own hard rule 8, not
             // forward-compatibility; add it back alongside its first real reader.
             tree_keep_finished_secs: c.ui.tree_keep_finished_secs,
