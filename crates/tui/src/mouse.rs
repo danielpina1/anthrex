@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 /// Two left presses on the same cell within this are one double click.
 /// Crossterm reports presses, never gestures, so the client recognises this
 /// one itself.
-const DOUBLE_CLICK: Duration = Duration::from_millis(400);
+pub(crate) const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 
 /// How far one wheel notch scrolls the graph canvas (decision 16).
 const WHEEL_ROWS: u16 = 3;
@@ -36,11 +36,13 @@ impl MouseState {
     ///
     /// A double click consumes the gesture, so a third press starts a new one
     /// instead of firing again on every press after the second.
-    fn press(&mut self, column: u16, row: u16) -> bool {
-        let double = self
-            .last_press
-            .is_some_and(|(x, y, at)| (x, y) == (column, row) && at.elapsed() < DOUBLE_CLICK);
-        self.last_press = (!double).then(|| (column, row, Instant::now()));
+    /// `now` is the press's instant (milestone 9.11 decision 23), so the window is
+    /// measured against the caller's clock.
+    pub(crate) fn press(&mut self, column: u16, row: u16, now: Instant) -> bool {
+        let double = self.last_press.is_some_and(|(x, y, at)| {
+            (x, y) == (column, row) && now.saturating_duration_since(at) < DOUBLE_CLICK
+        });
+        self.last_press = (!double).then_some((column, row, now));
         self.drag_from = Some((column, row));
         double
     }
@@ -137,6 +139,18 @@ impl App {
     }
 
     pub fn on_click(&mut self, column: u16, row: u16, layout: &ui::Layout) -> Vec<Effect> {
+        self.on_click_at(column, row, layout, Instant::now())
+    }
+
+    /// [`App::on_click`] at a given instant (milestone 9.11 decision 23): a double
+    /// click's window is measured against `now`.
+    pub fn on_click_at(
+        &mut self,
+        column: u16,
+        row: u16,
+        layout: &ui::Layout,
+        now: Instant,
+    ) -> Vec<Effect> {
         self.forget_stale_panel_state();
         if self.modal.is_some() || self.plan_review.is_some() || self.screen.is_some() {
             return vec![];
@@ -155,7 +169,7 @@ impl App {
             return vec![];
         }
         if self.overview
-            && let Some(effects) = self.click_graph(column, row, layout.main)
+            && let Some(effects) = self.click_graph(column, row, layout.main, now)
         {
             return effects;
         }
@@ -235,6 +249,7 @@ impl App {
         column: u16,
         row: u16,
         main: ratatui::layout::Rect,
+        now: Instant,
     ) -> Option<Vec<Effect>> {
         // One row build for the gesture: `overview::view` would otherwise
         // build its own, and the selection below needs the same list — the run
@@ -249,7 +264,7 @@ impl App {
         if !view.canvas.contains((column, row).into()) {
             return None;
         }
-        let double = self.graph_mouse.press(column, row);
+        let double = self.graph_mouse.press(column, row, now);
         // Decision 22: the list hit-tests through the function its renderer windows by.
         let key = if view.list && double {
             // The first press re-centred the window on its row, so the second, on the

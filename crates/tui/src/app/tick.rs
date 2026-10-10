@@ -9,6 +9,12 @@ use std::time::Instant;
 impl App {
     /// The renderer calls this with the main inner area after every draw.
     pub fn set_terminal_size(&mut self, cols: u16, rows: u16) -> Vec<Effect> {
+        self.set_terminal_size_at(cols, rows, Instant::now())
+    }
+
+    /// [`App::set_terminal_size`] at a given instant (milestone 9.11 decision 23): the
+    /// debounce of a later size change is measured from `now`.
+    pub fn set_terminal_size_at(&mut self, cols: u16, rows: u16, now: Instant) -> Vec<Effect> {
         // The conversation view draws in the same main area, so its interior is this
         // size too; set before the early return so it is right from the first frame.
         self.conversation.set_interior_width(cols);
@@ -21,7 +27,7 @@ impl App {
         if first {
             return self.ensure_focus();
         }
-        self.pending_resize = Some(Instant::now());
+        self.pending_resize = Some(now);
         vec![]
     }
 
@@ -54,20 +60,26 @@ impl App {
     /// Called every 100 ms: advances the spinner, expires toasts, retries a dropped
     /// `Subscribe`, flushes a debounced resize.
     pub fn on_tick(&mut self) -> Vec<Effect> {
-        self.ticked_at = Instant::now();
+        self.on_tick_at(Instant::now())
+    }
+
+    /// [`App::on_tick`] at a given instant (milestone 9.11 decision 23): the toast's
+    /// time to live and the resize debounce are measured against `now`.
+    pub fn on_tick_at(&mut self, now: Instant) -> Vec<Effect> {
+        self.ticked_at = now;
         let mut effects = self.expire_replies();
-        effects.extend(self.screens_tick(self.ticked_at));
-        effects.extend(self.tick());
+        effects.extend(self.screens_tick(now));
+        effects.extend(self.tick(now));
         effects
     }
 
-    fn tick(&mut self) -> Vec<Effect> {
+    fn tick(&mut self, now: Instant) -> Vec<Effect> {
         self.spinner_frame = self.spinner_frame.wrapping_add(1);
         self.forget_stale_panel_state();
         if self
             .toast
             .as_ref()
-            .is_some_and(|t| t.at.elapsed() >= TOAST_TTL)
+            .is_some_and(|t| now.saturating_duration_since(t.at) >= TOAST_TTL)
         {
             self.toast = None;
         }
@@ -80,7 +92,7 @@ impl App {
         }
         if self
             .pending_resize
-            .is_some_and(|at| at.elapsed() >= RESIZE_DEBOUNCE)
+            .is_some_and(|at| now.saturating_duration_since(at) >= RESIZE_DEBOUNCE)
         {
             self.pending_resize = None;
             if let Some(id) = self.focused_pty() {
