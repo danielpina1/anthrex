@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use proto::{HookSource, Runtime, Status};
 use serde_json::json;
 
-use super::rig::{SLACK, draw, fixture_screen, role, screen, shown, spec, stand_in};
+use super::rig::{SLACK, draw, draw_split, fixture_screen, role, screen, shown, spec, stand_in};
 use super::*;
 use crate::launch::LaunchGate;
 use crate::manager::{ManagerConfig, WindowManager};
@@ -306,6 +306,20 @@ async fn a_further_question_raises_it_again() {
     rig.tick_with(window, "orch.ctl", Some(1)).await;
     assert_eq!(rig.status(window).0, Status::Working);
     rig.tick_with(window, "orch.ctl", Some(3)).await;
+    assert_eq!(rig.status(window).0, Status::Attention);
+    let _ = rig.manager.kill(window);
+}
+
+/// M9.11.36 (C4): the stand-in draws the screen in two writes, its first line, then the
+/// rest after a stall. The wait before the tick must cover the whole screen: a wait for
+/// the first line alone ticked on the half-drawn screen and missed the footer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_screen_drawn_in_two_writes_is_scanned_whole() {
+    let rig = rig();
+    let window = rig.orchestrator().await;
+    draw_split(rig.dir.path(), "orch.ctl", &screen(Some(1)));
+    shown(&rig.manager, window, Some(1)).await;
+    rig.manager.tick();
     assert_eq!(rig.status(window).0, Status::Attention);
     let _ = rig.manager.kill(window);
 }

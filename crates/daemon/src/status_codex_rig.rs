@@ -13,8 +13,22 @@ use crate::manager::WindowManager;
 
 const FIXTURE: &str = include_str!("../tests/fixtures/screens/codex-question-footer.txt");
 
-/// Slack on top of each derived bound (a process start, a few 20 ms polls).
+/// The bound on each wait for the stand-in (M9.11.36, C4; `docs/timing-budgets.md`
+/// standing rule 1). What a wait covers once [`stand_in`] has warmed the script's first
+/// exec: the PTY spawn and the script's start (~0.02 s warmed; "Measured primitive
+/// costs"), the script's 50 ms poll of its control file, one `cat` spawn (90 ms at the
+/// loaded maximum), at most [`SPLIT_STALL`] for a split draw, then the PTY read and the
+/// parse: under 0.5 s. Five seconds is that sum with a tenfold margin for a loaded
+/// host; the unwarmed first exec (0.44 s, serialised to 3.5 s at eight at once) is no
+/// longer inside it.
 pub(crate) const SLACK: Duration = Duration::from_secs(5);
+
+/// The marker [`draw_split`] puts in a control file: the stand-in draws what is before
+/// it, stalls [`SPLIT_STALL`], then draws the rest.
+const SPLIT: &str = "@@anthrex-split@@";
+/// A split draw's stall: far longer than the 20 ms poll of [`shown`], so a wait that
+/// stops at the first line always sees the half-drawn screen.
+const SPLIT_STALL: &str = "0.3";
 
 /// The fixture's screen: every line but its `# ` notes.
 pub(crate) fn fixture_screen() -> String {
@@ -42,8 +56,13 @@ pub(crate) fn screen(questions: Option<u32>) -> String {
 /// `codex` in `dir`: `--version` answered at once (`docs/timing-budgets.md`), no echo,
 /// a `Ready` title (its signal, as a Codex session with no hooks gives), then the screen
 /// redrawn each time the control file in `dir` changes: the one its environment's
-/// `ANTHREX_TEST_CTL` names (the role's `env`), else `plain.ctl`. It exits once `dir`
-/// is gone.
+/// `ANTHREX_TEST_CTL` names (the role's `env`), else `plain.ctl`. A control file with
+/// [`SPLIT`] in it is drawn in two writes, [`SPLIT_STALL`] apart ([`draw_split`]). It
+/// exits once `dir` is gone.
+///
+/// M9.11.36 (C4): the script is run once with `--version` before this returns, as
+/// `ordering_codex` does (`docs/timing-budgets.md`, "the codex-probe ordering flake"),
+/// so macOS's first-exec assessment of the fresh file is paid here, outside every wait.
 pub(crate) fn stand_in(dir: &Path) -> String {
     let codex = dir.join("codex");
     let script = format!(
@@ -51,11 +70,19 @@ pub(crate) fn stand_in(dir: &Path) -> String {
          stty -echo 2>/dev/null\nprintf '\\033]0;Ready\\007'\n\
          ctl={dir}/\"${{ANTHREX_TEST_CTL:-plain.ctl}}\"\nlast=''\nwhile :; do\n  \
          [ -d \"{dir}\" ] || exit 0\n  c=$(cat \"$ctl\" 2>/dev/null)\n  \
-         if [ \"$c\" != \"$last\" ]; then\n    printf '\\033[2J\\033[H%s' \"$c\"\n    \
+         if [ \"$c\" != \"$last\" ]; then\n    case \"$c\" in\n    \
+         *{SPLIT}*) printf '\\033[2J\\033[H%s' \"${{c%%{SPLIT}*}}\"\n      \
+         sleep {SPLIT_STALL}\n      printf '%s' \"${{c#*{SPLIT}}}\" ;;\n    \
+         *) printf '\\033[2J\\033[H%s' \"$c\" ;;\n    esac\n    \
          last=$c\n  fi\n  sleep 0.05\ndone\n",
         dir = dir.display()
     );
     testexec::write_executable(&codex, script);
+    let warm = std::process::Command::new(&codex)
+        .arg("--version")
+        .output()
+        .expect("the stand-in's warm-up");
+    assert!(warm.status.success(), "the stand-in's warm-up: {warm:?}");
     codex.to_str().unwrap().into()
 }
 
@@ -108,19 +135,37 @@ pub(crate) fn draw(dir: &Path, ctl: &str, screen: &str) {
     std::fs::rename(tmp, path).unwrap();
 }
 
-/// Waits until `window`'s screen shows [`screen`]`(questions)`.
+/// Writes `screen` to `dir/ctl` as [`draw`] does, for the stand-in to draw in two
+/// writes: its first line, then, [`SPLIT_STALL`] later, the rest (M9.11.36, C4).
+pub(crate) fn draw_split(dir: &Path, ctl: &str, screen: &str) {
+    let (first, rest) = screen
+        .split_once('\n')
+        .expect("a screen of two lines or more");
+    draw(dir, ctl, &format!("{first}\n{SPLIT}{rest}"));
+}
+
+/// Waits until `window`'s screen shows the whole of [`screen`]`(questions)`: every one
+/// of its non-blank lines is a row of the window's screen (M9.11.36, C4: a wait for its
+/// first line alone could end on a half-drawn screen, and a tick then scanned no footer).
 pub(crate) async fn shown(manager: &WindowManager, window: u32, questions: Option<u32>) {
-    let token = match questions {
-        None => "screen: no footer".to_string(),
-        Some(n) => format!("screen: {n}"),
-    };
+    let want = screen(questions);
+    let want: Vec<&str> = (want.lines().map(str::trim))
+        .filter(|l| !l.is_empty())
+        .collect();
     let deadline = Instant::now() + SLACK;
     loop {
-        let (bytes, _, _) = manager.snapshot(window).unwrap();
-        if String::from_utf8_lossy(&bytes).contains(&token) {
+        let (bytes, cols, rows) = manager.snapshot(window).unwrap();
+        let mut parser = vt100::Parser::new(rows, cols, 0);
+        parser.process(&bytes);
+        let text = parser.screen().contents();
+        let have: Vec<&str> = text.lines().map(str::trim).collect();
+        if want.iter().all(|line| have.contains(line)) {
             return;
         }
-        assert!(Instant::now() < deadline, "screen never {token:?}");
+        assert!(
+            Instant::now() < deadline,
+            "the screen never showed all of {want:?}; it shows {text:?}"
+        );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }
