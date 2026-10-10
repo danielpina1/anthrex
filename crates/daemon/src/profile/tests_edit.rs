@@ -33,7 +33,8 @@ pub(super) fn edit(project: &Path, key: &str, value: Option<&str>) -> ProfileReq
         value: value.map(str::to_string),
         // The TUI always sends `yes: true` (decision 16).
         yes: true,
-        unconfined_checks: false,
+        // Off macOS no sandbox confines a check; these tests are not about that.
+        unconfined_checks: !cfg!(target_os = "macos"),
         anyway: false,
         on_proposal: false,
     }
