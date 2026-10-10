@@ -241,6 +241,11 @@ fn hostile_text_never_reaches_a_drawn_row() {
                 },
             });
             st.proposal = Some(r);
+            st.dropped_goals = vec![proto::DroppedGoal {
+                goal: evil.into(),
+                reason: evil.into(),
+                at: 1,
+            }];
             s.selected = 1;
             s.expanded = Some("check".into());
         }

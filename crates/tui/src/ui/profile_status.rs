@@ -92,9 +92,35 @@ fn edit_notice(s: &ProfileScreen) -> Option<String> {
     }
 }
 
+/// How many of the daemon's dropped goals (it keeps five) the footer shows.
+const DROPPED_SHOWN: usize = 3;
+/// A dropped goal's goal is cut to this many characters (the brief's dropped-goal text).
+const GOAL_CHARS: usize = 60;
+
+/// Final review D-I2: the last queued goals that could not start, as `profile status`
+/// lists them: `dropped the queued goal "<goal>": <reason>`.
+fn dropped_goals(s: &ProfileScreen) -> Vec<String> {
+    let Some(status) = &s.status else {
+        return vec![];
+    };
+    let list = &status.dropped_goals;
+    list[list.len().saturating_sub(DROPPED_SHOWN)..]
+        .iter()
+        .map(|d| {
+            let goal = if d.goal.chars().count() > GOAL_CHARS {
+                let kept: String = d.goal.chars().take(GOAL_CHARS - 1).collect();
+                format!("{kept}…")
+            } else {
+                d.goal.clone()
+            };
+            format!("dropped the queued goal \"{goal}\": {}", d.reason)
+        })
+        .collect()
+}
+
 /// The footer: a ✗ row edit's notice in `Attention`, the daemon's last text (a refusal
-/// in `Failed`, else a `Done` muted), then a failed set-up's reason in `Failed`; each
-/// at most three lines, none hiding another.
+/// in `Failed`, else a `Done` muted), a failed set-up's reason, then the last dropped
+/// goals, in `Failed`; each at most three lines, none hiding another.
 pub(super) fn footer(s: &ProfileScreen, width: usize, p: Palette) -> Vec<Line<'static>> {
     let notice = edit_notice(s).map(|n| (n, Role::Attention));
     let last = match (&s.error, &s.message) {
@@ -103,10 +129,12 @@ pub(super) fn footer(s: &ProfileScreen, width: usize, p: Palette) -> Vec<Line<'s
         _ => None,
     };
     let failed = setup_failure(s).map(|f| (f, Role::Failed));
+    let dropped = dropped_goals(s).into_iter().map(|d| (d, Role::Failed));
     notice
         .into_iter()
         .chain(last)
         .chain(failed)
+        .chain(dropped)
         .flat_map(|(text, r)| footer_text(&text, r, width, p))
         .collect()
 }

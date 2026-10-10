@@ -33,6 +33,7 @@ impl App {
             && due(s.status_sent_at)
             && (s.in_progress()
                 || s.row_checking()
+                || s.drain_until.is_some_and(|until| now < until)
                 || (s.status.is_none() && s.status_failed.is_some()));
         let sides: Vec<bool> = [false, true]
             .into_iter()
@@ -266,6 +267,13 @@ impl App {
             (_, ProfileReply::Done { message }) => {
                 s.message = Some(message.clone());
                 s.error = None;
+                // Final review D-I2: the goals that waited start now; one that cannot
+                // is recorded a moment later, and the poll brings it to the screen.
+                if ask == ProfileAsk::Confirm
+                    && s.status.as_ref().is_some_and(|st| !st.queued.is_empty())
+                {
+                    s.drain_until = Some(Instant::now() + super::DRAIN_WATCH);
+                }
                 match (ask, s.saving.as_mut()) {
                     (ProfileAsk::Edit, Some(saving)) => saving.done = true,
                     _ => s.saving = None,

@@ -179,3 +179,51 @@ fn the_gate_opens_when_the_link_is_lost() {
         "{again:?}"
     );
 }
+
+/// A status with a ready review proposal and one goal waiting for it.
+fn ready_with_a_queued_goal() -> ProfileReply {
+    status_with(Some(ProposalState::Ready), |st| {
+        st.queued = vec![proto::QueuedGoalInfo {
+            id: "q1".into(),
+            project: dir(),
+            goal: "add a flag".into(),
+            queued_at: 0,
+            yes: false,
+            trust_project: false,
+            unconfined_checks: false,
+            setup: proto::SetupState::NeedsReview,
+        }];
+    })
+}
+
+/// Final review D-I2: **Use this** with goals waiting starts them after its reply, and
+/// a goal that cannot start is recorded a moment later; the screen asks for the status
+/// once a second for [`DRAIN_WATCH`] after it, so the dropped goal shows. Without
+/// waiting goals it does not poll.
+#[test]
+fn use_this_with_queued_goals_watches_them_start() {
+    use super::profile_screen::statuses;
+    use crate::app::profile_screen::DRAIN_WATCH;
+    for queued in [true, false] {
+        let (mut app, _) = ready_app();
+        if queued {
+            poll(&mut app, ready_with_a_queued_goal());
+        }
+        let id = tagged(&tap(&mut app, KeyCode::Enter))[0].0;
+        let done = ProfileReply::Done {
+            message: "stored the profile for /p/shop".into(),
+        };
+        let asked = tagged(&reply(&mut app, id, done));
+        reply(&mut app, asked[0].0, status(None));
+        let t0 = Instant::now();
+        let later = t0 + Duration::from_secs(2);
+        let polled = app.screens_tick(later);
+        assert_eq!(statuses(&polled), usize::from(queued), "{queued}");
+        // Answered, the poll goes on; nothing once the watch is over.
+        for (id, _) in tagged(&polled) {
+            reply(&mut app, id, status(None));
+        }
+        let past = t0 + DRAIN_WATCH + Duration::from_secs(2);
+        assert_eq!(statuses(&app.screens_tick(past)), 0, "{queued}");
+    }
+}

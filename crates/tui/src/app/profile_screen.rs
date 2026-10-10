@@ -26,6 +26,10 @@ pub const NO_PROJECT: &str = "select a Git project to see its profile";
 /// Decision 34: one `Status` a second while a detection runs.
 pub const POLL_EVERY: Duration = Duration::from_secs(1);
 
+/// Final review D-I2: how long after **Use this** with goals waiting the screen polls
+/// the status, so a goal that could not start shows among the dropped ones.
+pub const DRAIN_WATCH: Duration = Duration::from_secs(30);
+
 /// The key of the `Advanced ▸` line among the rows (decision 29: Enter toggles it).
 pub const ADVANCED_ROW: &str = "advanced";
 
@@ -158,6 +162,8 @@ pub struct ProfileScreen {
     pub(crate) saving: Option<Saving>,
     /// The request id of the last `s`, `r` or **Use this**: another waits for its reply.
     pub(crate) acting: Option<u64>,
+    /// Until when the status is polled after **Use this** started queued goals.
+    pub(crate) drain_until: Option<Instant>,
 }
 
 /// Interfaces-style refusal of `C-b a`, `C-b m` and `C-b t` over a full screen.
@@ -183,6 +189,7 @@ impl ProfileScreen {
             show_id: [None; 2],
             saving: None,
             acting: None,
+            drain_until: None,
         }
     }
 

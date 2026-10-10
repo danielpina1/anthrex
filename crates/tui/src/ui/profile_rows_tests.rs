@@ -352,3 +352,32 @@ fn a_failed_rows_page_names_the_value_that_failed() {
     };
     assert!(at("your edit: cargo nextest run") < at("couldn't verify: exit 101 after 3s"));
 }
+
+/// Final review D-I2: a queued goal that could not start is drawn with its reason
+/// (the daemon keeps the last five; the screen shows the last three), its goal cut to
+/// 60 characters, in `Failed`.
+#[test]
+fn dropped_goals_are_drawn_with_their_reasons() {
+    let mut app = sp_app(false);
+    let failed = role(Role::Failed, app.palette()).fg.unwrap();
+    let mut st = status_of(true, None);
+    let long = "g".repeat(70);
+    st.dropped_goals = ["first", "second", "third", long.as_str()]
+        .iter()
+        .map(|goal| proto::DroppedGoal {
+            goal: goal.to_string(),
+            reason: format!("{goal}: HEAD is detached"),
+            at: 1,
+        })
+        .collect();
+    screen_mut(&mut app).status = Some(st);
+    let buffer = audit::draw(&app, 120, 40);
+    let text = audit::rows(&buffer).join("\n");
+    assert!(!text.contains("\"first\""), "only the last three\n{text}");
+    let line = "dropped the queued goal \"second\": second: HEAD is detached";
+    assert!(text.contains(line), "{text}");
+    let &(x, y) = audit::find(&buffer, line).first().unwrap();
+    assert_eq!(buffer[(x, y)].fg, failed);
+    let cut = format!("dropped the queued goal \"{}…\":", "g".repeat(59));
+    assert!(text.contains(&cut), "{text}");
+}
