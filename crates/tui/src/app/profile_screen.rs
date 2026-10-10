@@ -230,6 +230,12 @@ impl ProfileScreen {
         self.row_edit().filter(|e| e.key == key).map(|e| &e.state)
     }
 
+    /// The row edit when its check failed (decision 31's ✗), whatever its row.
+    pub fn failed_row_edit(&self) -> Option<&RowEdit> {
+        self.row_edit()
+            .filter(|e| matches!(e.state, RowEditState::Failed { .. }))
+    }
+
     /// A row edit's check is running (the screen polls meanwhile).
     pub fn row_checking(&self) -> bool {
         self.row_edit()

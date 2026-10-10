@@ -281,16 +281,11 @@ fn an_edit_refused_during_a_live_run_shows_the_daemons_text() {
     let effects = tap(&mut app, KeyCode::Char('y'));
     let id = tagged(&effects)[0].0;
     let text = "finish or cancel the run in this repo to change its profile";
-    assert!(
-        reply(
-            &mut app,
-            id,
-            ProfileReply::Refused {
-                message: text.into()
-            }
-        )
-        .is_empty()
-    );
+    // Final review M5: the views are asked again after a refusal.
+    let refused = ProfileReply::Refused {
+        message: text.into(),
+    };
+    assert_eq!(profile_requests(&reply(&mut app, id, refused)).len(), 3);
     assert_eq!(screen(&app).error.as_deref(), Some(text));
     assert_eq!(app.toast_text(), None, "not a toast");
     // A Done clears it and refreshes all three.

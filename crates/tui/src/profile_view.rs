@@ -61,6 +61,11 @@ pub fn sections() -> &'static [(&'static str, bool, &'static [&'static str])] {
 
 /// The section of `key` and whether it sits inside Advanced (`env.<NAME>` is the
 /// environment section's).
+/// Whether `key`'s row sits inside Advanced.
+pub fn in_advanced(key: &str) -> bool {
+    section_of(key).1
+}
+
 fn section_of(key: &str) -> (&'static str, bool) {
     let key = if key.starts_with("env.") {
         ENV_ADD
@@ -327,6 +332,23 @@ pub fn edit_text(profile: &RepoProfile, key: &str) -> String {
         Some(toml::Value::Array(items)) => items.iter().map(display).collect::<Vec<_>>().join("\n"),
         Some(value) => display(&value),
         None => String::new(),
+    }
+}
+
+/// Final review C-I1: a row edit's `value` as a row shows it, read as the daemon's
+/// `parse_value` reads it (`v = <value>` when that parses as one TOML value, else the
+/// text as typed); an environment value as typed, since it is stored unparsed; an unset
+/// `—`.
+pub fn tried_value(key: &str, value: Option<&str>) -> String {
+    let Some(value) = value else {
+        return "—".to_string();
+    };
+    if key.starts_with("env.") {
+        return value.to_string();
+    }
+    match toml::from_str::<toml::Table>(&format!("v = {value}")) {
+        Ok(table) if table.len() == 1 => table.get("v").map_or(value.to_string(), display),
+        _ => value.to_string(),
     }
 }
 

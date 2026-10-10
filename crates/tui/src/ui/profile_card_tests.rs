@@ -226,3 +226,38 @@ fn card_text_is_sanitised() {
         }
     }
 }
+
+/// Final review C-I1: on the card a ✗ row edit draws the value that failed, and,
+/// whatever row is selected, says plainly that **Use this** leaves it out.
+#[test]
+fn a_failed_proposal_edit_is_named_before_use_this() {
+    for ascii in [false, true] {
+        let mut app = fresh_app(ascii);
+        let s = screen_mut(&mut app);
+        let mut st = status_of(false, Some(ProposalState::Ready));
+        if let Some(p) = st.proposal.as_mut() {
+            p.edit = Some(proto::RowEdit {
+                key: "check".into(),
+                value: Some("\"cargo nextest run\"".into()),
+                state: proto::RowEditState::Failed {
+                    reason: "exit 101 after 3s".into(),
+                    tail: String::new(),
+                    secs: 3,
+                },
+            });
+        }
+        s.status = Some(st);
+        s.selected = 0;
+        let f = |text: &str| crate::theme::fold(text, ascii);
+        let text = crate::ui::audit::rows(&audit::draw(&app, 120, 40)).join("\n");
+        assert!(
+            text.contains(&f("cargo test --workspace → cargo nextest run")),
+            "{text}"
+        );
+        let notice = "your edit of check (cargo nextest run) failed its check; ⏎ uses this proposal without it";
+        assert!(text.contains(&f(notice)), "{text}");
+        // At 80 columns the notice wraps, and still shows.
+        let text = render_text(&app, 80, 24);
+        assert!(text.contains(&f("failed its check;")), "{text}");
+    }
+}

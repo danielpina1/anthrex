@@ -11,6 +11,9 @@ use crate::profile_view::{self, ENV_ADD, Row};
 use crossterm::event::{KeyCode, KeyEvent};
 use proto::{ProfileRequest, RowEdit, RowEditState};
 
+/// What a press of `s`, `r` or **Use this** shows while the last one's reply is out.
+pub(crate) const WAITING: &str = "waiting for the daemon's reply to the last request";
+
 impl App {
     /// The screen's keys: a page's first, then the card's or the profile's.
     pub(in crate::app) fn on_profile_key(&mut self, key: KeyEvent) -> Vec<Effect> {
@@ -20,17 +23,26 @@ impl App {
         if s.page.is_some() {
             return self.on_profile_page_key(key);
         }
-        // `s`, `r` and **Use this** wait for the last one's reply (review M1).
-        let last_act = s.acting;
-        let acting = last_act.is_some_and(|id| self.replies.contains(id));
-        let Some(s) = self.profile_screen_mut() else {
-            return vec![];
-        };
         let rows = s.rows();
         let row = rows.get(s.selected).cloned();
         let last = rows.len().saturating_sub(1);
         let card = s.showing_card();
         let on_row = row.as_ref().filter(|r| r.key != ADVANCED_ROW);
+        // `s`, `r` and **Use this** wait for the last one's reply (review M1), and a
+        // press the gate holds says so (task 8 re-review).
+        let acting = s.acting.is_some_and(|id| self.replies.contains(id));
+        let gated = match key.code {
+            KeyCode::Enter => card && on_row.is_some(),
+            KeyCode::Char('s' | 'r') => true,
+            _ => false,
+        };
+        if acting && gated {
+            self.toast_at(ToastLevel::Info, WAITING);
+            return vec![];
+        }
+        let Some(s) = self.profile_screen_mut() else {
+            return vec![];
+        };
         match key.code {
             KeyCode::Esc => self.set_screen(None),
             KeyCode::Char('j') | KeyCode::Down => s.selected = (s.selected + 1).min(last),
@@ -38,7 +50,10 @@ impl App {
             KeyCode::PageDown => s.selected = (s.selected + 10).min(last),
             KeyCode::PageUp => s.selected = s.selected.saturating_sub(10),
             KeyCode::Char('a') => toggle_advanced(s),
-            KeyCode::Enter if card && acting => {}
+            // Final review M3: the Advanced line folds or opens on the card too.
+            KeyCode::Enter if row.as_ref().is_some_and(|r| r.key == ADVANCED_ROW) => {
+                toggle_advanced(s)
+            }
             // M9.10.6 fix round: **Use this** waits for a row edit's check, as the daemon
             // does; the screen says so in the daemon's words.
             KeyCode::Enter if card && s.row_checking() => {
@@ -51,7 +66,6 @@ impl App {
             }
             KeyCode::Enter if card => return self.profile_use_this(),
             KeyCode::Enter => match &row {
-                Some(r) if r.key == ADVANCED_ROW => toggle_advanced(s),
                 Some(r) => {
                     s.page = Some(ProfilePage::Row {
                         key: r.key.clone(),
@@ -106,7 +120,6 @@ impl App {
                     focus: 0,
                 });
             }
-            KeyCode::Char('s' | 'r') if acting => {}
             KeyCode::Char(c @ ('s' | 'r')) => {
                 let failed = on_row.and_then(|r| failed_edit(s, &r.key)).cloned();
                 if let Some(edit) = failed {

@@ -54,6 +54,17 @@ fn a_failed_row_draws_its_cross_and_choices() {
             .first()
             .unwrap_or_else(|| panic!("{all}"));
         assert!(row.contains('✗'), "{all}");
+        // Final review C-I1: the value that failed is drawn, beside the one kept.
+        if w == 120 {
+            assert!(
+                row.contains("cargo test --workspace → cargo nextest run"),
+                "{all}"
+            );
+            assert!(
+                all.contains("your edit of check (cargo nextest run) failed its check; the profile is unchanged"),
+                "{all}"
+            );
+        }
         assert_eq!(buffer[(x, y)].fg, failed);
         let choices = "couldn't verify: exit 101 after 3s · o output · s save anyway · r revert";
         assert!(
@@ -294,4 +305,50 @@ fn the_list_window_keeps_its_height_without_a_hint() {
         height(&mut app, crate::app::profile_screen::ADVANCED_ROW),
         with_hint
     );
+}
+
+/// Final review C-I1: a ✗ row's page names the value that failed, above its reason.
+#[test]
+fn a_failed_rows_page_names_the_value_that_failed() {
+    let mut app = sp_app(false);
+    let mut st = status_of(true, None);
+    let mut r = record(
+        ProposalState::Ready,
+        ProposalOrigin::Edit {
+            keys: vec!["check".into()],
+        },
+    );
+    r.edit = Some(RowEdit {
+        key: "check".into(),
+        value: Some("\"cargo nextest run\"".into()),
+        state: RowEditState::Failed {
+            reason: "exit 101 after 3s".into(),
+            tail: String::new(),
+            secs: 3,
+        },
+    });
+    st.proposal = Some(r);
+    let s = screen_mut(&mut app);
+    s.status = Some(st);
+    let page = crate::app::profile_screen::ProfilePage::Row {
+        key: "check".into(),
+        scroll: 0,
+    };
+    let s = screen_mut(&mut app);
+    s.page = Some(page.clone());
+    let s = match &app.screen {
+        Some(crate::app::screens::Screen::Profile(s)) => s,
+        _ => unreachable!(),
+    };
+    let lines: Vec<String> = crate::ui::profile::page_lines(&app, s, &page, 76)
+        .into_iter()
+        .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+        .collect();
+    let at = |text: &str| {
+        lines
+            .iter()
+            .position(|l| l == text)
+            .unwrap_or_else(|| panic!("{text:?} in {lines:#?}"))
+    };
+    assert!(at("your edit: cargo nextest run") < at("couldn't verify: exit 101 after 3s"));
 }

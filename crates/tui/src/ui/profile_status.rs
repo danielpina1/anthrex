@@ -73,17 +73,39 @@ fn setup_failure(s: &ProfileScreen) -> Option<String> {
     }
 }
 
-/// The footer: the daemon's last text (a refusal in `Failed`, else a `Done` muted),
-/// then a failed set-up's reason in `Failed`; each at most three lines, neither hiding
-/// the other.
+/// Final review C-I1: a ✗ row edit, named with the value that failed, whatever row is
+/// selected. On the card it says that **Use this** leaves the edit out (the held ✗
+/// does not block it); on the profile, that the stored profile kept its value.
+fn edit_notice(s: &ProfileScreen) -> Option<String> {
+    let edit = s.failed_row_edit()?;
+    let what = format!(
+        "your edit of {} ({}) failed its check",
+        profile_words::label(&edit.key),
+        crate::profile_view::tried_value(&edit.key, edit.value.as_deref())
+    );
+    if s.showing_card() {
+        Some(format!("{what}; ⏎ uses this proposal without it"))
+    } else if !s.review_proposal() {
+        Some(format!("{what}; the profile is unchanged"))
+    } else {
+        None
+    }
+}
+
+/// The footer: a ✗ row edit's notice in `Attention`, the daemon's last text (a refusal
+/// in `Failed`, else a `Done` muted), then a failed set-up's reason in `Failed`; each
+/// at most three lines, none hiding another.
 pub(super) fn footer(s: &ProfileScreen, width: usize, p: Palette) -> Vec<Line<'static>> {
+    let notice = edit_notice(s).map(|n| (n, Role::Attention));
     let last = match (&s.error, &s.message) {
         (Some(e), _) => Some((e.clone(), Role::Failed)),
         (None, Some(m)) => Some((m.clone(), Role::Muted)),
         _ => None,
     };
     let failed = setup_failure(s).map(|f| (f, Role::Failed));
-    last.into_iter()
+    notice
+        .into_iter()
+        .chain(last)
         .chain(failed)
         .flat_map(|(text, r)| footer_text(&text, r, width, p))
         .collect()

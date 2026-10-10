@@ -182,7 +182,16 @@ impl App {
                 // A row edit whose check ends changed its side (decision 15): the stored
                 // profile for an `Edit`-origin record, else the review proposal.
                 let checked = s.row_checking().then(|| !s.review_proposal());
+                let failed_before = s.failed_row_edit().map(|e| e.key.clone());
                 s.status = Some(status.clone());
+                // Final review M7: a ✗ that arrives on a key inside Advanced opens it,
+                // so its row, and its `s` and `r`, show.
+                if let Some(key) = s.failed_row_edit().map(|e| e.key.clone())
+                    && Some(&key) != failed_before.as_ref()
+                    && crate::profile_view::in_advanced(&key)
+                {
+                    s.advanced = true;
+                }
                 s.status_failed = None;
                 if status.proposal.is_none() {
                     s.proposal = Side::Absent("no proposal".into());
@@ -238,7 +247,16 @@ impl App {
                 s.error = Some(message.clone());
                 s.message = None;
                 s.saving = None;
-                vec![]
+                // Final review M5: what was refused may have changed meanwhile (another
+                // client's edit, a re-detection): the views are asked again, so the
+                // next Enter sends what the card then shows.
+                match ask {
+                    ProfileAsk::Confirm
+                    | ProfileAsk::Edit
+                    | ProfileAsk::RevertEdit
+                    | ProfileAsk::Discard => self.profile_fetch_all(Instant::now()),
+                    _ => vec![],
+                }
             }
             (ProfileAsk::Detect, ProfileReply::Done { message }) => {
                 s.message = Some(message.clone());

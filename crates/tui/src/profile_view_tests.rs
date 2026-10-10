@@ -485,3 +485,39 @@ fn rows_walk_the_sections_in_order() {
     let order: Vec<&str> = sections().iter().map(|(t, _, _)| *t).collect();
     assert_eq!(deduped, order, "each section's rows are together");
 }
+
+/// Final review C-I1: a row edit's value as a row shows it, read as the daemon reads it
+/// (`parse_value`): a TOML literal as its value, anything else as typed; an environment
+/// value always as typed; an unset `—`.
+#[test]
+fn a_row_edits_value_reads_as_the_daemon_reads_it() {
+    assert_eq!(
+        tried_value("check", Some("\"cargo test --all\"")),
+        "cargo test --all"
+    );
+    assert_eq!(
+        tried_value("check", Some("cargo nextest run")),
+        "cargo nextest run"
+    );
+    assert_eq!(
+        tried_value("source", Some("[\"src/\", \"lib/\"]")),
+        "src/, lib/"
+    );
+    assert_eq!(tried_value("check_timeout_secs", Some("90")), "90");
+    assert_eq!(tried_value("env.MODE", Some("\"quoted\"")), "\"quoted\"");
+    assert_eq!(tried_value("delivery.mode", Some("pr")), "pr");
+    assert_eq!(tried_value("check", None), "—");
+}
+
+/// Task 7 review M3: a profile with no `[delivery]` table lists both delivery rows,
+/// unset.
+#[test]
+fn delivery_rows_are_unset_without_a_delivery_table() {
+    let profile = RepoProfile::default();
+    let values: Vec<Option<String>> = rows(&profile, None, None)
+        .into_iter()
+        .filter(|r| r.key.starts_with("delivery."))
+        .map(|r| r.value)
+        .collect();
+    assert_eq!(values, vec![None, None]);
+}

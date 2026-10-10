@@ -202,6 +202,18 @@ fn profile_cell(s: &ProfileScreen, row: &Row, p: Palette) -> Option<(String, Rol
     }
 }
 
+/// Final review C-I1: a row's value with its ✗ row edit's value after it
+/// (`<value> → <tried>`), so the value that failed, the one `s` would store, shows.
+pub(super) fn with_tried(s: &ProfileScreen, key: &str, value: String) -> String {
+    match s.failed_row_edit().filter(|e| e.key == key) {
+        Some(e) => format!(
+            "{value} → {}",
+            crate::profile_view::tried_value(key, e.value.as_deref())
+        ),
+        None => value,
+    }
+}
+
 /// A value as a row shows it: delivery in words (decision 26), `—` for none.
 pub(super) fn value_text(
     key: &str,
@@ -346,7 +358,7 @@ fn list_lines(
             Parts {
                 head,
                 label: row.label.clone(),
-                value,
+                value: with_tried(s, &row.key, value),
                 value_role,
                 cell: profile_cell(s, row, p),
                 key: row.key.clone(),

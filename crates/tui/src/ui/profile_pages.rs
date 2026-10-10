@@ -181,6 +181,14 @@ fn page_parts(
             let check = row.and_then(|r| r.check);
             let tail = match (s.edit_of(key), &check) {
                 (Some(proto::RowEditState::Failed { reason, tail, .. }), _) => {
+                    // Final review C-I1: the value that failed, the one `s` stores.
+                    let tried = s.row_edit().and_then(|e| e.value.as_deref());
+                    let tried = crate::profile_view::tried_value(key, tried);
+                    body.extend(
+                        wrap(&format!("your edit: {tried}"))
+                            .into_iter()
+                            .map(|l| l.style(role(Role::Failed, p))),
+                    );
                     body.extend(
                         wrap(&format!("couldn't verify: {reason}"))
                             .into_iter()

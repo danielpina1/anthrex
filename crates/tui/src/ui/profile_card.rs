@@ -5,7 +5,7 @@
 //! `Attention`. Split from `ui/profile.rs` by responsibility (`AGENTS.md` rule 8).
 //! Pure; every string a profile, a check or the scout wrote passes `safe_text`.
 
-use super::{Parts, plain, value_text};
+use super::{Parts, plain, value_text, with_tried};
 use crate::app::profile_screen::{ProfileScreen, Shown, Side};
 use crate::profile_view::{Row, card_cell};
 use crate::profile_words;
@@ -69,7 +69,7 @@ pub(super) fn parts(s: &ProfileScreen, row: &Row, head: bool, p: Palette) -> Par
     Parts {
         head,
         label: row.label.clone(),
-        value,
+        value: with_tried(s, &row.key, value),
         value_role,
         cell: cell(s, row, p),
         key: row.key.clone(),
