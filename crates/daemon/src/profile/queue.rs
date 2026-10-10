@@ -40,12 +40,18 @@ pub struct QueuedGoal {
 pub struct GoalQueue {
     pub goals: Vec<QueuedGoal>,
     pub dropped: Vec<DroppedGoal>,
+    /// Final review I1: the goals a drain took out of `goals` and handed to the starter,
+    /// whose start has not returned. Written before the start, so a daemon stop leaves
+    /// them here, and `restore` turns each into a dropped goal (decision 6: at most
+    /// once). Absent from a file written before this field.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub starting: Vec<QueuedGoal>,
 }
 
 impl GoalQueue {
-    /// Nothing queued and nothing dropped: the file is removed.
+    /// Nothing queued, starting or dropped: the file is removed.
     pub fn is_empty(&self) -> bool {
-        self.goals.is_empty() && self.dropped.is_empty()
+        self.goals.is_empty() && self.dropped.is_empty() && self.starting.is_empty()
     }
 
     /// Decision 6: remembers a goal that could not start, the last [`DROPPED_KEPT`].
@@ -102,14 +108,34 @@ pub fn info(goal: &QueuedGoal, setup: &SetupState) -> QueuedGoalInfo {
     }
 }
 
+/// Why [`load`] found no queue (task 4 re-review minor 1): a file that does not parse
+/// is set aside at restore; one that could not be read is left where it is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoadError {
+    Unparseable(String),
+    Unreadable(String),
+}
+
+impl std::fmt::Display for LoadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LoadError::Unparseable(text) | LoadError::Unreadable(text) => f.write_str(text),
+        }
+    }
+}
+
 /// The queue in `repo_dir`; an absent file is an empty queue. Blocking.
-pub fn load(repo_dir: &Path) -> Result<GoalQueue, String> {
+pub fn load(repo_dir: &Path) -> Result<GoalQueue, LoadError> {
     let path = repo_dir.join(QUEUE_FILE);
     match std::fs::read(&path) {
-        Ok(bytes) => serde_json::from_slice(&bytes)
-            .map_err(|error| format!("{} does not parse: {error}", path.display())),
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| {
+            LoadError::Unparseable(format!("{} does not parse: {error}", path.display()))
+        }),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(GoalQueue::default()),
-        Err(error) => Err(format!("could not read {}: {error}", path.display())),
+        Err(error) => Err(LoadError::Unreadable(format!(
+            "could not read {}: {error}",
+            path.display()
+        ))),
     }
 }
 

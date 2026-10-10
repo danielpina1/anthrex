@@ -687,6 +687,16 @@ A first goal sets the profile up end to end (`crates/cli/tests/profile_cli_tui.r
 | Stage 11l: after **Use this**, `run status --json` lists the goal's run | the same | `GOAL_CMD_TIMEOUT` (1300 s), polled every 0.5 s | The store and the drain are spawned at once; the drained start is any goal's start (stage 11d's derivation). | **Recorded.** |
 | Stage 11l: the run's completion and its accept | the same | `RUN_WAIT` (300 s); `ACCEPT_CMD_TIMEOUT` (900 s) | Stage 11c's constants, imported: one task path, and `run accept`'s 668.25 s. | **Recorded.** |
 
+### Recorded, from the M9.10 final review fixes (daemon, 2026-10-10)
+
+The drain taken one goal at a time (`crates/daemon/src/profile/tests_queue_drain.rs`), restore's unreadable files (`tests_queue_restore.rs`), a Save anyway's time (`tests_edit_anyway.rs`), the count at its total (`tests_progress.rs`), and a profile change on a due publish (`run/driver/orch_tests.rs`). Measured: the three drain tests together 0.3 s; the four restore tests 0.2 s.
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| `status_reports_checking_while_verifying` and its `wait_status` (`STATUS_WAIT`; task 3 review minor 3: no row until now) | `daemon/src/profile/tests_progress.rs` | 300 s, a deadline loop every 20 ms | One stored-profile edit's verification: the verification checkout's prepare and discard (a handful of git calls at the default `git_timeout_secs = 60`) and the command, which sleeps 2 s. `PROFILE_WAIT`'s shape (M8b.11's row). Measured: the test takes about 2.3 s. | **Recorded.** A hang guard. |
+| The drain tests' `until` (`a_drain_cut_short_…`: the first start, then the restarted service's two starts; `a_restored_starting_goal_…`: the waiting goal's start and the file without `starting`) | `daemon/src/profile/tests_queue_drain.rs` | `REQUEST_WAIT` (75 s, from `tests_queue_service.rs`), every 20 ms | Each step is a few small queue-file writes on `spawn_blocking` under `writes` and a test starter that answers at once (or never, for the start a stop cuts short); no git, no agent. | **Recorded.** A hang guard. The never-answering start is the property under test: nothing waits on it. |
+| `a_profile_change_moves_the_revision_on_a_due_publish`: the due tick's push | `daemon/src/run/driver/orch_tests.rs` | 10 s | One `on_tick`: a snapshot and one publish, as `a_proposal_change_publishes_on_the_next_tick`'s bound beside it. | **Recorded.** A hang guard. |
+
 ### Fixed, from M9.5.8's flake fix (ruling F-1, 2026-10-03)
 
 | Test | File | Bound | Derivation | Status |

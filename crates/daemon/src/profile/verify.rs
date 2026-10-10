@@ -205,6 +205,22 @@ pub fn run_commands(
     verification
 }
 
+/// [`run_commands`] as [`verify`] runs it: then a counted `steps` ends at its total
+/// (task 3 review minor 1), since a command `planned` counted may have been skipped
+/// unrun (a module test whose module names the failed graph could not give). Blocking.
+pub fn run_counted(
+    dir: &Path,
+    profile: &RepoProfile,
+    confine: Option<&ConfineSpec>,
+    timeout: Duration,
+    now: u64,
+    steps: &Steps,
+) -> ProfileVerification {
+    let verification = run_commands(dir, profile, confine, timeout, now, steps);
+    steps.finish();
+    verification
+}
+
 /// Milestone 9.10 decision 10, pure: how many commands [`run_commands`] runs for `p`.
 /// A module test counts when its module names can be known (a graph, or `modules`);
 /// with no module directory found it is refused unrun, and `done` stays short.
@@ -509,7 +525,7 @@ pub async fn verify(queue: &GitQueue, job: VerifyJob) -> Result<Verified, String
             );
             let steps = job.counter.clone().into_iter().fold(steps, Steps::counted);
             tokio::task::spawn_blocking(move || {
-                run_commands(
+                run_counted(
                     &dir,
                     &profile,
                     confine.as_ref(),

@@ -32,6 +32,10 @@ pub type GoalStarter = Arc<
 pub const DISCARDED: &str = "the proposal was discarded";
 /// Decision 11's reason for a goal whose directory went away.
 pub const GONE: &str = "the repository is gone";
+/// Final review I1: the reason for a goal a daemon stop caught while it was starting.
+/// It may have started (decision 6 starts a goal at most once), so it is never started
+/// again; the user looks and starts it again.
+pub const INTERRUPTED: &str = "the daemon stopped while the goal was starting; if anthrex run status shows no run for it, start it again";
 
 /// The project's short name in messages: its directory's name.
 pub(super) fn name_of(project: &Path) -> String {
@@ -119,6 +123,7 @@ impl ProfileService {
             if !absent {
                 return Ok(None);
             }
+            self.adopt_queue(&project).await?;
             let mut queue = self.queue_of(&project);
             if queue.goals.len() >= MAX_QUEUED {
                 return Err(queue_full(&project));
@@ -135,11 +140,51 @@ impl ProfileService {
         ))
     }
 
+    /// Task 4 re-review minors 1 and 2: memory's copy of `project`'s queue, loaded from
+    /// its file when memory has none (restore could not tie an unreadable queue's
+    /// record to a project, or could not read the file). `Err`: the file is there and
+    /// cannot be read, so nothing may write over it. The caller holds `writes`.
+    async fn adopt_queue(&self, project: &Path) -> Result<(), String> {
+        if crate::lock(&self.table).queued.contains_key(project) {
+            return Ok(());
+        }
+        let dir = self.repo_dir(project);
+        let loaded = blocking(move || queue::load(&dir).map_err(|e| e.to_string())).await?;
+        if !loaded.is_empty() {
+            self.remember_queue(project, loaded);
+        }
+        Ok(())
+    }
+
+    /// [`Self::adopt_queue`] for `profile status`, which takes `writes` only when memory
+    /// has no queue for `project` and a file is there.
+    pub(super) async fn adopt_for_status(&self, project: &Path) {
+        if crate::lock(&self.table).queued.contains_key(project) {
+            return;
+        }
+        let path = self.repo_dir(project).join(queue::QUEUE_FILE);
+        let present = blocking(move || Ok(std::fs::symlink_metadata(&path).is_ok()))
+            .await
+            .unwrap_or(false);
+        if !present {
+            return;
+        }
+        let _writes = self.writes.lock().await;
+        if let Err(error) = self.adopt_queue(project).await {
+            tracing::warn!(%error, project = %project.display(), "profile status: the goal queue");
+        }
+    }
+
     /// The snapshot's list; memory only, one short hold of the table.
     pub fn queued_goals(&self) -> Vec<QueuedGoalInfo> {
         let table = crate::lock(&self.table);
         let mut listed = Vec::new();
-        for (project, queue) in &table.queued {
+        // Final review I1: a drain's goals wait for their start, not for a set-up.
+        let queues = table
+            .queued
+            .iter()
+            .filter(|(p, _)| !table.draining.contains(*p));
+        for (project, queue) in queues {
             let checking = table
                 .active
                 .get(project)
@@ -245,45 +290,102 @@ impl ProfileService {
         starting(n)
     }
 
-    /// Decision 6: takes `project`'s goals out of the queue (file first, then memory, so
-    /// a crash never starts one twice), then starts them in queue order with no lock of
+    /// Decision 6: starts `project`'s queued goals in queue order, one drain per
+    /// project (a second call while one runs returns; the running one takes every goal).
+    /// Final review I1: each goal is taken out alone, moved from `goals` to `starting`
+    /// under `writes` (file first, then memory) before the starter gets it, and leaves
+    /// `starting` when its start returns. A daemon stop then loses no goal: those not
+    /// yet taken wait in `goals` for the restart's drain, and the one being started is
+    /// a dropped goal at restore, never started twice. The starter runs with no lock of
     /// this service held. A refused start is recorded as a drop.
     pub(super) async fn start_queued(self: Arc<Self>, project: PathBuf) {
-        let goals = {
+        {
             let _writes = self.writes.lock().await;
-            let mut queue = self.queue_of(&project);
-            let goals = std::mem::take(&mut queue.goals);
-            if goals.is_empty() {
+            let mut table = crate::lock(&self.table);
+            if !table.draining.insert(project.clone()) {
                 return;
             }
-            if let Err(error) = self.put_queue(&project, queue).await {
-                tracing::warn!(%error, project = %project.display(), "could not take the queued goals");
-                return;
-            }
-            goals
-        };
+            table.setup_generation += 1;
+        }
         let starter = crate::lock(&self.starter).clone();
-        for goal in goals {
+        while let Some(goal) = self.take_next(&project).await {
             let started = match &starter {
                 Some(start) => start(goal.clone()).await,
                 None => Err("the daemon cannot start goals yet".to_string()),
             };
-            match started {
-                Ok(run) => tracing::info!(%run, goal = %goal.id, "started a queued goal"),
-                Err(reason) => self.record_drop(&project, &goal.goal, &reason).await,
+            self.start_returned(&project, &goal, started).await;
+        }
+    }
+
+    /// The drain's next goal, moved to `starting`; `None` ends the drain, under the same
+    /// hold of `writes` that found nothing left. Final review M5: when the move cannot
+    /// be written, nothing starts and every goal left is dropped with the error, so none
+    /// waits behind the stored profile until a restart.
+    async fn take_next(&self, project: &Path) -> Option<QueuedGoal> {
+        let _writes = self.writes.lock().await;
+        let mut queue = self.queue_of(project);
+        if queue.goals.is_empty() {
+            self.end_drain(project);
+            return None;
+        }
+        let goal = queue.goals.remove(0);
+        queue.starting.push(goal.clone());
+        match self.put_queue(project, queue).await {
+            Ok(()) => Some(goal),
+            Err(error) => {
+                let reason =
+                    format!("could not take the goal out of its queue ({error}); start it again");
+                let mut queue = self.queue_of(project);
+                for goal in std::mem::take(&mut queue.goals) {
+                    tracing::info!("{}", queue::drop_line(&goal.goal, &reason));
+                    queue.record_drop(&goal.goal, &reason, unix_now());
+                }
+                self.keep_queue(project, queue).await;
+                self.end_drain(project);
+                None
             }
         }
     }
 
-    /// Decision 6: a goal that could not start, remembered as dropped and logged.
-    async fn record_drop(&self, project: &Path, goal: &str, reason: &str) {
+    /// The drain of `project` over; the caller holds `writes`.
+    fn end_drain(&self, project: &Path) {
+        let mut table = crate::lock(&self.table);
+        table.draining.remove(project);
+        table.setup_generation += 1;
+    }
+
+    /// `goal`'s start returned: it leaves `starting`, and a refusal is recorded as a
+    /// drop (decision 6).
+    async fn start_returned(
+        &self,
+        project: &Path,
+        goal: &QueuedGoal,
+        started: Result<String, String>,
+    ) {
         let _writes = self.writes.lock().await;
         let mut queue = self.queue_of(project);
-        tracing::info!("{}", queue::drop_line(goal, reason));
-        queue.record_drop(goal, reason, unix_now());
-        if let Err(error) = self.put_queue(project, queue).await {
-            tracing::warn!(%error, "could not record a dropped goal");
+        queue.starting.retain(|g| g.id != goal.id);
+        match started {
+            Ok(run) => tracing::info!(%run, goal = %goal.id, "started a queued goal"),
+            Err(reason) => {
+                tracing::info!("{}", queue::drop_line(&goal.goal, &reason));
+                queue.record_drop(&goal.goal, &reason, unix_now());
+            }
         }
+        self.keep_queue(project, queue).await;
+    }
+
+    /// Writes `queue` and keeps it in memory even when the write fails (logged): memory
+    /// then says what happened, and the next write that succeeds puts it on file. The
+    /// caller holds `writes`.
+    async fn keep_queue(&self, project: &Path, queue: GoalQueue) {
+        let (dir, saved) = (self.repo_dir(project), queue.clone());
+        if let Err(error) =
+            blocking(move || queue::save(&dir, &saved).map_err(|e| e.to_string())).await
+        {
+            tracing::warn!(%error, project = %project.display(), "could not write the goal queue");
+        }
+        self.remember_queue(project, queue);
     }
 
     /// Decision 8: every goal queued for `project` dropped with `reason`; how many.

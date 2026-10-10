@@ -105,6 +105,16 @@ impl Steps {
         }
     }
 
+    /// The commands are over: `done` is the total, and one tick pushes it.
+    pub fn finish(&self) {
+        if let Some(counter) = &self.counter {
+            let total = counter.total.load(Ordering::Relaxed);
+            counter.done.store(total, Ordering::Relaxed);
+            // Release, as in `count`.
+            counter.ticks.fetch_add(1, Ordering::Release);
+        }
+    }
+
     /// One more command done, on the counter and the shared ticks.
     fn count(&self) {
         if let Some(counter) = &self.counter {

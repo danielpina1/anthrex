@@ -117,6 +117,9 @@ pub(super) struct Table {
     pub(super) states: BTreeMap<PathBuf, ProposalState>,
     /// Decision 10: moves on every `note_proposal` and every change to `queued`.
     pub(super) setup_generation: u64,
+    /// Final review I1: the projects a drain is starting goals for, one drain each;
+    /// their goals are not listed as waiting for a set-up. Changed under `writes`.
+    pub(super) draining: std::collections::BTreeSet<PathBuf>,
 }
 
 /// See the module doc.

@@ -18,7 +18,7 @@ use proto::{
 use super::store::{self, META_FILE, PROFILE_FILE, UNREADABLE_TEXT_MAX};
 use super::tests_ready::{Rig, repo};
 use super::tests_tiers::steps;
-use super::verify::{CheckCounter, planned, run_commands};
+use super::verify::{CheckCounter, planned, run_commands, run_counted};
 
 /// How long the status test waits for the edit's verification: `PROFILE_WAIT`'s
 /// shape (`cli/tests/support/run_adapt.rs`, `docs/timing-budgets.md`). The command
@@ -247,4 +247,70 @@ async fn an_unparseable_profile_sends_its_text_capped() {
     let parsed = status(&rig, &project).await;
     assert_eq!(parsed.unparseable, None);
     assert_eq!(parsed.unreadable_text, None, "set only with unparseable");
+}
+
+/// Task 3 review minors 1 and 3: `planned` counts a module test that is refused unrun
+/// when the cargo graph fails (no workspace here), so `done` would stop at 2/3 until
+/// the proposal turns `Ready`. A verification's commands, as `verify` runs them, end
+/// with the count at its total, and one more tick pushes it.
+#[test]
+fn progress_reaches_the_total_when_a_planned_command_is_skipped() {
+    let dir = tempfile::tempdir().unwrap();
+    let skipping = profile(|p| {
+        p.module_graph = Some("cargo".into());
+        p.module_names = Some(proto::ModuleNames::Cargo);
+        p.module_test = Some("true {module}".into());
+    });
+    let ticks = Arc::new(AtomicU64::new(0));
+    let counter = Arc::new(CheckCounter {
+        ticks: ticks.clone(),
+        ..CheckCounter::default()
+    });
+    counter.total.store(planned(&skipping), Ordering::Relaxed);
+    assert_eq!(
+        planned(&skipping),
+        3,
+        "check, the graph and the module test"
+    );
+    let steps = steps(dir.path()).counted(counter.clone());
+    let v = run_counted(
+        dir.path(),
+        &skipping,
+        None,
+        Duration::from_secs(30),
+        0,
+        &steps,
+    );
+    assert_eq!(v.module_test, None, "the module test was not run");
+    assert_eq!(
+        counter.progress(),
+        Some(CheckProgress { done: 3, total: 3 }),
+        "the count ends at its total"
+    );
+    assert_eq!(ticks.load(Ordering::Relaxed), 3, "two commands and the end");
+}
+
+/// Task 3 review minor 2: a profile file that is not UTF-8 is sent within the cap; its
+/// invalid bytes, each three bytes once replaced, do not grow it past 64 KiB.
+#[test]
+fn a_binary_profile_text_stays_within_the_cap() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(PROFILE_FILE);
+    std::fs::write(&path, vec![0xFF_u8; UNREADABLE_TEXT_MAX]).unwrap();
+    let text = store::load_text(&path).expect("the text is sent");
+    let note = "\n… (cut at 64 KiB)";
+    assert!(
+        text.ends_with(note),
+        "a replaced text over the cap is marked"
+    );
+    let body = &text[..text.len() - note.len()];
+    assert!(body.len() <= UNREADABLE_TEXT_MAX, "{} bytes", body.len());
+    assert!(body.chars().all(|c| c == char::REPLACEMENT_CHARACTER));
+
+    // A short invalid file is sent whole, replaced, and not marked.
+    std::fs::write(&path, b"check = \xFF\n").unwrap();
+    assert_eq!(
+        store::load_text(&path).as_deref(),
+        Some("check = \u{FFFD}\n")
+    );
 }

@@ -129,12 +129,13 @@ fn every_new_profile_type_round_trips() {
         both_ways(&RowEdit {
             key: "test".into(),
             value: None,
-            state,
+            state: state.clone(),
         });
+        // Task 1-2 review minor 4: each state inside a `ProposalRecord` too.
         both_ways(&record(Some(RowEdit {
             key: "lint".into(),
             value: Some("x".into()),
-            state: RowEditState::Verifying,
+            state,
         })));
     }
     both_ways(&DroppedGoal {
@@ -170,21 +171,25 @@ fn every_new_profile_type_round_trips() {
 /// A protocol-19/20 peer's JSON, without the new fields, still decodes.
 #[test]
 fn new_profile_fields_default_when_absent() {
-    let rec = serde_json::to_value(record(None)).unwrap();
-    let rec: ProposalRecord = serde_json::from_value(rec).unwrap();
-    assert_eq!(rec.edit, None);
+    // Task 1-2 review minor 3: literal protocol-20 JSON, so the old field names are
+    // pinned too, not only the new fields' defaults.
+    let rec: ProposalRecord = serde_json::from_str(
+        r#"{"project":"/work/app","state":{"state":"ready"},"origin":{"origin":"detect"},
+            "started_at":1,"updated_at":2,"base_sha":"abc","scout_id":null,"window_id":null,
+            "profile":null,"verification":null,"dropped":[],"proposed":null,
+            "trusted_project":[],"unconfined_checks":false,"auto_confirm":false}"#,
+    )
+    .unwrap();
+    let mut expected = record(None);
+    expected.origin = ProposalOrigin::Detect;
+    assert_eq!(rec, expected);
 
-    let mut old = serde_json::to_value(status(false)).unwrap();
-    for key in [
-        "queued",
-        "checking",
-        "verified_at",
-        "unreadable_text",
-        "dropped_goals",
-    ] {
-        old.as_object_mut().unwrap().remove(key);
-    }
-    let old: ProfileStatus = serde_json::from_value(old).unwrap();
+    let old: ProfileStatus = serde_json::from_str(
+        r#"{"project":"/work/app","repo_dir":"/tmp/data/repos/app-1","source":"none",
+            "confirmed_at":null,"stale":[],"unparseable":null,"proposal":null,"scout":null,
+            "verify_confined":false}"#,
+    )
+    .unwrap();
     assert_eq!(old, status(false));
 
     let edit: ProfileRequest = serde_json::from_str(

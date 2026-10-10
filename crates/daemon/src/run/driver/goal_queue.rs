@@ -138,6 +138,13 @@ impl RunService {
                     Effective::Absent { proposal: now } if in_progress(now.as_ref()) => {
                         proposal = now;
                     }
+                    // Final review M3: registered, its first record not written yet.
+                    Effective::Absent { .. } if profiles.registered(&pre.project) => {
+                        proposal = Some(ProposalState::Preparing);
+                    }
+                    // Task 5 re-review: stored since `goal_ready` looked; `queue_goal`
+                    // sees it and the goal starts at once.
+                    Effective::Stored { .. } => {}
                     _ => return refused(refusal),
                 }
             }

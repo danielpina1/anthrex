@@ -149,6 +149,7 @@ impl ProfileService {
                 .and_then(|active| active.counter.progress()),
             _ => None,
         };
+        self.adopt_for_status(&project).await;
         let (mut queued, dropped_goals) = self.queued_for(&project);
         // M9.10.5: the goals' set-up reads the proposal this reply shows; memory's copy
         // (`Table.states`) is noted just after each write, so it can trail the file.
@@ -314,14 +315,22 @@ impl ProfileService {
         })
         .await?;
         self.note_proposal(&project, None);
+        // Task 4 re-review minor 3: a retry after a late failure (a checkout it could
+        // not discard) finds no proposal but the marker or a checkout; it cleans up.
+        let mut cleaned = false;
         if running.is_none() {
             for name in [super::ONBOARDING_CHECKOUT, super::VERIFY_CHECKOUT] {
-                self.discard_checkout(&project, name).await?;
+                cleaned |= self.discard_checkout(&project, name).await?.is_some();
             }
             let dir = self.repo_dir(&project);
-            blocking(move || store::delete_detection(&dir).map_err(|e| e.to_string())).await?;
+            cleaned |= blocking(move || {
+                let marked = store::load_detection(&dir).is_some();
+                store::delete_detection(&dir).map_err(|e| e.to_string())?;
+                Ok(marked)
+            })
+            .await?;
         }
-        if running.is_none() && !existed && dropped == 0 {
+        if running.is_none() && !existed && dropped == 0 && !cleaned {
             return Err(format!("no proposal for {}", project.display()));
         }
         Ok(ProfileReply::Done {

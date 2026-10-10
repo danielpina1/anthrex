@@ -112,6 +112,8 @@ mod tests_delivery;
 #[cfg(test)]
 mod tests_edit;
 #[cfg(test)]
+mod tests_edit_anyway;
+#[cfg(test)]
 mod tests_edit_proposal;
 #[cfg(test)]
 mod tests_installed;
@@ -122,7 +124,11 @@ mod tests_progress;
 #[cfg(test)]
 mod tests_queue;
 #[cfg(test)]
+mod tests_queue_drain;
+#[cfg(test)]
 mod tests_queue_order;
+#[cfg(test)]
+mod tests_queue_restore;
 #[cfg(test)]
 mod tests_queue_service;
 #[cfg(test)]
