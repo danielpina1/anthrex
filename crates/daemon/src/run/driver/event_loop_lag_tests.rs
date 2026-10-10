@@ -180,12 +180,12 @@ async fn lagged(capacity: usize, a_texts: usize, b_texts: usize) -> Lagged {
     }
 }
 
-/// Every signal the forwarder sends until `until` holds of the ones sent so far, then
-/// whatever else it had already queued.
-async fn forwarded(
-    rig: Lagged,
-    mut until: impl FnMut(&[(u32, AgentSignal)]) -> bool,
-) -> (Vec<(u32, AgentSignal)>, Lagged) {
+/// Every signal the forwarder sends for the lag, in order. The forwarder sends one lag's
+/// signals in one pass, catch-up first and retained last, and `b`'s turn end is in
+/// every rig the newest signal at the cut, so the last one sent: once it has arrived,
+/// the whole batch has (the engine's queue keeps the send order). D9F-M2: a deadline
+/// loop on that signal, not a yield.
+async fn forwarded(rig: Lagged) -> (Vec<(u32, AgentSignal)>, Lagged) {
     let mut rig = rig;
     let shutdown = CancellationToken::new();
     let feed = rig.feed.resubscribe();
@@ -193,18 +193,11 @@ async fn forwarded(
     tokio::spawn(rig.s.clone().forward(feed, shutdown.clone()));
     let mut seen = Vec::new();
     let deadline = Instant::now() + FORWARD_WAIT;
-    while !until(&seen) {
+    while count(&seen, rig.b, turn_ended) == 0 {
         let left = deadline.saturating_duration_since(Instant::now());
         let Ok(Some(msg)) = tokio::time::timeout(left, rig.engine.recv()).await else {
-            panic!("the engine never had what the test waits for: {seen:?}");
+            panic!("the engine never had b's turn end: {seen:?}");
         };
-        if let Msg::Event(EventKind::Signal { window_id, signal }) = msg {
-            seen.push((window_id, signal));
-        }
-    }
-    // The forwarder sends one lag's signals in one pass, so the rest is queued already.
-    tokio::task::yield_now().await;
-    while let Ok(msg) = rig.engine.try_recv() {
         if let Msg::Event(EventKind::Signal { window_id, signal }) = msg {
             seen.push((window_id, signal));
         }
@@ -225,37 +218,59 @@ fn turn_ended(s: &AgentSignal) -> bool {
     matches!(s, AgentSignal::TurnEnded { .. })
 }
 
+/// The position of the first signal of window `id` that `what` matches.
+fn at(seen: &[(u32, AgentSignal)], id: u32, what: fn(&AgentSignal) -> bool) -> usize {
+    let found = seen.iter().position(|(w, s)| *w == id && what(s));
+    found.unwrap_or_else(|| panic!("no such signal of window {id}: {seen:?}"))
+}
+
 /// Decision 9: `a`'s exit and turn end are gone from a 4-signal feed (`b` sent an init,
-/// 8 lines and a turn end after them), and still reach the engine.
+/// 8 lines and a turn end after them), and still reach the engine, turn end first.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_lagged_feed_still_delivers_the_exit() {
     let rig = lagged(4, 1, 8).await;
     let a = rig.a;
-    let (seen, _rig) = forwarded(rig, |seen| {
-        count(seen, a, exited) > 0 && count(seen, a, turn_ended) > 0
-    })
-    .await;
+    let (seen, _rig) = forwarded(rig).await;
     assert_eq!(count(&seen, a, exited), 1, "{seen:?}");
     assert_eq!(count(&seen, a, turn_ended), 1, "{seen:?}");
+    assert!(at(&seen, a, turn_ended) < at(&seen, a, exited), "{seen:?}");
 }
 
-/// D9-I1: a lag must not drop what the feed still retained. `a` sends more than the
-/// 8-signal feed holds (an init, 10 lines, a turn end, its exit), then `b` sends its
-/// start, its init and a turn end: those are retained at the lag, and `b`'s
-/// `ProcessStarted` (the only source of a round's pid) and `Init` (of its session id)
-/// must reach the engine, once each, with `b`'s turn end once (retained, so never
-/// caught up again), and `a`'s exit (overflowed, so caught up) once.
+/// D9-I1: a lag must not drop what the feed still retained. `a` sends 15 signals (its
+/// start, an init and a turn start, 10 lines, a turn end, its exit), then `b` 4 (its
+/// start, an init, a turn start, a turn end). The 8-signal feed retains the last 8:
+/// `a`'s last 2 lines, turn end and exit, and all of `b`'s. `b`'s `ProcessStarted` (the
+/// only source of a round's pid) and `Init` (of its session id) must reach the engine
+/// once each, with every retained terminal event once (none caught up again).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_lag_still_delivers_the_retained_signals() {
     let rig = lagged(8, 10, 0).await;
     let (a, b) = (rig.a, rig.b);
-    let (seen, _rig) = forwarded(rig, |seen| count(seen, a, exited) > 0).await;
+    let (seen, _rig) = forwarded(rig).await;
     let started = |s: &AgentSignal| matches!(s, AgentSignal::ProcessStarted { .. });
     let init = |s: &AgentSignal| matches!(s, AgentSignal::Init { .. });
     assert_eq!(count(&seen, b, started), 1, "{seen:?}");
     assert_eq!(count(&seen, b, init), 1, "{seen:?}");
     assert_eq!(count(&seen, b, turn_ended), 1, "{seen:?}");
     assert_eq!(count(&seen, a, exited), 1, "{seen:?}");
+    assert_eq!(count(&seen, a, turn_ended), 1, "{seen:?}");
+}
+
+/// D9F-I1: a process whose turn end overflowed and whose exit was retained. `b` sends 7
+/// signals (its start, an init, a turn start, 3 lines, a turn end), so the 8-signal
+/// feed (tokio rounds a capacity up to a power of two) retains `a`'s exit and all of
+/// `b`'s; `a`'s turn end is caught up from the records and must reach the engine before
+/// `a`'s exit, or the engine reads a completed turn as a death.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_lost_turn_end_reaches_the_engine_before_its_retained_exit() {
+    let rig = lagged(8, 10, 3).await;
+    let (a, b) = (rig.a, rig.b);
+    let (seen, _rig) = forwarded(rig).await;
+    assert_eq!(count(&seen, a, turn_ended), 1, "{seen:?}");
+    assert_eq!(count(&seen, a, exited), 1, "{seen:?}");
+    assert!(at(&seen, a, turn_ended) < at(&seen, a, exited), "{seen:?}");
+    let started = |s: &AgentSignal| matches!(s, AgentSignal::ProcessStarted { .. });
+    assert_eq!(count(&seen, b, started), 1, "{seen:?}");
 }
 
 /// Decision 9: an exit forwarded before a lag is not forwarded again by the catch-up,
@@ -339,4 +354,19 @@ fn a_lag_never_forwards_an_exit_twice() {
     }];
     assert_eq!(forwarded.catch_up(retained.clone(), &records), retained);
     assert!(forwarded.catch_up(Vec::new(), &records).is_empty());
+
+    // D9F-I1: process 95's turn end overflowed and its exit was retained. Everything
+    // caught up is older than everything retained, so the turn end comes first.
+    let retained = vec![live(6, 95, &exit(0))];
+    let records = vec![TerminalRecord {
+        window_id: 6,
+        pid: 95,
+        turn_ends: 1,
+        last_turn_end: Some(turn_end("ninety five")),
+        exited: Some(exit(0)),
+    }];
+    assert_eq!(
+        forwarded.catch_up(retained, &records),
+        vec![live(6, 95, &turn_end("ninety five")), live(6, 95, &exit(0))]
+    );
 }

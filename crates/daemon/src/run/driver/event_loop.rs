@@ -191,13 +191,13 @@ impl Forwarded {
         }
     }
 
-    /// After a lag: the signals the feed still `retained`, in order and noted, then, from
-    /// the manager's `records` (taken at the same cut), each process's last turn end when
-    /// the manager applied more than were forwarded (the lost ones in between are
-    /// coalesced into it), and its exit when that was not forwarded. A process whose
-    /// turn end was retained already has its newest one (nothing came after the cut), so
-    /// its count is only brought level. Nothing is sent twice; processes the manager no
-    /// longer records are forgotten.
+    /// After a lag: from the manager's `records` (taken at the same cut), each process's
+    /// last turn end when the manager applied more than were forwarded (the lost ones in
+    /// between are coalesced into it), and its exit when that was not forwarded. A
+    /// process whose turn end was retained already has its newest one (nothing came
+    /// after the cut), so its count is only brought level. Then the signals the feed
+    /// still `retained`, in order and noted. Nothing is sent twice; processes the manager no longer records
+    /// are forgotten.
     pub(super) fn catch_up(
         &mut self,
         retained: Vec<WindowSignal>,
@@ -212,7 +212,11 @@ impl Forwarded {
                 ended_here.insert((signal.window_id, pid));
             }
         }
-        let mut out = retained;
+        // D9F-I1: what is caught up overflowed, so it is older than everything retained,
+        // and goes first: a lost turn end must reach the engine before a retained exit
+        // of the same process. Only terminal events are caught up, so nothing rebuilt
+        // can follow a retained `ProcessStarted` or `Init` of a newer process.
+        let mut out = Vec::new();
         let signal = |r: &TerminalRecord, event: &SessionEvent| WindowSignal {
             window_id: r.window_id,
             pid: Some(r.pid),
@@ -232,6 +236,7 @@ impl Forwarded {
             }
         }
         self.prune(records);
+        out.extend(retained);
         out
     }
 
