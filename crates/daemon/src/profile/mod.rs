@@ -145,3 +145,5 @@ mod tests_tiers_review;
 mod tests_verify;
 #[cfg(test)]
 mod tests_verify_steps;
+#[cfg(test)]
+mod tests_writes;

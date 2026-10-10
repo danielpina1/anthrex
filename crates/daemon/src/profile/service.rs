@@ -122,13 +122,17 @@ pub(super) struct Table {
     pub(super) draining: std::collections::BTreeSet<PathBuf>,
 }
 
+/// A hold of one repository's profile writes ([`ProfileService::hold_writes`]).
+pub(super) type WritesGuard = tokio::sync::OwnedMutexGuard<()>;
+
 /// See the module doc.
 pub struct ProfileService {
     pub(super) scouts: Arc<ScoutService>,
     pub(super) manager: Arc<WindowManager>,
     pub(super) ctx: ProfileContext,
     pub(super) table: Mutex<Table>,
-    pub(super) writes: tokio::sync::Mutex<()>,
+    /// Milestone 9.11 decision 35 (B11): one write lock per repository ([`Self::writes_for`]).
+    writes: Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>,
     next_generation: AtomicU64,
     /// Milestone 9.0.6 decision 37: the runs a profile edit waits for (`set_live_runs`).
     live_runs: Mutex<Option<LiveRuns>>,
@@ -213,7 +217,7 @@ impl ProfileService {
             manager,
             ctx,
             table: Mutex::new(Table::default()),
-            writes: tokio::sync::Mutex::new(()),
+            writes: Mutex::default(),
             next_generation: AtomicU64::new(1),
             live_runs: Mutex::new(None),
             host: std::sync::OnceLock::new(),
@@ -241,6 +245,17 @@ impl ProfileService {
 
     pub(super) fn repo_dir(&self, project: &Path) -> PathBuf {
         super::repo_dir(&self.ctx.data_dir, project)
+    }
+
+    /// `project`'s write lock; the table is held only to fetch it, never across an await.
+    pub(super) fn writes_for(&self, project: &Path) -> Arc<tokio::sync::Mutex<()>> {
+        let mut writes = crate::lock(&self.writes);
+        writes.entry(project.to_path_buf()).or_default().clone()
+    }
+
+    /// [`Self::writes_for`]`(project)` held until the guard drops.
+    pub(super) async fn hold_writes(&self, project: &Path) -> WritesGuard {
+        self.writes_for(project).lock_owned().await
     }
 
     pub(super) fn git_timeout(&self) -> Duration {
@@ -435,7 +450,7 @@ impl ProfileService {
     /// Saves `record` only while `generation` still owns its proposal, ordered against
     /// `reject` by `writes`. `false`: the proposal was rejected, nothing was written.
     pub(super) async fn save_if_current(&self, generation: u64, record: &ProposalRecord) -> bool {
-        let _writes = self.writes.lock().await;
+        let _writes = self.hold_writes(&record.project).await;
         if !self.current(&record.project, generation) {
             return false;
         }

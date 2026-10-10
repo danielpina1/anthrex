@@ -244,7 +244,7 @@ impl ProfileService {
         shown: Option<String>,
     ) -> Result<ProfileReply, String> {
         let project = self.project_of(dir).await?;
-        let _writes = self.writes.lock().await;
+        let _writes = self.hold_writes(&project).await;
         let active = crate::lock(&self.table).active.contains_key(&project);
         if active {
             // M9.10.6 fix round (M2): a proposal row edit being checked says so.
@@ -289,7 +289,7 @@ impl ProfileService {
     /// work, or here when none runs), and `proposal.json` deleted.
     pub(super) async fn reject(&self, dir: PathBuf) -> Result<ProfileReply, String> {
         let project = self.project_of(dir).await?;
-        let writes = self.writes.lock().await;
+        let writes = self.hold_writes(&project).await;
         // Milestone 9.10 decision 8: a goal cannot start without the proposal. Dropped
         // first, under this hold: a crash then leaves a proposal with no queue, never
         // goals waiting on a proposal that is gone.

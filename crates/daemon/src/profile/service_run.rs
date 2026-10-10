@@ -392,7 +392,7 @@ impl ProfileService {
         // Decision 18: `--anyway` stores the edit as typed whatever its check found.
         let anyway = job.anyway && job.record.edit.is_some();
         if job.record.auto_confirm && (anyway || self.may_auto_confirm(&job.record)) {
-            let _writes = self.writes.lock().await;
+            let _writes = self.hold_writes(&pre.project).await;
             if self.current(&pre.project, job.generation) {
                 let mut record = job.record.clone();
                 if anyway {
