@@ -163,11 +163,12 @@ fn route_line(route: &Route) -> String {
     route_label(route)
 }
 
-/// A task's deps, explicit then implicit, without repeats.
+/// A task's deps, explicit then implicit, without repeats and never the task itself
+/// (E25: the daemon refuses a self-dependency; this is the client's own guard).
 pub(crate) fn all_deps(task: &TaskInfo) -> Vec<&str> {
     let mut deps: Vec<&str> = Vec::new();
     for dep in task.deps.iter().chain(&task.implicit_deps) {
-        if !deps.contains(&dep.as_str()) {
+        if *dep != task.id && !deps.contains(&dep.as_str()) {
             deps.push(dep);
         }
     }

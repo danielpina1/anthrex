@@ -167,6 +167,9 @@ mod alerts_tier3;
 #[path = "../app_tests/clock.rs"]
 mod clock;
 
+#[path = "../app_tests/prefix_modal.rs"]
+mod prefix_modal;
+
 fn win(id: u32, name: &str, status: Status) -> WindowInfo {
     WindowInfo {
         id,

@@ -376,6 +376,9 @@ impl App {
     pub fn on_key(&mut self, key: KeyEvent) -> Vec<Effect> {
         self.forget_stale_panel_state();
         if self.modal.is_some() {
+            // Decision 24 (milestone 9.11): the modal takes this key, and the prefix
+            // pressed before it opened must not wait to turn the next one into a command.
+            self.keymap.clear_pending();
             return self.on_modal_key(key);
         }
         let app_cursor = self.parser.screen().application_cursor();

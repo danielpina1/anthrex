@@ -76,6 +76,11 @@ impl App {
     fn tick(&mut self, now: Instant) -> Vec<Effect> {
         self.spinner_frame = self.spinner_frame.wrapping_add(1);
         self.forget_stale_panel_state();
+        // Milestone 9.11 decision 24: a modal a daemon reply opened over a pressed prefix
+        // clears it, so the prefix is not left waiting once the modal closes.
+        if self.modal.is_some() {
+            self.keymap.clear_pending();
+        }
         if self
             .toast
             .as_ref()
