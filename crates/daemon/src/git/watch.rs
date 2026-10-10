@@ -130,22 +130,41 @@ pub fn arm(
 
 /// Builds and arms the watcher for one root, sending one `()` per accepted event.
 ///
-/// **Blocking**: on the inotify backend `watch(.., Recursive)` walks the tree, which
-/// on a large checkout is real work, so the caller runs this on `spawn_blocking`. The
-/// returned [`WatchGuard`] must be kept alive — dropping it unwatches everything, which
-/// is exactly how the registry's per-root task tears its watcher down when it is
-/// aborted, and why the guard exists rather than the watcher itself.
+/// **Blocking**: on Linux the root is walked ([`plan`]) and each kept directory
+/// watched, which on a large checkout is real work, so the caller runs this on
+/// `spawn_blocking`. The returned [`WatchGuard`] must be kept alive — dropping it
+/// unwatches everything, which is exactly how the registry's per-root task tears its
+/// watcher down when it is aborted, and why the guard exists rather than the watcher
+/// itself.
 ///
 /// Failure is not fatal (design decision 15): the caller logs it once and leaves the
 /// root on the 30-second poll.
 ///
-/// **`ignore` filters events, not registration.** The watch is still armed recursively,
-/// so on the inotify backend a directory this filter would reject still costs a
-/// descriptor. Replacing that with a pruning walk that applies this same filter at
-/// registration time is git-surface spec section 9's descriptor-exhaustion item; it is
-/// deliberately deferred (see `docs/superpowers/plans/2026-09-17-anthrex-foundation-followups.md`),
-/// and this list is the one it will consume when it lands.
+/// Milestone 9.11 decision 18 (B12, git-surface spec section 9's descriptor-exhaustion
+/// item): on Linux (inotify, one descriptor per directory) only the directories
+/// [`accepts`] keeps are registered, each `NonRecursive`; a directory created or
+/// renamed in later is walked and watched by [`per_dir`]'s own thread before its event
+/// is forwarded. Elsewhere (macOS's FSEvents: one stream, no descriptor per directory)
+/// the root is watched recursively and `ignore` filters events only.
 pub fn build(
+    root: &Path,
+    git_dir: Option<&Path>,
+    ignore: &[String],
+    events: UnboundedSender<()>,
+) -> notify::Result<WatchGuard> {
+    #[cfg(target_os = "linux")]
+    {
+        per_dir::build(root, git_dir, ignore, events)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        recursive(root, git_dir, ignore, events)
+    }
+}
+
+/// [`build`] off Linux: one recursive watch over the root.
+#[cfg(not(target_os = "linux"))]
+fn recursive(
     root: &Path,
     git_dir: Option<&Path>,
     ignore: &[String],
@@ -172,16 +191,169 @@ pub fn build(
         }
     })?;
     watcher.watch(root, RecursiveMode::Recursive)?;
+    watch_outside_git_dir(&mut watcher, root, git_dir)?;
+    Ok(WatchGuard::new(watcher))
+}
+
+/// A linked worktree's git dir lives under the *common* dir, outside this root, so it
+/// needs its own watch. An ordinary checkout's `<root>/.git` is already covered by the
+/// root's watch, and adding a second watch for it is at best redundant and at worst an
+/// error on backends that reject duplicates.
+fn watch_outside_git_dir(
+    watcher: &mut impl Watcher,
+    root: &Path,
+    git_dir: Option<&Path>,
+) -> notify::Result<()> {
     if let Some(git_dir) = git_dir
         && !git_dir.starts_with(root)
     {
-        // A linked worktree's git dir lives under the *common* dir, outside this root,
-        // so it needs its own watch. An ordinary checkout's `<root>/.git` is already
-        // covered by the recursive watch above, and adding a second watch for it is at
-        // best redundant and at worst an error on backends that reject duplicates.
         watcher.watch(git_dir, RecursiveMode::NonRecursive)?;
     }
-    Ok(WatchGuard::new(watcher))
+    Ok(())
+}
+
+/// Milestone 9.11 decision 18 (B12): the directories under `root` a Linux watch
+/// registers, `root` first: a walk that keeps each directory [`accepts`] keeps (so
+/// [`DENY_COMPONENTS`], `ignore` and the git dir's `objects/` and `lfs/` are never
+/// entered) and never follows a symbolic link. Blocking (it reads the tree).
+pub fn plan(root: &Path, git_dir: Option<&Path>, ignore: &[String]) -> Vec<PathBuf> {
+    plan_from(root, root, git_dir, ignore)
+}
+
+/// [`plan`] of the subtree at `start` (a directory under `root`, created or renamed in
+/// after the watch was armed): `start` itself when accepted, then what it holds.
+fn plan_from(start: &Path, root: &Path, git_dir: Option<&Path>, ignore: &[String]) -> Vec<PathBuf> {
+    let mut kept = Vec::new();
+    let is_dir = |path: &Path| std::fs::symlink_metadata(path).is_ok_and(|meta| meta.is_dir());
+    if !is_dir(start) || !accepts(start, root, git_dir, ignore) {
+        return kept;
+    }
+    let mut pending = vec![start.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                // `file_type` does not follow a link.
+                if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                    let path = entry.path();
+                    if accepts(&path, root, git_dir, ignore) {
+                        pending.push(path);
+                    }
+                }
+            }
+        }
+        kept.push(dir);
+    }
+    kept
+}
+
+/// Milestone 9.11 decision 18 (B12): the Linux watcher, one `NonRecursive` inotify
+/// watch per directory [`plan`] keeps.
+#[cfg(target_os = "linux")]
+mod per_dir {
+    use std::path::{Path, PathBuf};
+    use std::sync::{Arc, Mutex, Weak, mpsc};
+
+    use notify::event::{EventKind, ModifyKind};
+    use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+    use tokio::sync::mpsc::UnboundedSender;
+
+    use super::{WatchGuard, accepts, plan, plan_from, watch_outside_git_dir};
+
+    /// The filter's inputs, owned.
+    #[derive(Clone)]
+    struct Scope {
+        root: PathBuf,
+        git_dir: Option<PathBuf>,
+        ignore: Vec<String>,
+    }
+
+    impl Scope {
+        fn accepts(&self, path: &Path) -> bool {
+            accepts(path, &self.root, self.git_dir.as_deref(), &self.ignore)
+        }
+    }
+
+    /// [`super::build`] on Linux. An accepted event on a path that is a directory
+    /// created or renamed in is handed to [`adder`], which watches it (and what it
+    /// holds) and only then forwards it, so a forwarded event for a new directory means
+    /// it is watched. The callback runs on notify's event-loop thread, which a
+    /// `watch` call itself waits on, so the adder is a thread of its own.
+    pub(super) fn build(
+        root: &Path,
+        git_dir: Option<&Path>,
+        ignore: &[String],
+        events: UnboundedSender<()>,
+    ) -> notify::Result<WatchGuard> {
+        let scope = Scope {
+            root: root.to_path_buf(),
+            git_dir: git_dir.map(Path::to_path_buf),
+            ignore: ignore.to_vec(),
+        };
+        let (dirs_tx, dirs_rx) = mpsc::channel::<PathBuf>();
+        let (filter, forward) = (scope.clone(), events.clone());
+        let watcher = notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
+            let Ok(event) = result else {
+                // A watcher-level error is not information about the worktree; the
+                // safety poll covers what it lost.
+                return;
+            };
+            let named = matches!(
+                event.kind,
+                EventKind::Create(_) | EventKind::Modify(ModifyKind::Name(_))
+            );
+            let mut accepted = false;
+            for path in event.paths.iter().filter(|path| filter.accepts(path)) {
+                // `lstat`: a link is never walked.
+                if named && std::fs::symlink_metadata(path).is_ok_and(|meta| meta.is_dir()) {
+                    let _ = dirs_tx.send(path.clone());
+                } else {
+                    accepted = true;
+                }
+            }
+            if accepted {
+                let _ = forward.send(());
+            }
+        })?;
+        let watcher = Arc::new(Mutex::new(watcher));
+        {
+            let mut armed = crate::lock(&watcher);
+            for dir in plan(root, git_dir, ignore) {
+                armed.watch(&dir, RecursiveMode::NonRecursive)?;
+            }
+            watch_outside_git_dir(&mut *armed, root, git_dir)?;
+        }
+        // The adder holds the watcher weakly: dropping the guard drops the watcher,
+        // whose callback owns the sender, which ends the adder.
+        let weak = Arc::downgrade(&watcher);
+        std::thread::Builder::new()
+            .name("anthrex-watch-dirs".to_string())
+            .spawn(move || adder(&weak, &dirs_rx, &scope, &events))
+            .map_err(notify::Error::io)?;
+        Ok(WatchGuard::new(watcher))
+    }
+
+    /// Watches each new directory's accepted subtree, then forwards its event.
+    fn adder(
+        watcher: &Weak<Mutex<RecommendedWatcher>>,
+        dirs: &mpsc::Receiver<PathBuf>,
+        scope: &Scope,
+        events: &UnboundedSender<()>,
+    ) {
+        while let Ok(dir) = dirs.recv() {
+            let Some(watcher) = watcher.upgrade() else {
+                return;
+            };
+            {
+                let mut armed = crate::lock(&watcher);
+                for sub in plan_from(&dir, &scope.root, scope.git_dir.as_deref(), &scope.ignore) {
+                    // A directory gone again already is not an error worth a log.
+                    let _ = armed.watch(&sub, RecursiveMode::NonRecursive);
+                }
+            }
+            drop(watcher);
+            let _ = events.send(());
+        }
+    }
 }
 
 #[cfg(test)]
@@ -252,5 +424,109 @@ mod tests {
             runtime_thread,
             "an aborted task dropped its watcher on the runtime thread"
         );
+    }
+}
+
+#[cfg(test)]
+mod plan_tests {
+    //! Milestone 9.11 decision 18 (B12): what a Linux watch registers.
+
+    use super::*;
+
+    fn dirs(root: &Path, list: &[&str]) {
+        for dir in list {
+            std::fs::create_dir_all(root.join(dir)).unwrap();
+        }
+    }
+
+    fn relative(root: &Path, planned: Vec<PathBuf>) -> Vec<String> {
+        let mut names: Vec<String> = planned
+            .iter()
+            .map(|path| {
+                let rel = path.strip_prefix(root).unwrap().display().to_string();
+                if rel.is_empty() { ".".to_string() } else { rel }
+            })
+            .collect();
+        names.sort();
+        names
+    }
+
+    fn tree() -> (tempfile::TempDir, PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        dirs(
+            &root,
+            &[
+                "src/a",
+                "node_modules/p",
+                "gen/q",
+                ".git/refs/heads",
+                ".git/objects/aa",
+                ".git/lfs/x",
+            ],
+        );
+        // `target/x/y` and 60 directories under it: none is entered.
+        for i in 0..60 {
+            dirs(&root, &[&format!("target/x/y/d{i}")]);
+        }
+        (tmp, root)
+    }
+
+    #[test]
+    fn plan_skips_what_the_deny_list_rejects() {
+        let (_tmp, root) = tree();
+        let git_dir = root.join(".git");
+        let planned = plan(&root, Some(&git_dir), &["gen".to_string()]);
+        assert_eq!(
+            relative(&root, planned),
+            [".", ".git", ".git/refs", ".git/refs/heads", "src", "src/a"]
+        );
+    }
+
+    #[test]
+    fn plan_never_follows_a_link() {
+        let (_tmp, root) = tree();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(outside.path().join("deep/er")).unwrap();
+        std::os::unix::fs::symlink(outside.path(), root.join("src/out")).unwrap();
+        let planned = plan(&root, Some(&root.join(".git")), &["gen".to_string()]);
+        assert_eq!(
+            relative(&root, planned),
+            [".", ".git", ".git/refs", ".git/refs/heads", "src", "src/a"]
+        );
+    }
+
+    /// Linux only (inotify). The watch on a directory created after `build` is added
+    /// before the event of its creation is forwarded, so a file written in it after
+    /// that event is seen. Bound: the watcher forwards each accepted event at once (no
+    /// debounce of its own); `DEBOUNCE` (the scheduler's, 300 ms) plus a 2 s wall-clock
+    /// slack for a loaded runner covers the inotify delivery and the notify thread.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_new_directory_is_watched_when_created() {
+        use std::time::Duration;
+        const WALL_CLOCK_SLACK: Duration = Duration::from_secs(2);
+        let bound = crate::git::schedule::DEBOUNCE + WALL_CLOCK_SLACK;
+        let (_tmp, root) = tree();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let _guard = build(&root, Some(&root.join(".git")), &[], tx).unwrap();
+        let wait = |rx: &mut tokio::sync::mpsc::UnboundedReceiver<()>, what: &str| {
+            let deadline = std::time::Instant::now() + bound;
+            loop {
+                if rx.try_recv().is_ok() {
+                    return;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "no event for {what} within {bound:?}"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        std::fs::create_dir(root.join("src/b")).unwrap();
+        wait(&mut rx, "src/b's creation");
+        while rx.try_recv().is_ok() {}
+        std::fs::write(root.join("src/b/f"), "f").unwrap();
+        wait(&mut rx, "a file written in src/b");
     }
 }
