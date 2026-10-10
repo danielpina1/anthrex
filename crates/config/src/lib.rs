@@ -99,6 +99,8 @@ pub struct Ui {
     pub tree_keep_finished_secs: u64,
 }
 
+/// The `[panes]` table. Accepted for compatibility with existing config files and
+/// ignored: nothing reads it since milestone 7 (split panes) was dropped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Panes {
     pub max: u8,

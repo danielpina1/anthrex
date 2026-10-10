@@ -1,6 +1,6 @@
 # anthrex roadmap
 
-anthrex is built in twenty-two milestones. Milestones 1 to 6.5, 8a to 8c, and 9 to 9.5 (9, 9.0.5, 9.1, 9.0.6, 9.0.7, 9.2, 9.3 and 9.5) are merged, and milestones 9.6, 9.7, 9.8, 9.9 and 9.10 are done; milestone 7 is deferred until the user takes it up. Each later milestone has an implementation brief in `docs/milestones/`, written so that a coding agent such as Codex can implement it without further questions. `AGENTS.md` at the repository root holds the rules that apply to every milestone.
+anthrex is built in twenty-seven milestones. Milestones 1 to 6.5, 8a to 8c, and 9 to 9.5 (9, 9.0.5, 9.1, 9.0.6, 9.0.7, 9.2, 9.3 and 9.5) are merged, and milestones 9.6, 9.7, 9.8, 9.9 and 9.10 are done, and milestone 9.11 is ready. Milestone 7 (split panes) was dropped on 2026-10-10; its four terminal-input follow-ups moved to milestone 9.11. Each later milestone has an implementation brief in `docs/milestones/`, written so that a coding agent such as Codex can implement it without further questions. `AGENTS.md` at the repository root holds the rules that apply to every milestone.
 
 The design is layered, newest first:
 
@@ -25,7 +25,6 @@ The protocol version is **10** once milestone 9 merges, raised from 9 (milestone
 - Runs many Claude Code and Codex agents side by side, each as the real app in its own terminal, owned by a background daemon so agents survive closing the UI.
 - Shows every project as a tree — project, then each agent session, then that session's sub-agents, then theirs — drawn with real connectors to any depth. Every node shows live state: working, needs attention, done.
 - Shows the branch, uncommitted work and divergence of the focused agent's checkout, kept fresh by watching the filesystem.
-- Shows several agents at once in split panes.
 - Creates agents from a form, each optionally in its own git worktree, and restarts them in their previous session after a reboot.
 - Runs an orchestration: you give a goal to one orchestrator, the only agent you type to. It scouts the repository, sizes the work into small and medium tasks (splitting anything large, with sub-planners for big goals), and dispatches each to a headless Claude or Codex worker whose model, effort and test mode (TDD when the task needs it) match the task. Every task runs in its own worktree, passes a test proof, the check and a review by a different agent, and merges through a queue that tests the merged result. You watch it all live in the `C-b T` run view. Nothing reaches your base branch until you accept the result.
 
@@ -43,7 +42,6 @@ The protocol version is **10** once milestone 9 merges, raised from 9 (milestone
 | 5 | New-agent dialog and git worktrees | `docs/milestones/M5-worktrees.md` | 4.7 | `done` |
 | 6 | Persistence, resume, rename, config, reconnect | `docs/milestones/M6-persistence.md` | 3 | `done` |
 | 6.5 | Agent conversation view: structured turns, folded tool calls, sub-agent links | `docs/milestones/M6.5-conversation-view.md` | 6 | `done` |
-| 7 | Split panes | `docs/milestones/M7-split-panes.md` | 4 | `blocked` |
 | 8 | ~~Orchestration engine~~ — superseded by 8a, 8b, 8c | `docs/milestones/M8-orchestration-engine.md` | — | `superseded` |
 | 8a | Orchestration engine core: task graph, headless sessions, gates, merge queue, escalation, journal | `docs/milestones/M8a-orchestration-engine-core.md` | 5, 6, 6.5 | `done` |
 | 8b | Adaptation: repo profile, scouts, deciders, fast path, output filter, metering, run history | `docs/milestones/M8b-adaptation.md` | 8a | `done` |
@@ -64,7 +62,7 @@ The protocol version is **10** once milestone 9 merges, raised from 9 (milestone
 | 9.10 | A simple repository profile: a goal with no profile is queued while the profile is set up, one review card (**Use this** / **Edit**), the Profile screen as one plain page (status line, three sections, Advanced collapsed, dimmed keys), row edits checked once then saved, saved anyway or reverted, `profile use` (`confirm` its alias), `edit --anyway`; protocol 21 | `docs/milestones/M9.10-simple-profile.md` | 9.9 (orchestrator-first alerts) | `done` |
 | 9.11 | Stabilization, no new features: the run snapshot always fits one frame, a worker's waiting messages survive its replacement, deleted checkouts salvaged, the driver survives a panic, `daemon stop` never hangs, a leftover session whose pid only the journal held stopped at restore, checks without the user's tokens, milestone 7's four terminal-input items in the single-pane client, every flaky test fixed at its root; then the release gate (five full macOS runs, two green CI runs); protocol stays 21 | `docs/milestones/M9.11-stabilization.md` | 9.10 | `ready` |
 
-Work the milestones in numerical order, with one agreed exception: **milestone 7 is deferred** until after the orchestrator, because nothing in 6.5, 8 or 9 depends on split panes and the orchestration work is what is wanted next. The order to follow is **5 → 6 → 6.5 → 8a → (8b and 8c, in either order) → 9 → 9.0.5 → 9.1 → 9.0.6 → 9.0.7 → 9.2 → 9.3 → 9.5 → 9.6 → 9.7 → 9.8 → 9.9 → 9.10 → 9.11**, then 7. Milestone 9.10 starts once milestone 9.9 (orchestrator-first alerts) merges: it routes its new alert through 9.9's `alerts_route.rs` and takes the protocol number after 9.9's. Milestone 9.8 starts once PR #49 merges: that PR changes the decider, scout and orchestrator launch code 9.8 rewrites. Milestones 9.0.6 and 9.0.7 go before the rest of 9.2 by the user's choice (spec `2026-10-01-tui-end-to-end-design.md` §0). Milestones 8b and 8c both need only 8a and touch different crates (8b the daemon, 8c the client), but they share the protocol version, so run them one after the other, not at once.
+Work the milestones in numerical order: **5 → 6 → 6.5 → 8a → (8b and 8c, in either order) → 9 → 9.0.5 → 9.1 → 9.0.6 → 9.0.7 → 9.2 → 9.3 → 9.5 → 9.6 → 9.7 → 9.8 → 9.9 → 9.10 → 9.11**. Milestone 9.10 starts once milestone 9.9 (orchestrator-first alerts) merges: it routes its new alert through 9.9's `alerts_route.rs` and takes the protocol number after 9.9's. Milestone 9.8 starts once PR #49 merges: that PR changes the decider, scout and orchestrator launch code 9.8 rewrites. Milestones 9.0.6 and 9.0.7 go before the rest of 9.2 by the user's choice (spec `2026-10-01-tui-end-to-end-design.md` §0). Milestones 8b and 8c both need only 8a and touch different crates (8b the daemon, 8c the client), but they share the protocol version, so run them one after the other, not at once.
 
 Only one milestone should be in progress at a time: they all touch the protocol and the client state.
 
@@ -78,7 +76,6 @@ flowchart LR
   M46 --> M47[4.7 Node inspector]
   M47 --> M5[5 Worktrees]
   M3 --> M6[6 Persistence]
-  M4 --> M7[7 Split panes]
   M5 --> M8a[8a Engine core]
   M6 --> M65[6.5 Conversation view]
   M65 --> M8a

@@ -79,7 +79,7 @@ Each open item above is closed by exactly one milestone. Its brief lists the ite
 | M4 Project tree | Sidebar overflow: the tree scrolls to keep the selection visible. Hit-testing shares geometry with rendering. |
 | M5 Worktrees | The Task 8 minor "create() holds the Inner mutex across Window::spawn": `create` runs `Window::spawn` off the lock. |
 | M6 Persistence | The lifetime lock file, the unconditional socket unlink at shutdown, and the stale-socket TOCTOU. Umask around bind. Reconnect, including re-subscribe after a dropped Subscribe. `C-b Q` confirms that the shutdown was delivered before quitting. End-to-end `lifecycle::run` start and stop test. Log rotation. Handshake read timeout. **Not closed** (whole-branch-review m11, fix wave 12): register git watches non-recursively with a pruning walk, so a directory the deny list already rejects does not still cost a descriptor. Half of what this row used to claim landed later on branch `m6-git-config`: the `[git]` table, `ignore` included, exists and filters events. The pruning walk itself is deferred, unassigned, and detailed above; the descriptor risk is unchanged. M6's own actual scope is the eight items above it in this cell. |
-| M7 Split panes | SIGWINCH jiggle on attach so full-screen apps repaint. Wheel scrolling for alternate-screen apps without mouse mode. Check `mouse_protocol_encoding()` instead of assuming SGR. Define terminal-input policy for embedded bracketed-paste end markers before crossterm splits the intended clipboard boundary. |
+| M7 Split panes (dropped 2026-10-10; the four terminal-input items moved to milestone 9.11) | SIGWINCH jiggle on attach so full-screen apps repaint. Wheel scrolling for alternate-screen apps without mouse mode. Check `mouse_protocol_encoding()` instead of assuming SGR. Define terminal-input policy for embedded bracketed-paste end markers before crossterm splits the intended clipboard boundary. |
 | Not scheduled | Kitty keyboard protocol flags. Coalescing redraws. The remaining test-coverage minors from tasks 4, 5, 8 and 13. |
 
 ### M3 file organization observation for M4
@@ -118,7 +118,7 @@ Each open item above is closed by exactly one milestone. Its brief lists the ite
   change. It cannot mis-draw or panic — `view_of` re-clamps the pan. Tightening the gate
   to compare `(key, content_text)` would close it, at the cost of re-introducing some of
   the snap-back the gate was added to remove. Assigned to milestone 7, which already
-  takes the `TreeState::overview` follow-up.
+  takes the `TreeState::overview` follow-up. (Milestone 7 was dropped on 2026-10-10; this item is unscheduled.)
 - **`crates/tui/src/ui/mod.rs` is 599 lines against the 600 rule**, about 470 of them its
   test module. The next `ui` change has nowhere to land. Milestone 7 removes `main_inner`
   and restructures the layout, so it splits the file there. *Resolved before M8c (recorded
