@@ -4,7 +4,9 @@ use crate::dialog::{FormDefaults, NewAgentForm, RemoveConfirm};
 use crate::keymap::{Command, KeyAction, Keymap};
 use crate::settings::UiSettings;
 use crate::tree::{self, TreeState};
-pub use alerts::{Alert, AlertKey, AlertWho, AlertsFocus, StageAlert, alerts};
+pub use alerts::{
+    Alert, AlertKey, AlertWho, AlertsFocus, GOAL_START_BUDGET, RUN_REQUEST_SECS, StageAlert, alerts,
+};
 pub use alerts_route::{Route, RouteKind, alert_route, orchestrator_lives, route_kind};
 pub use asks::{answer_request, handled_line};
 pub use confirm::PendingAction;

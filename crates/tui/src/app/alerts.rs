@@ -25,9 +25,9 @@ pub(crate) use alerts_setup::setup_state;
 
 #[path = "alerts_dropped.rs"]
 mod alerts_dropped;
-pub use alerts_dropped::DroppedGoals;
 #[cfg(test)]
-pub(crate) use alerts_dropped::{ASK_GAP, GOAL_START_BUDGET};
+pub(crate) use alerts_dropped::ASK_GAP;
+pub use alerts_dropped::{DroppedGoals, GOAL_START_BUDGET, RUN_REQUEST_SECS};
 
 /// What an alert is about: its identity, which the focus follows (decision 21).
 #[derive(Debug, Clone, PartialEq, Eq)]

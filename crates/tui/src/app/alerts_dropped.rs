@@ -33,19 +33,19 @@ const GOAL_CHARS: usize = 60;
 pub(crate) const ASK_GAP: Duration = Duration::from_secs(1);
 
 /// The CLI's `RUN_REQUEST_TIMEOUT` (`cli/src/run_cmd.rs`), which the client cannot
-/// import: the CLI depends on this crate, not the other way round.
-const RUN_REQUEST_SECS: u64 = 180;
+/// import: the CLI depends on this crate, not the other way round. Public so the CLI's
+/// `the_clients_restated_run_request_timeout_is_the_clis` can pin the two equal.
+pub const RUN_REQUEST_SECS: u64 = 180;
 
 /// One queued goal's start, at its worst: the CLI's `GOAL_REQUEST_TIMEOUT`
 /// (`cli/src/run_cmd/adapt.rs`, 1220 s; `docs/timing-budgets.md`, stage 11d's row),
 /// rebuilt from the same terms: `RUN_START_TIMEOUT` (`RUN_REQUEST_TIMEOUT` +
 /// `PREFLIGHT_BOUND` + 30 s + `TUNING_START_BOUND`), then the triage's 600 + 30 s and
 /// `INSTALLED_PROBE_TIMEOUT`. A drained goal is started by the same `StartGoal` path.
-pub(crate) const GOAL_START_BUDGET: Duration =
-    Duration::from_secs(RUN_REQUEST_SECS + 30 + 600 + 30)
-        .saturating_add(daemon::host::PREFLIGHT_BOUND)
-        .saturating_add(daemon::run::driver::tuning::TUNING_START_BOUND)
-        .saturating_add(daemon::run::driver::INSTALLED_PROBE_TIMEOUT);
+pub const GOAL_START_BUDGET: Duration = Duration::from_secs(RUN_REQUEST_SECS + 30 + 600 + 30)
+    .saturating_add(daemon::host::PREFLIGHT_BOUND)
+    .saturating_add(daemon::run::driver::tuning::TUNING_START_BOUND)
+    .saturating_add(daemon::run::driver::INSTALLED_PROBE_TIMEOUT);
 
 /// A goal that left the queue with no run for it, waiting for its project's status.
 /// `give_up_at` is in the daemon's unix seconds (the snapshots' `now`).
