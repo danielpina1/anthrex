@@ -148,6 +148,7 @@ pub fn round(
         lane: None,
         environment_failed: false,
         startup_failure: None,
+        sandbox_note: None,
     }
 }
 

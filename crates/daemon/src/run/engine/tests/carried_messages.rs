@@ -30,7 +30,7 @@ fn args() -> serde_json::Value {
 
 /// A `task_done` from `window` whose check fails (a generated file outside the task's
 /// `owns`): one done-gate failure, its text in the tool's reply (`told`).
-fn done_fails(fx: &mut Fixture, window: u32) -> Vec<Effect> {
+pub(super) fn done_fails(fx: &mut Fixture, window: u32) -> Vec<Effect> {
     let effects = fx.tool(window, "task_done", args());
     let (op, _) = ops_in(&effects, "VerifyDone")[0].clone();
     let mut result = fx.clean_check("t1");
@@ -46,7 +46,7 @@ fn done_fails(fx: &mut Fixture, window: u32) -> Vec<Effect> {
 
 /// A working `t1` whose done gate can fail (its profile names a generated file), on
 /// `extra`'s budget; its window, its first turn open.
-fn working_generated(extra: &str) -> (Fixture, u32) {
+pub(super) fn working_generated(extra: &str) -> (Fixture, u32) {
     let profile = PROFILE.replace("setup = ", "generated = [\"Cargo.lock\"]\nsetup = ");
     let mut fx = Fixture::new(&plan_with(&profile, &[task("t1", "S", "a", extra)]));
     fx.ready(true);
@@ -57,7 +57,7 @@ fn working_generated(extra: &str) -> (Fixture, u32) {
 
 /// The replaced session in `window` exits and its diff is answered: the fresh
 /// session's `CreateWindow` first turn.
-fn fresh_first_turn(fx: &mut Fixture, window: u32) -> String {
+pub(super) fn fresh_first_turn(fx: &mut Fixture, window: u32) -> String {
     let effects = killed_exit(fx, window);
     let (op, _) = only_op(&effects, "DiffSoFar");
     let effects = fx.done(

@@ -182,6 +182,8 @@ pub(super) fn history(run: &mut Run, i: usize, now: u64, text: impl Into<String>
 }
 
 pub(super) fn block(run: &mut Run, i: usize, reason: BlockReason, text: String, now: u64) {
+    // Milestone 9.11 decision 7: a sandbox failure the task's last round recorded.
+    let text = super::rounds::with_sandbox_note(run, i, text);
     let label = serde_json::to_value(reason)
         .ok()
         .and_then(|v| v.as_str().map(str::to_string))

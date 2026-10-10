@@ -224,6 +224,8 @@ pub(super) fn take_rung(
 /// A stall (decision 38): `stalls += 1; failures += 1`; rung 3 at three failures, else
 /// rung 2.
 pub(super) fn stall(run: &mut Run, i: usize, reason: String, now: u64, fx: &mut Vec<Effect>) {
+    // Milestone 9.11 decision 7: named in the stall, so not again in a rung's text.
+    let reason = super::rounds::with_sandbox_note(run, i, reason);
     let task = &mut run.tasks[i];
     task.stalls = task.stalls.saturating_add(1);
     task.failures = task.failures.saturating_add(1);
@@ -271,6 +273,8 @@ pub(super) fn breach(run: &mut Run, i: usize, what: String, now: u64, fx: &mut V
 /// starts in the same worktree once the old one has exited ([`start_fresh_sessions`]).
 /// Ruling RL-1 skips a route that failed in this task.
 pub(super) fn rung2(run: &mut Run, i: usize, reason: String, now: u64, fx: &mut Vec<Effect>) {
+    // Milestone 9.11 decision 7: a session replaced for a failure names its sandbox's.
+    let reason = super::rounds::with_sandbox_note(run, i, reason);
     // Milestone 9.5 decision 20: past rung 1, a lane leaves its race.
     if run.tasks[i].lane_view.is_some() {
         return super::race::lane_out(run, i, 2, reason, now, fx);

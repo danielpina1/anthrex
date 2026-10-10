@@ -201,7 +201,10 @@ fn evictable(event: &HeldEvent) -> bool {
     matches!(
         event,
         HeldEvent::Signal(
-            AgentSignal::Activity | AgentSignal::ToolUse { .. } | AgentSignal::Said { .. }
+            AgentSignal::Activity
+                | AgentSignal::ToolUse { .. }
+                | AgentSignal::Said { .. }
+                | AgentSignal::SandboxBroken { .. }
         )
     )
 }

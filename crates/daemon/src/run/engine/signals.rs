@@ -204,6 +204,7 @@ fn apply(run: &mut Run, i: usize, r: usize, signal: AgentSignal, now: u64, fx: &
             }
         }
         AgentSignal::Said { text } => rounds::note_said(round, &text),
+        AgentSignal::SandboxBroken { note } => rounds::note_sandbox(round, note),
         AgentSignal::Activity
         | AgentSignal::ProcessStarted { .. }
         | AgentSignal::StartupFailed { .. }

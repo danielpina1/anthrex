@@ -208,4 +208,10 @@ pub enum AgentSignal {
     Said {
         text: String,
     },
+    /// Milestone 9.11 decision 7: a failed tool result Claude's sandbox could not run,
+    /// its note (`headless::failure::sandbox_command_failure`). Recorded on the round
+    /// and named in the task's next block, stall or failure; it blocks nothing.
+    SandboxBroken {
+        note: String,
+    },
 }

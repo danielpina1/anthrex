@@ -6,6 +6,7 @@
 use proto::safe_text::{multi_line, one_line};
 use proto::{ACTIVITY_MAX, AgentRole, WORKER_SUMMARY_MAX};
 
+use crate::headless::failure;
 use crate::run::model::{AgentRound, OpId, Run};
 use crate::run::snapshot_detail::cut;
 
@@ -76,6 +77,7 @@ pub(super) fn new_round(
         lane: None,
         environment_failed: false,
         startup_failure: None,
+        sandbox_note: None,
     }
 }
 
@@ -129,4 +131,21 @@ pub(super) fn note_failed_turn(run: &mut Run, i: usize, r: usize, error: &str, a
         crate::run::report::format_utc(at)
     );
     super::dispatch::history(run, i, now, text);
+}
+
+/// Milestone 9.11 decision 7 (as the scout does): the round keeps the note of its first
+/// sandbox-failed command, and nothing else changes. It blocks nothing.
+pub(super) fn note_sandbox(round: &mut AgentRound, note: String) {
+    round.sandbox_note.get_or_insert(note);
+}
+
+/// Decision 7: `reason` for task `i`'s next block, stall or failure, naming the note its
+/// last round recorded, which is taken so it is said once; an older round's is never
+/// used. `failure::with_sandbox_hint` adds the bubblewrap hint to a missing-sandbox text.
+pub(super) fn with_sandbox_note(run: &mut Run, i: usize, reason: String) -> String {
+    let last = run.tasks[i].rounds.last_mut();
+    let Some(note) = last.and_then(|r| r.sandbox_note.take()) else {
+        return reason;
+    };
+    failure::with_sandbox_hint(&format!("{reason}; {note}"))
 }

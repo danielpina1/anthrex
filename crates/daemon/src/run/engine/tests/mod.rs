@@ -200,6 +200,7 @@ mod role_history;
 mod role_history_ends;
 mod rounds_limits;
 mod run_scouts;
+mod sandbox_note;
 mod scenarios;
 mod scenarios_c27;
 mod scenarios_c28;
