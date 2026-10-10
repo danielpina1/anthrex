@@ -468,20 +468,23 @@ pub fn confirm_record(
     let Some(profile) = record.profile.clone() else {
         return Err("the proposal has no profile".to_string());
     };
-    let (report, edited_keys) = match &record.origin {
+    let (report, edited_keys, previous) = match &record.origin {
         ProposalOrigin::Edit { keys } => {
-            let mut edited = match store::load(repo_dir) {
-                store::Stored::Found { meta, .. } => meta.edited_keys,
-                _ => Vec::new(),
+            let previous = match store::load(repo_dir) {
+                store::Stored::Found { meta, .. } => Some(meta),
+                _ => None,
             };
+            let mut edited = previous
+                .as_ref()
+                .map_or_else(Vec::new, |meta| meta.edited_keys.clone());
             for key in keys {
                 if !edited.contains(key) {
                     edited.push(key.clone());
                 }
             }
-            (None, edited)
+            (None, edited, previous)
         }
-        _ => (record.scout_id.clone(), Vec::new()),
+        _ => (record.scout_id.clone(), Vec::new(), None),
     };
     let watched: Vec<String> = profile
         .conventions
@@ -492,7 +495,8 @@ pub fn confirm_record(
     let meta = ProfileMeta {
         confirmed_at: unix_now(),
         report,
-        verification: record.verification.clone(),
+        // Final review M4: a Save anyway keeps the last verified time.
+        verification: super::row_edit::stored_verification(record, previous.as_ref()),
         fingerprint: store::fingerprint(project, &watched),
         edited_keys,
         project: Some(project.to_path_buf()),

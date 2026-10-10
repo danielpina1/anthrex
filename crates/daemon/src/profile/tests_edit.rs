@@ -183,7 +183,7 @@ pub(super) fn put(rig: &Rig, record: &ProposalRecord) {
 }
 
 /// `profile edit check false` on the stored profile, waited until its ✗ is recorded.
-async fn failed_check_edit(rig: &Rig, project: &Path) -> ProposalRecord {
+pub(super) async fn failed_check_edit(rig: &Rig, project: &Path) -> ProposalRecord {
     rig.store_profile(project);
     let message = done(
         rig.profiles

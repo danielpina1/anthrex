@@ -112,6 +112,8 @@ mod tests_delivery;
 #[cfg(test)]
 mod tests_edit;
 #[cfg(test)]
+mod tests_edit_anyway;
+#[cfg(test)]
 mod tests_edit_proposal;
 #[cfg(test)]
 mod tests_installed;

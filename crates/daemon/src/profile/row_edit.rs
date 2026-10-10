@@ -120,6 +120,78 @@ pub(super) fn failed_edit(
     }
 }
 
+/// A verification at `at` that ran nothing.
+fn no_checks(at: u64, confined: bool) -> ProfileVerification {
+    ProfileVerification {
+        at,
+        confined,
+        setup: None,
+        check: None,
+        single_test: None,
+        build_check: None,
+        module_graph: None,
+        module_test: None,
+        module_tests: None,
+        toolchain_id: None,
+    }
+}
+
+/// `key`'s slot in `v` set to a ✗ of `command`, from a row edit's `tail` and `secs`.
+fn failed_check(
+    v: &mut ProfileVerification,
+    key: &str,
+    command: String,
+    (tail, secs): (String, u64),
+) {
+    if let Some(slot) = command_slot(v, key) {
+        *slot = Some(CommandCheck {
+            command,
+            ok: false,
+            code: None,
+            timed_out: false,
+            secs,
+            tail,
+        });
+    }
+}
+
+/// Final review M4: the verification a **Save anyway** of the stored profile stores (a
+/// record whose row edit is `Failed`, decision 18). The edit's ✗ is kept, but `at` stays
+/// the time the stored profile was last verified (`previous`'s `verification.at`, else
+/// its `confirmed_at`), so `verified_at` never reads as fresh for a profile whose check
+/// failed. With no verification of its own (it could not run, `Stop::Failed`), the
+/// previous one is kept with the edited key's ✗ in its slot. Any other record, a
+/// review proposal's included: its own.
+pub(super) fn stored_verification(
+    record: &ProposalRecord,
+    previous: Option<&proto::ProfileMeta>,
+) -> Option<ProfileVerification> {
+    let Some(RowEdit {
+        key,
+        state: RowEditState::Failed { tail, secs, .. },
+        ..
+    }) = record.edit.as_ref().filter(|_| !is_review(record))
+    else {
+        // A review proposal's held ✗ is not what Use this stores (its profile keeps
+        // the old value; the controller's ruling after the task 6 fix round).
+        return record.verification.clone();
+    };
+    let last = previous.map(|m| m.verification.as_ref().map_or(m.confirmed_at, |v| v.at));
+    let mut kept = record.verification.clone();
+    if kept.is_none() {
+        kept = previous.and_then(|m| m.verification.clone());
+        let command = record.profile.as_ref().and_then(|p| command_of(p, key));
+        if let Some(command) = command {
+            let v = kept.get_or_insert_with(|| no_checks(last.unwrap_or(0), false));
+            failed_check(v, key, command, (tail.clone(), *secs));
+        }
+    }
+    if let (Some(v), Some(last)) = (kept.as_mut(), last) {
+        v.at = last;
+    }
+    kept
+}
+
 /// Decision 18 on a proposal (R22): `edited` written into the proposal, and the key's ✗
 /// check rebuilt from the row edit's `tail` and `secs`; the key leaves `dropped`.
 pub(super) fn saved_anyway(
@@ -130,28 +202,10 @@ pub(super) fn saved_anyway(
     (now, confined): (u64, bool),
 ) {
     if let Some(command) = command_of(&edited, key) {
-        let v = record.verification.get_or_insert(ProfileVerification {
-            at: now,
-            confined,
-            setup: None,
-            check: None,
-            single_test: None,
-            build_check: None,
-            module_graph: None,
-            module_test: None,
-            module_tests: None,
-            toolchain_id: None,
-        });
-        if let Some(slot) = command_slot(v, key) {
-            *slot = Some(CommandCheck {
-                command,
-                ok: false,
-                code: None,
-                timed_out: false,
-                secs,
-                tail,
-            });
-        }
+        let v = record
+            .verification
+            .get_or_insert_with(|| no_checks(now, confined));
+        failed_check(v, key, command, (tail, secs));
     }
     record.profile = Some(edited);
     record.dropped.retain(|d| d.key != key);
