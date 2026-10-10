@@ -63,6 +63,23 @@ pub(super) async fn remove_keeping(
     reference: String,
     keep_head: bool,
 ) -> Result<Option<String>, String> {
+    // Milestone 9.11 decision 14 (A14): a nested repository's work cannot be salvaged
+    // into the user's repository, so a checkout holding some is kept, and the op's
+    // failure says why (the task's history, `could not remove its worktree: kept …`).
+    if path.exists() {
+        let at = path.clone();
+        let nested = service
+            .write(ctx, move |g, t| git::nested_work(g, &at, t))
+            .await?;
+        if !nested.is_empty() {
+            return Err(format!(
+                "kept {}: it holds a nested git repository ({}) whose work anthrex cannot \
+                 salvage; remove it yourself when done",
+                path.display(),
+                nested.join(", ")
+            ));
+        }
+    }
     let salvaged = salvage_at(
         service,
         ctx,
@@ -347,6 +364,51 @@ mod tests {
             git(&rig.root, &["show", &format!("{reference}:w.txt")]),
             "work"
         );
+        assert!(!rig.repo.exists(), "the checkout's repository was kept");
+    }
+
+    /// `git init` of `<task>/nested`, with its own identity.
+    fn nested(rig: &Rig) -> PathBuf {
+        let sub = rig.task.join("nested");
+        std::fs::create_dir_all(&sub).unwrap();
+        git(&sub, &["init", "-q"]);
+        git(&sub, &["config", "user.name", "n"]);
+        git(&sub, &["config", "user.email", "n@n"]);
+        sub
+    }
+
+    /// Milestone 9.11 decision 14 (A14): a nested repository holding work the salvage
+    /// cannot keep keeps its checkout, and the op says so.
+    #[test]
+    fn a_nested_repository_with_work_keeps_the_checkout() {
+        let rig = Rig::new();
+        let sub = nested(&rig);
+        std::fs::write(sub.join("c.txt"), "c\n").unwrap();
+        git(&sub, &["add", "-A"]);
+        git(&sub, &["commit", "-q", "-m", "nested"]);
+        std::fs::write(sub.join("p.txt"), "uncommitted\n").unwrap();
+
+        let expected = format!(
+            "kept {}: it holds a nested git repository (nested) whose work anthrex cannot \
+             salvage; remove it yourself when done",
+            rig.task.display()
+        );
+        assert_eq!(rig.remove(), Err(expected));
+        assert!(sub.join("p.txt").is_file(), "the nested work was removed");
+        assert!(rig.repo.exists(), "the checkout's repository was removed");
+    }
+
+    /// Pinning: an unchanged clone of the user's repository holds nothing to lose (its
+    /// `HEAD` is the user's); the checkout goes, as before.
+    #[test]
+    fn a_clean_nested_repository_is_removed() {
+        let rig = Rig::new();
+        let clone = rig.task.join("nested");
+        let (from, to) = (rig.root.to_str().unwrap(), clone.to_str().unwrap());
+        git(&rig.task, &["clone", "-q", from, to]);
+        let removed = rig.remove();
+        assert!(removed.is_ok(), "{removed:?}");
+        assert!(!rig.task.exists(), "the checkout was kept");
         assert!(!rig.repo.exists(), "the checkout's repository was kept");
     }
 

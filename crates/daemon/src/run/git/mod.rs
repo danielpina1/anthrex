@@ -61,7 +61,7 @@ pub use merge::{
     commits_since, guard_refs, materialize, merge_tree, read_ref, reattach, run_work_on_base,
 };
 pub use merge_state::abort_merge;
-pub use salvage::{delete_branches, remove_checkout, remove_worktree, salvage};
+pub use salvage::{delete_branches, nested_work, remove_checkout, remove_worktree, salvage};
 pub use settings::{codex_config_tree, project_settings};
 pub use signals::{
     DiffLimits, NoAttributes, SIGNALS_DIFF_BYTES, Zero, cfg_test_files, done_signals,

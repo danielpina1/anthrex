@@ -16,6 +16,10 @@ use super::merge::read;
 use super::worktrees::{forget_missing, listed, repair_git_file};
 use super::{DIFF_FLAGS, Git, NO_NESTED, checkout, failure, import, nul_fields, os};
 
+#[path = "salvage_nested.rs"]
+mod nested;
+pub use nested::nested_work;
+
 /// Decision 20's salvage. A worktree with nothing to save (`git status --porcelain`,
 /// untracked files included, ignored ones not) writes nothing and gives `None`.
 /// Otherwise its whole state — staged, unstaged and untracked, and a conflicted
