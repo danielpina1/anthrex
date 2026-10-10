@@ -39,6 +39,9 @@ pub const COMPACT_AFTER_BYTES: u64 = 1 << 20;
 pub const RUNS_DIR: &str = "runs";
 pub const RUN_FILE: &str = "run.json";
 pub const RUN_TMP: &str = "run.json.tmp";
+/// Milestone 9.11 decision 36 (A13): the newest `run.json` format this build reads and
+/// writes; a run without the field (written before it) reads as format 0.
+pub const RUN_FORMAT: u32 = 1;
 pub const JOURNAL_FILE: &str = "journal.jsonl";
 const JOURNAL_TMP: &str = "journal.jsonl.tmp";
 
@@ -78,7 +81,12 @@ pub fn runs_dir(data_dir: &Path) -> PathBuf {
 pub fn save_run(run: &Run) -> io::Result<()> {
     let dir = &run.data_dir;
     ensure_dir(dir)?;
-    let bytes = serde_json::to_vec(run).map_err(io::Error::other)?;
+    // Decision 36: stamped on every save, ahead of the run's own fields.
+    let bytes = serde_json::to_vec(&Stamped {
+        format: RUN_FORMAT,
+        run,
+    })
+    .map_err(io::Error::other)?;
     let tmp = dir.join(RUN_TMP);
     write_synced(&tmp, &bytes)?;
     fs::rename(&tmp, dir.join(RUN_FILE))?;
@@ -194,6 +202,17 @@ pub fn load_all(data_dir: &Path) -> (Vec<(Run, Vec<JournalLine>)>, Vec<String>) 
         .collect();
     dirs.sort();
     for dir in dirs {
+        let run_file = dir.join(RUN_FILE);
+        let read = fs::read(&run_file);
+        // Decision 36 (A13): a newer anthrex's run is left exactly as it is: not loaded,
+        // so never saved, and nothing in its directory is touched.
+        if let Some(format) = read.as_ref().ok().and_then(|bytes| newer_format(bytes)) {
+            problems.push(format!(
+                "run {} skipped: written by a newer anthrex (run format {format}; this one reads up to {RUN_FORMAT}); left as it is",
+                name(&dir)
+            ));
+            continue;
+        }
         for leftover in [RUN_TMP, JOURNAL_TMP] {
             let path = dir.join(leftover);
             if path.exists()
@@ -202,8 +221,7 @@ pub fn load_all(data_dir: &Path) -> (Vec<(Run, Vec<JournalLine>)>, Vec<String>) 
                 problems.push(format!("cannot remove {}: {err}", path.display()));
             }
         }
-        let run_file = dir.join(RUN_FILE);
-        let mut run: Run = match fs::read(&run_file) {
+        let mut run: Run = match read {
             Ok(bytes) => match serde_json::from_slice(&bytes) {
                 Ok(run) => run,
                 Err(err) => {
@@ -252,6 +270,27 @@ pub fn load_all(data_dir: &Path) -> (Vec<(Run, Vec<JournalLine>)>, Vec<String>) 
         }
     }
     (runs, problems)
+}
+
+/// `run.json` as written: the run's fields after its format. The format lives in the file
+/// only; `Run` itself ignores the key when it is read.
+#[derive(serde::Serialize)]
+struct Stamped<'a> {
+    format: u32,
+    #[serde(flatten)]
+    run: &'a Run,
+}
+
+/// The `format` of a `run.json` when it is above [`RUN_FORMAT`]. Read on its own, so a
+/// file whose other fields this build cannot parse is still recognised.
+fn newer_format(bytes: &[u8]) -> Option<u32> {
+    #[derive(serde::Deserialize)]
+    struct Format {
+        #[serde(default)]
+        format: u32,
+    }
+    let format = serde_json::from_slice::<Format>(bytes).ok()?.format;
+    (format > RUN_FORMAT).then_some(format)
 }
 
 fn name(dir: &Path) -> String {
