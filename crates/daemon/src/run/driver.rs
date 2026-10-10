@@ -445,7 +445,9 @@ impl RunService {
         self.retire_deadlines();
         self.check_orchestrators();
         let publish = std::mem::take(&mut crate::lock(&self.book).publish_due);
-        if publish || self.proposals_moved() {
+        // Always asked (M9.10 final review M1): it moves the revision for a profile change.
+        let moved = self.proposals_moved();
+        if publish || moved {
             // Bound first, so the engine guard drops before `publish` takes the scout
             // table (AGENTS.md rule 2; M9.6 second review). `publish` lays the scouts
             // over it (review fix M-5: once per tick).

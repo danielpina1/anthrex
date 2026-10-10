@@ -185,21 +185,23 @@ async fn the_tick_publishes_outside_the_engine_lock() {
     assert_eq!(pushed.runs.len(), 1);
 }
 
-/// Milestone 9.0.5 decision 10: a change to the ready profile proposals is pushed on
-/// the next tick even with no run change, and `current` (a `List` answer) carries the
-/// same list. The change here is `restore` seeding the list from a `Ready`
-/// `proposal.json` on disk; a tick with nothing new publishes nothing.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_proposal_change_publishes_on_the_next_tick() {
-    let dir = tempfile::tempdir().unwrap();
-    let socket = dir.path().join("d.sock");
+/// A run service and its wired profile service over a data directory holding a `Ready`
+/// `proposal.json` that `restore` has not read yet, and the proposal's project.
+fn ready_on_disk(
+    dir: &Path,
+) -> (
+    Arc<RunService>,
+    Arc<crate::profile::service::ProfileService>,
+    PathBuf,
+) {
+    let socket = dir.join("d.sock");
     let mut config = ManagerConfig::for_tests(socket.clone(), "/bin/sh".into());
     config.claude_bin = "/nonexistent/anthrex-test/claude".into();
     config.codex_bin = "/nonexistent/anthrex-test/codex".into();
-    config.worktrees_root = dir.path().join("worktrees");
+    config.worktrees_root = dir.join("worktrees");
     config.launch_gate = LaunchGate::open_already();
     let (manager, _events) = WindowManager::new(config);
-    let data = dir.path().join("data");
+    let data = dir.join("data");
     let project = PathBuf::from("/work/ready-app");
     let repo_dir = crate::profile::repo_dir(&data, &project);
     std::fs::create_dir_all(&repo_dir).unwrap();
@@ -230,6 +232,17 @@ async fn a_proposal_change_publishes_on_the_next_tick() {
         &socket,
         &config::Orchestrator::default(),
     );
+    (runs, profiles, project)
+}
+
+/// Milestone 9.0.5 decision 10: a change to the ready profile proposals is pushed on
+/// the next tick even with no run change, and `current` (a `List` answer) carries the
+/// same list. The change here is `restore` seeding the list from a `Ready`
+/// `proposal.json` on disk; a tick with nothing new publishes nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_proposal_change_publishes_on_the_next_tick() {
+    let dir = tempfile::tempdir().unwrap();
+    let (runs, profiles, project) = ready_on_disk(dir.path());
     let mut pushes = runs.pushes();
     runs.on_tick(unix_now()).await;
     assert!(pushes.try_recv().is_err(), "nothing changed yet");
@@ -254,6 +267,33 @@ async fn a_proposal_change_publishes_on_the_next_tick() {
     assert!(
         pushes.try_recv().is_err(),
         "an unchanged list is not pushed again"
+    );
+}
+
+/// Final review M1: a profile change on a tick that publishes anyway (`publish_due`)
+/// still moves the engine's revision, or a subscriber that has already sent that
+/// revision drops the snapshot (`run_api.rs::forward`) and the change waits for an
+/// unrelated engine change.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_profile_change_moves_the_revision_on_a_due_publish() {
+    let dir = tempfile::tempdir().unwrap();
+    let (runs, profiles, _project) = ready_on_disk(dir.path());
+    let mut pushes = runs.pushes();
+    runs.on_tick(unix_now()).await;
+    let before = runs.current().revision;
+
+    profiles.restore().await;
+    crate::lock(&runs.book).publish_due = true;
+    let ticking = runs.clone();
+    tokio::spawn(async move { ticking.on_tick(unix_now()).await });
+    let pushed = tokio::time::timeout(Duration::from_secs(10), pushes.recv())
+        .await
+        .expect("the due tick publishes")
+        .unwrap();
+    assert_eq!(pushed.proposals.len(), 1);
+    assert!(
+        pushed.revision > before,
+        "the profile change kept revision {before}, which a subscriber drops"
     );
 }
 
