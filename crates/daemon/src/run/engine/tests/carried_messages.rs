@@ -15,10 +15,10 @@ use super::race::{claim, lane};
 use super::race_crown::crowned;
 use super::race_end::b_out;
 use super::race_lanes::proof;
-use super::turns::{killed_exit, queue, working_on};
+use super::turns::{exited, killed_exit, queue, working_on};
 use super::worker_messages::msg;
 use crate::run::contract::{answer_message, handover_prompt};
-use crate::run::engine::{AgentSignal, Effect, OpKind, OpResult};
+use crate::run::engine::{AgentSignal, Effect, EventKind, OpKind, OpResult};
 use crate::run::orch::contract::notes_section;
 
 /// Room for every tool call and minute a test makes, so no budget rung interferes.
@@ -231,4 +231,81 @@ fn rung_4_and_a_lane_out_keep_the_mail() {
     let first_turn = fresh_first_turn(&mut fx, a);
     assert!(first_turn.ends_with(&format!("\n\n{text}")), "{first_turn}");
     assert!(fx.run().outbox.is_empty(), "{:#?}", fx.run().outbox);
+}
+
+#[test]
+fn a_failed_resume_keeps_an_in_flight_wrap_up() {
+    // The soft budget's wrap-up is queued while the first turn is open, then delivered
+    // when it closes: `Deliver` sent, its turn taken and closed, no `Delivered` yet.
+    let (mut fx, window) = working_on("[task.budget]\ntool_calls = 5\nminutes = 1000");
+    for _ in 0..5 {
+        fx.signal(
+            window,
+            AgentSignal::ToolUse {
+                name: "Bash".into(),
+                target: None,
+            },
+        );
+    }
+    let wrap_up = waiting(&fx, "t1");
+    assert_eq!(wrap_up.len(), 1, "{wrap_up:#?}");
+    let wrap_up = wrap_up[0].clone();
+    let effects = fx.turn_completed(window);
+    let in_flight: Vec<u64> = (effects.iter())
+        .find_map(|e| match e {
+            Effect::Deliver { message_ids, .. } => Some(message_ids.clone()),
+            _ => None,
+        })
+        .expect("the wrap-up is delivered");
+    assert!(waiting(&fx, "t1").is_empty(), "in flight, not waiting");
+    // The wrap-up's turn ends; its `Delivered` has not come.
+    fx.turn_completed(window);
+
+    // The process exits between turns; a second message goes out as a resume.
+    exited(&mut fx, window);
+    queue(&mut fx, "[anthrex] the parser moved");
+    let effects = fx.tick();
+    let (op, kind) = only_op(&effects, "ResumeSession");
+    let OpKind::ResumeSession { message, .. } = kind else {
+        unreachable!()
+    };
+    assert_eq!(message, "[anthrex] the parser moved");
+
+    // The resume fails: the fresh session's first turn carries both, each once, in
+    // queue order.
+    let effects = fx.done(
+        op,
+        OpResult::ResumeFailed {
+            error: "no such session".into(),
+        },
+    );
+    let (op, _) = only_op(&effects, "DiffSoFar");
+    let effects = fx.done(
+        op,
+        OpResult::Diff {
+            stat: String::new(),
+            patch: String::new(),
+        },
+    );
+    let (_, kind) = only_op(&effects, "CreateWindow");
+    let OpKind::CreateWindow { first_turn, .. } = kind else {
+        unreachable!()
+    };
+    let tail = format!("\n\n{wrap_up}\n\n[anthrex] the parser moved");
+    assert!(first_turn.ends_with(&tail), "{first_turn}");
+    assert_eq!(first_turn.matches(&wrap_up).count(), 1, "{first_turn}");
+    assert_eq!(first_turn.matches("the parser moved").count(), 1);
+    assert!(fx.run().outbox.is_empty(), "{:#?}", fx.run().outbox);
+
+    // The wrap-up's late failed `Delivered` finds nothing to queue again.
+    fx.complete_windows();
+    let before = fx.task("t1").rounds.clone();
+    fx.next(EventKind::Delivered {
+        run_id: RUN_ID.into(),
+        message_ids: in_flight,
+        ok: false,
+        error: Some("the window is gone".into()),
+    });
+    assert!(fx.run().outbox.is_empty(), "{:#?}", fx.run().outbox);
+    assert_eq!(fx.task("t1").rounds, before);
 }
