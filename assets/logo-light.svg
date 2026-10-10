@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 440 120" width="440" height="120" role="img" aria-labelledby="t">
+  <title id="t">anthrex</title>
+  <rect width="120" height="120" rx="26" fill="#1e1e2e"/>
+  <g fill="none" stroke="#89b4fa" stroke-width="10" stroke-linecap="round">
+    <path d="M38 58 C20 66 12 82 26 90"/>
+    <path d="M52 64 C50 80 36 90 46 100"/>
+    <path d="M68 64 C70 80 84 90 74 100"/>
+    <path d="M82 58 C100 66 108 82 94 90"/>
+  </g>
+  <path d="M28 64 C22 12 98 12 92 64 Z" fill="#89b4fa"/>
+  <circle cx="48" cy="44" r="6.5" fill="#1e1e2e"/>
+  <circle cx="72" cy="44" r="6.5" fill="#1e1e2e"/>
+  <circle cx="50" cy="42" r="2" fill="#cdd6f4"/>
+  <circle cx="74" cy="42" r="2" fill="#cdd6f4"/>
+  <circle cx="26" cy="90" r="6.5" fill="#a6e3a1"/>
+  <circle cx="46" cy="100" r="6.5" fill="#f9e2af"/>
+  <circle cx="74" cy="100" r="6.5" fill="#fab387"/>
+  <circle cx="94" cy="90" r="6.5" fill="#cba6f7"/>
+  <text x="146" y="80" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="56" font-weight="600" letter-spacing="-1" fill="#1e1e2e">anthrex</text>
+</svg>

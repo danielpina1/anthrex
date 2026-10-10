@@ -81,17 +81,11 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(block, area);
 
     if app.focused.is_none() {
-        let hint = vec![
-            Line::raw(""),
-            Line::styled(
-                format!(
-                    "  No agents. Press {} c to create one, or run `anthrex new`.",
-                    app.settings.prefix_label
-                ),
-                theme::role(theme::Role::Muted, app.palette()),
-            ),
-        ];
-        frame.render_widget(Paragraph::new(hint), inner);
+        let hint = format!(
+            "No agents. Press {} c to create one, or run `anthrex new`.",
+            app.settings.prefix_label
+        );
+        super::splash::render(frame, inner, &hint, app.palette());
         return;
     }
 

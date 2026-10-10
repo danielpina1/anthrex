@@ -32,6 +32,7 @@ pub mod run_list;
 pub(crate) mod run_pr_tests;
 pub mod settings;
 pub mod sidebar;
+pub mod splash;
 pub mod stats;
 pub mod statusbar;
 mod statusbar_modes;
