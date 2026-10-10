@@ -7,10 +7,11 @@
 //! client. The manager itself holds no git state and takes no git-related lock (AGENTS.md
 //! hard rule 2).
 
-use crate::git::GitRegistry;
+use crate::git::{ArmFn, GitRegistry, ProbeFn};
 use crate::manager::WindowManager;
 use proto::{DaemonMsg, GitState};
-use std::path::PathBuf;
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 use tokio_util::sync::CancellationToken;
@@ -27,6 +28,31 @@ impl GitWiring {
         let (publish_tx, publish_rx) = mpsc::unbounded_channel();
         GitWiring {
             registry: Arc::new(GitRegistry::new(settings, publish_tx)),
+            publish_rx,
+        }
+    }
+
+    /// [`Self::new`] with the watcher builder injected (M9.11.37): the real probe, and
+    /// `arm` in place of `watch::arm`, so a test can hold or observe a root's arming in
+    /// a whole daemon, as `tests/git_registry_arming.rs` does for the registry alone.
+    /// The production probe as a [`ProbeFn`]: the real `git` under
+    /// [`crate::git::probe::PROBE_TIMEOUT`], what `GitRegistry::new` runs. Tests wrap
+    /// it (M9.11.37).
+    pub fn real_probe() -> ProbeFn {
+        Arc::new(|root: &Path| {
+            crate::git::probe::probe(OsStr::new("git"), root, crate::git::probe::PROBE_TIMEOUT)
+        })
+    }
+
+    pub fn with_seams(settings: config::Git, arm: ArmFn) -> Self {
+        let (publish_tx, publish_rx) = mpsc::unbounded_channel();
+        GitWiring {
+            registry: Arc::new(GitRegistry::with_seams(
+                settings,
+                publish_tx,
+                Self::real_probe(),
+                arm,
+            )),
             publish_rx,
         }
     }

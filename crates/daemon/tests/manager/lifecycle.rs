@@ -168,6 +168,33 @@ async fn a_parser_panic_ends_the_child_and_keeps_its_reason() {
     );
 }
 
+/// The name libtest gives `name`, a test in this module: this module's path without
+/// the test binary's own crate name (`manager::lifecycle` → `lifecycle::<name>`).
+///
+/// M9.11.38c: the re-exec below once passed the bare function name with `--exact`,
+/// which matched no test in this binary; the child ran nothing, exited 0, and the
+/// test passed on Linux without running its body.
+fn libtest_name(name: &str) -> String {
+    match module_path!().split_once("::") {
+        Some((_, module)) => format!("{module}::{name}"),
+        None => name.to_string(),
+    }
+}
+
+/// The name the Linux re-exec runs with `--exact` names exactly this test: a rename
+/// of the test or its module fails here, on every system.
+#[test]
+fn the_reexec_name_lists_exactly_one_test() {
+    let name = libtest_name("shutdown_waits_for_cleanup_after_the_group_leader_exits");
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", &name, "--list"])
+        .output()
+        .unwrap();
+    let listed = String::from_utf8_lossy(&output.stdout);
+    let tests: Vec<&str> = listed.lines().filter(|l| l.ends_with(": test")).collect();
+    assert_eq!(tests, [format!("{name}: test")], "{listed}");
+}
+
 #[tokio::test]
 async fn shutdown_waits_for_cleanup_after_the_group_leader_exits() {
     // Isolate Linux's subreaper setting from the other concurrently running tests.
@@ -176,24 +203,25 @@ async fn shutdown_waits_for_cleanup_after_the_group_leader_exits() {
     {
         const CHILD_ENV: &str = "ANTHREX_TEST_GROUP_REAPER";
         if std::env::var_os(CHILD_ENV).is_none() {
-            let output = tokio::task::spawn_blocking(|| {
+            let name = libtest_name("shutdown_waits_for_cleanup_after_the_group_leader_exits");
+            let output = tokio::task::spawn_blocking(move || {
                 std::process::Command::new(std::env::current_exe().unwrap())
-                    .args([
-                        "--exact",
-                        "shutdown_waits_for_cleanup_after_the_group_leader_exits",
-                        "--nocapture",
-                    ])
+                    .args(["--exact", &name, "--nocapture"])
                     .env(CHILD_ENV, "1")
                     .output()
                     .unwrap()
             })
             .await
             .unwrap();
-            assert!(
-                output.status.success(),
-                "{}\n{}",
+            let (stdout, stderr) = (
                 String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
+                String::from_utf8_lossy(&output.stderr),
+            );
+            assert!(output.status.success(), "{stdout}\n{stderr}");
+            // The child must have run this test's body, not matched nothing.
+            assert!(
+                stdout.contains("running 1 test") && stdout.contains("test result: ok. 1 passed"),
+                "the re-exec did not run exactly one test:\n{stdout}\n{stderr}"
             );
             return;
         }

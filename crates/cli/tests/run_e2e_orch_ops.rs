@@ -286,6 +286,10 @@ fn a_restarted_orchestrator_names_the_receiver_that_is_up_now() {
 /// restored after a daemon restart launches it with the receiver that is up now, not
 /// the one it had before. The daemon's `claude` is a wrapper that records the endpoint
 /// in its real environment, then runs `fake-agent`.
+///
+/// M9.11.35 (C3): the wrapper creates the file, stalls, then writes the line, so the
+/// window between "the file exists" and "the line is in it" is a second wide on every
+/// run. The test waits for a whole line, never for the file alone.
 #[test]
 fn a_manual_restart_after_a_daemon_restart_names_the_receiver_that_is_up_now() {
     let (mut h, run, window) = waiting();
@@ -295,9 +299,9 @@ fn a_manual_restart_after_a_daemon_restart_names_the_receiver_that_is_up_now() {
     testexec::write_executable(
         &wrapper,
         format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$OTEL_EXPORTER_OTLP_ENDPOINT\" >> '{}'\nexec '{}' \"$@\"\n",
-            seen.display(),
-            support::fake_agent_bin().display()
+            "#!/bin/sh\n: >> '{seen}'\nsleep 1\nprintf '%s\\n' \"$OTEL_EXPORTER_OTLP_ENDPOINT\" >> '{seen}'\nexec '{}' \"$@\"\n",
+            support::fake_agent_bin().display(),
+            seen = seen.display(),
         ),
     );
 
@@ -309,7 +313,12 @@ fn a_manual_restart_after_a_daemon_restart_names_the_receiver_that_is_up_now() {
 
     let out = h.anthrex(&["restart", &window.to_string()]);
     assert!(out.status.success(), "{}", stderr(&out));
-    wait_until("the restarted orchestrator started", || seen.exists());
+    // A whole line, not the file: the wrapper creates it a second before it writes
+    // the line. `REQUEST_WAIT` covers the restart's launch, the wrapper's injected
+    // second and one `printf`.
+    wait_until("the restarted orchestrator wrote its endpoint line", || {
+        std::fs::read_to_string(&seen).is_ok_and(|text| text.ends_with('\n'))
+    });
     let endpoints = std::fs::read_to_string(&seen).unwrap();
     assert_eq!(endpoints.lines().collect::<Vec<_>>(), vec![second.as_str()]);
 }

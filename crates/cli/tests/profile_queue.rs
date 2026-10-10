@@ -298,6 +298,7 @@ fn e2e_the_queue_survives_a_daemon_restart() {
         |s| s.proposal.as_ref().is_some_and(|r| r.window_id.is_some()),
         PROFILE_WAIT,
     );
+    wait_claimed(&h, "scout-onboarding-1", CLAIM_WAIT);
     h.restart_daemon(&[]);
     let status = h.profile_status();
     assert_eq!(
@@ -313,6 +314,98 @@ fn e2e_the_queue_survives_a_daemon_restart() {
     let used = ok(h.profile_input(&["use", "--yes"], ""));
     assert!(used.contains("; starting 1 queued goal"), "{used}");
     completes(&h, RUN_WAIT);
+}
+
+/// M9.11.38a (C14): the restart above must wait until the first scout has claimed its
+/// script, not only until its window exists. `fake-agent` takes the role's script with
+/// the smallest unclaimed `n` (`fake-agent/src/roles.rs`), after its own exec and a
+/// `git rev-parse`; a scout stopped before it claims leaves `scout-onboarding-1` (the
+/// hang) to the scout `detect` starts after the restart, which then fails "the scout
+/// ran longer than 60 s". Here the first scout's `claude` stalls 5 s before it execs
+/// `fake-agent`, so it is still unclaimed whenever the window is first seen.
+#[test]
+fn the_restart_waits_for_the_first_scout_to_claim_its_script() {
+    let stall = tempfile::tempdir().unwrap();
+    let wrapper = stall.path().join("claude");
+    testexec::write_executable(
+        &wrapper,
+        format!(
+            "#!/bin/sh\ncase \"$*\" in *scout*) mkdir '{first}' 2>/dev/null && sleep {secs} ;; esac\nexec '{fake}' \"$@\"\n",
+            first = stall.path().join("first").display(),
+            secs = SCOUT_STALL.as_secs(),
+            fake = support::fake_agent_bin().display(),
+        ),
+    );
+    // The warm-up (`docs/timing-budgets.md`, the codex-probe ordering row): the
+    // wrapper's first exec is paid here, before any daemon budget can time it.
+    let warm = std::process::Command::new(&wrapper)
+        .arg("--version")
+        .output()
+        .unwrap();
+    assert!(warm.status.success(), "{warm:?}");
+    let wrapper = wrapper.display().to_string();
+    let mut h = RunHarness::adapt(
+        "claude",
+        PROFILE_LINES,
+        &[("ANTHREX_CLAUDE_BIN", wrapper.as_str())],
+        ADAPT_FILES,
+    );
+    h.onboarding_script(1, &[hang()]);
+    h.onboarding_report(2, json!({"check": "sh check.sh"}));
+    h.decider("triage", 1, triage_single(&["a.txt"]));
+    green_scripts(&h.repo);
+    queued(&h.start_goal("add a", &[]));
+    h.wait_profile(
+        "the scout to run",
+        |s| s.proposal.as_ref().is_some_and(|r| r.window_id.is_some()),
+        PROFILE_WAIT,
+    );
+    // The restart must come after the first scout's claim (it panics otherwise).
+    wait_claimed(&h, "scout-onboarding-1", CLAIM_WAIT + SCOUT_STALL);
+    h.restart_daemon(&[]);
+    ok(h.profile(&["detect"]));
+    wait_claimed(&h, "scout-onboarding-2", CLAIM_WAIT);
+    h.wait_profile("the new proposal", ready, PROFILE_WAIT);
+}
+
+/// The injected stall of the first scout's start in the test above.
+const SCOUT_STALL: Duration = Duration::from_secs(5);
+
+/// Concurrent first execs of `fake-agent` in this file's parallel tests: ~0.44 s each,
+/// serialised, eight at once finishing by 3.5 s (`docs/timing-budgets.md`, "Measured
+/// primitive costs"), rounded up.
+const FIRST_EXECS: Duration = Duration::from_secs(4);
+/// `fake-agent`'s `GIT_TIMEOUT` for the `git rev-parse` before it claims
+/// (`fake-agent/src/roles.rs`; a binary crate, so coupled by this comment).
+const FAKE_AGENT_GIT_TIMEOUT: Duration = Duration::from_secs(5);
+/// Wall-clock slack, as the harness's other derived bounds use.
+const WALL_CLOCK_SLACK: Duration = Duration::from_secs(10);
+/// From a scout's window being up to its script claimed: its exec, its `git
+/// rev-parse`, then one `create_new`.
+const CLAIM_WAIT: Duration = FIRST_EXECS
+    .saturating_add(FAKE_AGENT_GIT_TIMEOUT)
+    .saturating_add(WALL_CLOCK_SLACK);
+
+/// Whether `fake-agent` has claimed the script `<name>.jsonl`.
+fn claimed(h: &RunHarness, name: &str) -> bool {
+    h.repo
+        .join(".git/fake-agent")
+        .join(format!("{name}.jsonl.claimed"))
+        .exists()
+}
+
+/// Waits until `fake-agent` has claimed `<name>.jsonl` (its `.claimed` file, next to
+/// the scripts `script_in` writes), for at most `within`.
+fn wait_claimed(h: &RunHarness, name: &str, within: Duration) {
+    let deadline = Instant::now() + within;
+    while !claimed(h, name) {
+        assert!(
+            Instant::now() < deadline,
+            "{name} was not claimed within {within:?} (a restart must follow the claim)\n{}",
+            h.log_tail()
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 
 /// Decision 12: a set-up that cannot start refuses the goal with its reason and queues

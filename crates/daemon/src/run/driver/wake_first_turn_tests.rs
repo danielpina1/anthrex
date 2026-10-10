@@ -36,13 +36,41 @@ pub(in crate::run::driver::wake) struct Rig {
     pub(in crate::run::driver::wake) events: UnboundedReceiver<crate::run::driver::Msg>,
 }
 
+/// Set only on [`stand_in`]'s warm-up run: the script exits before its body, so the
+/// warm-up records no argv.
+const WARM_UP_VAR: &str = "ANTHREX_TEST_WARM_UP";
+
 /// `claude` as a stand-in that appends its argv to `<dir>/claude.args`, prints one
 /// line and then sleeps (`Starting`, then `Working` on its output, then `Idle` once
 /// quiet: an agent at a prompt that has sent no signal).
-fn stand_in(dir: &Path) -> String {
+///
+/// M9.11.38b: the script is run once before this returns, as the Codex rig's
+/// `stand_in` is (M9.11.36), so macOS's first-exec assessment of the fresh file
+/// (~0.44 s, serialised across processes to seconds under parallel copies,
+/// `docs/timing-budgets.md`, "First exec of a freshly written executable") is paid
+/// here, never inside a `QUIET_AFTER + SLACK` wait for the window's first output.
+/// `first_exec_stall` injects that cost: the first exec of the script sleeps it.
+fn stand_in(dir: &Path, first_exec_stall: Duration) -> String {
     let claude = dir.join("claude");
-    let script = "#!/bin/sh\necho \"$*\" >> \"$0.args\"\necho starting\nexec sleep 300\n";
+    let stall = if first_exec_stall.is_zero() {
+        String::new()
+    } else {
+        format!(
+            "mkdir '{}' 2>/dev/null && sleep {}\n",
+            dir.join("claude.first-exec").display(),
+            first_exec_stall.as_secs_f64()
+        )
+    };
+    let script = format!(
+        "#!/bin/sh\n{stall}[ -n \"${WARM_UP_VAR}\" ] && exit 0\n\
+         echo \"$*\" >> \"$0.args\"\necho starting\nexec sleep 300\n"
+    );
     testexec::write_executable(&claude, script);
+    let warm = std::process::Command::new(&claude)
+        .env(WARM_UP_VAR, "1")
+        .output()
+        .expect("the stand-in's warm-up");
+    assert!(warm.status.success(), "the stand-in's warm-up: {warm:?}");
     claude.to_str().unwrap().into()
 }
 
@@ -76,12 +104,17 @@ fn role(run_id: &str) -> RoleLaunch {
 }
 
 pub(in crate::run::driver::wake) fn rig() -> Rig {
+    rig_with(Duration::ZERO)
+}
+
+/// [`rig`], its `claude` stand-in's first exec stalled `first_exec_stall`.
+fn rig_with(first_exec_stall: Duration) -> Rig {
     let dir = tempfile::Builder::new()
         .prefix("ax-first-turn-")
         .tempdir_in("/tmp")
         .unwrap();
     let mut config = ManagerConfig::for_tests(dir.path().join("d.sock"), "/bin/sh".into());
-    config.claude_bin = stand_in(dir.path());
+    config.claude_bin = stand_in(dir.path(), first_exec_stall);
     // Milestone 9.5 task M9.5.5b: a Codex orchestrator's tests draw screens with it.
     config.codex_bin = crate::status_codex::rig::stand_in(dir.path());
     config.worktrees_root = dir.path().join("worktrees");
@@ -451,5 +484,22 @@ async fn a_restart_resumes_only_a_session_that_had_its_first_turn() {
     assert_eq!(restart().await, OpResult::RestartedFresh);
     let argv = launches(&rig, 4).await;
     assert!(!argv[3].contains("--resume"), "{argv:#?}");
+    let _ = rig.manager.kill(window);
+}
+
+/// M9.11.38b: the stand-in's first exec stalls past the wait for the window's first
+/// output (an injected first-exec assessment). The stand-in pays it in its warm-up,
+/// so the window starts at once and is `Idle` with no signal within `QUIET_AFTER +
+/// SLACK`; before the warm-up the window's own exec paid it and stayed `Starting`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_slow_first_exec_of_the_stand_in_is_paid_before_the_window_starts() {
+    let rig = rig_with(QUIET_AFTER + SLACK + Duration::from_secs(1));
+    let window = rig.orchestrator_window("r1").await;
+    let deadline = Instant::now() + QUIET_AFTER + SLACK;
+    while rig.status(window) != (Status::Idle, false) {
+        assert!(Instant::now() < deadline, "{:?}", rig.status(window));
+        rig.manager.tick();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
     let _ = rig.manager.kill(window);
 }
