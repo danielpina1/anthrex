@@ -309,6 +309,18 @@ fn a_missing_git_binary_probes_to_none() {
 
 #[test]
 fn a_timeout_marks_the_state_stale() {
+    timeout_marks_the_state_stale("");
+}
+
+/// M9.11.37 (C6): the wrapper stalls past the probe's timeout before it forks, so the
+/// probe's group kill always lands first and no grandchild is ever recorded.
+#[test]
+fn a_timeout_before_the_fork_marks_the_state_stale() {
+    timeout_marks_the_state_stale("sleep 30\n");
+}
+
+/// `stall`: shell lines the wrapper runs after its header and before it forks.
+fn timeout_marks_the_state_stale(stall: &str) {
     let repo = init_repo();
     let scripts = tempdir().unwrap();
     let pid_file = scripts.path().join("child.pid");
@@ -326,47 +338,48 @@ fn a_timeout_marks_the_state_stale() {
              printf '\\0'\n\
              printf '# branch.head main'\n\
              printf '\\0'\n\
+             {stall}\
              sleep 100 &\n\
              printf '%s\\n' \"$!\" > '{}'\n\
              wait\n",
             pid_file.display()
         ),
     );
-    // Generous enough that forking `sh` and its backgrounded `sleep` reliably gets
-    // scheduled before the deadline even when the rest of this suite is hammering the
-    // machine with concurrent git spawns (300ms and 1s both measurably flaked here
-    // under parallel test load — this is scheduler latency under contention, not the
-    // wrapper being slow to fork).
+    // The header must be printed inside it; the script was warmed by `write_script`,
+    // so its first line runs within milliseconds. Whether the wrapper also forks and
+    // records its grandchild before the timeout is not required (M9.11.37, C6).
     let timeout = Duration::from_secs(2);
     let started = Instant::now();
 
     let state = probe(script.as_os_str(), repo.path(), timeout);
     let elapsed = started.elapsed();
 
+    // `subprocess::run` polls every 10 ms and, at the timeout, sends `SIGKILL` to the
+    // group and reaps the wrapper: no grace period. So the probe returns within
+    // `timeout` and a poll, and `REAP_SLACK` covers the kill, the reap and scheduling.
+    const REAP_SLACK: Duration = Duration::from_secs(2);
     assert!(
-        elapsed < Duration::from_secs(4),
+        elapsed < timeout + REAP_SLACK,
         "probe did not return promptly after its timeout: {elapsed:?}"
     );
     let state = state.expect("a timeout still returns the state parsed so far");
     assert!(state.stale);
     assert_eq!(state.head, Head::Branch("main".into()));
 
-    // The wrapper recorded its backgrounded grandchild's pid before blocking on it.
     // `probe` must terminate and reap not just the wrapper but its whole process group
     // — a probe that leaves a grandchild running (or merely unreaped) will eventually
-    // exhaust the daemon.
-    let pid_deadline = Instant::now() + Duration::from_secs(2);
-    let mut child_pid = None;
-    while Instant::now() < pid_deadline {
-        if let Ok(text) = fs::read_to_string(&pid_file)
-            && let Ok(pid) = text.trim().parse::<libc::pid_t>()
-        {
-            child_pid = Some(pid);
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(5));
+    // exhaust the daemon. The wrapper was killed and reaped before `probe` returned, so
+    // the pid file is final now: absent, the group was killed before the fork, and the
+    // group kill leaves no grandchild to look for; present, that grandchild must go.
+    let recorded = fs::read_to_string(&pid_file)
+        .ok()
+        .and_then(|text| text.trim().parse::<libc::pid_t>().ok());
+    if !stall.is_empty() {
+        assert_eq!(recorded, None, "the stall did not outlast the timeout");
     }
-    let child_pid = child_pid.expect("the wrapper never recorded its backgrounded child's pid");
+    let Some(child_pid) = recorded else {
+        return;
+    };
 
     let gone_deadline = Instant::now() + Duration::from_secs(2);
     loop {

@@ -2,10 +2,69 @@
 
 mod support;
 
-use proto::{ClientMsg, DaemonMsg, PROTO_VERSION, WindowSpec};
+use daemon::git::probe::PROBE_TIMEOUT;
+use daemon::git::schedule::DEBOUNCE;
+use daemon::project::DETECT_TIMEOUT;
+use proto::{ClientMsg, DaemonMsg, PROTO_VERSION, WindowSpec, read_frame};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use support::{Client, git, shell_spec, start_daemon, start_daemon_with_git};
+use support::{Client, WALL_CLOCK_SLACK, git, shell_spec, start_daemon, start_daemon_with_git};
+use tokio::sync::mpsc::UnboundedReceiver;
+
+// M9.11.37 (C6): every wait for a `Git` frame reads frames directly under a bound
+// derived from the constants the daemon runs against, as `server_restore_git.rs` does,
+// never through `Client::recv`'s per-frame guard or `recv_until`'s literal.
+
+/// A created window: `CreateWindow` resolves its roots with a `git` run bounded by
+/// [`DETECT_TIMEOUT`], then the registration probe, bounded by [`PROBE_TIMEOUT`].
+fn created_deadline() -> Duration {
+    DETECT_TIMEOUT + PROBE_TIMEOUT + WALL_CLOCK_SLACK
+}
+
+/// A change to a published root while its real watcher may still be arming, which has
+/// no bound (`docs/timing-budgets.md`, "Arming a git watcher"): the safety poll
+/// (`poll_secs`, the daemon's default here) and two probes, one possibly in flight.
+fn change_deadline() -> Duration {
+    Duration::from_secs(config::Git::default().poll_secs) + PROBE_TIMEOUT * 2 + WALL_CLOCK_SLACK
+}
+
+/// A change made before the watcher armed, counted from the arming: the probe the
+/// registry runs once armed, behind one possibly in flight, and a [`DEBOUNCE`] if the
+/// watcher sees the write's event as well.
+fn armed_change_deadline() -> Duration {
+    PROBE_TIMEOUT * 2 + DEBOUNCE + WALL_CLOCK_SLACK
+}
+
+/// A hang guard for [`support::notifying_arm`]'s notification: the injected
+/// [`ARM_HOLD`], then the real arming, which has no bound of its own (1.5–7.8 s measured
+/// on a fresh executable); a minute turns a wedged arm into a named failure.
+const ARM_WAIT: Duration = ARM_HOLD.saturating_add(Duration::from_secs(60));
+
+/// Reads frames until one satisfies `pred`, for at most `within`.
+async fn frame_until(
+    client: &mut Client,
+    within: Duration,
+    what: &str,
+    mut pred: impl FnMut(&DaemonMsg) -> bool,
+) -> DaemonMsg {
+    tokio::time::timeout(within, async {
+        loop {
+            let m = read_frame(&mut client.rd)
+                .await
+                .unwrap()
+                .expect("daemon closed");
+            if pred(&m) {
+                return m;
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("no {what} within {within:?}"))
+}
+
+fn is_git_for(m: &DaemonMsg, root: &Path) -> bool {
+    matches!(m, DaemonMsg::Git { root: r, .. } if r == root)
+}
 
 /// A repository with one committed tracked file, whose worktree root is also its
 /// project root. Blocking setup runs off the runtime worker, same as
@@ -59,20 +118,18 @@ impl Client {
     /// arrive, and returns the new window's id. Registration races the probe that
     /// follows it, so the two messages have no guaranteed order.
     async fn wait_for_created_and_git(&mut self, root: &Path) -> u32 {
-        tokio::time::timeout(Duration::from_secs(8), async {
-            let mut window_id = None;
-            let mut saw_git = false;
-            while window_id.is_none() || !saw_git {
-                match self.recv().await {
-                    DaemonMsg::Created { window_id: id } => window_id = Some(id),
-                    DaemonMsg::Git { root: r, .. } if r == root => saw_git = true,
-                    _ => {}
-                }
+        let mut window_id = None;
+        let mut saw_git = false;
+        frame_until(self, created_deadline(), "Created and Git", |m| {
+            match m {
+                DaemonMsg::Created { window_id: id } => window_id = Some(*id),
+                m if is_git_for(m, root) => saw_git = true,
+                _ => {}
             }
-            window_id.unwrap()
+            window_id.is_some() && saw_git
         })
-        .await
-        .expect("timed out waiting for Created and a Git message")
+        .await;
+        window_id.unwrap()
     }
 }
 
@@ -91,9 +148,10 @@ async fn a_new_window_registers_its_worktree() {
             rows: 24,
         })
         .await;
-    let msg = client
-        .recv_until(|m| matches!(m, DaemonMsg::Git { root: r, .. } if *r == root))
-        .await;
+    let msg = frame_until(&mut client, created_deadline(), "Git", |m| {
+        is_git_for(m, &root)
+    })
+    .await;
     let DaemonMsg::Git { state, .. } = msg else {
         unreachable!()
     };
@@ -139,7 +197,31 @@ async fn removing_the_last_window_unregisters_the_root() {
 async fn two_windows_in_one_worktree_register_once() {
     let (_repo, root) = init_repo().await;
     let d = start_daemon().await;
-    let (mut client, _) = Client::connect(&d, PROTO_VERSION).await;
+    two_windows_register_once(&d, root, None).await;
+}
+
+/// M9.11.37 (C6): the same, with the root's watcher held [`ARM_HOLD`] before it arms,
+/// so the change after the first removal is made while nothing watches the root.
+#[tokio::test]
+async fn two_windows_register_once_while_the_watcher_arms_slowly() {
+    let (_repo, root) = init_repo().await;
+    let (arm, mut armed) = support::notifying_arm(ARM_HOLD);
+    let d = support::start_daemon_with_arm(arm).await;
+    two_windows_register_once(&d, root, Some(&mut armed)).await;
+}
+
+/// The injected arming stall: past one probe, so a wait that bounds the arming by a
+/// probe's budget fails.
+const ARM_HOLD: Duration = PROBE_TIMEOUT.saturating_add(Duration::from_secs(1));
+
+/// `armed`: the injected arm's notifications, for the stalled variant; the change's
+/// wait then starts once the watcher is armed, so the stall is outside its bound.
+async fn two_windows_register_once(
+    d: &support::TestDaemon,
+    root: PathBuf,
+    armed: Option<&mut UnboundedReceiver<()>>,
+) {
+    let (mut client, _) = Client::connect(d, PROTO_VERSION).await;
 
     client
         .send(ClientMsg::CreateWindow {
@@ -163,8 +245,10 @@ async fn two_windows_in_one_worktree_register_once() {
             rows: 24,
         })
         .await;
-    let DaemonMsg::Created { window_id: id_b } = client
-        .recv_until(|m| matches!(m, DaemonMsg::Created { .. }))
+    let DaemonMsg::Created { window_id: id_b } =
+        frame_until(&mut client, created_deadline(), "Created", |m| {
+            matches!(m, DaemonMsg::Created { .. })
+        })
         .await
     else {
         unreachable!()
@@ -183,9 +267,17 @@ async fn two_windows_in_one_worktree_register_once() {
         .recv_until(|m| matches!(m, DaemonMsg::Ack { request } if request == "remove"))
         .await;
     touch_tracked_file(&root).await;
-    client
-        .recv_until(|m| matches!(m, DaemonMsg::Git { root: r, .. } if *r == root))
-        .await;
+    let within = match armed {
+        Some(armed) => {
+            support::armed(armed, ARM_WAIT).await;
+            armed_change_deadline()
+        }
+        None => change_deadline(),
+    };
+    frame_until(&mut client, within, "Git after the change", |m| {
+        is_git_for(m, &root)
+    })
+    .await;
 
     // The second and last window goes: nothing references the root any more.
     client
@@ -244,9 +336,10 @@ async fn a_window_outside_a_repository_registers_nothing() {
             rows: 24,
         })
         .await;
-    client
-        .recv_until(|m| matches!(m, DaemonMsg::Created { .. }))
-        .await;
+    frame_until(&mut client, created_deadline(), "Created", |m| {
+        matches!(m, DaemonMsg::Created { .. })
+    })
+    .await;
     assert_no_git_message(&mut client, Duration::from_millis(1000)).await;
 }
 

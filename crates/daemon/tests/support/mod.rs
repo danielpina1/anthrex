@@ -11,6 +11,8 @@ pub mod headless;
 pub mod history;
 pub mod run_git;
 
+use daemon::git::ArmFn;
+use daemon::git::probe::PROBE_TIMEOUT;
 use daemon::manager::{ManagerConfig, WindowManager};
 use daemon::run::driver::RunService;
 use daemon::server::{GitWiring, serve};
@@ -52,10 +54,85 @@ pub async fn start_daemon_with_git(git_enabled: bool) -> TestDaemon {
     start_daemon_configured(git_enabled, |_| {}).await
 }
 
+/// Scheduling slack on top of a derived bound: `spawn_blocking` contention, frame
+/// delivery and the rest of a real OS (the same margin `server_restore_git.rs` and
+/// `git_registry.rs` use).
+pub const WALL_CLOCK_SLACK: Duration = Duration::from_secs(10);
+
+/// As [`start_daemon`], with git on and its watcher builder injected (M9.11.37):
+/// [`GitWiring::with_seams`], the real probe, and `arm` — [`notifying_arm`], say.
+pub async fn start_daemon_with_arm(arm: ArmFn) -> TestDaemon {
+    let git = GitWiring::with_seams(
+        config::Git {
+            enabled: true,
+            ..config::Git::default()
+        },
+        arm,
+    );
+    start_daemon_wired(git, |_| {}).await
+}
+
+/// The real watcher builder (`daemon::git::watch::arm`), first held for `hold` (an
+/// injected stall, `Duration::ZERO` for none), then armed for real; the receiver gets
+/// one `()` each time a watcher is armed. A test that writes only after it has heard
+/// from the receiver bounds just what follows the arming, never the arming itself,
+/// which has no bound of its own (`docs/timing-budgets.md`, "Arming a git watcher").
+pub fn notifying_arm(hold: Duration) -> (ArmFn, tokio::sync::mpsc::UnboundedReceiver<()>) {
+    let (armed, rx) = tokio::sync::mpsc::unbounded_channel();
+    let arm: ArmFn = Arc::new(move |root, ignore, events| {
+        std::thread::sleep(hold);
+        let guard = daemon::git::watch::arm(root, ignore, events)?;
+        let _ = armed.send(());
+        Ok(guard)
+    });
+    (arm, rx)
+}
+
+/// A registry with the real probe and `arm` (a [`notifying_arm`]), publishing to
+/// `publish`: `GitRegistry::new` with its watcher builder injected.
+pub fn registry_with_arm(
+    settings: config::Git,
+    publish: tokio::sync::mpsc::UnboundedSender<(PathBuf, Option<proto::GitState>)>,
+    arm: ArmFn,
+) -> daemon::git::GitRegistry {
+    let probe: daemon::git::ProbeFn = Arc::new(|root: &std::path::Path| {
+        daemon::git::probe::probe(std::ffi::OsStr::new("git"), root, PROBE_TIMEOUT)
+    });
+    daemon::git::GitRegistry::with_seams(settings, publish, probe, arm)
+}
+
+/// Whether a `git` binary runs here at all.
+pub fn git_is_available() -> bool {
+    std::process::Command::new("git")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .status()
+        .is_ok()
+}
+
+/// Waits up to `within` for [`notifying_arm`]'s next notification.
+pub async fn armed(rx: &mut tokio::sync::mpsc::UnboundedReceiver<()>, within: Duration) {
+    tokio::time::timeout(within, rx.recv())
+        .await
+        .expect("the watcher never armed")
+        .expect("the arm was dropped");
+}
+
 /// As [`start_daemon_with_git`], with a last say over the manager's configuration
 /// (`conversation.linger_secs`, for instance).
 pub async fn start_daemon_configured(
     git_enabled: bool,
+    configure: impl FnOnce(&mut ManagerConfig),
+) -> TestDaemon {
+    let git = GitWiring::new(config::Git {
+        enabled: git_enabled,
+        ..config::Git::default()
+    });
+    start_daemon_wired(git, configure).await
+}
+
+async fn start_daemon_wired(
+    git: GitWiring,
     configure: impl FnOnce(&mut ManagerConfig),
 ) -> TestDaemon {
     let dir = tempfile::tempdir().unwrap();
@@ -76,10 +153,6 @@ pub async fn start_daemon_configured(
         }
     });
     let shutdown = CancellationToken::new();
-    let git = GitWiring::new(config::Git {
-        enabled: git_enabled,
-        ..config::Git::default()
-    });
     let runs = RunService::for_manager(&manager, dir.path().join("data"), git.registry.clone());
     runs.spawn(shutdown.clone());
     tokio::spawn(serve(
@@ -121,8 +194,12 @@ impl Client {
         write_frame(&mut self.wr, &m).await.unwrap();
     }
 
+    /// The next frame. A hang guard per frame, derived (M9.11.37, C6): the slowest
+    /// frame a test here waits for with nothing else in flight is a `Git` behind one
+    /// probe, so [`PROBE_TIMEOUT`] plus [`WALL_CLOCK_SLACK`]; a test that waits on more
+    /// (a watcher's arming, a safety poll) reads frames under its own derived bound.
     pub async fn recv(&mut self) -> DaemonMsg {
-        tokio::time::timeout(Duration::from_secs(5), read_frame(&mut self.rd))
+        tokio::time::timeout(PROBE_TIMEOUT + WALL_CLOCK_SLACK, read_frame(&mut self.rd))
             .await
             .expect("timed out")
             .unwrap()
