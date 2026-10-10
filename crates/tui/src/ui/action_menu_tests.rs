@@ -307,13 +307,27 @@ fn blocks(buffer: &Buffer) -> Vec<&ratatui::buffer::Cell> {
         .collect()
 }
 
+/// The `█` cells inside the 64-column dialog: an app with no focused window draws
+/// the splash's block-art octopus in the pane behind it.
+fn dialog_blocks(buffer: &Buffer) -> Vec<&ratatui::buffer::Cell> {
+    let area = buffer.area;
+    let w = area.width.min(64);
+    let x0 = (area.width - w) / 2;
+    (0..area.height)
+        .filter(|&y| buffer[(x0, y)].symbol() == "│")
+        .flat_map(|y| (x0..x0 + w).map(move |x| (x, y)))
+        .map(|pos| &buffer[pos])
+        .filter(|c| c.symbol() == "█")
+        .collect()
+}
+
 /// Follow-up to the final fix wave's M5: the accept page's block cursor keeps the
 /// accent it had before `kit::cursor_block`; the rename box's keeps its plain look.
 #[test]
 fn the_accept_cursor_wears_the_accent() {
     let app = moved_base_app(1, 1, "072", true);
     let buffer = draw(&app, 80, 24);
-    let cursor = blocks(&buffer);
+    let cursor = dialog_blocks(&buffer);
     assert_eq!(cursor.len(), 1);
     assert_eq!(Some(cursor[0].fg), role(Role::Accent, app.palette()).fg);
     let rename = crate::ui::audit::fixtures()

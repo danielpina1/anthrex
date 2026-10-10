@@ -1,4 +1,9 @@
-<h1 align="center">anthrex</h1>
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
+    <img alt="anthrex" src="assets/logo-light.svg" width="360">
+  </picture>
+</h1>
 
 <p align="center"><strong>A terminal multiplexer for coding agents.</strong><br>
 Run many Claude Code and Codex sessions side by side, see what each one is doing, and hand a whole goal to an orchestrator that plans it, runs it in git worktrees, reviews it and waits for your approval.</p>
