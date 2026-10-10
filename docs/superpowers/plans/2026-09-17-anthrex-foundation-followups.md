@@ -2069,3 +2069,19 @@ What milestone 9.10 parked, each detailed in `docs/milestones/M9.10-simple-profi
 - **A failed edit that adds an environment variable has no row** (final review fix wave, client): the Profile screen lists `env.<NAME>` rows from the profile, so a ✗ edit of a new `env.<NAME>` shows only in the notice under the list (`your edit of <NAME> (<value>) failed its check; …`); `s` and `r`, which act on the selected ✗ row, cannot reach it. `anthrex profile edit env.<NAME> … --anyway` or `anthrex profile reject` still can. Listing the edited key as a row, or letting `s`/`r` act on the one row edit whatever is selected, would close it.
 - **`anthrex profile status` says `Ready · verified <age> ago` beside a check saved failing** (final re-review N3): the Profile screen reads the stored side's verification and says `Ready · <label> saved failing its check · verified <age> ago` in the attention tone, but `ProfileStatus` carries no verification, so the CLI's line (`profile_words::status_line_tone`) cannot. A `ProfileStatus` field naming the stored profile's failing checks (a protocol change, every client updated) would let both say it.
 - **A dropped goal raises no alert** (final review D-I2, the "better" fix): the Profile screen and `profile status` list the last dropped goals, and the screen polls for 30 s after **Use this**, but a user who closed the screen learns of a drop only there. The snapshot carrying recent drops for a while, one `could not start "<goal>": <reason>` alert each, needs a protocol field (a daemon change).
+
+## From milestone 9.11's stream X review (2026-10-10), for later
+
+- **More tokens are still visible to checks** (X-M5). Decision 32's list is binding for 9.11, so it was not widened. `crates/config/src/reserved_env.rs`'s `CHECK_SECRET_NAMES` and `CHECK_SECRET_PREFIXES` still let checks, proofs, `setup` and tier steps inherit at least:
+  - `SSH_AUTH_SOCK` (a check can push with the user's keys)
+  - `CI_JOB_TOKEN`, `GITLAB_PRIVATE_TOKEN`, `HOMEBREW_GITHUB_API_TOKEN`, `VERCEL_TOKEN`, `SENTRY_AUTH_TOKEN`, `GOOGLE_API_KEY`
+  - `KUBECONFIG`
+
+  Widening the list needs a ruling, since each name can break a user's check (`ANTHREX_CHECK_ENV_PASS` passes one back). `SSH_AUTH_SOCK` in particular is a socket, not a secret value.
+- **Token sums outside `TokenUsage::billable` still use plain addition** (X-M7). B8 made `billable()` saturate. These still use `+` or `+=`:
+  - `crates/daemon/src/run/engine/design_agents.rs:297`
+  - `crates/daemon/src/run/engine/design_reviewer.rs:244`
+  - `crates/daemon/src/run/engine/design_spend.rs:94`
+  - `crates/daemon/src/scout/machine.rs:318`
+
+  A huge or hostile usage report can overflow them: a panic in a debug build, a wrap in a release one. Fix direction: `saturating_add`, as `billable()` does.
