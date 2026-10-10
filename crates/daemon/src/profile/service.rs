@@ -141,6 +141,9 @@ pub struct ProfileService {
     /// Milestone 9.10 decision 10: one tick per verified command, shared by every
     /// `CheckCounter`; it only grows.
     pub(super) progress_ticks: Arc<AtomicU64>,
+    /// M9.11.33b's seam: when set, `save_if_current` stops between its two steps.
+    #[cfg(test)]
+    pub(super) ready_gap: Mutex<Option<super::service_run::GapHook>>,
     /// Decision 6: starts a drained goal (`set_goal_starter`).
     pub(super) starter: Mutex<Option<super::service_queue::GoalStarter>>,
 }
@@ -222,6 +225,8 @@ impl ProfileService {
             live_runs: Mutex::new(None),
             host: std::sync::OnceLock::new(),
             progress_ticks: Arc::new(AtomicU64::new(0)),
+            #[cfg(test)]
+            ready_gap: Mutex::new(None),
             starter: Mutex::new(None),
         })
     }
@@ -444,28 +449,6 @@ impl ProfileService {
         };
         if changed {
             table.ready_generation += 1;
-        }
-    }
-
-    /// Saves `record` only while `generation` still owns its proposal, ordered against
-    /// `reject` by `writes`. `false`: the proposal was rejected, nothing was written.
-    pub(super) async fn save_if_current(&self, generation: u64, record: &ProposalRecord) -> bool {
-        let _writes = self.hold_writes(&record.project).await;
-        if !self.current(&record.project, generation) {
-            return false;
-        }
-        let (dir, record) = (self.repo_dir(&record.project), record.clone());
-        let saved = record.clone();
-        match blocking(move || store::save_proposal(&dir, &record).map_err(|e| e.to_string())).await
-        {
-            Ok(()) => {
-                self.note_proposal(&saved.project, Some(&saved));
-                true
-            }
-            Err(error) => {
-                tracing::warn!(%error, "could not save a profile proposal");
-                true
-            }
         }
     }
 }

@@ -33,6 +33,10 @@ use crate::worktree::repo_worktrees_dir;
 /// The question an onboarding scout answers (its `ScoutInfo.question`).
 pub const ONBOARDING_QUESTION: &str = "How is this repository set up, built and tested?";
 
+/// M9.11.33b's seam (tests only): `(reached, resume)`.
+#[cfg(test)]
+pub(super) type GapHook = (Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>);
+
 /// One proposal's work.
 pub(super) struct Job {
     pub(super) generation: u64,
@@ -100,6 +104,46 @@ impl ProfileService {
             })
             .await
     }
+
+    /// Saves `record` only while `generation` still owns its proposal, ordered against
+    /// `reject` by `writes`. `false`: the proposal was rejected, nothing was written.
+    /// M9.11.33b: memory is noted **before** the file is written, so whoever reads the
+    /// file's `Ready` (`profile status`, a goal) finds the snapshot `Ready` already; a
+    /// failed write notes back what the file still holds.
+    pub(super) async fn save_if_current(&self, generation: u64, record: &ProposalRecord) -> bool {
+        let _writes = self.hold_writes(&record.project).await;
+        if !self.current(&record.project, generation) {
+            return false;
+        }
+        self.note_proposal(&record.project, Some(record));
+        self.ready_gap().await;
+        let (dir, written) = (self.repo_dir(&record.project), record.clone());
+        let saved =
+            blocking(move || store::save_proposal(&dir, &written).map_err(|e| e.to_string())).await;
+        if let Err(error) = saved {
+            tracing::warn!(%error, "could not save a profile proposal");
+            let dir = self.repo_dir(&record.project);
+            let kept = blocking(move || store::load_proposal(&dir))
+                .await
+                .ok()
+                .flatten();
+            self.note_proposal(&record.project, kept.as_ref());
+        }
+        true
+    }
+
+    /// The seam's stop: tells the test it is in the gap, then waits for its release.
+    #[cfg(test)]
+    async fn ready_gap(&self) {
+        let hook = crate::lock(&self.ready_gap).clone();
+        if let Some((reached, resume)) = hook {
+            reached.notify_one();
+            resume.notified().await;
+        }
+    }
+
+    #[cfg(not(test))]
+    async fn ready_gap(&self) {}
 
     /// Saves `job.record` with `state` (while current). `false`: rejected meanwhile.
     async fn advance(&self, job: &mut Job, state: ProposalState) -> bool {

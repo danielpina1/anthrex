@@ -136,6 +136,8 @@ mod tests_queue_service;
 #[cfg(test)]
 mod tests_ready;
 #[cfg(test)]
+mod tests_ready_gap;
+#[cfg(test)]
 mod tests_tiers;
 #[cfg(test)]
 mod tests_tiers_expansion;
