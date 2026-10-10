@@ -88,6 +88,11 @@ fn probe(g: Git<'_>, (worktree, dir): (&Path, &Path), dot: &Path, gitlink: Optio
     let Some((head, refs)) = nested_ids(dot) else {
         return true;
     };
+    // Review m10: a `HEAD` that reads as unborn (a reftable repository's does) over an
+    // object store that holds anything counts as work.
+    if head.is_none() && !objects_empty(&dot.join("objects")) {
+        return true;
+    }
     let upstream: Vec<&str> = (refs.iter())
         .filter(|(name, _)| name.starts_with("refs/remotes/"))
         .map(|(_, id)| id.as_str())
@@ -106,6 +111,22 @@ fn probe(g: Git<'_>, (worktree, dir): (&Path, &Path), dot: &Path, gitlink: Optio
         _ => return true,
     }
     nested_dirty(g, dir, dot, head.as_deref()).unwrap_or(true)
+}
+
+/// Whether the object directory holds no object: nothing but empty `info/` and
+/// `pack/` (what `git init` makes). Unreadable is not empty.
+fn objects_empty(objects: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(objects) else {
+        return false;
+    };
+    entries.into_iter().all(|entry| {
+        entry.is_ok_and(|entry| {
+            let name = entry.file_name();
+            (name == "info" || name == "pack")
+                && entry.file_type().is_ok_and(|kind| kind.is_dir())
+                && std::fs::read_dir(entry.path()).is_ok_and(|mut inner| inner.next().is_none())
+        })
+    })
 }
 
 /// Fix round 1 (I3): the git directory a submodule's `.git` file at `dot` names
@@ -238,6 +259,20 @@ fn nested_ids(dot: &Path) -> Option<(Option<String>, Vec<NamedId>)> {
                 ids.extend(import::is_id(&id).then_some((name, id)));
             } else {
                 return None;
+            }
+        }
+    }
+    // Review m11: the `HEAD` of each of its own linked worktrees.
+    match std::fs::read_dir(dot.join("worktrees")) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return None,
+        Ok(entries) => {
+            for entry in entries {
+                let name = entry.ok()?.file_name();
+                let head = plain_text(&dot.join("worktrees").join(&name).join("HEAD"))?;
+                let id = head.trim().to_string();
+                let label = format!("worktrees/{}/HEAD", name.to_string_lossy());
+                ids.extend(import::is_id(&id).then_some((label, id)));
             }
         }
     }

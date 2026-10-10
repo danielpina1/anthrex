@@ -318,7 +318,12 @@ mod per_dir {
         {
             let mut armed = crate::lock(&watcher);
             for dir in plan(root, git_dir, ignore) {
-                armed.watch(&dir, RecursiveMode::NonRecursive)?;
+                // Review m14: a directory gone again since the walk (a build's churn)
+                // is skipped, not a reason to leave the whole root on the poll.
+                match armed.watch(&dir, RecursiveMode::NonRecursive) {
+                    Err(err) if dir != root && gone(&err) => {}
+                    other => other?,
+                }
             }
             watch_outside_git_dir(&mut *armed, root, git_dir)?;
         }
@@ -330,6 +335,15 @@ mod per_dir {
             .spawn(move || adder(&weak, &dirs_rx, &scope, &events))
             .map_err(notify::Error::io)?;
         Ok(WatchGuard::new(watcher))
+    }
+
+    /// Whether `err` says the path is no longer there.
+    fn gone(err: &notify::Error) -> bool {
+        match &err.kind {
+            notify::ErrorKind::PathNotFound => true,
+            notify::ErrorKind::Io(io) => io.kind() == std::io::ErrorKind::NotFound,
+            _ => false,
+        }
     }
 
     /// Watches each new directory's accepted subtree, then forwards its event.

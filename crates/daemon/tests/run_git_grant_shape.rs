@@ -378,9 +378,10 @@ fn links_left_at_denied_paths_refuse_the_grant() {
         let _ = std::fs::remove_dir_all(c.admin.join(name));
         std::os::unix::fs::symlink(elsewhere.path(), c.admin.join(name)).unwrap();
     }
+    // In the order the grant checks them, so each refusal names the next one.
     for name in [
-        "locked",
         "config.worktree",
+        "locked",
         "packed-refs",
         "logs",
         "hooks",
@@ -388,7 +389,10 @@ fn links_left_at_denied_paths_refuse_the_grant() {
     ] {
         let refused = worker_git_grant(&c.common, &c.task, &roots, GrantShape::WholeDir)
             .expect_err("a link at a denied path was granted");
-        assert!(refused.contains("has a link at"), "{refused}");
+        assert_eq!(
+            refused,
+            format!("the checkout's git directory has a link at {name}; anthrex will not grant it")
+        );
         let path = c.admin.join(name);
         let meta = std::fs::symlink_metadata(&path).unwrap();
         assert!(meta.file_type().is_symlink(), "{name}'s link was removed");

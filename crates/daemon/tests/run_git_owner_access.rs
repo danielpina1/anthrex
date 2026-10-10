@@ -88,3 +88,34 @@ fn a_locked_tree_is_opened_up_and_links_are_left_alone() {
     std::fs::remove_dir_all(&root).unwrap();
     set_mode(&outside, 0o700);
 }
+
+/// Review m9: a child swapped for a link after its parent is listed and before it is
+/// opened (here, once its parent was opened) is never entered.
+#[test]
+fn a_child_swapped_before_its_open_is_left_alone() {
+    let tmp = tempfile::tempdir().unwrap();
+    let top = tmp.path().canonicalize().unwrap();
+    let root = top.join("checkout");
+    let b = root.join("b");
+    std::fs::create_dir_all(b.join("locked")).unwrap();
+    let outside = top.join("outside");
+    std::fs::create_dir_all(outside.join("inner")).unwrap();
+    set_mode(&outside.join("inner"), 0o500);
+    set_mode(&outside, 0o500);
+
+    let mut swapped = false;
+    restore_owner_access_with(&root, |opened: &Path| {
+        if opened == root && !swapped {
+            swapped = true;
+            std::fs::rename(&b, root.join("b-moved")).unwrap();
+            std::os::unix::fs::symlink(&outside, &b).unwrap();
+        }
+    })
+    .unwrap();
+
+    assert!(swapped);
+    assert_eq!(mode(&outside), 0o500);
+    assert_eq!(mode(&outside.join("inner")), 0o500);
+    set_mode(&outside, 0o700);
+    set_mode(&outside.join("inner"), 0o700);
+}

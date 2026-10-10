@@ -211,3 +211,62 @@ fn a_submodule_of_another_repository_at_its_upstream_commit_is_not_work() {
         vec!["sub".to_string()]
     );
 }
+
+/// Review m10: a nested repository whose `HEAD` reads as unborn (as a reftable
+/// repository's does, `ref: refs/heads/.invalid`) but whose object store holds
+/// objects counts as work, even with an empty index and working tree.
+#[test]
+fn an_unborn_looking_repository_with_objects_is_work() {
+    let repo = repo();
+    let (_keep, task) = task_worktree(&repo, "r", "t1");
+    let sub = nested(&task, "rt");
+    commit_file(&sub, "gone.txt", "only here\n", "a commit");
+    out(&sub, &["rm", "-q", "gone.txt"]);
+    out(&sub, &["commit", "-q", "-m", "empty tree"]);
+    std::fs::remove_dir_all(sub.join(".git/refs/heads")).unwrap();
+    std::fs::create_dir_all(sub.join(".git/refs/heads")).unwrap();
+    std::fs::write(sub.join(".git/HEAD"), "ref: refs/heads/.invalid\n").unwrap();
+    assert_eq!(
+        nested_work(real_git(), &task, T).unwrap(),
+        vec!["rt".to_string()]
+    );
+}
+
+/// Review m11: a commit reachable only from a nested repository's own linked
+/// worktree's `HEAD` counts.
+#[test]
+fn a_nested_repositorys_linked_worktree_head_counts() {
+    let repo = repo();
+    let (keep, task) = task_worktree(&repo, "r", "t1");
+    let clone = task.join("clone");
+    out(
+        &task,
+        &[
+            "clone",
+            "-q",
+            repo.root.to_str().unwrap(),
+            clone.to_str().unwrap(),
+        ],
+    );
+    let elsewhere = keep.path().join("linked");
+    out(
+        &clone,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "--detach",
+            elsewhere.to_str().unwrap(),
+        ],
+    );
+    commit_file(
+        &elsewhere,
+        "w.txt",
+        "only in the linked worktree\n",
+        "linked",
+    );
+    assert_eq!(
+        nested_work(real_git(), &task, T).unwrap(),
+        vec!["clone".to_string()]
+    );
+}

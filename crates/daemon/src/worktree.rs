@@ -451,6 +451,10 @@ fn run_git_capturing(
     // A planted `commondir` in a standalone checkout names no config for this call.
     if let Some((key, value)) = pinned_as.as_ref().and_then(pinned::common_dir_env) {
         command.env(key, value);
+        // Review m4: nor does a `shallow` planted there (and removed again before the
+        // check after the call) cut this call's history walks short. The engine never
+        // makes a shallow checkout.
+        command.env("GIT_SHALLOW_FILE", "");
     }
     if let Some(file) = input {
         use std::os::fd::AsRawFd;
@@ -505,8 +509,13 @@ fn run_git_capturing(
         }
     };
 
-    if let Some(staged) = staged
-        && let Err(stderr) = staged.install()
+    // Milestone 9.11 decision 16 (D8): the pin is checked again once the call is done.
+    // A `commondir` or `shallow` planted while git ran could have steered it; its
+    // result is then discarded, and the check's refusal returned. Checked before the
+    // engine's index is installed (review m5): a refused call leaves the index as it
+    // was (dropping `staged` removes the copy).
+    if let Some(pin) = pinned_as.as_ref()
+        && let Err(stderr) = pinned::check(dir, pin)
     {
         return Err(WorktreeError::Git {
             action: joined_args,
@@ -514,11 +523,8 @@ fn run_git_capturing(
         });
     }
 
-    // Milestone 9.11 decision 16 (D8): the pin is checked again once the call is done.
-    // A `commondir` or `shallow` planted while git ran could have steered it; its
-    // result is then discarded, and the check's refusal returned.
-    if let Some(pin) = pinned_as.as_ref()
-        && let Err(stderr) = pinned::check(dir, pin)
+    if let Some(staged) = staged
+        && let Err(stderr) = staged.install()
     {
         return Err(WorktreeError::Git {
             action: joined_args,

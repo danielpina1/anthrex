@@ -45,6 +45,10 @@ const READY: &str = "ready";
 /// Milestone 9.11 decision 15 (A15): the file, in [`Repo::engine`], holding the
 /// identity the user's repository resolves; the checkout's config includes it after
 /// the repository config ([`config`]), by a path relative to the git directory.
+///
+/// Review m2: git treats an *unreadable* include target as fatal, so every git command
+/// in the checkout, the worker's included, needs this file readable: no session's
+/// `deny_read` may cover the run's data directory.
 const IDENTITY: &str = "identity";
 
 /// Where a checkout's repository and the engine's own files live.
