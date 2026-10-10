@@ -86,6 +86,7 @@ fn a_queue_survives_save_and_load() {
             goal(&project, "second", true),
         ],
         dropped: Vec::new(),
+        starting: Vec::new(),
     };
     queue.record_drop("third", "the repository is gone", 7);
     save(dir.path(), &queue).unwrap();

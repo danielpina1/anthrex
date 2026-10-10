@@ -294,6 +294,7 @@ pub(super) fn write_queue(rig: &Rig, project: &Path, goals: Vec<QueuedGoal>) {
         &GoalQueue {
             goals,
             dropped: Vec::new(),
+            starting: Vec::new(),
         },
     )
     .unwrap();

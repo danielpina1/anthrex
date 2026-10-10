@@ -40,12 +40,18 @@ pub struct QueuedGoal {
 pub struct GoalQueue {
     pub goals: Vec<QueuedGoal>,
     pub dropped: Vec<DroppedGoal>,
+    /// Final review I1: the goals a drain took out of `goals` and handed to the starter,
+    /// whose start has not returned. Written before the start, so a daemon stop leaves
+    /// them here, and `restore` turns each into a dropped goal (decision 6: at most
+    /// once). Absent from a file written before this field.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub starting: Vec<QueuedGoal>,
 }
 
 impl GoalQueue {
-    /// Nothing queued and nothing dropped: the file is removed.
+    /// Nothing queued, starting or dropped: the file is removed.
     pub fn is_empty(&self) -> bool {
-        self.goals.is_empty() && self.dropped.is_empty()
+        self.goals.is_empty() && self.dropped.is_empty() && self.starting.is_empty()
     }
 
     /// Decision 6: remembers a goal that could not start, the last [`DROPPED_KEPT`].

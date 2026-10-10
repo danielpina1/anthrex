@@ -122,6 +122,8 @@ mod tests_progress;
 #[cfg(test)]
 mod tests_queue;
 #[cfg(test)]
+mod tests_queue_drain;
+#[cfg(test)]
 mod tests_queue_order;
 #[cfg(test)]
 mod tests_queue_service;

@@ -14,6 +14,7 @@ use super::queue::{self, GoalQueue};
 use super::service::{
     EDIT_RESTART_REASON, ProfileService, RESTART_REASON, auto_allowed, blocking, in_progress,
 };
+use super::service_queue::INTERRUPTED;
 use super::store::{self, Stored};
 use crate::run::driver::unix_now;
 use crate::run::git::checkout_repo_dir;
@@ -44,7 +45,7 @@ pub const UNREADABLE_QUEUE: &str = "(unreadable queue)";
 /// names the kept file. Blocking.
 fn load_queue(dir: &Path) -> GoalQueue {
     let error = match queue::load(dir) {
-        Ok(queue) => return queue,
+        Ok(queue) => return settle_starting(dir, queue),
         Err(error) => error,
     };
     let now = unix_now();
@@ -64,6 +65,23 @@ fn load_queue(dir: &Path) -> GoalQueue {
         tracing::warn!(%error, "could not record the unreadable goal queue");
     }
     kept
+}
+
+/// Final review I1: each goal a stop caught in `starting` becomes a dropped goal with
+/// [`INTERRUPTED`], written back, so it is never started again (decision 6). Blocking.
+fn settle_starting(dir: &Path, mut queue: GoalQueue) -> GoalQueue {
+    if queue.starting.is_empty() {
+        return queue;
+    }
+    let now = unix_now();
+    for goal in std::mem::take(&mut queue.starting) {
+        tracing::info!("{}", queue::drop_line(&goal.goal, INTERRUPTED));
+        queue.record_drop(&goal.goal, INTERRUPTED, now);
+    }
+    if let Err(error) = queue::save(dir, &queue) {
+        tracing::warn!(%error, "could not record the goals a stop interrupted");
+    }
+    queue
 }
 
 /// What the start found in one repository's data directory.
