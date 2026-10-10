@@ -29,7 +29,7 @@ fn alert_texts_follow_decision_7() {
             "blocked: which db?",
             "run halted: disk full",
             "ready to accept · 2/2 merged",
-            "profile proposal ready",
+            "review how anthrex will work here",
         ]
     );
     // A block with no text: `blocked` for a question, else the reason alone; a task

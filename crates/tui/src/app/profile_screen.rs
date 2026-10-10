@@ -431,7 +431,12 @@ impl App {
     }
 
     /// One tagged profile request, recorded with what it asked.
-    fn profile_send(&mut self, dir: PathBuf, ask: ProfileAsk, request: ProfileRequest) -> Effect {
+    pub(in crate::app) fn profile_send(
+        &mut self,
+        dir: PathBuf,
+        ask: ProfileAsk,
+        request: ProfileRequest,
+    ) -> Effect {
         let request = RunRequest::Profile(request);
         let timeout = reply_timeout(&request);
         let (id, effect) = self.tagged_request(request);

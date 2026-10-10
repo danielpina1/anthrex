@@ -19,6 +19,10 @@ use proto::{
 };
 use std::path::PathBuf;
 
+#[path = "alerts_setup.rs"]
+mod alerts_setup;
+pub(crate) use alerts_setup::setup_state;
+
 /// What an alert is about: its identity, which the focus follows (decision 21).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AlertKey {
@@ -53,6 +57,8 @@ pub enum AlertKey {
         stage: u16,
         kind: StageAlert,
     },
+    /// Milestone 9.10 decision 34: a repository's set-up, for the goals waiting on it.
+    Setup(PathBuf),
 }
 
 /// Who an alert is for (milestone 9.0.7 decision 7): a run, by its goal (the id when
@@ -370,20 +376,8 @@ pub fn alerts(app: &App) -> Vec<Alert> {
             push(4, AlertKey::Accept(id.clone()), text, None, None, None);
         }
     }
-    for proposal in &app.runs.proposals {
-        let text = "profile proposal ready".to_owned();
-        out.push(Alert {
-            priority: 4,
-            key: AlertKey::Proposal(proposal.project.clone()),
-            who: AlertWho::Project(one_line(&project_name(&proposal.project))),
-            task: None,
-            detail: text.clone(),
-            text,
-            age: Some(app.run_age(proposal.updated_at)),
-            you: false,
-        });
-    }
-    // Stable: within a priority the runs' order, then the rules', then the proposals.
+    alerts_setup::profile_alerts(app, &mut out);
+    // Stable: within a priority the runs' order, then the rules', then the projects'.
     out.sort_by_key(|alert| alert.priority);
     out
 }

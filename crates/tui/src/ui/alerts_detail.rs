@@ -16,7 +16,7 @@ use crate::safe_text::{multi_line, one_line};
 use crate::theme::{self, Palette, Role, fold};
 use crate::tree::{self, format_elapsed};
 use crate::ui::tree_view::truncate_in;
-use proto::{RunInfo, TaskInfo, TaskState};
+use proto::{RunInfo, SetupState, TaskInfo, TaskState};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
@@ -128,7 +128,7 @@ fn facts(app: &App, alert: &Alert) -> Vec<(String, String)> {
         rows.push((label.to_owned(), value));
     };
     let run = match &alert.key {
-        AlertKey::Proposal(_) => None,
+        AlertKey::Proposal(_) | AlertKey::Setup(_) => None,
         AlertKey::Orchestrator(id)
         | AlertKey::OrchestratorAsks(id)
         | AlertKey::OrchestratorStuck(id)
@@ -249,7 +249,23 @@ fn facts(app: &App, alert: &Alert) -> Vec<(String, String)> {
         }
         (AlertKey::Proposal(project), _) => {
             push(&mut rows, "phase", "proposal ready".to_owned());
-            push(&mut rows, "project", project.to_string_lossy().into_owned());
+            text_rows(&mut rows, "detail", &alert.detail);
+            push(&mut rows, "project", one_line(&project.to_string_lossy()));
+        }
+        // Milestone 9.10 decision 34: the set-up's phase, a failure's whole reason, the
+        // waiting goals.
+        (AlertKey::Setup(project), _) => {
+            let state = crate::app::alerts::setup_state(app, project);
+            let phase = match state {
+                Some(SetupState::Failed { .. }) => "set-up failed",
+                _ => "setting up",
+            };
+            push(&mut rows, "phase", phase.to_owned());
+            if let Some(SetupState::Failed { reason }) = state {
+                text_rows(&mut rows, "reason", reason);
+            }
+            text_rows(&mut rows, "detail", &alert.detail);
+            push(&mut rows, "project", one_line(&project.to_string_lossy()));
         }
         (_, None) => {}
     }
@@ -365,7 +381,7 @@ fn actions_lines(app: &App, alert: &Alert, width: u16) -> Vec<Line<'static>> {
 
 /// The detail's own hint row (Interfaces "Hint priorities"): `⏎ <label>`, `. all
 /// actions`, `m message` where offered, `o open <task|run>` (not on a proposal, whose
-/// Enter opens the same screen).
+/// Enter opens the same screen), `o open profile` on a set-up.
 fn detail_hints(app: &App, alert: &Alert) -> Vec<Hint> {
     let hint = |key: &str, word: &str, priority| Hint {
         key: key.to_owned(),
@@ -385,6 +401,7 @@ fn detail_hints(app: &App, alert: &Alert) -> Vec<Hint> {
     match alert.key {
         AlertKey::Blocked { .. } => hints.push(hint("o", "open task", 6)),
         AlertKey::Proposal(_) => {}
+        AlertKey::Setup(_) => hints.push(hint("o", "open profile", 6)),
         _ => hints.push(hint("o", "open run", 6)),
     }
     hints

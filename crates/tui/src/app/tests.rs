@@ -83,6 +83,9 @@ mod plan_review_edges;
 #[path = "../app_tests/alerts.rs"]
 mod alerts;
 
+#[path = "../app_tests/alerts_setup.rs"]
+mod alerts_setup;
+
 #[path = "../app_tests/alerts_focus.rs"]
 mod alerts_focus;
 
