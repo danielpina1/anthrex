@@ -260,7 +260,13 @@ impl TestDaemon {
         let child = command.spawn().unwrap();
         let data = dir.path().join("data");
         let mut daemon = Self { dir, data, child };
-        let deadline = Instant::now() + Duration::from_secs(3);
+        // The client's own start bound (decision 31, task M9.11.28b), not a literal 3 s,
+        // which failed once under load: `ENSURE_DAEMON_SOCKET_WAIT` is `daemon::LOCK_WAIT`
+        // (a daemon may wait that long for its lifetime lock before it binds) plus
+        // `PRE_BIND_ALLOWANCE` (its pre-bind loads; a fresh data directory has nothing to
+        // restore). A daemon that exits early is seen at once in the loop, so only a hung start
+        // waits this out.
+        let deadline = Instant::now() + tui::spawn::ENSURE_DAEMON_SOCKET_WAIT;
         while !daemon.socket().exists() {
             assert!(
                 daemon.child.try_wait().unwrap().is_none(),

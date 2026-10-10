@@ -14,7 +14,7 @@
 //! stopped with `daemon stop` and killed by its exact pid only if still alive at the end.
 mod support;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
 use std::time::{Duration, Instant};
 use support::{RunningCommand, isolated_command, tempdir};
@@ -124,4 +124,27 @@ fn a_start_behind_a_stopping_daemon_waits_for_it() {
         "the started daemon did not answer: {said}"
     );
     release.join().unwrap();
+}
+
+/// Task M9.11.28b: `support::TestDaemon::start` waits for its foreground daemon's socket
+/// with the client's own start bound, `ENSURE_DAEMON_SOCKET_WAIT` (it waited a literal 3 s,
+/// which failed once under load). The reproduction is the same held lock: the daemon binds
+/// about `HOLD` (4 s) in, past the old 3 s and inside the new 10 s. The lock is taken in
+/// `configure`, which runs before the spawn, from the data directory the harness gave the
+/// daemon; `TestDaemon`'s own drop stops the daemon.
+#[test]
+fn the_test_daemon_waits_out_a_slow_start() {
+    warm_up();
+    let mut release = None;
+    let daemon = support::TestDaemon::start_configured(&[], |command| {
+        let data = command
+            .get_envs()
+            .find(|(name, _)| *name == "ANTHREX_DATA_DIR")
+            .and_then(|(_, value)| value)
+            .map(PathBuf::from)
+            .expect("the harness isolates the data directory");
+        release = Some(hold_the_lock(&data));
+    });
+    assert!(daemon.socket().exists());
+    release.expect("configure ran").join().unwrap();
 }
