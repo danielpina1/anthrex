@@ -370,21 +370,21 @@ fn a_retry_keeps_what_a_refused_fresh_session_carried() {
     );
 }
 
-/// Stream E re-review N1: the automatic rung 2 can meet a fresh session already
-/// decided. A stall at its interrupt's deadline takes rung 2 (the session killed, the
-/// queued nudge and message in the fresh session's `append`); the run is paused and
-/// resumed before the killed process exits, and `restore::resume_worker` sees the
-/// round's expired interrupt again: a second stall, a second rung 2. The messages the
-/// first fresh session carried reach the session that starts, once.
+/// Stream E re-review N1, then the double stall it found: a stall at its interrupt's
+/// deadline takes rung 2 (the session killed, the queued nudge and message in the
+/// fresh session's `append`); the run is paused and resumed before the killed process
+/// exits. `restore::resume_worker` leaves the round being killed alone: one stall, one
+/// escalation, and the messages reach the session that starts, once.
 #[test]
-fn a_second_rung_2_keeps_what_the_first_fresh_session_carried() {
+fn a_resume_before_a_killed_rounds_exit_stalls_it_once() {
     let (mut fx, window) = working_on(ROOMY);
     let quiet = fx.task("t1").rounds[0].last_event;
     fx.send(quiet + 601, EventKind::Tick);
     queue(&mut fx, "[anthrex] keep the parser");
     fx.send(quiet + 632, EventKind::Tick);
     let t1 = fx.task("t1");
-    assert_eq!((t1.rung, t1.stalls), (2, 1));
+    assert_eq!((t1.rung, t1.stalls, t1.failures), (2, 1, 1));
+    let (route, from) = (t1.route.clone(), t1.escalated_from.clone());
     let append = t1.fresh_session.as_ref().and_then(|f| f.append.clone());
     let append = append.expect("the first rung 2 carried the mail");
     assert!(append.ends_with("[anthrex] keep the parser"), "{append}");
@@ -392,7 +392,12 @@ fn a_second_rung_2_keeps_what_the_first_fresh_session_carried() {
     edit(&mut fx, vec![proto::PlanEdit::Pause]);
     super::control::resume(&mut fx);
     let t1 = fx.task("t1");
-    assert_eq!(t1.stalls, 2, "the resume stalled the retiring round again");
+    assert_eq!((t1.stalls, t1.failures), (1, 1), "one stall");
+    assert_eq!(
+        (&t1.route, &t1.escalated_from),
+        (&route, &from),
+        "one escalation"
+    );
     let kept = t1.fresh_session.as_ref().and_then(|f| f.append.clone());
     assert_eq!(kept.as_deref(), Some(append.as_str()), "the append is kept");
 
@@ -402,4 +407,39 @@ fn a_second_rung_2_keeps_what_the_first_fresh_session_carried() {
         "{first_turn}"
     );
     assert_eq!(first_turn.matches("keep the parser").count(), 1);
+}
+
+/// Re-review N1, pinned on its own (no path reaches it once a resume leaves a killed
+/// round alone): a rung 2 that meets a fresh session already decided keeps what that
+/// one carries, the new reason replacing only its reason. The fixture is built by hand:
+/// a kept fresh session beside a live round.
+#[test]
+fn a_rung_2_keeps_a_decided_fresh_sessions_append() {
+    let (mut fx, window) = working_on(ROOMY);
+    queue(&mut fx, "[anthrex] the lexer is shared");
+    fx.task_mut("t1").fresh_session = Some(crate::run::model::FreshSession {
+        reason: "an earlier reason".into(),
+        append: Some("[anthrex] decided earlier".into()),
+    });
+    let quiet = fx.task("t1").rounds[0].last_event;
+    fx.send(quiet + 601, EventKind::Tick);
+    fx.send(quiet + 632, EventKind::Tick);
+    let fresh = fx.task("t1").fresh_session.clone().expect("rung 2");
+    assert!(
+        fresh.reason.starts_with("the last session stalled"),
+        "{}",
+        fresh.reason
+    );
+    let append = fresh.append.expect("carried");
+    assert!(
+        append.starts_with("[anthrex] decided earlier\n\n"),
+        "{append}"
+    );
+    assert!(append.contains("[anthrex] the lexer is shared"), "{append}");
+    assert_eq!(
+        fresh_first_turn(&mut fx, window)
+            .matches("decided earlier")
+            .count(),
+        1
+    );
 }
