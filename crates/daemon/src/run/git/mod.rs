@@ -43,7 +43,7 @@ mod worktrees;
 
 pub use accept::{ACCEPT_MERGE_TIMEOUT, accept, accept_with_merge_timeout};
 pub(crate) use checkout::restore_owner_access;
-pub use checkout::{Repo, checkout_repo_dir, default_repo_dir};
+pub use checkout::{Repo, checkout_repo_dir, default_repo_dir, restore_owner_access_with};
 pub use crown::{clear_stale_locks, cleared_of, crown};
 pub use docs::{DocsCommit, DocsOutcome, commit_docs, docs_symlink};
 pub use done::{
