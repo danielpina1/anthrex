@@ -164,23 +164,30 @@ pub fn worker_git_grant(
         files.push(admin.join(format!("{file}.lock")));
     }
     files.extend(WORKTREE_GIT_DIRS.iter().map(|dir| admin.join(dir)));
-    let denied = WORKTREE_GIT_DENIED_FILES
-        .iter()
-        .chain(&WORKTREE_GIT_DENIED_DIRS)
-        .map(|name| admin.join(name));
     // Final fix batch F1c (I1's sweep): every entry is named lexically under the
-    // engine's own git directory, never resolved. A link a worker left at one of them
-    // is removed before the next session is granted it, so a sandbox that resolves its
-    // grants is never handed the link's target. The Linux shape sweeps its denied
-    // entries too: the sandbox must deny the path itself, never what a link names.
-    let swept: Vec<PathBuf> = match shape {
-        GrantShape::Files => files.clone(),
-        GrantShape::WholeDir => files.iter().cloned().chain(denied).collect(),
-    };
-    for path in &swept {
+    // engine's own git directory, never resolved. A link a worker left at a granted
+    // path is removed before the next session is granted it, so a sandbox that resolves
+    // its grants is never handed the link's target.
+    for path in &files {
         if std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink()) {
             std::fs::remove_file(path)
                 .map_err(|err| format!("cannot remove the link {}: {err}", path.display()))?;
+        }
+    }
+    // Milestone 9.11 decision 16 (D8): a link at a path the Linux shape denies is
+    // refused, never swept: removing it and making a placeholder left a moment in
+    // which the path was free to plant again. The link is left for the user to see.
+    if shape == GrantShape::WholeDir {
+        for name in WORKTREE_GIT_DENIED_FILES
+            .iter()
+            .chain(&WORKTREE_GIT_DENIED_DIRS)
+        {
+            let path = admin.join(name);
+            if std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.file_type().is_symlink()) {
+                return Err(format!(
+                    "the checkout's git directory has a link at {name}; anthrex will not grant it"
+                ));
+            }
         }
     }
     // Fix round 5: no reflog is left for the worker's git (which could not write it) or
@@ -222,7 +229,7 @@ pub fn worker_git_grant(
 /// engine unlocks before it removes one, and means nothing in a repository's own git
 /// directory), `packed-refs` with only its header, an empty directory. `commondir` is
 /// never made, and is denied only where it exists. Each is made without following a
-/// link (the sweep removed any) and checked with `lstat`: a link found afterwards fails
+/// link (the grant refused any) and checked with `lstat`: a link found afterwards fails
 /// closed.
 fn placeholders(admin: &Path) -> Result<Vec<PathBuf>, String> {
     use std::io::Write as _;

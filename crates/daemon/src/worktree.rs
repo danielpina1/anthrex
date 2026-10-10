@@ -514,6 +514,18 @@ fn run_git_capturing(
         });
     }
 
+    // Milestone 9.11 decision 16 (D8): the pin is checked again once the call is done.
+    // A `commondir` or `shallow` planted while git ran could have steered it; its
+    // result is then discarded, and the check's refusal returned.
+    if let Some(pin) = pinned_as.as_ref()
+        && let Err(stderr) = pinned::check(dir, pin)
+    {
+        return Err(WorktreeError::Git {
+            action: joined_args,
+            stderr,
+        });
+    }
+
     if let Some(kind) = spawn_error {
         return if kind == io::ErrorKind::NotFound {
             Err(WorktreeError::GitMissing)
