@@ -48,6 +48,7 @@ def matching_processes():
     A match is argv[0]'s basename `anthrex` with argv[1] `daemon`, or argv[0]'s
     basename `fake-agent`. Zombies are not counted: there is no process left to leak,
     and its parent is what would be. `ps axww` is the BSD form macOS and procps share.
+    argv[0] may hold spaces (`split_program`).
     """
     out = subprocess.run(
         ["ps", "axww", "-o", "pid=,ppid=,stat=,args="],
@@ -63,11 +64,31 @@ def matching_processes():
         pid, ppid, stat, args = fields
         if "Z" in stat:
             continue
-        argv = args.split()
-        name = os.path.basename(argv[0])
-        if (name == "anthrex" and len(argv) > 1 and argv[1] == "daemon") or name == "fake-agent":
+        program, rest = split_program(args)
+        name = os.path.basename(program)
+        if (name == "anthrex" and rest.split()[:1] == ["daemon"]) or name == "fake-agent":
             found[int(pid)] = (int(ppid), args)
     return found
+
+
+def split_program(args):
+    """`ps`'s space-joined args as (argv[0], the rest).
+
+    `ps` joins argv with spaces, so argv[0] is not always its first word: a binary under
+    a directory whose name has a space (`/Users/me/My Repos/target/debug/anthrex daemon`)
+    spans several. argv[0] is the shortest leading run of words whose basename is one
+    this gate matches and which is that bare name or an existing file; otherwise, the
+    first word.
+    """
+    words = args.split(" ")
+    for k in range(1, len(words) + 1):
+        program = " ".join(words[:k])
+        if os.path.basename(program) not in ("anthrex", "fake-agent"):
+            continue
+        if " " not in program or os.path.isfile(program):
+            return program, " ".join(words[k:])
+    first, _, rest = args.partition(" ")
+    return first, rest
 
 
 def temp_dirs():
@@ -172,7 +193,15 @@ def selftest():
     os.makedirs(before_dir, exist_ok=True)
     before = subprocess.Popen(["fake-agent", "60"], executable="/bin/sleep")
     leaked_dir = os.path.join(temp, f"ax-leakgate-selftest-{os.getpid()}")
+    # A stand-in under a directory whose name has a space: `ps` shows its argv[0] as
+    # several words, and the gate must still match it.
+    spaced_dir = os.path.join(temp, f"ax-leakgate selftest spaced-{os.getpid()}")
+    os.makedirs(spaced_dir, exist_ok=True)
+    spaced_program = os.path.join(spaced_dir, "fake-agent")
+    with open(spaced_program, "w"):
+        pass
     child = None
+    spaced = None
     fd, snap = tempfile.mkstemp(suffix=".json")
     os.close(fd)
     try:
@@ -181,6 +210,7 @@ def selftest():
             failures.append(f"snapshot exited {status}:\n{out}")
         os.makedirs(leaked_dir, exist_ok=True)
         child = subprocess.Popen(["fake-agent", "60"], executable="/bin/sleep")
+        spaced = subprocess.Popen([spaced_program, "60"], executable="/bin/sleep")
 
         status, out = run_self("check", snap, "--wait", "1")
         print(out, end="")
@@ -188,6 +218,8 @@ def selftest():
             failures.append(f"check with a leak exited {status}, not 1")
         if f"leaked process: pid {child.pid} " not in out:
             failures.append(f"check did not name the leaked process {child.pid}")
+        if f"leaked process: pid {spaced.pid} " not in out:
+            failures.append(f"check did not name the leaked process {spaced.pid}, whose path has a space")
         if os.path.realpath(leaked_dir) not in out:
             failures.append(f"check did not name the leaked directory {leaked_dir}")
         if f"pid {before.pid} " in out:
@@ -198,6 +230,9 @@ def selftest():
         child.terminate()  # the only signal this script sends: its own child, by its pid
         child.wait()
         child = None
+        spaced.terminate()  # its own child, by its pid
+        spaced.wait()
+        spaced = None
         os.rmdir(leaked_dir)
 
         status, out = run_self("check", snap)
@@ -208,10 +243,14 @@ def selftest():
         if child is not None:
             child.terminate()  # the only signal: its own child, by its pid
             child.wait()
+        if spaced is not None:
+            spaced.terminate()  # its own child, by its pid
+            spaced.wait()
         before.terminate()  # the only signal: its own child, by its pid
         before.wait()
         shutil.rmtree(leaked_dir, ignore_errors=True)
         shutil.rmtree(before_dir, ignore_errors=True)
+        shutil.rmtree(spaced_dir, ignore_errors=True)
         os.unlink(snap)
 
     for failure in failures:
