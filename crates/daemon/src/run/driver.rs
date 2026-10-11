@@ -76,6 +76,11 @@ use crate::manager::ManagerConfig;
 use crate::manager::{GitRoots, WindowManager, WindowSignal};
 use book::{Book, Retiring};
 
+/// How long [`RunService::stop`] waits for the loop's acknowledgement before it aborts
+/// the loop and saves the runs itself (a test may shorten it). Named for the test rigs'
+/// stop bounds (milestone 9.12 task M9.12.13, `docs/timing-budgets.md`).
+pub const STOP_WAIT: Duration = Duration::from_secs(30);
+
 pub use adapt::Adaptation;
 pub use build::installed::INSTALLED_PROBE_TIMEOUT;
 pub(crate) use context::OpCtx;
@@ -243,7 +248,7 @@ impl RunService {
             op_order: Mutex::new(HashMap::new()),
             stopped: AtomicBool::new(false),
             saved: AtomicBool::new(false),
-            stop_wait_ms: AtomicU64::new(30_000),
+            stop_wait_ms: AtomicU64::new(STOP_WAIT.as_millis() as u64),
             loop_gate: Arc::new(tokio::sync::Mutex::new(())),
             loop_abort: Mutex::new(None),
             abort_after: abort_after(),

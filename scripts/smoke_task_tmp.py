@@ -112,3 +112,14 @@ def remove_task_tmps_beneath(base):
                 if _remove(repo_dir):
                     removed += 1
     return removed
+
+
+def teardown(base):
+    """`remove_task_tmps_beneath(base)` for a stage's `finally`: a failure is printed,
+    never raised, so it cannot replace the error the stage is already failing with
+    (fix round 1, minor 7). What it leaves behind, the leak gate reports."""
+    try:
+        remove_task_tmps_beneath(base)
+    except Exception as err:  # noqa: BLE001 - reported, never masking the stage's own
+        print(f"smoke_task_tmp: could not remove {base}'s task directories: {err!r}", file=sys.stderr)
+

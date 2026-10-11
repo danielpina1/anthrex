@@ -52,7 +52,7 @@ from pty_smoke_design import design_stage
 from pty_smoke_profile import profile_stage
 from pty_smoke_run_view import run_view_stage
 from pty_smoke_tui import tui_stage
-from smoke_task_tmp import check_pinned, remove_task_tmps_beneath
+from smoke_task_tmp import check_pinned, teardown
 
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -1883,7 +1883,8 @@ def only(stage):
 
 
 if __name__ == "__main__":
-    # M9.12.13: the teardown's hash is the daemon's, or the smoke stops here.
+    # M9.12.13: the teardown's hash gives the pinned name, which the daemon's own test
+    # (`the_smokes_pinned_name_is_this_hash`) checks against its hash; or the smoke stops.
     check_pinned()
     try:
         if os.environ.get("ANTHREX_SMOKE_ONLY"):
@@ -1900,7 +1901,7 @@ if __name__ == "__main__":
         # directory (and so daemon.log) for debugging a failure.
         if not os.environ.get("ANTHREX_SMOKE_KEEP"):
             # M9.12.13: its runs' task temporary directories go with it.
-            remove_task_tmps_beneath(DATA_DIR)
+            teardown(DATA_DIR)
             shutil.rmtree(DATA_DIR, ignore_errors=True)
         # W1 and W2's fixture repository is not the daemon's data, so it is removed
         # unconditionally, keep-flag or not.

@@ -31,18 +31,52 @@ struct Rig {
     dir: tempfile::TempDir,
     repo: PathBuf,
     profiles: Arc<ProfileService>,
+    runs: Arc<RunService>,
     sched: Arc<TestScheduler>,
     shutdown: CancellationToken,
+    stopped: bool,
 }
 
-/// M9.12.13: the task temporary directories of the checkouts made under the rig's
-/// directory go with it.
+/// M9.12.13: once [`Rig::stop`] has stopped its services, the task temporary
+/// directories of the checkouts made under the rig's directory go with it. A rig
+/// dropped without `stop` fails the test (a failing test only cancels).
 impl Drop for Rig {
     fn drop(&mut self) {
-        let removed = daemon::run::git::remove_task_tmps_beneath(self.dir.path());
-        if let (Err(error), false) = (removed, std::thread::panicking()) {
-            panic!("{error}");
+        self.shutdown.cancel();
+        if std::thread::panicking() {
+            return;
         }
+        assert!(
+            self.stopped,
+            "a rig must be stopped with `Rig::stop().await`"
+        );
+        daemon::run::git::remove_task_tmps_beneath(self.dir.path()).unwrap();
+    }
+}
+
+impl Rig {
+    /// M9.12.13 (fix round 1): every verification job has ended, which its own
+    /// clean-up shows by removing the verification checkout, within [`LET_GO_WAIT`];
+    /// then the run service stops (its last `run.json` written), within
+    /// `RunService::stop`'s acknowledgement wait plus 10 s.
+    async fn stop(mut self) {
+        let checkout =
+            daemon::profile::verify::checkout_path(&self.dir.path().join("worktrees"), &self.repo);
+        let deadline = Instant::now() + LET_GO_WAIT;
+        while checkout.exists() {
+            assert!(
+                Instant::now() < deadline,
+                "a verification job never ended: {} is still there",
+                checkout.display()
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        self.shutdown.cancel();
+        let bound = daemon::run::driver::STOP_WAIT + Duration::from_secs(10);
+        tokio::time::timeout(bound, self.runs.stop())
+            .await
+            .unwrap_or_else(|_| panic!("the run service did not stop within {bound:?}"));
+        self.stopped = true;
     }
 }
 
@@ -90,7 +124,9 @@ async fn rig() -> Rig {
         repo,
         sched: runs.scheduler().clone(),
         profiles,
+        runs,
         shutdown,
+        stopped: false,
     }
 }
 
@@ -197,5 +233,5 @@ async fn a_rejected_verification_waiting_for_a_slot_lets_go() {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     drop(held);
-    rig.shutdown.cancel();
+    rig.stop().await;
 }

@@ -111,6 +111,9 @@ const WORKTREE_CHECKOUTS: [&str; 2] = ["integration", ".full"];
 /// not exist. Only a name hashed from a path under
 /// `base` is removed, so another test's or a real run's directory never is; a link
 /// under `base` is never followed. The number removed. Blocking.
+///
+/// For tests' teardown only: nothing in the product calls it.
+#[doc(hidden)]
 pub fn remove_task_tmps_beneath(base: &Path) -> Result<usize, String> {
     let mut spellings = vec![base.to_path_buf()];
     if let Ok(resolved) = base.canonicalize() {

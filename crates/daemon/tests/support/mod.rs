@@ -314,9 +314,6 @@ pub fn commit_more(dir: &std::path::Path, count: usize) {
     }
 }
 
-/// A real repository in a temporary directory: one commit holding `README` and a
-/// `.gitignore` that ignores `ignored-*`, on the deterministic branch `main`.
-///
 /// Milestone 9.12 task M9.12.13: a test's temporary directory that takes the task
 /// temporary directories of the checkouts made under it
 /// (`daemon::run::git::remove_task_tmps_beneath`) when it goes, and those of the
@@ -379,6 +376,9 @@ impl Drop for TestDir {
     }
 }
 
+/// A real repository in a temporary directory: one commit holding `README` and a
+/// `.gitignore` that ignores `ignored-*`, on the deterministic branch `main`.
+///
 /// The `.gitignore` is in that first commit deliberately: every linked worktree this
 /// repository grows starts from a commit that already has it, so an ignored file in a
 /// worktree really is ignored there. A `.gitignore` committed later, after the worktree

@@ -30,6 +30,16 @@ const STALL: Duration = Duration::from_secs(3);
 /// Writes a decider program under the rig's directory for the run of the given id.
 type MakeBin = fn(&Path, &str) -> PathBuf;
 
+/// Milestone 9.12 task M9.12.13 (fix round 1): how long [`Rig::stop`] may take before
+/// it fails with a clear message instead of hanging to nextest's 600 s limit. Its legal
+/// worst case: `RunService::stop`'s acknowledgement wait (`STOP_WAIT`), then
+/// `WindowManager::shutdown`'s kill grace and its cleanup's deadline, plus 30 s for the
+/// last saves and the joins on a loaded machine (`docs/timing-budgets.md`).
+const STOP_BOUND: Duration = Duration::from_secs(30)
+    .saturating_add(crate::run::driver::STOP_WAIT)
+    .saturating_add(crate::process::KILL_GRACE)
+    .saturating_add(crate::worktree::CLEANUP_TIMEOUT);
+
 struct Rig {
     dir: tempfile::TempDir,
     runs: Arc<RunService>,
@@ -122,12 +132,19 @@ impl Rig {
     /// directories of the checkouts under the rig's directory.
     async fn stop(&self) {
         self.shutdown.cancel();
-        self.runs.stop().await;
-        let run_loop = crate::lock(&self.run_loop).take();
-        if let Some(run_loop) = run_loop {
-            let _ = run_loop.await;
+        let stopping = async {
+            self.runs.stop().await;
+            let run_loop = crate::lock(&self.run_loop).take();
+            if let Some(run_loop) = run_loop {
+                let _ = run_loop.await;
+            }
+            self.manager.shutdown().await;
+        };
+        if tokio::time::timeout(STOP_BOUND, stopping).await.is_err() {
+            panic!(
+                "the rig did not stop within {STOP_BOUND:?}: does the test still hold the engine's lock (`runs.state`) across `stop()`?"
+            );
         }
-        self.manager.shutdown().await;
         crate::run::git::remove_task_tmps_beneath(self.dir.path()).unwrap();
         self.stopped
             .store(true, std::sync::atomic::Ordering::SeqCst);
