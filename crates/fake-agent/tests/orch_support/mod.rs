@@ -124,9 +124,13 @@ pub fn orch_argv_with(
 /// `real-io` tests may each find the file missing and write it at once: up to eight new
 /// files to assess, 3.50 s for eight concurrent first execs ("Measured primitive costs"),
 /// inside a first hook's 5 s `STEP_TIMEOUT`. So each test process execs the file once
-/// (its `hook` branch, logging to `/dev/null`) before any `fake-agent` uses it, and pays
-/// the assessment outside every budget, the recorded pattern of
-/// `docs/timing-budgets.md`'s "Fixed, from the codex-probe ordering flake".
+/// (its `hook` branch, logging to `/dev/null`) before any `fake-agent` uses it, and
+/// normally pays the assessment outside every budget, the recorded pattern of
+/// `docs/timing-budgets.md`'s "Fixed, from the codex-probe ordering flake". Not always: on
+/// a fresh target, a process that found the file missing before another's rename puts
+/// its own copy in place after the other warmed, so the other's next hook may exec a new
+/// inode. That worst case is the one without the warm-up, at most eight overlapping first
+/// execs (3.50 s), still inside the 5 s `STEP_TIMEOUT`.
 pub fn wrapper() -> &'static Path {
     static WRAPPER: OnceLock<PathBuf> = OnceLock::new();
     WRAPPER.get_or_init(|| {
