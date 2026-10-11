@@ -35,6 +35,9 @@ struct Rig {
     sched: Arc<TestScheduler>,
     shutdown: CancellationToken,
     stopped: bool,
+    /// The verification checkout was seen to exist ([`Rig::saw_checkout`]), so `stop`'s
+    /// wait for it to go cannot pass before a job has made it.
+    checkout_seen: bool,
 }
 
 /// M9.12.13: once [`Rig::stop`] has stopped its services, the task temporary
@@ -55,13 +58,32 @@ impl Drop for Rig {
 }
 
 impl Rig {
+    fn checkout(&self) -> PathBuf {
+        daemon::profile::verify::checkout_path(&self.dir.path().join("worktrees"), &self.repo)
+    }
+
+    /// A verification job has made its checkout: `verify` prepares it before its first
+    /// command asks for a slot, so it exists while a request waits.
+    fn saw_checkout(&mut self) {
+        let checkout = self.checkout();
+        assert!(
+            checkout.exists(),
+            "a verification waits for a slot, but its checkout {} is not there",
+            checkout.display()
+        );
+        self.checkout_seen = true;
+    }
+
     /// M9.12.13 (fix round 1): every verification job has ended, which its own
     /// clean-up shows by removing the verification checkout, within [`LET_GO_WAIT`];
     /// then the run service stops (its last `run.json` written), within
     /// `RunService::stop`'s acknowledgement wait plus 10 s.
     async fn stop(mut self) {
-        let checkout =
-            daemon::profile::verify::checkout_path(&self.dir.path().join("worktrees"), &self.repo);
+        assert!(
+            self.checkout_seen,
+            "the rig never saw the verification checkout, so its going would prove nothing"
+        );
+        let checkout = self.checkout();
         let deadline = Instant::now() + LET_GO_WAIT;
         while checkout.exists() {
             assert!(
@@ -127,6 +149,7 @@ async fn rig() -> Rig {
         runs,
         shutdown,
         stopped: false,
+        checkout_seen: false,
     }
 }
 
@@ -151,7 +174,7 @@ fn message(reply: &ProfileReply) -> Option<&str> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_rejected_verification_waiting_for_a_slot_lets_go() {
-    let rig = rig().await;
+    let mut rig = rig().await;
     // A run's candidate holds every slot.
     let held = rig
         .sched
@@ -217,6 +240,7 @@ async fn a_rejected_verification_waiting_for_a_slot_lets_go() {
         );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
+    rig.saw_checkout();
     // M9.12.13: the new edit is rejected too, while it still waits, so no verification
     // runs (and makes a checkout's temporary directory) once the slot is let go and the
     // test's directory is gone.
