@@ -957,6 +957,17 @@ close to genuine danger today.
    step already running to end (`crates/daemon/src/run/slots/book.rs`), and an exclusive
    step waits for all of them.
 
+6. **Never start the suite with SIGINT ignored.** `headless_sessions::interrupt_by_sigint_reaches_the_child`
+   and `headless_turns::interrupt_follows_cli_caps` send SIGINT to a child and wait for it to
+   react. A process started with SIGINT ignored passes that disposition to every child it
+   spawns, so the signal never arrives and both tests fail on their timeout ("timed out
+   waiting for interrupted", "timed out waiting for the SIGINT"). That happens under
+   `nohup`, and under a job a non-interactive shell backgrounds with `&`. M9.12.1's baseline
+   run, started with `nohup … &`, failed exactly these two; run again in the foreground they
+   passed. Run the suite in the foreground, or check first that SIGINT is not ignored where it
+   runs (M9.12.3: the Bash tool's background mode left it at its default, and both passed).
+   Such a failure is in the harness, not in the tree, so it is never fixed by changing a bound.
+
 ## What this document deliberately does not recommend
 
 `crates/daemon/tests/lockfile.rs` isolates one test into its own binary to dodge a
