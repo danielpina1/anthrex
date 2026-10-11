@@ -263,6 +263,12 @@ mod tests {
         let dir = crate::run::git::TestDir::new();
         let root = dir.path().canonicalize().unwrap();
         let checkout = root.join("wt/runs/r1/t1");
+        // M9.12.13: the checkout's temporary directory, named from a repository
+        // directory under `data` that the test never makes.
+        dir.also(crate::run::git::checkout_repo_dir(
+            &root.join("data/runs/r1"),
+            &checkout,
+        ));
         std::fs::create_dir_all(&checkout).unwrap();
         let c = spec(&root, &["/opt/cache/x"])
             .for_checkout(&checkout)
@@ -306,6 +312,12 @@ mod tests {
         let dir = crate::run::git::TestDir::new();
         let root = dir.path().canonicalize().unwrap();
         let checkout = root.join("wt/runs/r1/t1");
+        // M9.12.13: the checkout's temporary directory, named from a repository
+        // directory under `data` that the test never makes.
+        dir.also(crate::run::git::checkout_repo_dir(
+            &root.join("data/runs/r1"),
+            &checkout,
+        ));
         std::fs::create_dir_all(&checkout).unwrap();
         let repo = root.join("repo");
         for bad in [
@@ -329,6 +341,12 @@ mod tests {
         let dir = crate::run::git::TestDir::new();
         let root = dir.path().canonicalize().unwrap();
         let checkout = root.join("wt/runs/r1/t1");
+        // M9.12.13: the checkout's temporary directory, named from a repository
+        // directory under `data` that the test never makes.
+        dir.also(crate::run::git::checkout_repo_dir(
+            &root.join("data/runs/r1"),
+            &checkout,
+        ));
         std::fs::create_dir_all(checkout.parent().unwrap()).unwrap();
         std::os::unix::fs::symlink(&root, &checkout).unwrap();
         let err = spec(&root, &[]).for_checkout(&checkout).unwrap_err();
