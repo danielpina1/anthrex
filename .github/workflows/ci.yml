@@ -41,10 +41,15 @@ jobs:
 
       # Milestone 9.12 decision 22: the client's tree, dev-dependencies included, has no
       # daemon (decision 11), so an engine edit never rebuilds the TUI or its tests. The
-      # default shell has no `pipefail`, so `grep -q` closing the pipe early cannot turn
-      # a found daemon into a pass.
+      # tree is captured first, so a failing `cargo tree` fails the step, and no pipe
+      # can be closed early, whatever the shell's `pipefail` setting.
       - name: the client does not depend on the daemon
-        run: "! cargo tree -p anthrex-tui -e all | grep -q anthrex-daemon"
+        run: |
+          tree=$(cargo tree -p anthrex-tui -e all)
+          if printf '%s\n' "$tree" | grep -F anthrex-daemon; then
+            echo "the client's dependency tree contains anthrex-daemon (decision 11)"
+            exit 1
+          fi
 
       - name: cargo fmt --all --check
         run: cargo fmt --all --check
