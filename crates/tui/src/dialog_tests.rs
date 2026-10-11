@@ -719,39 +719,7 @@ fn paste_replaces_newlines_with_spaces() {
     assert_eq!(on_runtime, untouched);
 }
 
-/// `check_branch_syntax` is copied by hand in `daemon::worktree` (design decision 8,
-/// rules 1 to 4) and here, because the client validates on `Enter` (decision 32) before
-/// ever asking the daemon, and this crate does not otherwise depend on `daemon` at
-/// runtime — only as a dev-dependency, for `tests/connection.rs`'s end-to-end daemon.
-/// Pulling in the whole daemon crate as a real dependency just to reuse one ~20-line
-/// pure function would wire the client's pure form-validation module (`AGENTS.md` rule
-/// 5: no I/O, no clock, no filesystem) to everything the daemon crate links, for a
-/// helper with no I/O of its own to share. So the two copies stay separate, and this
-/// test is what stands in for the dependency: it fails the moment either copy's
-/// judgement of an input, or its message, drifts from the other's.
-#[test]
-fn check_branch_syntax_agrees_with_the_daemons_copy() {
-    let cases = [
-        "",
-        "   ",
-        "feat/api",
-        "  feat/api  ",
-        "feat api",
-        "feat\tapi",
-        "-feat",
-        "anthrex/",
-        "anthrex/run-1",
-        "anthrexanthrex/not-actually-reserved",
-        "feat/anthrex/nested",
-    ];
-    for branch in cases {
-        let daemon_result =
-            daemon::worktree::check_branch_syntax(branch).map_err(|e| e.to_string());
-        let tui_result = check_branch_syntax(branch);
-        assert_eq!(
-            tui_result, daemon_result,
-            "check_branch_syntax({branch:?}) disagrees between the TUI's copy and \
-             daemon::worktree's"
-        );
-    }
-}
+// `check_branch_syntax` is `common::branch`'s, the daemon's own (milestone 9.12
+// decision 12): the agreement test that held a hand copy here to the daemon's is gone,
+// and `common`'s `branch::tests::the_four_rules_answer_as_the_daemon_did` pins its
+// eleven inputs.

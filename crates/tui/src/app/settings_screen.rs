@@ -308,10 +308,7 @@ impl SettingsScreen {
     pub fn refit_note(&self, class: &str) -> Option<String> {
         let c = (self.tuning.as_ref()?.classes.iter()).find(|c| c.class == class)?;
         let budget = c.refit_budget.as_ref().filter(|_| !c.configured)?;
-        Some(format!(
-            "refit: {}",
-            daemon::run::refit::budget_text(budget)
-        ))
+        Some(format!("refit: {}", common::text::budget_text(budget)))
     }
 
     /// An edit makes the last outcome stale.

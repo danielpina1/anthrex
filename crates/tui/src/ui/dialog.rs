@@ -6,9 +6,9 @@
 //! The force follow-up's own lines say nothing about *what kind* of work the checkout
 //! holds: the daemon's message is the only thing that knows (it may be a rebase, a
 //! bisect, unreachable commits or plain uncommitted files — see
-//! `daemon::worktree::DirtyReason`), so the title and the `f` line describe the worktree
-//! as a whole. A prompt that said "changes" would be false for exactly the states whose
-//! loss is worst.
+//! `common::worktree_names::DirtyReason`), so the title and the `f` line describe the
+//! worktree as a whole. A prompt that said "changes" would be false for exactly the
+//! states whose loss is worst.
 //!
 //! Neither the remove-confirm dialog nor the force follow-up says anything about the
 //! agent's process. `WindowManager::remove_with_worktree`'s dirty check

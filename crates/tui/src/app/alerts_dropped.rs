@@ -43,9 +43,9 @@ pub const RUN_REQUEST_SECS: u64 = 180;
 /// `PREFLIGHT_BOUND` + 30 s + `TUNING_START_BOUND`), then the triage's 600 + 30 s and
 /// `INSTALLED_PROBE_TIMEOUT`. A drained goal is started by the same `StartGoal` path.
 pub const GOAL_START_BUDGET: Duration = Duration::from_secs(RUN_REQUEST_SECS + 30 + 600 + 30)
-    .saturating_add(daemon::host::PREFLIGHT_BOUND)
-    .saturating_add(daemon::run::driver::tuning::TUNING_START_BOUND)
-    .saturating_add(daemon::run::driver::INSTALLED_PROBE_TIMEOUT);
+    .saturating_add(common::bounds::PREFLIGHT_BOUND)
+    .saturating_add(common::bounds::TUNING_START_BOUND)
+    .saturating_add(common::bounds::INSTALLED_PROBE_TIMEOUT);
 
 /// A goal that left the queue with no run for it, waiting for its project's status.
 /// `give_up_at` is in the daemon's unix seconds (the snapshots' `now`).

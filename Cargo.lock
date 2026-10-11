@@ -208,8 +208,8 @@ dependencies = [
 name = "anthrex-tui"
 version = "0.2.0"
 dependencies = [
+ "anthrex-common",
  "anthrex-config",
- "anthrex-daemon",
  "anthrex-proto",
  "anthrex-testexec",
  "anyhow",
@@ -221,7 +221,6 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
- "tokio-util",
  "toml",
  "tui-term",
  "unicode-segmentation",

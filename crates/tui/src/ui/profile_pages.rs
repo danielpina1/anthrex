@@ -146,7 +146,7 @@ fn page_parts(
                 "the profile"
             };
             let field = key.split('.').next().unwrap_or(key);
-            let checked = daemon::profile::proposal::REVERIFY_KEYS.contains(&field);
+            let checked = common::profile_keys::REVERIFY_KEYS.contains(&field);
             let text = format!(
                 "{} is removed from {target}{}",
                 crate::profile_words::label(key),

@@ -14,7 +14,7 @@ use super::run_orch::{handled_rows, orchestrator_text};
 use super::{Field, Inspection, field};
 use crate::app::{App, state_text};
 use crate::tree::RowKind;
-use daemon::run::triage::{kinds_scale, source_label};
+use common::labels::{kinds_scale, source_label};
 use proto::{
     AgentRoundInfo, IdleOrchestrator, PlannerInfo, PlannerState, RoundInfo, RoundOrigin,
     RoundOutcome, RunInfo, RunPath, RunState, Runtime, ScoutInfo, ScoutState, TaskInfo, TaskState,
