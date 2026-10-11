@@ -257,11 +257,14 @@ def selftest():
             failures.append(f"check did not name the leaked process {spaced.pid}, whose path has a space")
         if f"leaked process: pid {copied.pid} " not in out:
             failures.append(f"check did not name the leaked process {copied.pid}, under `anthrex copy`")
-        if os.path.realpath(leaked_dir) not in out:
+        # Whole report lines, not substrings: a leaked process's command line can hold a
+        # directory's path (the `anthrex copy` stand-in lives under `before_dir`).
+        lines = out.splitlines()
+        if f"leaked temporary entry: {os.path.realpath(leaked_dir)}" not in lines:
             failures.append(f"check did not name the leaked directory {leaked_dir}")
         if f"pid {before.pid} " in out:
             failures.append(f"check named the pre-existing process {before.pid}")
-        if os.path.realpath(before_dir) in out:
+        if f"leaked temporary entry: {os.path.realpath(before_dir)}" in lines:
             failures.append(f"check named the pre-existing directory {before_dir}")
 
         child.terminate()  # the only signal this script sends: its own child, by its pid
