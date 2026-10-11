@@ -1,7 +1,7 @@
 //! Task M9.5.15, parts 2 and 3: a race lane's ops through the driver's executor
 //! (`ops::run` → `lane_ops`), against a temporary repository with a real lane checkout
 //! (its own repository in the run's data directory, as `PrepareWorktree` makes it).
-//! The git functions alone are `daemon/tests/run_git_crown.rs`'s.
+//! The git functions alone are `daemon/tests/it/run_git_crown.rs`'s.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

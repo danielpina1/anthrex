@@ -12,7 +12,7 @@
 //! `Restart` never registered either — stayed blank for the rest of that daemon's life.
 //!
 //! Every test mirrors the real startup order of `lifecycle::run`: build the manager,
-//! `restore` the loaded state into it, *then* `serve`. `crates/daemon/tests/server_git.rs`
+//! `restore` the loaded state into it, *then* `serve`. `crates/daemon/tests/it/server_git.rs`
 //! is the created-window half of the same surface.
 //!
 //! Every wait below is a deadline derived from the budgets the code runs against (see
@@ -21,7 +21,7 @@
 //! `PROBE_TIMEOUT`'s 5 s) failed about one run in ten on a freshly built test binary:
 //! the first probe waited for the root's watcher to arm, and on macOS the first FSEvents
 //! stream a new executable starts was measured taking 1.5 to 7.8 s. The registry no
-//! longer makes the first probe wait (`crates/daemon/tests/git_registry_arming.rs`), and
+//! longer makes the first probe wait (`crates/daemon/tests/it/git_registry_arming.rs`), and
 //! these deadlines now cover what the code is actually allowed to take.
 
 use crate::support;

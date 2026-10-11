@@ -1,7 +1,7 @@
 //! Milestone 9 task M9.13a: the `refresh` edit (decision 42e) in the reducer: due at
 //! the worker's turn boundary, M8a's `HandBack` with `list_merged`, the mail it holds,
 //! its four results, and why a refresh merge is never the task's work. The git side is
-//! `crates/daemon/tests/run_refresh.rs`.
+//! `crates/daemon/tests/it/run_refresh.rs`.
 
 use proto::{MessageKind, PlanEdit, TaskState};
 

@@ -81,35 +81,35 @@ real-io = { max-threads = 8 }
 # 39 the_tick_publishes_outside_the_engine_lock: daemon/src/run/driver/orch_tests.rs:169, the engine lock free within 3 s; row of that name.
 # daemon (crates/daemon/tests):
 # 40 restart_resumes_claude_and_codex_sessions: daemon/tests/lifecycle_resume.rs:230, < CODEX_PROBE_TIMEOUT / 2; row of that name.
-# 41 untokened_connections_are_closed_first_when_full: daemon/tests/otlp_server/tokens.rs:66, < OTLP_READ_TIMEOUT; row of that name.
-# 42 past_the_connection_cap_a_connection_is_closed_after_the_slot_wait: daemon/tests/otlp_server.rs:563, < OTLP_READ_TIMEOUT; row of that name.
-# 43 a_slow_client_does_not_block_another: daemon/tests/otlp_server.rs:344, answered within SLOW_BOUND (2 s); row of that name.
-# 44 stderr_is_bounded_and_does_not_block_the_child: daemon/tests/subprocess.rs:104, < 10 s; row of that name (decision 6 names it).
-# 45 a_slow_worktree_create_does_not_block_the_manager: daemon/tests/manager_worktree/admission.rs:190,211, < 100 ms and < 1 s; the four `< 100ms` lock-latency asserts (decision 6).
-# 46 an_exited_window_is_removed_without_waiting: daemon/tests/manager_worktree/removal/ordering.rs:295, < 10 s; "Measured primitive costs" (decision 6 names it).
-# 47 list_is_answered_while_a_create_is_running: daemon/tests/server/worktree.rs:212, < 500 ms; the manager lock not held across git is the property.
-# 48 a_client_that_never_says_hello_is_dropped: daemon/tests/server.rs:75, <= 7 s; HANDSHAKE_TIMEOUT (5 s) is the property.
-# 49 a_client_with_a_partial_frame_is_dropped_after_the_timeout: daemon/tests/server.rs:105, <= 7 s; as 48.
-# 50 a_client_that_disconnects_mid_handshake_ends_the_connection_promptly: daemon/tests/server.rs:132, < 1 s; not waiting out HANDSHAKE_TIMEOUT is the property.
-# 51 create_subscribe_input_and_kill_flow: daemon/tests/server.rs:291, < 1.5 s; kill's SIGHUP ending a shell at once is the property.
-# 52 kill_terminates_and_remove_forgets: daemon/tests/manager.rs:208, < 1.5 s; as 51.
-# 53 a_program_that_ignores_stdin_never_blocks_write_input_or_list: daemon/tests/manager.rs:237,324,332,336, < 100 ms; the four `< 100ms` lock-latency asserts (decision 6).
-# 54 shutdown_ends_every_window: daemon/tests/manager/lifecycle.rs:75, < 1.5 s; as 51.
-# 55 kill_ends_an_interactive_shell_within_a_second: daemon/tests/manager/lifecycle.rs:90, < 1 s; as 51.
-# 56 hanging_git_times_out: daemon/tests/project.rs:235, < 2 s; the injected 300 ms timeout is the property.
-# 57 inherited_stdout_does_not_outlive_the_detection_deadline: daemon/tests/project.rs:316, < DETECT_TIMEOUT + 2 s; the detection deadline is the property.
+# 41 untokened_connections_are_closed_first_when_full: daemon/tests/it/otlp_server/tokens.rs:66, < OTLP_READ_TIMEOUT; row of that name.
+# 42 past_the_connection_cap_a_connection_is_closed_after_the_slot_wait: daemon/tests/it/otlp_server.rs:563, < OTLP_READ_TIMEOUT; row of that name.
+# 43 a_slow_client_does_not_block_another: daemon/tests/it/otlp_server.rs:344, answered within SLOW_BOUND (2 s); row of that name.
+# 44 stderr_is_bounded_and_does_not_block_the_child: daemon/tests/it/subprocess.rs:104, < 10 s; row of that name (decision 6 names it).
+# 45 a_slow_worktree_create_does_not_block_the_manager: daemon/tests/it/manager_worktree/admission.rs:190,211, < 100 ms and < 1 s; the four `< 100ms` lock-latency asserts (decision 6).
+# 46 an_exited_window_is_removed_without_waiting: daemon/tests/it/manager_worktree/removal/ordering.rs:295, < 10 s; "Measured primitive costs" (decision 6 names it).
+# 47 list_is_answered_while_a_create_is_running: daemon/tests/it/server/worktree.rs:212, < 500 ms; the manager lock not held across git is the property.
+# 48 a_client_that_never_says_hello_is_dropped: daemon/tests/it/server.rs:75, <= 7 s; HANDSHAKE_TIMEOUT (5 s) is the property.
+# 49 a_client_with_a_partial_frame_is_dropped_after_the_timeout: daemon/tests/it/server.rs:105, <= 7 s; as 48.
+# 50 a_client_that_disconnects_mid_handshake_ends_the_connection_promptly: daemon/tests/it/server.rs:132, < 1 s; not waiting out HANDSHAKE_TIMEOUT is the property.
+# 51 create_subscribe_input_and_kill_flow: daemon/tests/it/server.rs:291, < 1.5 s; kill's SIGHUP ending a shell at once is the property.
+# 52 kill_terminates_and_remove_forgets: daemon/tests/it/manager.rs:208, < 1.5 s; as 51.
+# 53 a_program_that_ignores_stdin_never_blocks_write_input_or_list: daemon/tests/it/manager.rs:237,324,332,336, < 100 ms; the four `< 100ms` lock-latency asserts (decision 6).
+# 54 shutdown_ends_every_window: daemon/tests/it/manager/lifecycle.rs:75, < 1.5 s; as 51.
+# 55 kill_ends_an_interactive_shell_within_a_second: daemon/tests/it/manager/lifecycle.rs:90, < 1 s; as 51.
+# 56 hanging_git_times_out: daemon/tests/it/project.rs:235, < 2 s; the injected 300 ms timeout is the property.
+# 57 inherited_stdout_does_not_outlive_the_detection_deadline: daemon/tests/it/project.rs:316, < DETECT_TIMEOUT + 2 s; the detection deadline is the property.
 # 58 create_run_window_does_not_hold_the_manager_lock_across_spawn: daemon/tests/orchestrator_window.rs:392,404, < 100 ms; row of that name.
-# 59 a_timeout_marks_the_state_stale: daemon/tests/git_probe.rs:361, < timeout + REAP_SLACK; row "a_timeout_marks_the_state_stale, a_timeout_before_the_fork_marks_the_state_stale".
+# 59 a_timeout_marks_the_state_stale: daemon/tests/it/git_probe.rs:361, < timeout + REAP_SLACK; row "a_timeout_marks_the_state_stale, a_timeout_before_the_fork_marks_the_state_stale".
 # 60 a_timeout_before_the_fork_marks_the_state_stale: the same helper and row.
-# 61 a_racing_second_start_is_refused_and_does_not_become_a_phantom_daemon: daemon/tests/lifecycle.rs:154, < 500 ms; not waiting out lock_wait is the property.
-# 62 a_timeout_during_create_cleans_up: daemon/tests/worktree.rs:441, < 6 s; not waiting out the hook's 10 s is the property.
-# 63 create_and_its_cleanup_each_run_to_their_own_injected_deadline: daemon/tests/worktree.rs:523, < 4 s; the injected deadlines are the property.
-# 64 a_confined_command_that_times_out_is_killed_with_its_group: daemon/tests/run_confine.rs:223, < timeout + OUTPUT_GRACE + SLACK; row of that name.
-# 65 check_timeout_kills_the_process_group: daemon/tests/run_exec.rs:101, < 3 s; the check's timeout is the property.
-# 66 a_check_that_exits_leaves_no_background_process_behind: daemon/tests/run_exec.rs:134, < LONG / 2; not waiting on the background pipe is the property.
-# 67 check_timeout_holds_under_an_output_flood: daemon/tests/run_exec.rs:213, < timeout + OUTPUT_GRACE + SLACK; as 65.
-# 68 output_grace_is_a_hard_cap_for_a_writer_that_left_the_group: daemon/tests/run_exec.rs:253, < 2 * OUTPUT_GRACE + SLACK; OUTPUT_GRACE is the property.
-# 69 a_busy_tuning_file_starts_untuned_at_the_bound: daemon/tests/tuning_io.rs:264, within 5 s of a 50 ms bound; row of that name.
+# 61 a_racing_second_start_is_refused_and_does_not_become_a_phantom_daemon: daemon/tests/it/lifecycle.rs:154, < 500 ms; not waiting out lock_wait is the property.
+# 62 a_timeout_during_create_cleans_up: daemon/tests/it/worktree.rs:441, < 6 s; not waiting out the hook's 10 s is the property.
+# 63 create_and_its_cleanup_each_run_to_their_own_injected_deadline: daemon/tests/it/worktree.rs:523, < 4 s; the injected deadlines are the property.
+# 64 a_confined_command_that_times_out_is_killed_with_its_group: daemon/tests/it/run_confine.rs:223, < timeout + OUTPUT_GRACE + SLACK; row of that name.
+# 65 check_timeout_kills_the_process_group: daemon/tests/it/run_exec.rs:101, < 3 s; the check's timeout is the property.
+# 66 a_check_that_exits_leaves_no_background_process_behind: daemon/tests/it/run_exec.rs:134, < LONG / 2; not waiting on the background pipe is the property.
+# 67 check_timeout_holds_under_an_output_flood: daemon/tests/it/run_exec.rs:213, < timeout + OUTPUT_GRACE + SLACK; as 65.
+# 68 output_grace_is_a_hard_cap_for_a_writer_that_left_the_group: daemon/tests/it/run_exec.rs:253, < 2 * OUTPUT_GRACE + SLACK; OUTPUT_GRACE is the property.
+# 69 a_busy_tuning_file_starts_untuned_at_the_bound: daemon/tests/it/tuning_io.rs:264, within 5 s of a 50 ms bound; row of that name.
 # fake-agent and tui (crates/*/tests):
 # 70 subprocess_deadline_stops_a_hung_owned_child: fake-agent/tests/script.rs:198, < 1 s; the injected 200 ms deadline is the property.
 # 71 hook_timeout_includes_blocked_stdin_delivery: fake-agent/tests/script.rs:671, < 8 s; the hook's 5 s timeout is the property.

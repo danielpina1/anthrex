@@ -324,7 +324,7 @@ const SLOW_CREATE_DELAYS: &[(&str, &str, u64)] = &[
 /// `client::tests::the_budget_clears_the_daemons_worst_case_on_both_git_paths`, free and
 /// always run; `anthrex-daemon`'s own
 /// `create_and_its_cleanup_each_run_to_their_own_injected_deadline`
-/// (`crates/daemon/tests/worktree.rs`) is the always-run, ~2 s sibling that exercises the
+/// (`crates/daemon/tests/it/worktree.rs`) is the always-run, ~2 s sibling that exercises the
 /// identical two stages — `worktree add` killed at a deadline, then a cleanup that
 /// cannot finish inside its own — through the same production code
 /// (`worktree::create_with_cleanup_timeout`), with both deadlines injected instead of

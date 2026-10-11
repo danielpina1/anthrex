@@ -1,7 +1,7 @@
 //! End-to-end persistence tests that need the real `anthrex` binary — a hook fired by a
 //! real `anthrex hook` child process, and a restart driven over the real wire protocol —
 //! rather than a direct call into `daemon::manager::WindowManager`, the way
-//! `crates/daemon/tests/manager.rs` exercises the same machinery in-process.
+//! `crates/daemon/tests/it/manager.rs` exercises the same machinery in-process.
 
 mod support;
 

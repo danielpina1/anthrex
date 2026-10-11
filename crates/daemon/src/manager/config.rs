@@ -32,7 +32,7 @@ pub struct ManagerConfig {
     /// `from_vars`), and `remove_with_worktree`'s `kill_and_await_exit` reads this field
     /// rather than the constant directly, so a test can widen it far past its own removal
     /// bound instead of racing the two. See `an_exited_window_is_removed_without_waiting`
-    /// (`daemon/tests/manager_worktree/removal/ordering.rs`), which sets this to 60 s and
+    /// (`daemon/tests/it/manager_worktree/removal/ordering.rs`), which sets this to 60 s and
     /// asserts the removal finishes in under 10 s — a 6x separation between "waited" and
     /// "didn't wait" instead of the ~1x a shared 1 s bound gave it.
     pub kill_grace: Duration,

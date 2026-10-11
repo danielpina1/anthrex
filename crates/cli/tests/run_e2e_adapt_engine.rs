@@ -366,7 +366,7 @@ fn otlp_addr(data: &Path) -> String {
 /// from points carrying the run's own OTLP token. A `--plan` run has no orchestrator, so
 /// no token: its exports are answered `200` and dropped (the drop is logged), and its
 /// usage stays zero. The metered path, a real orchestrator's tokened export, is covered
-/// by `daemon/tests/otlp_server.rs` and end to end by M9.16.
+/// by `daemon/tests/it/otlp_server.rs` and end to end by M9.16.
 #[test]
 fn e2e_otlp_points_without_the_runs_token_are_dropped() {
     let h = harness("off", &[], &[]);

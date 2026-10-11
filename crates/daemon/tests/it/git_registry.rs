@@ -16,7 +16,7 @@
 //! its sibling for the linked-worktree watch, and waits the same way.
 //!
 //! The pure scheduler, publisher and path filter are tested in
-//! `crates/daemon/tests/git_schedule.rs`.
+//! `crates/daemon/tests/it/git_schedule.rs`.
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};

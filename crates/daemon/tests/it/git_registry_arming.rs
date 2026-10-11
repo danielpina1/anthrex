@@ -7,7 +7,7 @@
 //! in the process at once (`git probe` itself stayed around 25 ms throughout). Before
 //! this was fixed the registration probe only started after the watcher was armed, so
 //! for those seconds every root stayed blank; that was the intermittent failure in
-//! `crates/daemon/tests/server_restore_git.rs`.
+//! `crates/daemon/tests/it/server_restore_git.rs`.
 //!
 //! These tests inject the watcher builder and hold it on a gate, which is the only
 //! deterministic way to make "arming is slow" happen. They run on the real clock and

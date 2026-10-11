@@ -7,7 +7,7 @@ use support::{RunningCommand, isolated_command, tempdir, warm_anthrex};
 
 /// Generous margin over a derived bound for a test that spawns several real processes
 /// (the daemon, `ls`, `daemon stop`) end to end, matching the constant of the same name
-/// and purpose in `crates/daemon/tests/git_registry.rs` (`docs/timing-budgets.md` standing
+/// and purpose in `crates/daemon/tests/it/git_registry.rs` (`docs/timing-budgets.md` standing
 /// rule 1: derive a bound from the constants it wraps, then add slack for real subprocess
 /// spawns under load — not a literal that can coincide with the thing it bounds).
 const WALL_CLOCK_SLACK: Duration = Duration::from_secs(10);

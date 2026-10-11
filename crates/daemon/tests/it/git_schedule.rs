@@ -7,7 +7,7 @@
 //! argument — so a thirty second poll and a sixty second breaker cooldown are
 //! arithmetic on one base `Instant` and cost nothing to assert.
 //!
-//! `crates/daemon/tests/git_registry.rs` is the other half: the tokio task, the real
+//! `crates/daemon/tests/it/git_registry.rs` is the other half: the tokio task, the real
 //! watcher and publication end to end. The two files are split because together they
 //! run past this repository's file-length limit, not because they test different
 //! things.

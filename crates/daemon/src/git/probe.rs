@@ -186,7 +186,7 @@ pub fn detect_operation(git_dir: &Path) -> Option<GitOperation> {
 mod tests {
     //! [`detect_operation`] is pure filesystem logic, so these are plain unit tests
     //! against synthetic marker files — no repository needed. They exist to cover the
-    //! priority order and the operations `crates/daemon/tests/git_probe.rs`'s
+    //! priority order and the operations `crates/daemon/tests/it/git_probe.rs`'s
     //! real-repository tests do not construct (cherry-pick, revert, bisect): a wrong
     //! answer there would not be caught by any of the ten tests the brief names.
 

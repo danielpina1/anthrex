@@ -8,7 +8,7 @@
 //! assertion about the manager staying responsive while one is in flight is an assertion
 //! about the lock, not about the feature.
 //!
-//! `crates/daemon/tests/manager.rs` is already at the ~600-line guideline, which is why
+//! `crates/daemon/tests/it/manager.rs` is already at the ~600-line guideline, which is why
 //! these live in their own binary, and the second of those two concerns — admission and
 //! the lock — lives in the `admission` submodule below for the same reason.
 
