@@ -56,9 +56,10 @@ real-io = { max-threads = 8 }
 # 15 codex_probe_does_not_wait_forever_for_inherited_stdout: cli/tests/it/codex_version.rs:452, < LS_BOUND; as 14.
 # 16 daemon_start_does_not_wait_on_a_slow_codex_probe: cli/tests/it/codex_version.rs:545,556, < SLOW_PROBE_STALL; row "daemon_start_does_not_wait_on_a_slow_codex_probe: the property".
 # 17 wake_is_delivered_only_when_idle_and_quiet: cli/tests/it/run_e2e_orch_wake.rs:60, < 5 s; row "wake_is_delivered_only_when_idle_and_quiet".
+# common (unit tests; moved from the daemon by M9.12.2):
+# 18 acquire_waits_for_release: common/src/lockfile.rs:300, < 1.5 s; the lock's release is the property.
+# 19 acquire_or_yield_still_acquires_the_lock_when_never_already_running: common/src/lockfile.rs:374, < 1.5 s; as 18.
 # daemon (unit tests):
-# 18 acquire_waits_for_release: daemon/src/lockfile.rs:298, < 1.5 s; the lock's release is the property.
-# 19 acquire_or_yield_still_acquires_the_lock_when_never_already_running: daemon/src/lockfile.rs:372, < 1.5 s; as 18.
 # 20 a_probe_past_its_deadline_is_killed_reaped_and_reported: daemon/src/models/tests.rs:142, < 500 ms + REAP_RESERVE + WALL_CLOCK_SLACK; row of that name.
 # 21 a_head_or_a_trailer_arriving_a_byte_at_a_time_is_scanned_in_linear_time: daemon/src/metering/http_tests.rs:205, < DRIP_BOUND (500 ms); row of that name.
 # 22 tag_removal_is_linear_on_a_32_kib_heading: daemon/src/run/design/template_tests_linear.rs:40, < LINEAR_BOUND (40 ms); row of that name.

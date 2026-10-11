@@ -4,8 +4,8 @@
 /// Branch prefix that milestone 8 owns (design decision 8).
 pub const RESERVED_BRANCH_PREFIX: &str = "anthrex/";
 
-/// Design decision 8, rules 1 to 4. Pure. `crates/tui/src/dialog.rs` has its own copy
-/// with the same messages (task M5.8).
+/// Design decision 8, rules 1 to 4. Pure. The one copy: `crates/tui/src/dialog.rs`
+/// re-exports it for the new-window dialog (milestone 9.12, decision 12).
 pub fn check_branch_syntax(branch: &str) -> Result<(), String> {
     if branch.trim().is_empty() {
         return Err("branch name is required".to_string());

@@ -234,15 +234,16 @@ mod tests {
         // attempt was intermittently losing that race). The real mechanism, established
         // experimentally (M6 fix wave 1, task-2 review finding 3): `fork()` duplicates a
         // process's *entire* fd table regardless of `O_CLOEXEC`, which only takes effect
-        // at the child's own later `exec()`. This crate's `--lib` binary runs this test
-        // alongside `portable-pty`-spawning tests on other threads of the same process, so
-        // a sibling test's `fork()` can transiently duplicate this test's own just-closed
-        // lock fd into a child that hasn't `exec()`'d yet, keeping the flock held past
-        // `first`'s `drop()` above — not scheduling jitter, and not something widening the
-        // wait here actually tests, since it made this assertion redundant with
-        // `acquire_waits_for_release` below (same property, looser bound). The zero-wait,
-        // instant-reacquire assertion now lives in `crates/daemon/tests/lockfile.rs`,
-        // which is its own test binary with no forking siblings in its process.
+        // at the child's own later `exec()`. Until milestone 9.12 this test lived in the
+        // daemon's `--lib` binary, beside `portable-pty`-spawning tests on other threads
+        // of the same process, so a sibling test's `fork()` could transiently duplicate
+        // this test's just-closed lock fd into a child that had not `exec()`'d yet,
+        // keeping the flock held past `first`'s `drop()` above. The zero-wait,
+        // instant-reacquire assertion lives in `crates/daemon/tests/lockfile.rs`, a test
+        // binary of its own with no forking siblings. `anthrex-common`'s tests spawn
+        // nothing today, so the hazard is gone from this binary; the assertion stays
+        // there all the same, so a spawning test added to this crate later cannot bring
+        // the flake back.
     }
 
     #[test]
@@ -260,8 +261,8 @@ mod tests {
         drop(claimed);
         // That the drop releases the lock at once is asserted in
         // `crates/daemon/tests/lockfile.rs` (`instant_reacquire_after_a_claim_is_dropped`),
-        // not here: in this `--lib` binary a sibling test's `fork()` can briefly hold a
-        // duplicate of the just-closed fd (see `second_acquire_fails_while_held`).
+        // not here: in a `--lib` binary whose tests fork, a sibling's `fork()` can briefly
+        // hold a duplicate of the just-closed fd (see `second_acquire_fails_while_held`).
     }
 
     #[test]
