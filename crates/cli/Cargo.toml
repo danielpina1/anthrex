@@ -5,10 +5,17 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 description = "A terminal multiplexer for coding agents"
+# Milestone 9.12, decision 13: one integration-test binary, `tests/it/main.rs`; no file
+# is kept alone (decision 14).
+autotests = false
 
 [[bin]]
 name = "anthrex"
 path = "src/main.rs"
+
+[[test]]
+name = "it"
+path = "tests/it/main.rs"
 
 [dependencies]
 proto.workspace = true
