@@ -168,24 +168,33 @@ async fn a_parser_panic_ends_the_child_and_keeps_its_reason() {
     );
 }
 
-/// The name libtest gives `name`, a test in this module: this module's path without
-/// the test binary's own crate name (`manager::lifecycle` → `lifecycle::<name>`).
+/// The libtest name of the Linux re-exec's test (milestone 9.12, decision 15).
 ///
 /// M9.11.38c: the re-exec below once passed the bare function name with `--exact`,
 /// which matched no test in this binary; the child ran nothing, exited 0, and the
 /// test passed on Linux without running its body.
-fn libtest_name(name: &str) -> String {
-    match module_path!().split_once("::") {
-        Some((_, module)) => format!("{module}::{name}"),
-        None => name.to_string(),
-    }
+fn reexec_name() -> String {
+    testexec::libtest_name(
+        module_path!(),
+        "shutdown_waits_for_cleanup_after_the_group_leader_exits",
+    )
+}
+
+/// The merged binary (decision 13) names this module `manager::lifecycle`: the name the
+/// re-exec passes carries it, not the old binary's `lifecycle::` alone.
+#[test]
+fn the_reexec_name_carries_the_merged_module_path() {
+    assert_eq!(
+        reexec_name(),
+        "manager::lifecycle::shutdown_waits_for_cleanup_after_the_group_leader_exits"
+    );
 }
 
 /// The name the Linux re-exec runs with `--exact` names exactly this test: a rename
 /// of the test or its module fails here, on every system.
 #[test]
 fn the_reexec_name_lists_exactly_one_test() {
-    let name = libtest_name("shutdown_waits_for_cleanup_after_the_group_leader_exits");
+    let name = reexec_name();
     let output = std::process::Command::new(std::env::current_exe().unwrap())
         .args(["--exact", &name, "--list"])
         .output()
@@ -203,7 +212,7 @@ async fn shutdown_waits_for_cleanup_after_the_group_leader_exits() {
     {
         const CHILD_ENV: &str = "ANTHREX_TEST_GROUP_REAPER";
         if std::env::var_os(CHILD_ENV).is_none() {
-            let name = libtest_name("shutdown_waits_for_cleanup_after_the_group_leader_exits");
+            let name = reexec_name();
             let output = tokio::task::spawn_blocking(move || {
                 std::process::Command::new(std::env::current_exe().unwrap())
                     .args(["--exact", &name, "--nocapture"])
@@ -219,10 +228,7 @@ async fn shutdown_waits_for_cleanup_after_the_group_leader_exits() {
             );
             assert!(output.status.success(), "{stdout}\n{stderr}");
             // The child must have run this test's body, not matched nothing.
-            assert!(
-                stdout.contains("running 1 test") && stdout.contains("test result: ok. 1 passed"),
-                "the re-exec did not run exactly one test:\n{stdout}\n{stderr}"
-            );
+            testexec::assert_one_test_ran(&output);
             return;
         }
         // SAFETY: this isolated test process becomes a reaper for its own descendants.
