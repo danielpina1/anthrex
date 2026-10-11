@@ -15,7 +15,7 @@ cargo fmt --all --check
 python3 scripts/pty-smoke.py
 ```
 
-All six must pass before a pull request is ready. The suite runs under [cargo-nextest](https://nexte.st): `cargo install cargo-nextest --locked --version 0.9.146`. Doctests run on `cargo test`, which nextest cannot run. CI runs the same commands on Ubuntu and macOS with the latest stable Rust.
+All six must pass before a pull request is ready. The suite runs under [cargo-nextest](https://nexte.st): `cargo install cargo-nextest --locked --version 0.9.146`. Doctests run on `cargo test`, which nextest cannot run. CI runs the same commands on Ubuntu and macOS with the toolchain pinned in `rust-toolchain.toml` (Rust 1.99).
 
 - The suite spawns real shells in real pseudo-terminals, and the run-engine tests create temporary git repositories.
 - The tests never start a real `claude` or `codex`. They run `crates/fake-agent`, a scripted stand-in, through `ANTHREX_CLAUDE_BIN`, `ANTHREX_CODEX_BIN` and `ANTHREX_DECIDER_BIN`. Keep it that way in every new test.
