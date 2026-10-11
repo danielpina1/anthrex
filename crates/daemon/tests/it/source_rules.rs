@@ -69,9 +69,9 @@ fn code_only(text: &str) -> String {
             }
         } else if b[i] == b'r'
             && (b[i + 1..].starts_with(b"\"") || b[i + 1..].starts_with(b"#"))
-            && (i == 0 || !is_ident(b[i - 1]))
+            && raw_prefix_ok(b, i)
         {
-            // A raw string: r"…", r#"…"#, …
+            // A raw string: r"…", r#"…"#, …, and the byte and C forms br"…", cr#"…"#.
             let hashes = b[i + 1..].iter().take_while(|&&c| c == b'#').count();
             if b.get(i + 1 + hashes) != Some(&b'"') {
                 i += 1;
@@ -99,8 +99,12 @@ fn code_only(text: &str) -> String {
                 i += 1;
             }
             i += 1;
-        } else if b[i] == b'\'' && (b.get(i + 2) == Some(&b'\'') || b.get(i + 1) == Some(&b'\\')) {
-            // A character literal ('x' or '\…'); a lifetime has no closing quote.
+        } else if b[i] == b'\''
+            && (b.get(i + 1) == Some(&b'\\')
+                || b.get(i + 1)
+                    .is_some_and(|&c| b.get(i + 1 + utf8_len(c)) == Some(&b'\'')))
+        {
+            // A character literal ('x', 'é' or '\…'); a lifetime has no closing quote.
             i += 1;
             while i < b.len() && b[i] != b'\'' {
                 if b[i] == b'\\' {
@@ -116,6 +120,35 @@ fn code_only(text: &str) -> String {
         }
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+/// One-line literals that once left `code_only` inside a literal for the rest of the
+/// file, blinding all three rules: byte and C raw strings (final review I2a) and a
+/// non-ASCII character literal (I2b); the plain prefixes and escapes stay covered.
+const BLINDERS: [&str; 6] = [
+    "const S: &[u8] = br\"\\\";\n",
+    "const S: &CStr = cr\"\\\";\n",
+    "const S: &[u8] = br#\"a\"b\"#;\n",
+    "let a = ['é','\"'];\n",
+    "let e = ['\\u{e9}', '\\'', '\\\\', '\"'];\n",
+    "let p = (b\"\\\"\", c\"\\\"\", b'\"');\n",
+];
+
+/// Whether the `r` at `i` starts a raw string rather than ending an identifier: nothing
+/// identifier-like before it, or exactly a `b` or `c` prefix (`br"…"`, `cr"…"`).
+fn raw_prefix_ok(b: &[u8], i: usize) -> bool {
+    let free = |at: usize| at == 0 || !is_ident(b[at - 1]);
+    free(i) || (matches!(b[i - 1], b'b' | b'c') && free(i - 1))
+}
+
+/// The length in bytes of the UTF-8 character whose first byte is `lead`.
+fn utf8_len(lead: u8) -> usize {
+    match lead {
+        0xF0.. => 4,
+        0xE0.. => 3,
+        0xC0.. => 2,
+        _ => 1,
+    }
 }
 
 fn is_ident(c: u8) -> bool {
@@ -251,6 +284,10 @@ fn the_environment_scan_finds_calls_however_imported() {
                  let r = r#\"umask(\"0\")\"#;\n\
                  let c = '\"'; fn my_set_var() {} my_set_var();\n";
     assert_eq!(calls_in(quiet), []);
+    for blinder in BLINDERS {
+        let text = format!("{blinder}unsafe {{ std::env::set_var(\"A\", \"1\") }};\n");
+        assert_eq!(calls_in(&text), [(2, "set_var")], "after {blinder:?}");
+    }
 }
 
 #[test]
@@ -370,6 +407,14 @@ fn the_scanner_keeps_its_place_after_odd_test_shapes() {
         let caught = std::panic::catch_unwind(|| engine_scan(broken));
         assert!(caught.is_err(), "parsed without complaint: {broken:?}");
     }
+    // Final review I2: a literal the lexer misread blanked the code after it.
+    for blinder in BLINDERS {
+        let text = format!("{blinder}use std::fs;\nconst Q: &str = \"x\";\n");
+        assert_eq!(engine_scan(&text), [(2, "std::fs")], "after {blinder:?}");
+    }
+    let braces = "#[cfg(test)]\nfn t() { let a = ['é','{']; }\nuse std::fs;\n\
+                  fn u() { let b = ['é','}']; }\n";
+    assert_eq!(engine_scan(braces), [(3, "std::fs")]);
 }
 
 #[test]
@@ -453,6 +498,10 @@ fn the_manifest_scan_wants_checkout_dir_around_each_use() {
                 let h = Path::new(env!(r#\"CARGO_MANIFEST_DIR\"#));\n\
                 let i = testexec::checkout_dir(env!(r##\"CARGO_MANIFEST_DIR\"##));\n";
     assert_eq!(unguarded_manifest_dirs(text), [5, 10, 11]);
+    for blinder in BLINDERS {
+        let text = format!("{blinder}let c = Path::new(env!(\"CARGO_MANIFEST_DIR\"));\n");
+        assert_eq!(unguarded_manifest_dirs(&text), [2], "after {blinder:?}");
+    }
 }
 
 #[test]
@@ -502,6 +551,14 @@ fn the_mod_scan_reads_each_declaration_form() {
             ("b".to_string(), Some("x/b.rs".to_string())),
         ]
     );
+    for blinder in BLINDERS {
+        let text = format!("{blinder}mod x;\n");
+        assert_eq!(
+            mod_decls(&text),
+            [("x".to_string(), None)],
+            "after {blinder:?}"
+        );
+    }
 }
 
 #[test]
