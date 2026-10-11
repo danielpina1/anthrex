@@ -12,6 +12,7 @@ path = "src/lib.rs"
 [dependencies]
 proto.workspace = true
 libc.workspace = true
+anyhow.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -6,6 +6,8 @@ pub mod bounds;
 pub mod branch;
 pub mod labels;
 pub mod lifecycle;
+pub mod lockfile;
+pub mod logfile;
 pub mod profile_keys;
 pub mod refit_render;
 pub mod refusal;

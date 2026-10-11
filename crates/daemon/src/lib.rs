@@ -24,8 +24,6 @@ pub mod host;
 pub mod launch;
 pub mod lifecycle;
 pub mod live_config;
-pub mod lockfile;
-pub mod logfile;
 pub mod manager;
 pub mod metering;
 pub mod models;
@@ -52,6 +50,7 @@ pub mod transcript;
 pub mod window;
 pub mod worktree;
 
+pub use common::{lockfile, logfile};
 pub use lifecycle::{DaemonOptions, LOCK_WAIT, run};
 
 #[cfg(test)]
