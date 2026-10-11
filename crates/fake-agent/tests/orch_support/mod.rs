@@ -118,6 +118,15 @@ pub fn orch_argv_with(
 /// rewritten only when its text changes (so an assessed file is reused across runs),
 /// and is replaced by a rename, so a concurrent test binary never runs half a file.
 /// Its per-test values come from the environment each spawn sets.
+///
+/// M9.12.4: under cargo-nextest every test is its own process, so this cache is filled
+/// once per test, not once per binary, and on a fresh target directory up to eight
+/// `real-io` tests may each find the file missing and write it at once: up to eight new
+/// files to assess, 3.50 s for eight concurrent first execs ("Measured primitive costs"),
+/// inside a first hook's 5 s `STEP_TIMEOUT`. So each test process execs the file once
+/// (its `hook` branch, logging to `/dev/null`) before any `fake-agent` uses it, and pays
+/// the assessment outside every budget, the recorded pattern of
+/// `docs/timing-budgets.md`'s "Fixed, from the codex-probe ordering flake".
 pub fn wrapper() -> &'static Path {
     static WRAPPER: OnceLock<PathBuf> = OnceLock::new();
     WRAPPER.get_or_init(|| {
@@ -128,6 +137,13 @@ pub fn wrapper() -> &'static Path {
         if fs::read_to_string(&path).ok().as_deref() != Some(script) {
             testexec::write_executable(&path, script);
         }
+        let warm = std::process::Command::new(&path)
+            .arg("hook")
+            .env("FA_HOOK_LOG", "/dev/null")
+            .stdin(std::process::Stdio::null())
+            .output()
+            .expect("warm the anthrex wrapper");
+        assert!(warm.status.success(), "warming the anthrex wrapper: {warm:?}");
         path
     })
 }
