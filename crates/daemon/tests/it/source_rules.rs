@@ -122,22 +122,69 @@ fn is_ident(c: u8) -> bool {
     c.is_ascii_alphanumeric() || c == b'_'
 }
 
+/// `rest` past an optional turbofish (`::<…>`, angle brackets matched), if one is there.
+fn past_turbofish(rest: &str) -> &str {
+    let Some(t) = rest.trim_start().strip_prefix("::") else {
+        return rest;
+    };
+    let t = t.trim_start();
+    if !t.starts_with('<') {
+        return rest;
+    }
+    let mut depth = 0;
+    for (k, c) in t.char_indices() {
+        match c {
+            '<' => depth += 1,
+            '>' => {
+                depth -= 1;
+                if depth == 0 {
+                    return &t[k + 1..];
+                }
+            }
+            _ => {}
+        }
+    }
+    rest
+}
+
 /// Every call of one of [`CALLS`] in `text`'s code (not its comments or literals), as
-/// (line, name). A call may be split across lines before its `(`.
+/// (line, name). A call may be split across lines before its `(`, may carry a turbofish,
+/// and may be made through an alias (`use std::env::set_var as sv;`), which is reported
+/// by the name it aliases.
 fn calls_in(text: &str) -> Vec<(usize, &'static str)> {
     let code = code_only(text);
     let b = code.as_bytes();
-    let mut found = Vec::new();
+    let word_before = |at: usize| at == 0 || !is_ident(b[at - 1]);
+    let mut names: Vec<(String, &'static str)> = Vec::new();
     for name in CALLS {
+        names.push((name.to_string(), name));
         for (at, _) in code.match_indices(name) {
-            let before_ok = at == 0 || !is_ident(b[at - 1]);
             let rest = &code[at + name.len()..];
-            if before_ok && rest.trim_start().starts_with('(') {
-                found.push((code[..at].matches('\n').count() + 1, name));
+            let Some(alias) = rest.trim_start().strip_prefix("as") else {
+                continue;
+            };
+            if !word_before(at) || !alias.starts_with(char::is_whitespace) {
+                continue;
+            }
+            let alias = alias.trim_start();
+            let len = alias.bytes().take_while(|&c| is_ident(c)).count();
+            if len > 0 && &alias[..len] != "_" {
+                names.push((alias[..len].to_string(), name));
+            }
+        }
+    }
+    let mut found = Vec::new();
+    for (called, name) in &names {
+        for (at, _) in code.match_indices(called.as_str()) {
+            let rest = past_turbofish(&code[at + called.len()..]);
+            let after_ok = b.get(at + called.len()).is_none_or(|&c| !is_ident(c));
+            if word_before(at) && after_ok && rest.trim_start().starts_with('(') {
+                found.push((code[..at].matches('\n').count() + 1, *name));
             }
         }
     }
     found.sort();
+    found.dedup();
     found
 }
 
@@ -186,6 +233,17 @@ fn the_environment_scan_finds_calls_however_imported() {
             (6, "set_current_dir"),
             (7, "umask")
         ]
+    );
+    // An alias is caught at its call, by the name it aliases; so is a turbofish.
+    let renamed = "use std::env::{set_var as sv, remove_var};\n\
+                   fn f() {\n\
+                       unsafe { sv(\"A\", \"1\") };\n\
+                       unsafe { std::env::set_var::<&str, &str>(\"A\", \"1\") };\n\
+                       unsafe { remove_var :: <&str>(\"A\") };\n\
+                   }\n";
+    assert_eq!(
+        calls_in(renamed),
+        [(3, "set_var"), (4, "set_var"), (5, "remove_var")]
     );
     let quiet = "// set_var(x)\n\
                  /* remove_var(x)\n /* nested */ umask(0) */\n\
@@ -289,6 +347,31 @@ fn the_scanner_skips_test_code() {
     assert_eq!(kept, [5, 8]);
 }
 
+/// Second review: a multi-line attribute after `#[cfg(test)]`, and a test-only field,
+/// each once desynchronised the item parse so the rest of the file went unscanned.
+#[test]
+fn the_scanner_keeps_its_place_after_odd_test_shapes() {
+    let attribute = "#[cfg(test)]\n#[allow(\n    dead_code\n)]\nfn helper() {}\nuse std::fs;\n";
+    assert_eq!(engine_scan(attribute), [(6, "std::fs")]);
+    let field = "pub struct S {\n  #[cfg(test)]\n  a: u8,\n  b: u8,\n}\n\
+                 fn g() { let _ = std::fs::read(\"x\"); }\n";
+    assert_eq!(engine_scan(field), [(6, "std::fs")]);
+    let variant = "enum E {\n    #[cfg(test)]\n    A,\n    B { x: u8 },\n}\nuse std::process;\n";
+    assert_eq!(engine_scan(variant), [(6, "std::process")]);
+    // A test-only method in an `impl` is still skipped; the code after it is not.
+    let method = "impl S {\n    #[cfg(test)]\n    fn t() {\n        std::thread::yield_now();\n    }\n}\nuse std::env;\n";
+    assert_eq!(engine_scan(method), [(7, "std::env")]);
+    // An item the parse cannot close fails loudly rather than ending the scan.
+    for broken in [
+        "#[cfg(test)]\nfn f() {\n",
+        "#[cfg(test)]\n#[allow(\nfn f() {}\n",
+        "}\nuse std::fs;\n",
+    ] {
+        let caught = std::panic::catch_unwind(|| engine_scan(broken));
+        assert!(caught.is_err(), "parsed without complaint: {broken:?}");
+    }
+}
+
 #[test]
 fn the_engine_imports_no_runtime_io_or_clock() {
     // M9.12.11 passes this through `testexec::checkout_dir` (decision 25).
@@ -306,6 +389,22 @@ fn the_engine_imports_no_runtime_io_or_clock() {
         "the engine imports runtime, I/O or clock APIs:\n{}",
         hits.join("\n")
     );
+}
+
+/// Whether a macro's arguments start with the literal `CARGO_MANIFEST_DIR`, plain
+/// (`"…"`) or raw (`r"…"`, `r#"…"#`, …).
+fn names_manifest_dir(args: &str) -> bool {
+    let args = args.trim_start();
+    let (hashes, quoted) = match args.strip_prefix('r') {
+        Some(raw) => {
+            let hashes = raw.bytes().take_while(|&c| c == b'#').count();
+            (hashes, &raw[hashes..])
+        }
+        None => (0, args),
+    };
+    quoted
+        .strip_prefix("\"CARGO_MANIFEST_DIR\"")
+        .is_some_and(|after| after.bytes().take(hashes).filter(|&c| c == b'#').count() == hashes)
 }
 
 /// Every `env!("CARGO_MANIFEST_DIR")` and `option_env!("CARGO_MANIFEST_DIR")` in `text`'s
@@ -327,7 +426,7 @@ fn unguarded_manifest_dirs(text: &str) -> Vec<usize> {
         let Some(args) = args.strip_prefix('(') else {
             continue;
         };
-        if !args.trim_start().starts_with("\"CARGO_MANIFEST_DIR\"") {
+        if !names_manifest_dir(args) {
             continue;
         }
         let guarded = text[..start]
@@ -349,8 +448,11 @@ fn the_manifest_scan_wants_checkout_dir_around_each_use() {
                 // env!(\"CARGO_MANIFEST_DIR\")\n\
                 let d = \"env!(\\\"CARGO_MANIFEST_DIR\\\")\";\n\
                 let e = env!(\"CARGO_PKG_NAME\");\n\
-                let f = std::env::var(\"CARGO_MANIFEST_DIR\");\n";
-    assert_eq!(unguarded_manifest_dirs(text), [5]);
+                let f = std::env::var(\"CARGO_MANIFEST_DIR\");\n\
+                let g = Path::new(env!(r\"CARGO_MANIFEST_DIR\"));\n\
+                let h = Path::new(env!(r#\"CARGO_MANIFEST_DIR\"#));\n\
+                let i = testexec::checkout_dir(env!(r##\"CARGO_MANIFEST_DIR\"##));\n";
+    assert_eq!(unguarded_manifest_dirs(text), [5, 10, 11]);
 }
 
 #[test]
