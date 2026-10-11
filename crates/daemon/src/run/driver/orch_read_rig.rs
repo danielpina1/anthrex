@@ -27,16 +27,28 @@ pub(super) const WORKER: u32 = 902;
 pub(super) const ANSWER: Duration = Duration::from_secs(10);
 
 pub(super) struct Rig {
-    _dir: tempfile::TempDir,
+    dir: tempfile::TempDir,
     pub(super) runs: Arc<RunService>,
+    manager: Arc<WindowManager>,
     socket: PathBuf,
     pub(super) run_id: String,
     shutdown: CancellationToken,
+    /// The run service's loop and the server, awaited by [`Rig::stop`].
+    tasks: std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>,
+    stopped: std::sync::atomic::AtomicBool,
 }
 
+/// Milestone 9.12 task M9.12.13: a rig is stopped by [`Rig::stop`], which awaits every
+/// writer before its directory goes; one merely dropped would let the service write
+/// `run.json` into a directory already removed, recreating it. A failing test only
+/// cancels.
 impl Drop for Rig {
     fn drop(&mut self) {
         self.shutdown.cancel();
+        assert!(
+            self.stopped.load(std::sync::atomic::Ordering::SeqCst) || std::thread::panicking(),
+            "a rig must be stopped with `Rig::stop().await` before it drops"
+        );
     }
 }
 
@@ -109,21 +121,43 @@ impl Rig {
         crate::lock(&runs.state).runs.insert(run_id.clone(), run);
 
         let shutdown = CancellationToken::new();
-        runs.spawn(shutdown.clone());
-        tokio::spawn(serve(
+        let run_loop = runs.spawn(shutdown.clone());
+        let serving = serve(
             listener,
-            manager,
+            manager.clone(),
             git,
             runs.clone(),
             shutdown.clone(),
-        ));
+        );
+        let server = tokio::spawn(async move {
+            let _ = serving.await;
+        });
         Rig {
-            _dir: dir,
+            dir,
             runs,
+            manager,
             socket,
             run_id,
             shutdown,
+            tasks: std::sync::Mutex::new(vec![run_loop, server]),
+            stopped: Default::default(),
         }
+    }
+
+    /// Stops the rig as the daemon stops (`lifecycle.rs`): the server, the run service
+    /// (its last `run.json` written), its loop, then the windows; then removes the task
+    /// temporary directories of the checkouts under the rig's directory.
+    pub(super) async fn stop(&self) {
+        self.shutdown.cancel();
+        self.runs.stop().await;
+        let tasks = std::mem::take(&mut *crate::lock(&self.tasks));
+        for task in tasks {
+            let _ = task.await;
+        }
+        self.manager.shutdown().await;
+        crate::run::git::remove_task_tmps_beneath(self.dir.path()).unwrap();
+        self.stopped
+            .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     pub(super) fn opts(

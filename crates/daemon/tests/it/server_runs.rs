@@ -285,7 +285,7 @@ async fn tagged_rig(
     dir: &std::path::Path,
     adaptation: bool,
     shutdown: &CancellationToken,
-) -> (OwnedReadHalf, OwnedWriteHalf) {
+) -> (OwnedReadHalf, OwnedWriteHalf, Stop) {
     let agent = dir.join("agent");
     testexec::write_executable(&agent, "#!/bin/sh\nexit 0\n");
     rig_on(
@@ -302,7 +302,7 @@ async fn rig_with(
     dir: &std::path::Path,
     mode: (bool, proto::DeciderMode),
     shutdown: &CancellationToken,
-) -> (OwnedReadHalf, OwnedWriteHalf) {
+) -> (OwnedReadHalf, OwnedWriteHalf, Stop) {
     rig_on(dir, mode, None, shutdown).await
 }
 
@@ -315,7 +315,7 @@ async fn rig_on(
     (adaptation, mode): (bool, proto::DeciderMode),
     agent: Option<&std::path::Path>,
     shutdown: &CancellationToken,
-) -> (OwnedReadHalf, OwnedWriteHalf) {
+) -> (OwnedReadHalf, OwnedWriteHalf, Stop) {
     let socket = dir.join("d.sock");
     let data = dir.join("data");
     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
@@ -346,8 +346,24 @@ async fn rig_on(
     if adaptation {
         daemon::profile::service::wire(&manager, &runs, &data, &socket, &orchestrator);
     }
-    runs.spawn(shutdown.clone());
-    tokio::spawn(serve(listener, manager, git, runs, shutdown.clone()));
+    let run_loop = runs.spawn(shutdown.clone());
+    let serving = serve(
+        listener,
+        manager.clone(),
+        git,
+        runs.clone(),
+        shutdown.clone(),
+    );
+    let server = tokio::spawn(async move {
+        let _ = serving.await;
+    });
+    let stop = Stop {
+        dir: dir.to_path_buf(),
+        runs,
+        manager,
+        tasks: vec![run_loop, server],
+        shutdown: shutdown.clone(),
+    };
 
     let stream = UnixStream::connect(&socket).await.unwrap();
     let (mut rd, mut wr) = stream.into_split();
@@ -361,7 +377,33 @@ async fn rig_on(
         matches!(welcome, Some(DaemonMsg::Welcome { .. })),
         "{welcome:?}"
     );
-    (rd, wr)
+    (rd, wr, stop)
+}
+
+/// Milestone 9.12 task M9.12.13: a rig's daemon, stopped as `lifecycle.rs` stops one
+/// before the test's directory goes; a daemon merely cancelled could still write
+/// `run.json` or its journal into the removed directory, recreating it.
+struct Stop {
+    dir: std::path::PathBuf,
+    runs: std::sync::Arc<RunService>,
+    manager: std::sync::Arc<WindowManager>,
+    tasks: Vec<tokio::task::JoinHandle<()>>,
+    shutdown: CancellationToken,
+}
+
+impl Stop {
+    /// The server, the run service (its last `run.json` written), its loop and the
+    /// windows, in that order; then the task temporary directories of the checkouts
+    /// under the rig's directory.
+    async fn stop(self) {
+        self.shutdown.cancel();
+        self.runs.stop().await;
+        for task in self.tasks {
+            let _ = task.await;
+        }
+        self.manager.shutdown().await;
+        daemon::run::git::remove_task_tmps_beneath(&self.dir).unwrap();
+    }
 }
 
 /// The next run reply, skipping broadcasts, within a deadline.
@@ -390,7 +432,7 @@ async fn a_tagged_run_request_is_answered_with_its_id() {
         .tempdir_in("/tmp")
         .unwrap();
     let shutdown = CancellationToken::new();
-    let (mut rd, mut wr) = tagged_rig(dir.path(), false, &shutdown).await;
+    let (mut rd, mut wr, daemon) = tagged_rig(dir.path(), false, &shutdown).await;
     // `run stats` outside a repository is refused at once, whoever asks.
     let stats = RunRequest::Stats {
         dir: dir.path().to_path_buf(),
@@ -410,7 +452,7 @@ async fn a_tagged_run_request_is_answered_with_its_id() {
         };
         assert_eq!(request_id, expected);
     }
-    shutdown.cancel();
+    daemon.stop().await;
 }
 
 /// M9.2 review ruling 1: a tagged request's success reply carries its id too. A goal
@@ -437,7 +479,7 @@ async fn a_tagged_goal_start_is_triaged_with_its_id() {
     let repo_dir = daemon::profile::repo_dir(&dir.path().join("data"), &repo.root);
     daemon::profile::store::save(&repo_dir, &proto::RepoProfile::default(), &meta).unwrap();
     let shutdown = CancellationToken::new();
-    let (mut rd, mut wr) = tagged_rig(dir.path(), true, &shutdown).await;
+    let (mut rd, mut wr, daemon) = tagged_rig(dir.path(), true, &shutdown).await;
     let msg = ClientMsg::RunTagged {
         id: 11,
         request: RunRequest::StartGoal {
@@ -462,7 +504,7 @@ async fn a_tagged_goal_start_is_triaged_with_its_id() {
     };
     assert!(run_id.is_some(), "a planned run");
     assert_eq!(request_id, Some(11));
-    shutdown.cancel();
+    daemon.stop().await;
 }
 
 /// Milestone 9 decision 43: pre-run triage's decider session leaves its record in the
@@ -497,7 +539,7 @@ async fn pre_run_triage_writes_a_record_even_when_no_run_is_created() {
     daemon::profile::store::save(&repo_dir, &profile, &meta).unwrap();
     let shutdown = CancellationToken::new();
     let mode = (true, proto::DeciderMode::Claude);
-    let (mut rd, mut wr) = rig_with(dir.path(), mode, &shutdown).await;
+    let (mut rd, mut wr, daemon) = rig_with(dir.path(), mode, &shutdown).await;
     let goal = "rework storage";
     let msg = ClientMsg::Run(RunRequest::StartGoal {
         goal: goal.into(),
@@ -523,7 +565,7 @@ async fn pre_run_triage_writes_a_record_even_when_no_run_is_created() {
         message.contains("the orchestrator's runtime codex is not installed"),
         "{message}"
     );
-    shutdown.cancel();
+    daemon.stop().await;
 
     let path = repo_dir.join("history.jsonl");
     let (lines, problems) = daemon::run::history_io::read_history(&path);

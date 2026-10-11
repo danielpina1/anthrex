@@ -123,6 +123,7 @@ async fn a_planners_first_read_waits_for_its_launch() {
             );
             assert_eq!(answer, json!({ "error": text }));
         }
+        rig.stop().await;
     }
 }
 
@@ -147,6 +148,7 @@ async fn an_orchestrators_first_calls_wait_for_its_launch() {
     let (ok, answer) = answered(write).await;
     assert!(ok, "{answer}");
     assert_eq!(answer["accepted"], json!(true));
+    rig.stop().await;
 }
 
 /// A repository whose one commit tracks `.mcp.json`: project settings a headless
@@ -226,6 +228,7 @@ async fn a_held_submit_carries_its_runtime_refusals() {
     assert!(!ok, "the batch reaches Claude: {answer}");
     assert!(answer.to_string().contains(".mcp.json"), "{answer}");
     assert!(rig.run(|run| run.task("m1").is_none()));
+    rig.stop().await;
 }
 
 /// The launch wait's limit in the re-review tests: `HOLD_LIMIT_SECS` shortened.
@@ -288,6 +291,7 @@ async fn a_launch_wait_ends_at_its_limit() {
             .expect("the wait ends at its limit");
         assert_eq!(reply_text(reply), (false, json!({ "error": text })));
     }
+    rig.stop().await;
 }
 
 /// Re-review finding 5: an orchestrator write whose wait ends with its launch still in
@@ -307,4 +311,5 @@ async fn an_orchestrator_write_whose_launch_never_finishes_is_refused() {
         rig.run(|run| run.plan_edits.is_empty()),
         "the engine saw no batch"
     );
+    rig.stop().await;
 }

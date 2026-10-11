@@ -189,6 +189,7 @@ async fn get_context_and_task_result_answer_from_the_driver() {
         answer,
         json!({"error": "invalid arguments: extra: unknown field"})
     );
+    rig.stop().await;
 }
 
 /// Decision 15's routing of the writes: the orchestrator's `edit_plan` and a worker's
@@ -240,6 +241,7 @@ async fn writes_go_to_the_engine() {
     // Task M9.13a: the engine records it (decision 42f).
     assert!(ok, "{answer}");
     assert_eq!(answer, json!("Note recorded. Keep working."));
+    rig.stop().await;
 }
 
 /// The held case's deadline for `task_result`'s git reads. Nothing else can end them
@@ -293,4 +295,5 @@ async fn task_result_answers_a_git_error_at_its_one_deadline() {
     assert!(calls[1].contains(" diff "), "{calls:?}");
     gate.release();
     gate.wait_exited(wait).await;
+    rig.stop().await;
 }

@@ -152,6 +152,7 @@ async fn the_pack_reads_the_reports_and_the_previous_spec_off_the_engine() {
     .unwrap();
     let pack = built(&rig).await;
     assert!(!pack.contains("Related earlier work"), "{pack}");
+    rig.stop().await;
 }
 
 /// Ruling T15-1: a previous run that iterated is carried as round 1's spec then each
@@ -202,6 +203,7 @@ async fn the_pack_reads_round_ones_spec_and_each_amendment() {
         pack.contains("/prev/design/spec-v2.md: could not be read back"),
         "{pack}"
     );
+    rig.stop().await;
 }
 
 /// Ruling T8-2: the pack reads exactly the inputs frozen when the brainstormers were
@@ -224,6 +226,7 @@ async fn the_pack_reads_exactly_its_frozen_inputs() {
     let second = built(&rig).await;
     assert_eq!(first, second);
     assert!(!second.contains("Scout report s2"));
+    rig.stop().await;
 }
 
 /// Ruling T8-3: a design folder under a symlinked data dir is denied by both its paths,
@@ -369,6 +372,7 @@ async fn the_rounds_pack_is_written_once_and_every_start_sends_it() {
     std::fs::remove_file(&path).unwrap();
     let missing = rig.runs.brainstorm_pack(&rig.run_id).await.unwrap_err();
     assert!(missing.contains("pack-r1.md"), "{missing}");
+    rig.stop().await;
 }
 
 /// Fix round 2: when the canonical paths cannot be resolved in time, the paths as
@@ -482,6 +486,7 @@ async fn a_rethinks_pack_reads_the_previous_report_off_the_engine() {
         "{read}"
     );
     assert!(!read.contains("Changed."), "{read}");
+    rig.stop().await;
 }
 
 /// Task 8's re-review and the final fix wave's FW-36: the driver gives the engine the

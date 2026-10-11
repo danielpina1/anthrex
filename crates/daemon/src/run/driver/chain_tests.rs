@@ -81,6 +81,7 @@ async fn a_chained_call_reaches_the_current_run() {
     // The current run itself is reached as it is.
     let (ok, digest) = chained(&rig, (NEXT, CHAIN), "run_status", json!({})).await;
     assert!(ok && digest["run"]["id"] == json!(NEXT), "{digest}");
+    rig.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -115,6 +116,7 @@ async fn a_call_outside_the_chain_is_refused() {
     assert_eq!(answer, json!({ "error": text }));
     // Nothing reached the rig's run.
     assert!(rig.run(|run| run.orch.digest_read_at.is_none()));
+    rig.stop().await;
 }
 
 /// D16 (decision 20 amended): a failed run's chain leaves the table, and its window,
@@ -146,6 +148,7 @@ async fn a_failed_runs_window_reads_its_own_run() {
         !answer.to_string().contains("not one of its runs"),
         "{answer}"
     );
+    rig.stop().await;
 }
 
 /// D16: the project's older idle chain, dropped when a newer one went idle (decision
@@ -180,6 +183,7 @@ async fn a_dropped_idle_chains_window_reads_its_own_run() {
     assert_eq!(digest["run"]["id"], json!(first), "{digest}");
     let (ok, context) = chained(&rig, (&first, CHAIN), "get_context", json!({})).await;
     assert!(ok, "{context}");
+    rig.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -204,6 +208,7 @@ async fn an_idle_orchestrator_may_read_but_not_edit() {
         assert!(!ok, "{tool}: {answer}");
         assert_eq!(answer, json!({ "error": text }), "{tool}");
     }
+    rig.stop().await;
 }
 
 /// The long-poll test's shape (M9.11): no engine lock is held while a resolved
@@ -243,6 +248,7 @@ async fn resolution_holds_no_lock_across_the_read() {
     assert!(ok, "{digest}");
     assert_eq!(digest["run"]["id"], json!(NEXT));
     assert!(digest["revision"].as_u64().unwrap() > rev, "{digest}");
+    rig.stop().await;
 }
 
 /// Decision 19: an idle chain whose window is gone from the manager's list ends at the
@@ -258,6 +264,7 @@ async fn an_idle_chains_closed_window_ends_it() {
         assert!(Instant::now() < deadline, "the chain never ended");
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
+    rig.stop().await;
 }
 
 /// Task 6b (6a review m4): a `run_status` long-poll resolved to the idle chain's last
@@ -313,6 +320,7 @@ async fn a_long_poll_resolved_before_an_adopt_answers_for_the_new_run() {
         "{:?}",
         started.elapsed()
     );
+    rig.stop().await;
 }
 
 /// Task 6b (6a re-review, D16): a window adopted by a later run keeps an MCP target
@@ -337,6 +345,7 @@ async fn a_dropped_chains_window_reads_its_newest_run_and_starts_no_goal() {
     let text = "o-3f9a has ended; this window cannot start a goal, and the user starts the next one with a new orchestrator";
     assert_eq!(answer, json!({ "error": text }));
     assert_eq!(crate::lock(&rig.runs.state).runs.len(), 2, "no run started");
+    rig.stop().await;
 }
 
 /// The rig's run, delivered (a `pr` run complete with every PR landed, D17), as its
@@ -408,11 +417,14 @@ async fn a_delivered_runs_idle_orchestrator_may_only_summarise_or_iterate() {
     let iterate = json!({"iterate": "add a logout button"});
     let (ok, answer) = chained(&rig, (&first, CHAIN), "edit_plan", iterate).await;
     assert!(ok, "{answer}");
-    let state = crate::lock(&rig.runs.state);
-    assert_eq!(state.runs[&first].state, RunState::Planning);
-    assert_eq!(state.runs[&first].round(), 2);
-    assert_eq!(
-        state.chains[CHAIN].state,
-        crate::run::chain::ChainState::Active
-    );
+    {
+        let state = crate::lock(&rig.runs.state);
+        assert_eq!(state.runs[&first].state, RunState::Planning);
+        assert_eq!(state.runs[&first].round(), 2);
+        assert_eq!(
+            state.chains[CHAIN].state,
+            crate::run::chain::ChainState::Active
+        );
+    }
+    rig.stop().await;
 }
