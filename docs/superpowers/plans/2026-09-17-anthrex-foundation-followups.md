@@ -2150,6 +2150,10 @@ From the stream G review and its fix round 1.
   - `ls-files --others` then recurses into the directory and skips `.git`, so only its working files are salvaged. Any commits in its object store go with the checkout.
   - Git itself cannot open such a repository either.
   - A walk for `.git` entries that keeps the checkout when any of them is unrecognised would close the gap.
+- **Stream G's final re-review minors** (fix round 2, all non-blocking):
+  - **An intermediate directory of a ref path can be swapped.** `O_NOFOLLOW` covers only the last component, so a worker-left process could swap a directory in the path for a link to `/dev`. With `O_NOCTTY|O_NONBLOCK` and the regular-file check, the effect is an open and a close of the device: nothing is read and no controlling terminal is taken. An `openat` walk from the nested `.git` descriptor would close it.
+  - **No test pins the 10,000-entry cap of the refs and worktrees walk (n3), or that `restore_owner_access` changes a mode only when the owner lacks a permission (n4).**
+  - **The legacy-config bytes test does not cover `quoted`'s escaping**, which is shared with the current config writer rather than frozen with the 0.1.x text; a change to `quoted` would change what the legacy check accepts.
 
 ### Stream P
 
