@@ -7,10 +7,7 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use super::{Found, found};
-
-/// How long the probe may take. It stats two paths; only a hung file system is slower.
-/// A goal start's triage waits for it before the decider call (`docs/timing-budgets.md`).
-pub const INSTALLED_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+pub use common::bounds::INSTALLED_PROBE_TIMEOUT;
 
 /// Ruling I6: [`found`] for the two configured binaries, within `timeout`; `None` past
 /// it, or when the probe panicked.

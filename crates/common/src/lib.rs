@@ -2,8 +2,10 @@
 //! daemon and the client use. Depends on `proto` and `libc` only: never on the daemon,
 //! `config`, `tokio` or a PTY (decision 10).
 
+pub mod bounds;
 pub mod branch;
 pub mod labels;
+pub mod lifecycle;
 pub mod profile_keys;
 pub mod refit_render;
 pub mod refusal;
