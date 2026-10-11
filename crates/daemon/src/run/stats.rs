@@ -7,6 +7,8 @@
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
+pub(crate) use common::text::tokens;
+
 use proto::{
     DeciderSource, FlakyProposal, HistoryLine, HistoryStats, StatsRow, TaskOutcome, TaskRecord,
 };
@@ -219,16 +221,6 @@ fn count(n: u32, word: &str) -> String {
         format!("1 {word}")
     } else {
         format!("{n} {word}s")
-    }
-}
-
-/// Tokens as `<n>`, `<n>.<d>k` under 10k, `<n>k`, or `<n>.<d>M`, rounded down.
-pub(crate) fn tokens(n: u64) -> String {
-    match n {
-        0..1_000 => n.to_string(),
-        1_000..10_000 => format!("{}.{}k", n / 1_000, n % 1_000 / 100),
-        10_000..1_000_000 => format!("{}k", n / 1_000),
-        _ => format!("{}.{}M", n / 1_000_000, n % 1_000_000 / 100_000),
     }
 }
 

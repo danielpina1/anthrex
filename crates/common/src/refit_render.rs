@@ -4,8 +4,8 @@
 
 use proto::{ClassTuning, RefitState, TuningReport};
 
-use super::refit::budget_text;
-use super::report::format_utc;
+use crate::text::budget_text;
+use crate::text::format_utc;
 
 /// Decision 10's line for a `tuning.toml` that did not parse (`error`, ruling T8-2) and
 /// was moved to `moved`: the first line of the block, and a run log line at a start.

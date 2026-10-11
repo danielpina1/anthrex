@@ -14,27 +14,7 @@ use super::confined_hint;
 use crate::run::globs::validate_glob;
 use crate::run::plan::BUILTIN_PROTECTED;
 use crate::run::report::format_utc;
-
-/// The keys whose change re-runs verification (decision 10).
-pub const REVERIFY_KEYS: &[&str] = &[
-    "setup",
-    "check",
-    "check_timeout_secs",
-    "single_test",
-    "test_passed",
-    "sample_test",
-    "env",
-    // Milestone 9.1 decision 12: the tier commands and what they depend on.
-    "build_check",
-    "module_test",
-    "module_tests",
-    "module_graph",
-    "module_names",
-    "slow_tests",
-    "timing_tests",
-    "full_shards",
-    "toolchain_id",
-];
+pub use common::profile_keys::REVERIFY_KEYS;
 
 /// What `anthrex profile edit` accepts: every `RepoProfile` field, and `env.<NAME>` for
 /// one environment entry (decision 10). The order is the field order.
