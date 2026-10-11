@@ -8,8 +8,8 @@ use proto::{BlockReason, GateKind, TaskState};
 
 use super::dispatch::{block, history, launch_fresh};
 use super::schedule::op_in_flight;
-use super::{Effect, OpKind, OpResult, done, emit_op, next_op, outbox};
-use crate::run::model::{AgentRound, FreshSession, Run, Task, writes};
+use super::{Effect, OpKind, OpResult, done, emit_op, next_op, outbox, worker_messages};
+use crate::run::model::{AgentRound, FreshSession, Outgoing, Run, Task, writes};
 use crate::run::role_step::{every_route_failed, rung2_route};
 use crate::run::validate::resolve_task_lenient;
 
@@ -97,12 +97,19 @@ pub(super) fn end_hand_back(task: &mut crate::run::model::Task) {
     task.resolution = None;
 }
 
-/// Undelivered messages to task `i`'s worker are dropped when its session is replaced
-/// or stopped: the hand-over prompt carries the failure record instead.
-pub(super) fn drop_queued(run: &mut Run, i: usize) {
+/// Milestone 9.11 decision 4 (A2): task `i`'s undelivered messages leave the outbox
+/// for its next session's hand-over, their texts returned in queue order. A recorded
+/// message is in that session's notes section already (decision 42d), so its text is
+/// left out, as `outbox::deliver` does for a fresh session still to start.
+pub(super) fn take_queued(run: &mut Run, i: usize) -> Vec<String> {
     let id = run.tasks[i].id().to_string();
-    run.outbox
-        .retain(|m| m.task_id != id || m.delivered_at.is_some());
+    let waiting = |m: &Outgoing| m.task_id == id && m.delivered_at.is_none();
+    let texts = (run.outbox.iter())
+        .filter(|m| waiting(m) && !worker_messages::carries(run, m.id))
+        .map(|m| m.text.clone())
+        .collect();
+    run.outbox.retain(|m| !waiting(m));
+    texts
 }
 
 fn first_line(text: &str) -> &str {
@@ -217,6 +224,8 @@ pub(super) fn take_rung(
 /// A stall (decision 38): `stalls += 1; failures += 1`; rung 3 at three failures, else
 /// rung 2.
 pub(super) fn stall(run: &mut Run, i: usize, reason: String, now: u64, fx: &mut Vec<Effect>) {
+    // Milestone 9.11 decision 7: named in the stall, so not again in a rung's text.
+    let reason = super::rounds::with_sandbox_note(run, i, reason);
     let task = &mut run.tasks[i];
     task.stalls = task.stalls.saturating_add(1);
     task.failures = task.failures.saturating_add(1);
@@ -264,6 +273,8 @@ pub(super) fn breach(run: &mut Run, i: usize, what: String, now: u64, fx: &mut V
 /// starts in the same worktree once the old one has exited ([`start_fresh_sessions`]).
 /// Ruling RL-1 skips a route that failed in this task.
 pub(super) fn rung2(run: &mut Run, i: usize, reason: String, now: u64, fx: &mut Vec<Effect>) {
+    // Milestone 9.11 decision 7: a session replaced for a failure names its sandbox's.
+    let reason = super::rounds::with_sandbox_note(run, i, reason);
     // Milestone 9.5 decision 20: past rung 1, a lane leaves its race.
     if run.tasks[i].lane_view.is_some() {
         return super::race::lane_out(run, i, 2, reason, now, fx);
@@ -275,7 +286,7 @@ pub(super) fn rung2(run: &mut Run, i: usize, reason: String, now: u64, fx: &mut 
         fx,
     );
     kill_worker(run, i, fx);
-    drop_queued(run, i);
+    let texts = take_queued(run, i);
     // Milestone 9.5 decision 25: a fresh test writer, while the test is being written.
     if !super::pair::escalate_writer(run, i, now) {
         let route = rung2_route(run, i);
@@ -291,10 +302,15 @@ pub(super) fn rung2(run: &mut Run, i: usize, reason: String, now: u64, fx: &mut 
     let task = &mut run.tasks[i];
     task.rung = 2;
     set_state(task, TaskState::Working, now);
-    task.fresh_session = Some(FreshSession {
+    // Stream E re-review N1: a fresh session already decided (a second rung 2 before it
+    // starts) hands on what it carries; the new reason replaces its reason only.
+    let kept = task.fresh_session.take().and_then(|f| f.append);
+    let mut fresh = FreshSession {
         reason: reason.clone(),
-        append: None,
-    });
+        append: kept,
+    };
+    outbox::accumulate(&mut fresh, texts);
+    task.fresh_session = Some(fresh);
     history(run, i, now, format!("rung 2: a fresh session ({reason})"));
 }
 
@@ -305,8 +321,9 @@ pub(super) fn rung3(run: &mut Run, i: usize, text: String, now: u64, fx: &mut Ve
     if run.tasks[i].lane_view.is_some() {
         return super::race::lane_out(run, i, 3, text, now, fx);
     }
+    // Decision 4: a blocked task holds its mail (M8a.6 ruling N5); a retry's fresh
+    // session takes it (`requests::rung2`).
     kill_worker(run, i, fx);
-    drop_queued(run, i);
     let task = &mut run.tasks[i];
     task.size = task.size.raised();
     task.raised_size = Some(task.size);
@@ -341,7 +358,6 @@ pub(crate) fn reresolve(run: &mut Run, i: usize) -> proto::Route {
 /// Rung 4: `blocked(human)`, the worker killed.
 pub(super) fn rung4(run: &mut Run, i: usize, text: String, now: u64, fx: &mut Vec<Effect>) {
     kill_worker(run, i, fx);
-    drop_queued(run, i);
     let task = &mut run.tasks[i];
     task.rung = 4;
     task.fresh_session = None;

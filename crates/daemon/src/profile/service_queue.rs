@@ -144,7 +144,7 @@ impl ProfileService {
     pub async fn queue_goal(&self, goal: QueuedGoal) -> Result<Option<QueuedGoalInfo>, String> {
         let project = goal.project.clone();
         {
-            let _writes = self.writes.lock().await;
+            let _writes = self.hold_writes(&project).await;
             let dir = self.repo_dir(&project);
             let absent =
                 blocking(move || Ok(matches!(store::load(&dir), store::Stored::Absent))).await?;
@@ -197,7 +197,7 @@ impl ProfileService {
         if !present {
             return;
         }
-        let _writes = self.writes.lock().await;
+        let _writes = self.hold_writes(project).await;
         if let Err(error) = self.adopt_queue(project).await {
             tracing::warn!(%error, project = %project.display(), "profile status: the goal queue");
         }
@@ -276,7 +276,7 @@ impl ProfileService {
         project: &Path,
         unattended: bool,
     ) -> Result<String, String> {
-        let _writes = self.writes.lock().await;
+        let _writes = self.hold_writes(project).await;
         let dir = self.repo_dir(project);
         let p = project.to_path_buf();
         let message = blocking(move || {
@@ -343,7 +343,7 @@ impl ProfileService {
     /// panicked (final re-review), so the drain still ends and clears its claim.
     pub(super) async fn start_queued(self: Arc<Self>, project: PathBuf) {
         {
-            let _writes = self.writes.lock().await;
+            let _writes = self.hold_writes(&project).await;
             if !self.claim_drain(&project) {
                 return;
             }
@@ -369,7 +369,7 @@ impl ProfileService {
     /// be written, nothing starts and every goal left is dropped with the error, so none
     /// waits behind the stored profile until a restart.
     async fn take_next(&self, project: &Path) -> Option<QueuedGoal> {
-        let _writes = self.writes.lock().await;
+        let _writes = self.hold_writes(project).await;
         let mut queue = self.queue_of(project);
         if queue.goals.is_empty() {
             self.end_drain(project);
@@ -409,7 +409,7 @@ impl ProfileService {
         goal: &QueuedGoal,
         started: Result<String, String>,
     ) {
-        let _writes = self.writes.lock().await;
+        let _writes = self.hold_writes(project).await;
         let mut queue = self.queue_of(project);
         queue.starting.retain(|g| g.id != goal.id);
         match started {
@@ -440,7 +440,7 @@ impl ProfileService {
     /// [`Self::drop_queued_locked`]; this takes the hold itself, for the tests.
     #[cfg(test)]
     pub(super) async fn drop_queued(&self, project: &Path, reason: &str) -> usize {
-        let writes = self.writes.lock().await;
+        let writes = self.hold_writes(project).await;
         self.drop_queued_locked(&writes, project, reason)
             .await
             .unwrap_or_else(|error| {
@@ -455,7 +455,7 @@ impl ProfileService {
     /// written, and nothing changed.
     pub(super) async fn drop_queued_locked(
         &self,
-        _writes: &tokio::sync::MutexGuard<'_, ()>,
+        _writes: &super::service::WritesGuard,
         project: &Path,
         reason: &str,
     ) -> Result<usize, String> {
@@ -483,7 +483,7 @@ impl ProfileService {
     /// drains the queue when the profile is stored.
     pub(super) async fn drain_at_start(self: Arc<Self>, project: PathBuf) {
         {
-            let _writes = self.writes.lock().await;
+            let _writes = self.hold_writes(&project).await;
             let mut queue = self.queue_of(&project);
             let dirs: Vec<PathBuf> = queue.goals.iter().map(|goal| goal.dir.clone()).collect();
             let n = dirs.len();

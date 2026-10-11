@@ -329,8 +329,18 @@ fn a_refused_fresh_launch_keeps_its_messages() {
     assert!(ops_in(&effects, "CreateWindow").is_empty());
     let t1 = fx.task("t1");
     assert_eq!(t1.state, TaskState::Blocked);
+    // Milestone 9.11 decision 4: rung 2 carries the budget wrap-up the open turn held
+    // (it was dropped before), and the later message follows it.
     let append = t1.fresh_session.as_ref().and_then(|f| f.append.clone());
-    assert_eq!(append.as_deref(), Some("[anthrex] X"));
+    let wrap_up = crate::run::contract::budget_wrap_up(
+        proto::Spend {
+            tool_calls: 1,
+            secs: 0,
+            tokens: 0,
+        },
+        t1.budget,
+    );
+    assert_eq!(append, Some(format!("{wrap_up}\n\n[anthrex] X")));
 }
 
 /// T12-I1: a claim whose session's resume failed is dropped (the round is over), while

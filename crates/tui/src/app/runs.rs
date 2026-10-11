@@ -178,10 +178,14 @@ impl App {
             // restarted daemon counts from the start again. A push also proves the
             // subscription is live, so a pending retry has nothing left to do.
             RunReply::Snapshot(snapshot) => {
+                // Milestone 9.11 decision 22: a queued goal that left with no run.
+                let now = Instant::now();
+                let mut effects = self.watch_queued_goals(&snapshot, now);
                 self.replace_runs(snapshot);
-                self.runs_received_at = Instant::now();
+                self.runs_received_at = now;
                 self.run_subscribed = true;
-                return self.focus_off_idle();
+                effects.extend(self.focus_off_idle());
+                return effects;
             }
             // Decision 34: an edit's reply ends a submitting form — closed on `Done`,
             // its error row filled on `Refused`. Every other reply is a toast.

@@ -311,7 +311,7 @@ fn delivered_to(
 
 /// Ruling T12-I3: messages for a fresh session still to start join the end of its
 /// prompt, in order, after any already there.
-fn accumulate(fresh: &mut FreshSession, texts: Vec<String>) {
+pub(super) fn accumulate(fresh: &mut FreshSession, texts: Vec<String>) {
     if texts.is_empty() {
         return;
     }
@@ -350,10 +350,16 @@ pub(super) fn resumed(
     }
     run.tasks[i].rounds[r].resume_op = None;
     let carried = std::mem::take(&mut run.tasks[i].rounds[r].carried);
+    // Milestone 9.11 decision 4 (A4): a failed resume's fresh session also takes the
+    // task's messages delivered to the session but never confirmed, which `supersede`
+    // removes below; every text once, in queue order (only a failure uses `texts`).
+    let id = run.tasks[i].id().to_string();
+    let in_flight = |m: &Outgoing| m.task_id == id && m.delivered_at.is_some();
     let texts: Vec<String> = run
         .outbox
         .iter()
-        .filter(|m| carried.contains(&m.id) && !worker_messages::carries(run, m.id))
+        .filter(|m| carried.contains(&m.id) || in_flight(m))
+        .filter(|m| !worker_messages::carries(run, m.id))
         .map(|m| m.text.clone())
         .collect();
     run.outbox.retain(|m| !carried.contains(&m.id));

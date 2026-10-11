@@ -217,6 +217,7 @@ fn fresh(run: &mut Run, i: usize, reason: String, now: u64, fx: &mut Vec<Effect>
 /// session, or at three failures the task `blocked(environment)` (a research task has
 /// no size to raise).
 fn stall(run: &mut Run, i: usize, reason: String, now: u64, fx: &mut Vec<Effect>) {
+    let reason = super::rounds::with_sandbox_note(run, i, reason); // decision 7 (9.11)
     let task = &mut run.tasks[i];
     task.stalls = task.stalls.saturating_add(1);
     task.failures = task.failures.saturating_add(1);

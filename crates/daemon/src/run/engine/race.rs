@@ -373,8 +373,8 @@ pub(super) fn lane_out(
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
+    // Milestone 9.11 decision 4: the lane's mail stays, as a blocked task's does.
     super::ladder::kill_worker(run, i, fx);
-    super::ladder::drop_queued(run, i);
     let task = &mut run.tasks[i];
     task.rung = rung;
     task.fresh_session = None;

@@ -19,6 +19,7 @@ use super::delivery::{reply_edit, validate};
 use super::edits_state::is_live;
 pub(super) use super::edits_state::{not_started, state_label};
 use super::engine::actions::rules;
+use super::engine::user_only;
 use super::model::{Run, Task, TaskEvent, task_branch, task_path};
 use super::orch::EditSource;
 use super::orch::contract::ACTION_ALONE;
@@ -326,7 +327,23 @@ impl Batch {
         if let Some(text) = rules::cancel_task(&self.run, id) {
             return self.errors.push(PlanError::new(Some(id), "", "13", text));
         }
+        if let Some(error) = self.user_only_refusal(i, id) {
+            return self.errors.push(error);
+        }
         self.cancel_at(i);
+    }
+
+    /// Milestone 9.11 decision 5 (A5): a block only the user can fix is the user's to
+    /// cancel, as it is theirs to retry (`orch_ops::user_only_task`); the orchestrator
+    /// and a sub-planner are refused, whether they cancel it or split it (which cancels
+    /// it, stream E review I2).
+    fn user_only_refusal(&self, i: usize, id: &str) -> Option<PlanError> {
+        let block = self.run.tasks[i].block.as_ref().filter(|b| b.user_only)?;
+        if self.source == EditSource::User {
+            return None;
+        }
+        let text = user_only::refusal(&format!("task {id}"), &block.text);
+        Some(PlanError::new(Some(id), "", "13", text))
     }
 
     /// Cancels an unfinished task: a live one yields `CancelLive`, it leaves the merge
@@ -392,6 +409,9 @@ impl Batch {
         if !not_started(&self.run.tasks[i]) {
             let why = "only pending, queued or blocked tasks can be split";
             return self.refuse_unstarted(i, "it cannot be split", why);
+        }
+        if let Some(error) = self.user_only_refusal(i, id) {
+            return self.errors.push(error);
         }
         if into.is_empty() {
             self.errors.push(PlanError::new(

@@ -91,6 +91,12 @@ impl Keymap {
         self.pending
     }
 
+    /// Milestone 9.11 decision 24 (E2): forgets a pressed prefix. An open modal takes
+    /// the next key itself, so a prefix pressed before it opened must not outlive it.
+    pub fn clear_pending(&mut self) {
+        self.pending = false;
+    }
+
     pub fn set_tree_mode(&mut self, on: bool) {
         self.tree_mode = on;
     }

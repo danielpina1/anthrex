@@ -194,3 +194,53 @@ fn a_run_json_without_the_stall_fields_loads() {
     assert_eq!(run.orch.waiting_since, None);
     assert_eq!(run.orch.stalled_at, None);
 }
+
+/// [`user_edit`], then a second user edit (a message to `t1`): two notes, the seq of
+/// each.
+fn two_notes(fx: &mut Fixture) -> (u64, u64) {
+    user_edit(fx);
+    let first = crate::run::engine::notes_seq(fx.run());
+    let to_t1 = super::worker_messages::msg(&["t1"], proto::MessageKind::Info, "use v2");
+    super::dispatch::edit(fx, vec![to_t1]);
+    let second = crate::run::engine::notes_seq(fx.run());
+    assert!(second > first, "two notes: {first}, {second}");
+    (first, second)
+}
+
+fn digest_read(fx: &mut Fixture, notes_seq: u64) {
+    fx.next(EventKind::Orch(OrchEvent::DigestRead {
+        run_id: RUN_ID.into(),
+        digest_revision: fx.run().orch.digest_rev,
+        notes_seq,
+        at: fx.now,
+    }));
+}
+
+/// Milestone 9.11 decision 6 (A8): a read that returned only the first note answers
+/// only it; the second waits, and stalls the orchestrator once `stall_after_secs` has
+/// passed since the read. A read that returned it too clears the stall.
+#[test]
+fn a_digest_read_answers_only_the_notes_it_held() {
+    let mut fx = approved();
+    let stall = fx.run().limits.stall_after_secs;
+    let (first, second) = two_notes(&mut fx);
+    digest_read(&mut fx, first);
+    let since = fx.now;
+    fx.send(since + stall, EventKind::Tick);
+    assert_eq!(stuck(&fx), Some(OrchestratorStuck::Stalled { since }));
+    digest_read(&mut fx, second);
+    assert_eq!(stuck(&fx), None);
+    fx.send(fx.now + stall * 2, EventKind::Tick);
+    assert_eq!(stuck(&fx), None, "every note is answered");
+}
+
+/// Pinning: a tool call answers every note so far, whatever the orchestrator read.
+#[test]
+fn a_tool_call_answers_every_note() {
+    let mut fx = approved();
+    let stall = fx.run().limits.stall_after_secs;
+    two_notes(&mut fx);
+    orch_tool(&mut fx, ORCH, "edit_plan", json!({"edits": []}));
+    fx.send(fx.now + stall * 2, EventKind::Tick);
+    assert_eq!(stuck(&fx), None);
+}

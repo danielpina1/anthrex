@@ -91,9 +91,47 @@ impl Drop for KillGroupOnDrop {
     }
 }
 
+/// Whether `pid` is a live process: in the process table and not a zombie.
+///
+/// M9.11.38 (C8): `kill(pid, 0)` also succeeds on a zombie, a process that has exited
+/// but whose parent has not reaped it yet. A killed background child of a shell that
+/// is still looping is exactly that until the shell next waits, so a "gone" check by
+/// signal 0 failed intermittently. `ps -o stat=` names a zombie `Z`; no row, gone.
+/// Looks only: nothing here signals anything (R7).
 fn alive(pid: u32) -> bool {
-    // SAFETY: signal 0 only checks that the pid exists.
-    unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+    let out = std::process::Command::new("ps")
+        .args(["-o", "stat=", "-p", &pid.to_string()])
+        .output()
+        .expect("ps runs");
+    let stat = String::from_utf8_lossy(&out.stdout);
+    let stat = stat.trim();
+    !stat.is_empty() && !stat.starts_with('Z')
+}
+
+/// M9.11.38 (C8): a child that has exited but is not reaped yet is not alive. The test
+/// starts it itself and reaps it at the end.
+#[test]
+fn a_zombie_is_not_alive() {
+    let mut child = std::process::Command::new("sh")
+        .args(["-c", "exit 0"])
+        .spawn()
+        .expect("spawn sh");
+    let pid = child.id();
+    let deadline = Instant::now() + DEADLINE;
+    loop {
+        let out = std::process::Command::new("ps")
+            .args(["-o", "stat=", "-p", &pid.to_string()])
+            .output()
+            .expect("ps runs");
+        if String::from_utf8_lossy(&out.stdout).trim().starts_with('Z') {
+            break;
+        }
+        assert!(Instant::now() < deadline, "{pid} never became a zombie");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let zombie_alive = alive(pid);
+    child.wait().expect("reap the zombie");
+    assert!(!zombie_alive, "a zombie {pid} counted as alive");
 }
 
 #[test]

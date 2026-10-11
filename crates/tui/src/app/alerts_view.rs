@@ -31,7 +31,7 @@ pub(crate) fn alert_node(key: &AlertKey) -> Option<(String, ActionTarget)> {
             ..
         } => Some((run.clone(), ActionTarget::Run)),
         AlertKey::Stage { run, stage, .. } => Some((run.clone(), ActionTarget::Stage(*stage))),
-        AlertKey::Proposal(_) | AlertKey::Setup(_) => None,
+        AlertKey::Proposal(_) | AlertKey::Setup(_) | AlertKey::Dropped(_) => None,
     }
 }
 
@@ -66,7 +66,8 @@ pub(crate) fn preselected(app: &App, key: &AlertKey) -> Option<ActionKind> {
         | AlertKey::OrchestratorAsks(_)
         | AlertKey::OrchestratorStuck(_)
         | AlertKey::Proposal(_)
-        | AlertKey::Setup(_) => None,
+        | AlertKey::Setup(_)
+        | AlertKey::Dropped(_) => None,
         // Milestone 9.6 decision 34: a brainstorm or spec gate's document is reviewed on
         // the gate screen; a plan gate (a design run's too) on the plan review.
         AlertKey::Gate(run) => Some(
@@ -108,7 +109,7 @@ pub(crate) fn enter_label(app: &App, key: &AlertKey) -> String {
         AlertKey::Orchestrator(_)
         | AlertKey::OrchestratorAsks(_)
         | AlertKey::OrchestratorStuck(_) => "focus".to_owned(),
-        AlertKey::Proposal(_) => "open profile".to_owned(),
+        AlertKey::Proposal(_) | AlertKey::Dropped(_) => "open profile".to_owned(),
         AlertKey::Setup(project) => match setup_state(app, project) {
             Some(SetupState::Failed { .. }) => "retry".to_owned(),
             _ => "open profile".to_owned(),
@@ -267,6 +268,8 @@ impl App {
                 Some(SetupState::Failed { .. }) => self.retry_setup(project),
                 _ => self.open_profile_on(project.clone()),
             },
+            // Milestone 9.11 decision 22: the Profile screen, and the alert is cleared.
+            AlertKey::Dropped(project) => self.enter_dropped(&project.clone()),
             _ => match alert_node(&key) {
                 Some(node) => {
                     let kind = preselected(self, &key);
@@ -300,7 +303,7 @@ impl App {
     /// closes, so the run view is what the main pane shows.
     pub(crate) fn open_alert_node(&mut self, key: AlertKey) -> Vec<Effect> {
         let (run, task) = match key {
-            AlertKey::Proposal(project) | AlertKey::Setup(project) => {
+            AlertKey::Proposal(project) | AlertKey::Setup(project) | AlertKey::Dropped(project) => {
                 return self.open_profile_on(project);
             }
             AlertKey::Blocked { run, task } => (run, Some(task)),

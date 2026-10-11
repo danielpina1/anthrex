@@ -43,7 +43,7 @@ mod worktrees;
 
 pub use accept::{ACCEPT_MERGE_TIMEOUT, accept, accept_with_merge_timeout};
 pub(crate) use checkout::restore_owner_access;
-pub use checkout::{Repo, checkout_repo_dir, default_repo_dir};
+pub use checkout::{Repo, checkout_repo_dir, default_repo_dir, restore_owner_access_with};
 pub use crown::{clear_stale_locks, cleared_of, crown};
 pub use docs::{DocsCommit, DocsOutcome, commit_docs, docs_symlink};
 pub use done::{
@@ -55,13 +55,13 @@ pub use handback::{
     HandBack, MERGED_LIST_MAX, MergedCommits, UNCOMMITTED, hand_back, hand_back_listing,
     tracked_changes,
 };
-pub use import::{HeadFile, head_file, rebase_in_progress, sync};
+pub use import::{HeadFile, head_file, rebase_in_progress, salvage_gone, sync};
 pub use merge::{
     ACCEPT_LIST_MAX, AcceptOutcome, CandidateStep, RefCheck, cas_update, commit_tree,
     commits_since, guard_refs, materialize, merge_tree, read_ref, reattach, run_work_on_base,
 };
 pub use merge_state::abort_merge;
-pub use salvage::{delete_branches, remove_checkout, remove_worktree, salvage};
+pub use salvage::{delete_branches, nested_work, remove_checkout, remove_worktree, salvage};
 pub use settings::{codex_config_tree, project_settings};
 pub use signals::{
     DiffLimits, NoAttributes, SIGNALS_DIFF_BYTES, Zero, cfg_test_files, done_signals,
@@ -73,14 +73,14 @@ pub use tiers::{changed_paths, checkout_tree, show_stat, sync_read, tree_of, tre
 
 /// Reads reconcile (M8a.21) shares with the ops it checks.
 pub(crate) use handback::{finish_clean, interrupted_conflict};
-pub(crate) use import::{is_id, sync_in};
+pub(crate) use import::{is_id, salvage_gone_keeping, sync_in};
 pub(crate) use merge::{read, reattach_in, short};
 pub(crate) use merge_state::{
     Leftover, clear as clear_merge_state, leftover, undo_clean_merge, unmerged,
 };
 pub(crate) use worktrees::{common_dir, forget_missing, is_ancestor, listed as listed_worktree_in};
 
-pub(crate) use checkout::config as checkout_config;
+pub(crate) use checkout::{config as checkout_config, config_v0_1 as checkout_config_v0_1};
 pub use queue::{GitQueue, LOCK_RETRY_DELAYS_MS};
 pub use resolution::resolution_only;
 pub use sandbox::{

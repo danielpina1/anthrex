@@ -50,7 +50,10 @@ impl TokenUsage {
     /// a long-lived session. Defined here, in `proto`, because the daemon cannot add
     /// an inherent impl to a foreign type.
     pub fn billable(&self) -> u64 {
-        self.input + self.cache_write + self.output
+        // Milestone 9.11 decision 33 (B8): saturating, never an overflow.
+        self.input
+            .saturating_add(self.cache_write)
+            .saturating_add(self.output)
     }
 
     /// Milestone 9.5 decision 37: field-wise, saturating at 0.
@@ -535,4 +538,22 @@ pub struct RunsSnapshot {
     /// Milestone 9.10 decision 33: the goals waiting for their repository's profile.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub queued_goals: Vec<crate::profile::QueuedGoalInfo>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Milestone 9.11 decision 33 (B8): a sum past `u64::MAX` saturates, never panics in
+    /// a debug build or wraps to a small number in a release one.
+    #[test]
+    fn billable_saturates() {
+        let usage = TokenUsage {
+            input: u64::MAX,
+            output: 1,
+            cache_read: 7,
+            cache_write: 3,
+        };
+        assert_eq!(usage.billable(), u64::MAX);
+    }
 }

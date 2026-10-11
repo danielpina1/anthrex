@@ -374,6 +374,19 @@ mod tests {
         assert_eq!(request_timeout(&promote), super::super::RUN_REQUEST_TIMEOUT);
     }
 
+    /// Milestone 9.11, stream T review N3: the client cannot import the CLI's constants
+    /// (the CLI depends on the client), so its dropped-goal wait restates
+    /// `RUN_REQUEST_TIMEOUT` as `RUN_REQUEST_SECS` and rebuilds `GOAL_REQUEST_TIMEOUT` as
+    /// `GOAL_START_BUDGET`. Either side changing alone fails here.
+    #[test]
+    fn the_clients_restated_run_request_timeout_is_the_clis() {
+        assert_eq!(
+            Duration::from_secs(tui::app::RUN_REQUEST_SECS),
+            super::super::RUN_REQUEST_TIMEOUT
+        );
+        assert_eq!(tui::app::GOAL_START_BUDGET, GOAL_REQUEST_TIMEOUT);
+    }
+
     /// M8b.17's acceptance: `anthrex run --help` lists `stats`, which takes `--json`.
     #[test]
     fn run_help_lists_stats_and_stats_takes_json() {

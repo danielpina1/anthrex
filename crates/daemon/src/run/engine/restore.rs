@@ -383,8 +383,10 @@ fn resume_worker(run: &mut Run, i: usize, restored: bool, now: u64, fx: &mut Vec
     let working = run.tasks[i].state == TaskState::Working;
     let round = &mut run.tasks[i].rounds[r];
     match round.stall {
-        // Second stage: the grace ran out while nothing watched it.
-        StallState::Interrupted { deadline } if working && now >= deadline => {
+        // Second stage: the grace ran out while nothing watched it. A round being
+        // killed (its rung decided, its exit not yet in) was counted already
+        // (milestone 9.11, stream E re-review).
+        StallState::Interrupted { deadline } if working && now >= deadline && !round.retiring => {
             let reason = "the interrupt did not end its turn".to_string();
             return ladder::stall(run, i, reason, now, fx);
         }

@@ -1,4 +1,5 @@
 mod client;
+mod daemon_cmd;
 mod filter_hook;
 mod filter_run;
 mod hook;
@@ -12,8 +13,6 @@ mod tree_cmd;
 use clap::{Parser, Subcommand, ValueEnum};
 use proto::{ClientMsg, DaemonMsg, Runtime, WindowSpec};
 use std::path::PathBuf;
-use std::time::Duration;
-use tokio::net::UnixStream;
 
 #[derive(Parser)]
 #[command(
@@ -163,12 +162,19 @@ enum DaemonAction {
 
 fn main() -> anyhow::Result<()> {
     pre_clap::dispatch(std::time::Instant::now());
-    run_cli()
+    let cli = Cli::parse();
+    // Decision 30: the foreground daemon runs on a runtime of its own, never this one.
+    if let Some(Command::Daemon {
+        action: DaemonAction::Start { foreground: true },
+    }) = &cli.command
+    {
+        return daemon_cmd::foreground(proto::paths::socket_path());
+    }
+    run_cli(cli)
 }
 
 #[tokio::main]
-async fn run_cli() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+async fn run_cli(cli: Cli) -> anyhow::Result<()> {
     let socket: PathBuf = proto::paths::socket_path();
     match cli.command {
         // Pitfall 17: nothing but JSON-RPC may reach stdout from here on, so this arm
@@ -181,7 +187,7 @@ async fn run_cli() -> anyhow::Result<()> {
         Some(Command::Run(args)) => run_cmd::main(args, socket, cli.dir).await,
         Some(Command::Profile(args)) => profile_cmd::main(args, socket, cli.dir).await,
         Some(Command::Attach { target }) => attach(socket, resolve_dir(cli.dir)?, target).await,
-        Some(Command::Daemon { action }) => daemon_command(action, socket).await,
+        Some(Command::Daemon { action }) => daemon_cmd::daemon_command(action, socket).await,
         Some(Command::New {
             runtime,
             name,
@@ -383,69 +389,6 @@ async fn attach(socket: PathBuf, dir: PathBuf, target: Option<String>) -> anyhow
         daemon_exe: Some(daemon_exe),
     })
     .await
-}
-
-async fn daemon_command(action: DaemonAction, socket: PathBuf) -> anyhow::Result<()> {
-    match action {
-        DaemonAction::Start { foreground: true } => {
-            daemon::run(daemon::DaemonOptions {
-                socket_path: socket,
-                data_dir: proto::paths::data_dir(),
-                config_path: proto::paths::config_path(),
-                lock_wait: daemon::LOCK_WAIT,
-            })
-            .await
-        }
-        DaemonAction::Start { foreground: false } => {
-            tui::spawn::ensure_daemon(&std::env::current_exe()?, &socket).await?;
-            println!("daemon running on {}", socket.display());
-            Ok(())
-        }
-        DaemonAction::Stop => {
-            let mut c = client::CliClient::connect(&socket)
-                .await
-                .map_err(|_| anyhow::anyhow!("no daemon is running"))?;
-            c.send(ClientMsg::Shutdown).await?;
-            c.wait_close().await;
-            // Decision 27: only report the daemon stopped once its lifetime lock is
-            // free, so an `anthrex` right after this never races a daemon that is still
-            // tearing down.
-            let lock_path = proto::paths::lock_path();
-            let released = tokio::task::spawn_blocking(move || {
-                daemon::lockfile::wait_released(&lock_path, Duration::from_secs(10))
-            })
-            .await?;
-            if !released {
-                anyhow::bail!(
-                    "the daemon did not exit within 10 s; see {}",
-                    proto::paths::log_path().display()
-                );
-            }
-            println!("daemon stopped");
-            Ok(())
-        }
-        DaemonAction::Status => match UnixStream::connect(&socket).await {
-            Ok(_) => match client::CliClient::connect(&socket).await {
-                Ok(c) => {
-                    println!(
-                        "running: version {}, {} window(s), socket {}",
-                        c.daemon_version,
-                        c.windows.len(),
-                        socket.display()
-                    );
-                    Ok(())
-                }
-                Err(e) => {
-                    println!("running but incompatible: {e}");
-                    Ok(())
-                }
-            },
-            Err(_) => {
-                println!("not running (socket {})", socket.display());
-                Ok(())
-            }
-        },
-    }
 }
 
 #[cfg(test)]

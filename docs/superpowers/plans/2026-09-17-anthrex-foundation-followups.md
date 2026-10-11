@@ -2069,3 +2069,140 @@ What milestone 9.10 parked, each detailed in `docs/milestones/M9.10-simple-profi
 - **A failed edit that adds an environment variable has no row** (final review fix wave, client): the Profile screen lists `env.<NAME>` rows from the profile, so a ✗ edit of a new `env.<NAME>` shows only in the notice under the list (`your edit of <NAME> (<value>) failed its check; …`); `s` and `r`, which act on the selected ✗ row, cannot reach it. `anthrex profile edit env.<NAME> … --anyway` or `anthrex profile reject` still can. Listing the edited key as a row, or letting `s`/`r` act on the one row edit whatever is selected, would close it.
 - **`anthrex profile status` says `Ready · verified <age> ago` beside a check saved failing** (final re-review N3): the Profile screen reads the stored side's verification and says `Ready · <label> saved failing its check · verified <age> ago` in the attention tone, but `ProfileStatus` carries no verification, so the CLI's line (`profile_words::status_line_tone`) cannot. A `ProfileStatus` field naming the stored profile's failing checks (a protocol change, every client updated) would let both say it.
 - **A dropped goal raises no alert** (final review D-I2, the "better" fix): the Profile screen and `profile status` list the last dropped goals, and the screen polls for 30 s after **Use this**, but a user who closed the screen learns of a drop only there. The snapshot carrying recent drops for a while, one `could not start "<goal>": <reason>` alert each, needs a protocol field (a daemon change).
+
+## From milestone 9.11 (2026-10-10, recorded by M9.11.39), for later
+
+What milestone 9.11 (stabilization, released as 0.2.0) left open: what its brief deferred, what each stream's review parked, and the entries above that it closed. Each item is detailed in `docs/milestones/M9.11-stabilization.md` (its "Scope", "Checked and dropped", decision 21 and each "Stream <X> notes" section). The streams' own entries, written while they ran, are kept below under their stream's heading.
+
+### Deferred by the brief
+
+- **A11: a failed second spec review drops the first review's findings.** Dropped by the user's ruling (2026-10-10), as the spec says: DF §4.3 gives the gate `not reviewed: <reason>` and opens it without findings, and the code does exactly that (`run/engine/design_reviewer.rs:301-304`). Changing it means changing the spec first.
+- **B10: every hook and every 250 ms reader pass clones the whole conversation under the manager lock** (line 528-538 of this file). About 1.5 ms per hook at the configured maximum, far under the 100 ms lock-latency asserts; a performance refactor, not a hang (category F).
+- **B6's two remaining cases and D4** (decision 21, the user's ruling). After a crash the restore cannot stop (a) **Codex's first process**, whose argv carries no session id, so M8a decision 28's argv check cannot confirm it is the session's, or (b) **a descendant that left its session's process group with `setsid`**; while the daemon runs, (b) also keeps its sandbox grant into later turns (D4), a stopped racer's child outliving its lane's removal included. Why deferred: finding either needs the daemon to look for processes it did not record itself (an environment marker or a process-table scan), and the user ruled that the daemon keeps its stance of never inspecting processes it did not start. The README's "What a crash can leave running" says so. Decisions 19-20 closed only the case whose pid the daemon's own launch recorded.
+- **E3: `RUN_REQUEST_TIMEOUT` (180 s, `cli/src/run_cmd.rs:29`) is shorter than six git calls at the default 60 s timeout** (line 1914), so the CLI can time out while the daemon still answers. Not one line: the right bound is six times the configured `git_timeout_secs` (up to 600 s each, `config/src/orchestrator.rs:277-283`), which the CLI does not read today, and a constant big enough is an hour. Note that the client restates the 180 s in `tui/src/app/alerts_dropped.rs` (`RUN_REQUEST_SECS`); `cli/src/run_cmd/adapt.rs`'s `the_clients_restated_run_request_timeout_is_the_clis` fails if the two drift.
+- **E5-E24 (except E1, E2, E4, done) were not taken**: none is a one-line fix (protocol, engine semantics or several files), and E15 and E19 also need a ruling. Each stays open where this file already records it:
+  - E5, restart id reuse: a stale `Output` or `Title` event, or an `anthrex hook` payload, can relabel a freshly restarted window; it needs a generation counter (lines 307-334; protocol).
+  - E6, a conversation `from_rev` is meaningless across a daemon restart; latent while the TUI always sends `None` (lines 644-656).
+  - E7, a failed Claude `headless_send` leaves its turn recorded, so the next result is classed `Unprompted` (lines 1180-1186).
+  - E8, a task returning to `Working` takes a writer slot without a cap check, so `max_writers` can be exceeded (lines 1211-1218, 1926).
+  - E9, a failed task prepare leaves its branch and a partial checkout until discard, and a task cancelled in that state is never cleaned (line 1924).
+  - E10, two `candidate_done` arms move a stage head without the late landing judgment, and a stage above that closes does not cancel a lower stage's fixes (lines 1973-1974).
+  - E11, a tier-3 red on a closed stage still bisects and adds a fix task; a CI bisect on a merged top stage runs its remaining probes (lines 1970, 1961).
+  - E12, `sync::live` treats an empty declared stage as live, so a merged stage's fixes keep running (line 1956).
+  - E13, `open_roster` and plan rule 9 disagree after a runtime move, so a bisect can return an error and fall back to the default route (line 1955).
+  - E14, rung 4's ceiling floor uses the class budget, not the task's own budget (line 1918).
+  - E15, `accept_red` is allowed while a fix on that head is in flight (line 2050); needs a ruling.
+  - E16, a design budget halt is recognised by matching its reason text (line 2059).
+  - E17, phase times include daemon downtime and pauses, which skews refits and estimates (lines 1485-1493, 1900).
+  - E18, a Codex usage limit is retried every `rate_limit_retry_secs` until its stated reset, which can be dozens of doomed turns (lines 744-760, 1899).
+  - E19, a settings refusal says "reopen C-b S" but reopening does not clear it; migrated Haiku `low` logs an effort warning on every run (lines 2036-2037); needs a ruling.
+  - E20, `WindowEvent::Exited` is not ordered after the window's final output (lines 1584-1593).
+  - E21, the main pane can switch to a new window while the new-agent form is still swallowing keys (lines 1562-1574).
+  - E22, a late `McpReady` from a superseded orchestrator session releases the new session's first turn too early (line 1908; argv and wire).
+  - E23, disk leaks: empty `/tmp/ax-<uid>/<hash>` task temp directories, stray tier step directories, `tuning.toml.bad-*` and an ever-growing `history.jsonl` (lines 1519-1524, 1737, 1901, 1913, 1530).
+  - E24, `wrap` measures characters while dialog boxes are sized in display columns, so CJK paths draw misaligned boxes (lines 188-191).
+- **The pre-bind allowance is an allowance, not a bound** (decision 31). The client's daemon start waits `daemon::LOCK_WAIT` (5 s) plus `tui::spawn::PRE_BIND_ALLOWANCE` (5 s); nothing bounds what the daemon does before it binds (loading its state and config, restoring its runs, whose reconcile makes git calls). A pre-bind phase longer than the allowance makes the client report `the daemon did not start within 10 s` although the daemon comes up later, and once the spawn marker (`<data>/daemon.spawning`, fresh for `PRE_BIND_ALLOWANCE`) has aged, a second waiting client spawns a second daemon, which yields to the first. A bound on the pre-bind work, or a daemon that binds before it restores, would close it.
+- **Category F stays out** (the user's ruling R1): TUI features and polish, engine features, refactors (the files at or over 600 lines included: `run/git/mod.rs` at exactly 600, `run/engine/signals.rs` 598, `daemon/tests/git_registry.rs` 608) and the accepted `u32::MAX` id.
+- **The manual checks are outstanding**: milestone 9.11's own ("Manual check": `less` and `vim` after a re-attach, typing during a wake-up, `daemon stop` leaving no process) and those of 9.8, 9.9 and 9.10 above. They need the real `claude` and `codex` and a person, before the `v0.2.0` tag.
+
+### Closed by milestone 9.11
+
+Entries above that this milestone fixed; each stays where it is, for its history.
+
+- Milestone 9.9's "a digest read marks every wake note answered" (A8, decision 6), "the module-graph temp file can collide" (C1/E1, decision 37; the 9.9 gate's graph and tier flakes listed beside it are likely the same cause) and "the orchestrator can cancel and replace a user-only-blocked task" (A5, decision 5; `split_task` is refused too).
+- Milestone 9.10's "a dropped goal raises no alert" (A7, decision 22): the alert is raised by the client, with no protocol change, for the client session that saw the goal leave; a client started later sees the drop only on the Profile screen and in `profile status`, as before.
+
+### Stream D
+
+- **`restore.rs`'s `restore_runs` keeps the stepped state when `prepare` panics twice** (M9.11.8): decision 8 restores the pre-step state in the event loop only. Close to unreachable; `restore.rs` is in no stream.
+- **Hiding old runs can make an ambiguous run-id prefix resolve** (D10-M2): once runs past the 50 newest finished leave the list, a prefix that used to match two runs can match the one still listed. Low risk with anthrex's run ids.
+- **`fit_frame` encodes every snapshot one more time** (D10-M3), CPU only; cache the size if it ever shows in a profile.
+- **The live-only snapshot rule's `error` log line is not asserted** (D10-M4): the lib tests capture no logs.
+
+### Stream E
+What stream E's review left open, each detailed under "Stream E notes" in `docs/milestones/M9.11-stabilization.md`.
+
+- **A message in flight to a session a rung kills is dropped** (review m5; needs a ruling): `ladder::kill_worker`'s `supersede` removes a task's delivered-but-unconfirmed outbox messages when rung 2, 3, 4 or a lane out stops its session, so a `Deliver` whose `Delivered { ok: false }` comes after the kill finds nothing to queue again, and its text never reaches the next session. Decision 4 carries in-flight texts only for a failed resume (`outbox::resumed`). The window is the `Deliver`'s round trip (normally milliseconds). Carrying them into the rung's fresh session (or keeping them, for a blocked task) would close it.
+- **A long `SANDBOX_UNAVAILABLE` reason plus a sandbox note can lose the note's `USERNS_HINT`** when the reason is cut to its length limit (review m2's remainder, left as it is). Cut the reason before appending the note.
+
+### Stream G
+
+From the stream G review and its fix round 1.
+
+- **A3's last window (review m16).** `run/reconcile/git.rs::remove_worktree` (gone-checkout branch, `:457-468`) removes a deleted checkout's repository without `salvage_gone` when the daemon died inside that `RemoveWorktree`. Safe fix: when the repository's `HEAD` file holds a commit id and the op's `salvage_ref` does not exist, return `Reconciled::NotStarted` instead of `remove_dir_all(repo)`; the re-emitted op is idempotent (`salvage_gone` replays or creates the ref, then removes). Needs both the user's hand deletion and a crash inside that op.
+- **Identity resolved in the common git directory (m1).** `checkout::identity` runs `git config --get` in `<common>`, not in `root` as decision 15 says; they differ only for a linked-worktree root (`onbranch:` conditions, patterns matching `worktrees/<id>`). Passing `root` into `ensure` needs `run/git/worktrees.rs`.
+- **The run's data directory must stay readable to every task session (m2).** git treats an unreadable include target as fatal, and each task config includes `<repo>/engine/identity`; a future `deny_read` covering it would break every git command in the checkout. Say so beside the `deny_read` builders (`headless/argv.rs`).
+- **The window probe has no pin re-check after its call (m3).** `git/probe.rs:45-80` checks before only; display-only output, so harmless; add the after-check (return `None` on refusal) for parity with decision 16.
+- **A planted-and-removed `commondir`/`shallow` during a call (m4).** `GIT_COMMON_DIR` and (fix round 1) an empty `GIT_SHALLOW_FILE` neutralise both for a standalone checkout; a linked checkout's call still relies on the before/after checks.
+- **The grant's TOCTOU to the sandbox's bind (m7).** Between the grant's lstat refusal/placeholders and the sandbox's bind-mount at launch, only a leftover process holding an earlier grant of the same git directory can act; it cannot replace a denied entry (a mount point: `EBUSY`) and a `commondir` it creates is refused by `pinned::check`. Denial of service at most.
+- **Ignored nested repositories are not candidates (m12).** `ls-files --others --exclude-standard` drops ignored untracked directories, so a nested repository under an ignored path (`vendor/`, a `.gitignore`d clone) goes with the checkout, as today's salvage keeps no ignored file. Listing `--others --ignored --exclude-standard --directory` entries that hold a `.git` would keep them.
+- **The "kept" text's route (m13).** Decision 14 says "the run log says"; the text reaches the user as the op's error in the task history (`could not remove its worktree: kept …`). A run-log line would match the decision's wording.
+- **The Linux watcher after an inotify overflow (m14b).** Directories created during a queue overflow (`need_rescan`) are never watched; re-plan from the root on a rescan event.
+- **A rename's source forwarded before its target is watched (m15).** For `Modify(Name(Both))` inside the root, the vanished source path sets `accepted` and the event is forwarded before the adder watches the target (the adder forwards again afterwards; no state is lost). Skip forwarding when the only accepted non-directory path is a rename's source whose target went to the adder.
+- **Reflog-only commits in a nested repository (m11, part).** The probe counts `HEAD`, every ref, and (fix round 1) each linked worktree's `HEAD`; a commit reachable only from a reflog is not counted.
+- **Remote-tracking tips count as saved (fix round 1, I3).** In a nested repository or submodule, a commit equal to a `refs/remotes/*` tip, or to the gitlink the checkout records, is taken as kept elsewhere; a worker that forges a remote-tracking ref in a repository it made can only hide its own work.
+- **`restore_owner_access` on a system whose `fchmodat` cannot honour `AT_SYMLINK_NOFOLLOW` (fix round 1, I5).** glibc before 2.32 (or a newer one without `/proc` on a kernel before 6.6) refuses to open up a directory locked with no owner access; the removal fails and the checkout is kept. A descriptor-only change (`O_PATH` plus `/proc/self/fd`) was not taken: the milestone's verification forbids `/proc/` in new daemon code, and where `fchmodat2`'s `AT_EMPTY_PATH` exists glibc already honours the flag.
+- **The production Linux watcher has not run outside CI (I6).** nexus1 was unreachable from the implementer's machine on 2026-10-10 (`ssh: connect to host 192.168.0.199 port 22: Operation timed out`, and no reply to ping); the PR's ubuntu job is its first run. Stress `git::watch` and `git_registry*` there before a release that depends on it.
+
+- **An empty nested repository blocks its checkout's removal** (stream G followup 3): today's salvage fails on a nested repository with no commit (`git add -A`: `'<dir>/' does not have a commit checked out`), so such a checkout can be neither salvaged nor removed without the user's help.
+- **One `salvage_gone` with a `keep_head` flag (fix round 2, n7).** `salvage_gone_keeping` repeats `salvage_gone`'s `Pin` setup and runs `common_dir` and `head_file` a second time. Folding it into `salvage_gone` as a parameter would remove the duplication.
+- **A nested `.git` that git does not take for a repository is not a candidate (fix round 2).** One example is a `HEAD` whose `ref:` lies outside `refs/`.
+  - `ls-files --others` then recurses into the directory and skips `.git`, so only its working files are salvaged. Any commits in its object store go with the checkout.
+  - Git itself cannot open such a repository either.
+  - A walk for `.git` entries that keeps the checkout when any of them is unrecognised would close the gap.
+- **Stream G's final re-review minors** (fix round 2, all non-blocking):
+  - **An intermediate directory of a ref path can be swapped.** `O_NOFOLLOW` covers only the last component, so a worker-left process could swap a directory in the path for a link to `/dev`. With `O_NOCTTY|O_NONBLOCK` and the regular-file check, the effect is an open and a close of the device: nothing is read and no controlling terminal is taken. An `openat` walk from the nested `.git` descriptor would close it.
+  - **No test pins the 10,000-entry cap of the refs and worktrees walk (n3), or that `restore_owner_access` changes a mode only when the owner lacks a permission (n4).**
+  - **The legacy-config bytes test does not cover `quoted`'s escaping**, which is shared with the current config writer rather than frozen with the 0.1.x text; a change to `quoted` would change what the legacy check accepts.
+
+### Stream P
+
+- **The `Orphan` and `ps` test helpers are copied** (about 90 lines) from `daemon/tests/run_journal/sessions.rs` into `daemon/tests/reconcile_journal_pid.rs`. Move them into `daemon/tests/support/` (stream C's file during 9.11, so not done there).
+- **No start-time identity check on a recorded or journaled pid** (decision 20 and M9.11.20 forbid a new check). The residual: a reused pid whose new owner is an orphan of the same uid carrying the same session UUID as a whole argv element. It is the same as for a `run.json` pid today.
+
+### Stream T
+
+- **Three client clocks are still read directly** (review M1, M2; files outside stream T): `app/toast.rs:42` stamps a toast with `Instant::now()` (its expiry reads the injected `now`), and `app/replies.rs`'s `expire_replies` and `app/link.rs`'s `check_stopping_timeout` read the real clock inside `on_tick_at`. Stamp with the tick's instant and pass `now` through, as decision 23 does for the rest.
+- **An expired background `profile status` shows the generic no-reply toast** (review M8, raised by the re-review's N2): `app/replies.rs` does not count a dropped-goal Status as owned, and the dropped-goal wait re-asks every second or so, so a slow daemon can repeat that toast every few seconds. Raise its priority.
+- **The dropped-goal wait re-asks on every snapshot** (N1): a goal that left the queue for a reason other than a start (removed, cancelled, a hand-edited queue) has neither a run nor a drop, so its project is asked about at most once a second for up to 1220 s times its position. The rate is the controller's ruling; a growing gap (doubling per ask, 1 s floor) would tighten it.
+- **`the_wait_ends_silently_at_its_bound` does not show the wait alive one second before its bound** (N4): the `bound - 1` snapshot sees no ask only because the first ask is still in flight. `a_goal_behind_another_waits_two_budgets` pins the multiplier; only position 1's last second is not pinned.
+- **Two queued goals with one text in one project, one started and one refused in the same snapshot** (M9): the run matches both, so the refusal is not asked about and raises no alert. Decision 22's own matching rule, kept.
+
+### Stream S
+
+- **`RETRY_WINDOW` (30 s) is nearly filled at worst-case timings** (S28-m2): `daemon stop`'s 19 s and `daemon start`'s 10.25 s now nearly use the whole reconnect window of stage 11 of `pty-smoke.py`.
+- **No full-screen repaint stand-in test** (S26-m1, optional): `server_winch.rs` proves the nudge's `SIGWINCH` with a trap, not a program that redraws.
+- **`cli/tests/support/mod.rs`'s `anthrex()` waits a literal 3 s `finish`.** It is not a start wait, so M9.11.28b left it; derive it if it ever fails.
+- **`daemon/tests/server/worktree.rs`'s `a_create_runs_to_completion_after_its_client_disconnects` and `list_is_answered_while_a_create_is_running`** failed 3 of 4 runs under the macOS first-exec stall, on the base binary as often as on stream S's (`timed out waiting for git to reach the checkout hook`, 20 s). The stand-in's first exec is paid inside the bound; a warm-up, as M9.11.36 and .38b did, would remove it.
+
+### Stream X
+
+From the stream X review and the M9.11.33b review.
+
+- **More tokens are still visible to checks** (X-M5). Decision 32's list is binding for 9.11, so it was not widened. `crates/config/src/reserved_env.rs`'s `CHECK_SECRET_NAMES` and `CHECK_SECRET_PREFIXES` still let checks, proofs, `setup` and tier steps inherit at least:
+  - `SSH_AUTH_SOCK` (a check can push with the user's keys)
+  - `CI_JOB_TOKEN`, `GITLAB_PRIVATE_TOKEN`, `HOMEBREW_GITHUB_API_TOKEN`, `VERCEL_TOKEN`, `SENTRY_AUTH_TOKEN`, `GOOGLE_API_KEY`
+  - `KUBECONFIG`
+
+  Widening the list needs a ruling, since each name can break a user's check (`ANTHREX_CHECK_ENV_PASS` passes one back). `SSH_AUTH_SOCK` in particular is a socket, not a secret value.
+- **Token sums outside `TokenUsage::billable` still use plain addition** (X-M7). B8 made `billable()` saturate. These still use `+` or `+=`:
+  - `crates/daemon/src/run/engine/design_agents.rs:297`
+  - `crates/daemon/src/run/engine/design_reviewer.rs:244`
+  - `crates/daemon/src/run/engine/design_spend.rs:94`
+  - `crates/daemon/src/scout/machine.rs:318`
+
+  A huge or hostile usage report can overflow them: a panic in a debug build, a wrap in a release one. Fix direction: `saturating_add`, as `billable()` does.
+- **The profile service's `blocking` helper has no timeout** (33b review m4, pre-existing; `crates/daemon/src/profile/service.rs`'s `blocking`, which wraps `spawn_blocking`). A stalled file write or fsync holds the project's `writes` lock indefinitely, and hard rule 2 asks for a timeout. `save_if_current`'s failure branch adds a second untimed call. Fix direction: a bound on each call. It needs care, because the write can still land after the timeout fires, so memory must be noted from what the file holds afterwards.
+- **A failed proposal save still reports `true`** (33b review m7, pre-existing; `profile/service_run.rs`'s `save_if_current`). The detection carries on to `after_ready` and unregisters while `proposal.json` stays at its last saved state (for example `Verifying`). `running()` then reports it in progress until a restart's `restore` fails it.
+- **Write-then-note and delete-then-note paths keep a short reverse gap** (33b review m6). In `service_edit.rs`'s `save_over` and `verify_row_edit`, the file's `updated_at` can run ahead of the snapshot. In `store_ready` and `reject`, the snapshot can list a ready proposal for one write after the file shows it stored or gone. No reader acts on it today. It matters only if a client starts keying on `updated_at`.
+- **A failed proposal write can move the ready and set-up generations twice** (33b review m2, not applied): a client can see a `Ready` alert appear and then be withdrawn, and a failed reload after it falls back to `None`. Restoring the exact earlier memory needs the table's previous entries kept across the write (more code in `service.rs`).
+- **The skip text for a hand-edited `format` still says "written by a newer anthrex"** (33b review m5, not applied): a `null` or `"2"` format is skipped with decision 36's template, which names a newer anthrex though none wrote it.
+
+### Stream C
+
+- **Two unattributed stress failures.** Under 20 rounds of 12 parallel copies, `status_codex::a_screen_drawn_in_two_writes_is_scanned_whole` failed once (`(Working, false)` in `signalled` after 5 s, with copies running about ten times slower than alone); two early whole-file runs of `profile_queue.rs` failed without a log. Neither recurred in the logged runs since.
+- **M9.11.38c's Linux re-exec has run only on CI** (nexus1 unreachable): `manager/lifecycle.rs`'s `shutdown_waits_for_cleanup_after_the_group_leader_exits` now asserts `running 1 test` in its child; the PR's ubuntu job is its first Linux run.
+
+### The machine, across every stream
+
+- **macOS's first-exec stall still fails stand-in tests in bulk under load.** With XProtect busy, the first exec of a freshly written script took 11-48 s on the implementers' machine while other streams built; every test that execs a fresh stand-in inside its bound (git wrapper scripts, warm-up-less rigs) then failed together, 25 to 43 at a time, and passed once the load fell. Milestone 9.11 warmed the rigs it owned (M9.11.36, .38b, the CLI harness's `warm_anthrex`); `docs/timing-budgets.md` records the pattern and its earlier warm-up fixes. A shared warm-up helper for every stand-in writer would retire the pattern.

@@ -510,7 +510,7 @@ fn summary_prints_the_built_ins_and_the_degradations() {
     assert_eq!(
         text,
         "languages: rust\n\
-         protected: built-in .claude/**, .mcp.json, .codex/**, **/CLAUDE.md, **/AGENTS.md + .cursor/**\n\
+         protected: built-in .claude/**, .mcp.json, .codex/**, **/CLAUDE.md, **/AGENTS.md, **/AGENTS.override.md, **/CLAUDE.local.md, .agents/** + .cursor/**\n\
          setup: none\n\
          check: none (runs are unverified)\n\
          single test: none (tdd is impossible; code tasks use check)"

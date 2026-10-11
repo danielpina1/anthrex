@@ -7,9 +7,23 @@ release is a pre-release and any release may change behaviour or the protocol.
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-10-11
+
 The protocol version is now 21 (19 for model roles, 20 for orchestrator-first alerts, 21
 for the simple repository profile): a client needs a daemon of the same release. Stop
-the old daemon (`anthrex daemon stop`) after upgrading.
+the old daemon (`anthrex daemon stop`) after upgrading. The stabilization work (milestone
+9.11, under "Fixed") leaves the protocol unchanged (21).
+
+**Upgrading.** Runs in flight keep working across the upgrade. Task checkouts made by
+0.1.x are accepted as they are; each one picks up your git identity at its next fresh
+session (see "Task checkouts commit as you" below).
+
+**Downgrading.** Every `run.json` this release writes records its format (`"format": 1`).
+A run written by a newer anthrex (a higher format, or one that is not a whole number) is
+skipped with `run <id> skipped: written by a newer anthrex (run format <n>; this one reads
+up to 1); left as it is`, and its directory is never rewritten. Releases before 0.2.0
+lack this guard: a 0.1.x daemon loads a 0.2.0 run and can drop the fields it does not
+know when it saves it again. Finish or discard your runs before downgrading below 0.2.0.
 
 ### Added
 
@@ -120,6 +134,127 @@ the old daemon (`anthrex daemon stop`) after upgrading.
   Do not downgrade anthrex with a run in flight: older daemons ignore the new read-only
   list.
 
+Stabilization (milestone 9.11), no new features. The protocol is unchanged (21).
+
+**Data loss**
+
+- **The run list never outgrows a frame.** Clients get every live run and the 50 newest
+  finished runs; a snapshot still too large for one frame drops its oldest finished runs
+  first. Before, a long-lived daemon with many finished runs stopped sending runs to its
+  clients at all. Older runs stay on disk, untouched (A1).
+- **A worker's waiting messages survive its replacement.** A session replaced at rung 2,
+  a task blocked at rung 3 or 4, the last race lane (the one adopted after the other ran
+  out) and a retried task keep their queued messages for the next session, which gets
+  each one once. A lane stopped while the other lane races on still drops its own (A2).
+- **A failed resume keeps a message that was delivered but not yet confirmed** (A4).
+- **A task checkout deleted by hand is salvaged.** Its commits are imported from its
+  repository and kept under a salvage ref before the repository is removed. One window
+  is left: if the daemon dies inside that removal, the restore can still remove the
+  repository without salvaging it (A3).
+- **The orchestrator can no longer cancel or split a task blocked for you**; it gets the
+  refusal `retry` already gave (A5).
+- **A queued goal that could not start raises an alert**, `could not start "<goal>":
+  <reason>`; Enter opens the Profile screen (A7).
+- **Reading the wake digest answers only the notes it held**, so a newer note still
+  restarts the orchestrator's stall clock (A8).
+- **Keys you type during a wake-up are not submitted with it.** If you type in the
+  orchestrator window while a wake-up note is being pasted, the note is left in the
+  input for you to submit (A9).
+- **A worker's broken sandbox is named** in the task's next block, stall or failure
+  reason, with the fix, as scouts already did; nothing new is blocked (A10).
+- **A lagged session feed is caught up**, so a burst of output never loses a turn end or
+  an exit the engine was waiting for (A12).
+- **A run written by a newer anthrex is never rewritten** (A13; see "Downgrading" above).
+- **A task checkout that holds a nested git repository with unsaved work is kept**, with
+  `kept <path>: it holds a nested git repository (<sub>) whose work anthrex cannot
+  salvage; remove it yourself when done`. Initialized submodules are checked the same
+  way (A14).
+- **Task checkouts commit as you.** They now commit with the identity your repository
+  resolves, `includeIf` included. A run in flight across the upgrade keeps working; each
+  of its checkouts picks the identity up at its next fresh session (A15).
+- **A session's transcript is learned from any hook** after a missed `SessionStart`, so
+  the conversation view still finds it (A16).
+
+**Crashes and hangs**
+
+- **A panic in the run engine costs one event, not the engine.** A request waiting on it
+  is answered `the run engine failed while carrying out this request (a bug; see the
+  daemon log); the run may not match what was saved`, and the engine keeps running. A
+  step that panics twice is rolled back in memory (B1, B3).
+- **`anthrex daemon stop` leaves no daemon process behind** when a blocking task is
+  stuck: the process exits about 2 s after it releases its lock (B2).
+- **Shutdown waits for a worktree removal under way** (B4).
+- **Briefs are capped where the daemon checks them**: 1,000,000 characters per brief,
+  4 MiB for a plan's briefs together (B5).
+- **A leftover session whose process id only the journal held is stopped at restore.** A
+  launch's process id is now journaled even while the daemon stops (B6, the cases that
+  need no process scan; see the README's "What a crash can leave running").
+- **Starting the client behind a stopping daemon works.** The client's daemon start
+  waits 10 s (the daemon's own 5 s lock wait plus a 5 s allowance for loading), claims
+  the start again while it waits, and spawns the daemon itself when it wins. A
+  `<data>/daemon.spawning` marker, fresh for 5 s (`PRE_BIND_ALLOWANCE`), keeps two
+  waiting clients from both spawning one (B7).
+- **Token totals saturate instead of overflowing** (B8).
+- **The force-remove dialog lists its safe keys first** (`n`, `k`, then `f`), so a
+  clipped dialog never shows only the destructive one (B9).
+- **Profile writes to one repository no longer wait for another's** (B11).
+- **Git watches on Linux skip what anthrex ignores** (`objects/`, `lfs/`, ignored and
+  denied directories): each kept directory is watched on its own, so a large repository
+  under a low `max_user_watches` is less likely to fall back to the 30 s poll (B12).
+- **`profile status` no longer shows a proposal ready before the client does**: the
+  daemon notes it in memory before it writes it.
+
+**Flaky tests** (each with a reproduction that failed before its fix where one could be
+built; see the two exceptions noted below)
+
+- The module-graph capture file never collides; two tier jobs in one instant no longer
+  fall back to a full run (C1, E1).
+- The restart-endpoint test reads the endpoint once it is written, not once the file
+  exists (C3).
+- The Codex question rig warms its stand-in and waits for the whole screen (C4). The
+  warm-up matches the observed failures but could not be reproduced by injection.
+- Git test bounds include the watcher's arming, which has no bound of its own (C6, C10).
+- The persisted session id test waits for a record that holds one (C7).
+- A zombie no longer counts as a live process in the headless-session tests (C8).
+- The profile queue's restart test waits for the first scout to claim its script (C14).
+- The wake first-turn rig warms its stand-in before any window starts. Its stress run
+  passed 239 of 240 copies; the one failure, in `status_codex`, is unattributed.
+- A Linux test that re-ran itself under the wrong name, and so ran nothing and passed,
+  now runs its body.
+
+**Security and isolation**
+
+- **Checks do not see your tokens.** Checks, proofs, `setup` and tier steps no longer
+  inherit cloud and registry tokens (`GITHUB_TOKEN`, `GH_TOKEN`, `NPM_TOKEN`, `AWS_*` and
+  the rest listed in the README); `ANTHREX_CHECK_ENV_PASS=NAME,...` in the daemon's
+  environment passes one through. A check that relied on one fails until you pass it
+  (D3).
+- **`AGENTS.override.md`, `CLAUDE.local.md` and `.agents/**` are protected** like the
+  other agent instruction files (D6).
+- **The conversation view drops hidden format characters** (D2), and **`run status`**
+  drops them from reasons (D7).
+- **The Linux worker grant refuses a symbolic link at a denied path** (`the checkout's
+  git directory has a link at <name>; anthrex will not grant it`) instead of replacing
+  it, and every daemon git call in a task checkout checks the checkout's pin again after
+  the call (D8).
+- **Restoring a checkout's permissions walks by open directory**, never through a path
+  re-resolved after a step, so a swapped-in link is left alone (D9).
+- Your own agent windows keep inheriting `CLAUDE_CODE_*`, `MCP_*` and `OTEL_*`; the
+  README now says so (D1). `worker_sandbox = false` is documented as giving workers your
+  full power, approving their own review included (D5).
+
+**Terminal input and small fixes**
+
+- **Attaching repaints a full-screen program** (`less`, `vim`): an attach at the window's
+  own size nudges its size, so the program redraws.
+- **The wheel follows the program**: the mouse encoding it asked for (SGR, X10, UTF-8),
+  or arrow keys in a full-screen program without mouse reporting.
+- The paste boundary policy is documented in the README ("Pasting").
+- A dialog opened while the prefix is pending clears it, so the next key is not read as
+  a command (E2).
+- Saving settings keeps a `config.toml` link to a file not yet created (E4).
+- The plan review no longer lists a task among its own dependencies (E25).
+
 ## [0.1.2] — 2026-10-07
 
 The protocol version is now 18: a 0.1.2 client needs a 0.1.2 daemon. Stop the old
@@ -224,7 +359,8 @@ see [docs/install.md](https://github.com/danielpina1/anthrex/blob/main/docs/inst
 - macOS and Linux only. anthrex runs `claude` and `codex` as installed on your
   machine; it does not ship or install them.
 
-[Unreleased]: https://github.com/danielpina1/anthrex/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/danielpina1/anthrex/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/danielpina1/anthrex/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/danielpina1/anthrex/releases/tag/v0.1.2
 [0.1.1]: https://github.com/danielpina1/anthrex/releases/tag/v0.1.1
 [0.1.0]: https://github.com/danielpina1/anthrex/releases/tag/v0.1.0

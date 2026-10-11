@@ -14,8 +14,15 @@ use support::TestDaemon;
 /// Design decision 9 (state persistence) meeting milestone 3's hook path: a session id
 /// `AgentState::on_hook` learns from a real `SessionStart` hook — fired by a real
 /// `anthrex hook` child, not injected directly — reaches `state.json` through the
-/// manager's `watch()` → `spawn_persister` pipeline within `SAVE_DEBOUNCE` (100ms) of the
-/// change, so 2s is a wide failsafe over that real cost, not the expected one.
+/// manager's `watch()` → `spawn_persister` pipeline.
+///
+/// M9.11.38 (C7): the window's record is in `state.json` from its creation, before the
+/// hook, so the test waits until the record holds a session id, then asserts it is the
+/// one `WindowInfo` has; it used to assert on the first record found, which could be
+/// the creation's, with no session id yet, inside the hook's save debounce. The bound
+/// is derived: the persister writes within `SAVE_DEBOUNCE` of the last change, and
+/// never later than `SAVE_MAX_DELAY` after the first unwritten one, however the window
+/// keeps changing; then one small fsynced write; plus [`SAVE_SLACK`].
 ///
 /// The fake-agent script fires `SessionStart` and then blocks on `read_line`, mirroring
 /// milestone 3's own convention (`crates/cli/tests/claude_status.rs`'s `turn_script`) —
@@ -38,24 +45,31 @@ fn session_id_learned_from_a_hook_is_saved() {
         .expect("checked by wait_window's predicate above");
 
     let state_path = daemon.data_dir().join("state.json");
-    let deadline = Instant::now() + Duration::from_secs(2);
+    let within = daemon::state::SAVE_MAX_DELAY + SAVE_SLACK;
+    let deadline = Instant::now() + within;
     loop {
         let (loaded, _problems) = daemon::state::load(&state_path);
-        if let Some(record) = loaded.windows.iter().find(|w| w.id == id) {
+        let saved = (loaded.windows.iter())
+            .find(|w| w.id == id)
+            .and_then(|record| record.session_id.clone());
+        if let Some(saved) = saved {
             assert_eq!(
-                record.session_id.as_deref(),
-                Some(session_id.as_str()),
+                saved, session_id,
                 "state.json's session id must equal WindowInfo's, not merely be non-null"
             );
             return;
         }
         assert!(
             Instant::now() < deadline,
-            "state.json never recorded window {id} within 2s"
+            "state.json never recorded window {id}'s session id within {within:?}"
         );
         std::thread::sleep(Duration::from_millis(20));
     }
 }
+
+/// Slack on top of the persister's own bound: the write and its fsync on a blocking
+/// thread, and this test's 20 ms polls, on a loaded host.
+const SAVE_SLACK: Duration = Duration::from_secs(5);
 
 /// Design decision 20: a live window's restart kills the old process and waits — up to
 /// several real seconds — for it to be gone, and that wait must never stop this

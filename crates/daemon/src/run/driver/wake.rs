@@ -90,15 +90,44 @@ fn encode_paste_within(text: &str, max: usize) -> Vec<u8> {
     [PASTE_START, &body, PASTE_END].concat().into_bytes()
 }
 
+/// What became of a wake-up's paste (decision 12 of milestone 9.11).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Delivery {
+    /// Pasted and submitted with its `\r`.
+    Submitted,
+    /// Pasted and left unsubmitted: the user typed into the window during the delay.
+    Unsubmitted,
+}
+
 /// Writes the paste, waits [`SUBMIT_DELAY`] holding nothing, then writes the `\r`.
 pub async fn deliver_wake(
     manager: &WindowManager,
     window_id: u32,
     paste: &[u8],
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Delivery> {
+    deliver_wake_with(manager, window_id, paste, SUBMIT_DELAY).await
+}
+
+/// [`deliver_wake`] with its delay given. Milestone 9.11 decision 12 (A9): when a
+/// client's input reached the window after the paste began, the `\r` is not written, so
+/// the user's keys are never submitted with the notes; the paste stays for them.
+pub(crate) async fn deliver_wake_with(
+    manager: &WindowManager,
+    window_id: u32,
+    paste: &[u8],
+    delay: Duration,
+) -> anyhow::Result<Delivery> {
+    let pasted_at = std::time::Instant::now();
     manager.write_input(window_id, paste)?;
-    tokio::time::sleep(SUBMIT_DELAY).await;
-    manager.write_input(window_id, b"\r")
+    tokio::time::sleep(delay).await;
+    if manager
+        .last_client_input(window_id)
+        .is_some_and(|at| at >= pasted_at)
+    {
+        return Ok(Delivery::Unsubmitted);
+    }
+    manager.write_input(window_id, b"\r")?;
+    Ok(Delivery::Submitted)
 }
 
 /// One run's wake-up, waiting for its window.
@@ -401,7 +430,10 @@ impl RunService {
             let woken = delivered.is_ok() && !service.stopped.load(Ordering::SeqCst);
             service.wakes.delivered(&run_id, woken.then_some(&p));
             match delivered {
-                Ok(()) if woken => {
+                Ok(delivery) if woken => {
+                    if delivery == Delivery::Unsubmitted {
+                        tracing::info!(run = %run_id, window = p.window_id, "the user typed during the wake-up; it was pasted and left for them to submit");
+                    }
                     service.wakes.log_delivered(p.window_id, paste.len());
                     service.send(EventKind::Orch(OrchEvent::OrchestratorWoken {
                         run_id,
@@ -411,7 +443,7 @@ impl RunService {
                         first_turn: p.request == Some(FIRST_TURN),
                     }));
                 }
-                Ok(()) => {}
+                Ok(_) => {}
                 Err(error) => {
                     tracing::warn!(run = %run_id, window = p.window_id, %error, "the wake-up was not delivered");
                 }
@@ -450,3 +482,7 @@ mod exit_tests;
 #[cfg(test)]
 #[path = "wake_notes_tests.rs"]
 mod notes_tests;
+
+#[cfg(test)]
+#[path = "wake_submit_tests.rs"]
+mod submit_tests;

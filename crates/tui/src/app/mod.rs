@@ -4,7 +4,9 @@ use crate::dialog::{FormDefaults, NewAgentForm, RemoveConfirm};
 use crate::keymap::{Command, KeyAction, Keymap};
 use crate::settings::UiSettings;
 use crate::tree::{self, TreeState};
-pub use alerts::{Alert, AlertKey, AlertWho, AlertsFocus, StageAlert, alerts};
+pub use alerts::{
+    Alert, AlertKey, AlertWho, AlertsFocus, GOAL_START_BUDGET, RUN_REQUEST_SECS, StageAlert, alerts,
+};
 pub use alerts_route::{Route, RouteKind, alert_route, orchestrator_lives, route_kind};
 pub use asks::{answer_request, handled_line};
 pub use confirm::PendingAction;
@@ -198,6 +200,8 @@ pub struct App {
     /// closed dialog still waits on (its success clears that project's draft).
     pub goal_drafts: std::collections::BTreeMap<PathBuf, String>,
     goal_sent: Option<(u64, PathBuf, String)>,
+    /// Milestone 9.11 decision 22: the dropped queued goals' alerts, this session only.
+    pub(crate) dropped_goals: alerts::DroppedGoals,
 }
 
 impl App {
@@ -262,6 +266,7 @@ impl App {
             screen: None,
             goal_drafts: Default::default(),
             goal_sent: None,
+            dropped_goals: Default::default(),
             settings,
         }
     }
@@ -316,50 +321,6 @@ impl App {
     /// Focus this window as soon as it appears in the list (used for `Created` and `attach <name>`).
     pub fn request_focus(&mut self, id: u32) {
         self.pending_focus = Some(id);
-    }
-
-    /// The renderer calls this with the main inner area after every draw.
-    pub fn set_terminal_size(&mut self, cols: u16, rows: u16) -> Vec<Effect> {
-        // The conversation view draws in the same main area, so its interior is this
-        // size too; set before the early return so it is right from the first frame.
-        self.conversation.set_interior_width(cols);
-        if cols == 0 || rows == 0 || (cols, rows) == self.term_size {
-            return vec![];
-        }
-        let first = self.term_size == (0, 0);
-        self.term_size = (cols, rows);
-        self.parser.screen_mut().set_size(rows, cols);
-        if first {
-            return self.ensure_focus();
-        }
-        self.pending_resize = Some(Instant::now());
-        vec![]
-    }
-
-    fn ensure_focus(&mut self) -> Vec<Effect> {
-        if self.term_size == (0, 0) {
-            return vec![];
-        }
-        if let Some(id) = self.pending_focus
-            && self.windows.iter().any(|w| w.id == id)
-        {
-            self.pending_focus = None;
-            return self.focus(id);
-        }
-        if self.focused_window().is_some() {
-            return vec![];
-        }
-        match tree::focus_fallback(&self.rows(), 0) {
-            Some(id) => {
-                let effects = self.focus(id);
-                self.auto_focus = true;
-                effects
-            }
-            None => {
-                self.focused = None;
-                self.follow_no_focus()
-            }
-        }
     }
 
     pub fn focus(&mut self, id: u32) -> Vec<Effect> {
@@ -420,6 +381,9 @@ impl App {
     pub fn on_key(&mut self, key: KeyEvent) -> Vec<Effect> {
         self.forget_stale_panel_state();
         if self.modal.is_some() {
+            // Decision 24 (milestone 9.11): the modal takes this key, and the prefix
+            // pressed before it opened must not wait to turn the next one into a command.
+            self.keymap.clear_pending();
             return self.on_modal_key(key);
         }
         let app_cursor = self.parser.screen().application_cursor();
@@ -506,51 +470,6 @@ impl App {
             self.scroll_offset = 0;
         }
     }
-
-    /// Called every 100 ms: advances the spinner, expires toasts, retries a dropped
-    /// `Subscribe`, flushes a debounced resize.
-    pub fn on_tick(&mut self) -> Vec<Effect> {
-        self.ticked_at = Instant::now();
-        let mut effects = self.expire_replies();
-        effects.extend(self.screens_tick(self.ticked_at));
-        effects.extend(self.tick());
-        effects
-    }
-
-    fn tick(&mut self) -> Vec<Effect> {
-        self.spinner_frame = self.spinner_frame.wrapping_add(1);
-        self.forget_stale_panel_state();
-        if self
-            .toast
-            .as_ref()
-            .is_some_and(|t| t.at.elapsed() >= TOAST_TTL)
-        {
-            self.toast = None;
-        }
-        // Decision 36: the third of the three ways `C-b Q`'s wait can end — nothing
-        // arrived at all within `link::STOPPING_TIMEOUT`.
-        self.check_stopping_timeout();
-        let retries = self.retry_dropped_subscribes();
-        if !retries.is_empty() {
-            return retries;
-        }
-        if self
-            .pending_resize
-            .is_some_and(|at| at.elapsed() >= RESIZE_DEBOUNCE)
-        {
-            self.pending_resize = None;
-            if let Some(id) = self.focused_pty() {
-                let (cols, rows) = self.term_size;
-                return vec![Effect::Send(ClientMsg::Resize {
-                    window_id: id,
-                    cols,
-                    rows,
-                })];
-            }
-        }
-        // Decision 23: the inspected task's detail, once per task and key.
-        self.check_task_detail().into_iter().collect()
-    }
 }
 
 pub(crate) mod actions;
@@ -592,6 +511,7 @@ pub(crate) mod screens;
 pub(crate) mod settings_screen;
 pub(crate) mod stats;
 pub(crate) mod task_detail;
+mod tick;
 mod toast;
 mod windows;
 

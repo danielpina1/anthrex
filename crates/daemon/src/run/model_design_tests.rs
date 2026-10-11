@@ -44,6 +44,12 @@ fn an_old_run_json_loads_with_design_off() {
     }
     // `save_and_load` moved the run's data directory under the temp dir.
     again["data_dir"] = captured["data_dir"].clone();
+    // Milestone 9.11 decision 36: a save stamps the run format, which the old file lacks.
+    let format = again.as_object_mut().unwrap().remove("format");
+    assert_eq!(
+        format,
+        Some(serde_json::json!(crate::run::journal::RUN_FORMAT))
+    );
     // Milestone 9.8 (task M9.8.13): the roster, the scouts' routing keys and the model
     // lists are no longer part of the run; the rest is written back as 9.5 wrote it.
     let mut captured = captured;

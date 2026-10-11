@@ -454,8 +454,8 @@ fn codex_probe_does_not_wait_forever_for_inherited_stdout() {
 }
 
 /// Fix wave 4, item 1 (M6.5 review, Critical 1): the socket bind must never wait on the
-/// codex version probe. `spawn::ensure_daemon` gives up waiting for the socket after 3 s;
-/// the probe's own budget is 5 s. A `codex` that answers `--version` anywhere in that gap
+/// codex version probe. `spawn::ensure_daemon` gave up waiting for the socket after 3 s
+/// then (10 s since milestone 9.11's decision 31); the probe's own budget is 5 s. A `codex` that answers `--version` anywhere in that gap
 /// — a real shim, a cold page cache, a slow filesystem — must not fail `anthrex daemon
 /// start`, because the daemon is in fact starting up fine.
 ///
@@ -476,9 +476,10 @@ fn codex_probe_does_not_wait_forever_for_inherited_stdout() {
 #[test]
 fn daemon_start_does_not_wait_on_a_slow_codex_probe() {
     let dir = tempdir();
-    // Longer than `ENSURE_DAEMON_SOCKET_WAIT` (3 s), which is the wait this test's first
-    // assertion is about, and still inside `CODEX_PROBE_TIMEOUT` (5 s), so the probe ends
-    // by finishing rather than by being killed (see `PROBE_STALL`).
+    // Longer than the old `ENSURE_DAEMON_SOCKET_WAIT` (3 s), and still inside
+    // `CODEX_PROBE_TIMEOUT` (5 s), so the probe ends by finishing rather than by being
+    // killed (see `PROBE_STALL`). The last assertion compares `daemon start` with this
+    // stall itself (decision 31, pre-flight P6).
     const SLOW_PROBE_STALL: Duration = Duration::from_secs(4);
     let bin = ordering_codex(dir.path(), SLOW_PROBE_STALL);
 
@@ -488,7 +489,14 @@ fn daemon_start_does_not_wait_on_a_slow_codex_probe() {
         .env("ANTHREX_CONFIG", dir.path().join("config.toml"))
         .env("PROBE_DIR", dir.path());
     let started = Instant::now();
-    let output = RunningCommand::start(&mut command).finish(Duration::from_secs(6));
+    // `daemon start`'s own legal worst case: `SPAWN_HANDOFF_GRACE` (0.25 s, private to
+    // `tui::spawn`) + `ENSURE_DAEMON_SOCKET_WAIT` (10 s, imported), plus the spawn slack.
+    // It was 6 s, under the new 10 s wait (decision 31).
+    let output = RunningCommand::start(&mut command).finish(
+        tui::spawn::ENSURE_DAEMON_SOCKET_WAIT
+            .saturating_add(Duration::from_millis(250))
+            .saturating_add(WALL_CLOCK_SLACK),
+    );
     let elapsed = started.elapsed();
 
     // Whatever the assertions below find, do not leave a detached daemon behind: even
@@ -539,16 +547,14 @@ fn daemon_start_does_not_wait_on_a_slow_codex_probe() {
         "anthrex ls took {ls_elapsed:?}, the stub's whole stall — the probe was killed at \
          its budget rather than outrun, so the assertion above proved nothing",
     );
-    // Whole-branch-review m19: `< 3s` used to be a bare literal, independently typed
-    // from `spawn::ensure_daemon`'s own socket-poll deadline (`crates/tui/src/spawn.rs`)
-    // that it happens to equal. The property under test is "it did not wait out the
-    // stub's 4 s sleep", which any bound comfortably under 4 s proves — but the
-    // assertion *is* that deadline (the appendix's own verdict: correct as written to
-    // equal it, not a margin question), so a change to the real constant should change
-    // this assertion too. Now imports the same constant instead of a second literal
-    // that could silently drift from it.
+    // The property under test is "the bind did not wait out the stub's 4 s stall". This
+    // compared `elapsed` with `ENSURE_DAEMON_SOCKET_WAIT` while that wait was 3 s, under
+    // the stall (whole-branch-review m19 imported it instead of a literal). Milestone
+    // 9.11's decision 31 raised it to 10 s, at which `< ENSURE_DAEMON_SOCKET_WAIT` would
+    // pass with the bind waiting the whole 4 s (pre-flight P6), so the bound is now the
+    // stall itself.
     assert!(
-        elapsed < tui::spawn::ENSURE_DAEMON_SOCKET_WAIT,
+        elapsed < SLOW_PROBE_STALL,
         "daemon start took {elapsed:?}, meaning the socket bind waited on the codex probe"
     );
 }

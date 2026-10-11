@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 /// Two left presses on the same cell within this are one double click.
 /// Crossterm reports presses, never gestures, so the client recognises this
 /// one itself.
-const DOUBLE_CLICK: Duration = Duration::from_millis(400);
+pub(crate) const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 
 /// How far one wheel notch scrolls the graph canvas (decision 16).
 const WHEEL_ROWS: u16 = 3;
@@ -36,11 +36,13 @@ impl MouseState {
     ///
     /// A double click consumes the gesture, so a third press starts a new one
     /// instead of firing again on every press after the second.
-    fn press(&mut self, column: u16, row: u16) -> bool {
-        let double = self
-            .last_press
-            .is_some_and(|(x, y, at)| (x, y) == (column, row) && at.elapsed() < DOUBLE_CLICK);
-        self.last_press = (!double).then(|| (column, row, Instant::now()));
+    /// `now` is the press's instant (milestone 9.11 decision 23), so the window is
+    /// measured against the caller's clock.
+    pub(crate) fn press(&mut self, column: u16, row: u16, now: Instant) -> bool {
+        let double = self.last_press.is_some_and(|(x, y, at)| {
+            (x, y) == (column, row) && now.saturating_duration_since(at) < DOUBLE_CLICK
+        });
+        self.last_press = (!double).then_some((column, row, now));
         self.drag_from = Some((column, row));
         double
     }
@@ -48,8 +50,10 @@ impl MouseState {
 
 impl App {
     /// The sidebar wheel scrolls tree rows and the overview's wheel pans the
-    /// graph. Outside tree mode, the main wheel forwards SGR mouse reports
-    /// when enabled, otherwise it scrolls the local terminal history.
+    /// graph. Outside tree mode, the main wheel forwards mouse reports in the
+    /// app's encoding when a mouse mode is on, sends cursor keys to an
+    /// alternate-screen app without one, and otherwise scrolls the local
+    /// terminal history.
     pub fn on_scroll(
         &mut self,
         up: bool,
@@ -88,16 +92,39 @@ impl App {
         if self.tree_input.is_some() || !main_inner.contains((column, row).into()) {
             return vec![];
         }
-        if self.parser.screen().mouse_protocol_mode() != vt100::MouseProtocolMode::None {
+        // Milestone 9.11 decision 26: the wheel follows the app. A mouse mode gets the
+        // report in the encoding it asked for; an alternate screen without one gets
+        // cursor keys, as xterm's `alternateScroll` sends; otherwise the client's own
+        // scrollback scrolls.
+        let screen = self.parser.screen();
+        if screen.mouse_protocol_mode() != vt100::MouseProtocolMode::None {
             let Some(id) = self.focused_pty() else {
                 return vec![];
             };
             let x = column - main_inner.x + 1;
             let y = row - main_inner.y + 1;
             let button = if up { 64 } else { 65 };
+            return match wheel_report(screen.mouse_protocol_encoding(), button, x, y) {
+                Some(bytes) => vec![Effect::Send(ClientMsg::Input {
+                    window_id: id,
+                    bytes,
+                })],
+                None => vec![],
+            };
+        }
+        if screen.alternate_screen() {
+            let Some(id) = self.focused_pty() else {
+                return vec![];
+            };
+            let arrow: &[u8] = match (up, screen.application_cursor()) {
+                (true, false) => b"\x1b[A",
+                (false, false) => b"\x1b[B",
+                (true, true) => b"\x1bOA",
+                (false, true) => b"\x1bOB",
+            };
             return vec![Effect::Send(ClientMsg::Input {
                 window_id: id,
-                bytes: format!("\x1b[<{button};{x};{y}M").into_bytes(),
+                bytes: arrow.repeat(usize::from(WHEEL_ROWS)),
             })];
         }
         let target = if up {
@@ -137,6 +164,18 @@ impl App {
     }
 
     pub fn on_click(&mut self, column: u16, row: u16, layout: &ui::Layout) -> Vec<Effect> {
+        self.on_click_at(column, row, layout, Instant::now())
+    }
+
+    /// [`App::on_click`] at a given instant (milestone 9.11 decision 23): a double
+    /// click's window is measured against `now`.
+    pub fn on_click_at(
+        &mut self,
+        column: u16,
+        row: u16,
+        layout: &ui::Layout,
+        now: Instant,
+    ) -> Vec<Effect> {
         self.forget_stale_panel_state();
         if self.modal.is_some() || self.plan_review.is_some() || self.screen.is_some() {
             return vec![];
@@ -155,7 +194,7 @@ impl App {
             return vec![];
         }
         if self.overview
-            && let Some(effects) = self.click_graph(column, row, layout.main)
+            && let Some(effects) = self.click_graph(column, row, layout.main, now)
         {
             return effects;
         }
@@ -235,6 +274,7 @@ impl App {
         column: u16,
         row: u16,
         main: ratatui::layout::Rect,
+        now: Instant,
     ) -> Option<Vec<Effect>> {
         // One row build for the gesture: `overview::view` would otherwise
         // build its own, and the selection below needs the same list — the run
@@ -249,7 +289,7 @@ impl App {
         if !view.canvas.contains((column, row).into()) {
             return None;
         }
-        let double = self.graph_mouse.press(column, row);
+        let double = self.graph_mouse.press(column, row, now);
         // Decision 22: the list hit-tests through the function its renderer windows by.
         let key = if view.list && double {
             // The first press re-centred the window on its row, so the second, on the
@@ -306,6 +346,44 @@ impl App {
         }
         .clamped(view.layout.size, view.canvas);
         vec![]
+    }
+}
+
+/// The largest coordinate the X10 encoding carries: `32 + 223` is the byte 255.
+const X10_MAX: u16 = 223;
+
+/// The largest coordinate the UTF-8 encoding carries: `32 + 2015` is U+07FF, the last
+/// code point of two bytes, xterm's own limit for this mode.
+const UTF8_MAX: u16 = 2015;
+
+/// A wheel report for `button` at the 1-based cell (`x`, `y`), in the app's `encoding`
+/// (milestone 9.11 decision 26). `None` when the coordinate does not fit the encoding:
+/// a wrong report would land on another cell, so nothing is sent.
+fn wheel_report(
+    encoding: vt100::MouseProtocolEncoding,
+    button: u16,
+    x: u16,
+    y: u16,
+) -> Option<Vec<u8>> {
+    match encoding {
+        vt100::MouseProtocolEncoding::Sgr => Some(format!("\x1b[<{button};{x};{y}M").into_bytes()),
+        vt100::MouseProtocolEncoding::Default => {
+            if x > X10_MAX || y > X10_MAX {
+                return None;
+            }
+            let byte = |v: u16| u8::try_from(32 + v).ok();
+            Some(vec![0x1b, b'[', b'M', byte(button)?, byte(x)?, byte(y)?])
+        }
+        vt100::MouseProtocolEncoding::Utf8 => {
+            if x > UTF8_MAX || y > UTF8_MAX {
+                return None;
+            }
+            let mut report = String::from("\x1b[M");
+            for v in [button, x, y] {
+                report.push(char::from_u32(32 + u32::from(v))?);
+            }
+            Some(report.into_bytes())
+        }
     }
 }
 

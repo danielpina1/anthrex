@@ -58,6 +58,15 @@ pub fn translate(
         WindowSignalKind::Unprompted(_) => return activity(signal.window_id, last_activity, now),
         WindowSignalKind::Session(event) => event,
     };
+    // Milestone 9.11 decision 7: a command Claude's sandbox could not run, as the scout
+    // reads it (`scout::machine`); every other tool result is activity.
+    if let SessionEvent::ToolResult {
+        ok: false, text, ..
+    } = event
+        && let Some(note) = crate::headless::failure::sandbox_command_failure(text)
+    {
+        return Some(AgentSignal::SandboxBroken { note });
+    }
     Some(match event {
         SessionEvent::Init { session_id, .. } => AgentSignal::Init {
             session_id: session_id.clone(),
@@ -483,5 +492,42 @@ mod tests {
         assert_eq!(text.chars().count(), proto::WORKER_SUMMARY_MAX + 1);
         assert!(text.starts_with(&"é".repeat(proto::WORKER_SUMMARY_MAX)));
         assert!(text.ends_with('…'), "{text}");
+    }
+
+    fn tool_result(ok: bool, text: &str) -> WindowSignal {
+        session(
+            3,
+            7,
+            SessionEvent::ToolResult {
+                id: "toolu_1".into(),
+                text: text.into(),
+                ok,
+                parent: None,
+            },
+        )
+    }
+
+    /// Milestone 9.11 decision 7: a failed tool result Claude's sandbox could not run
+    /// is its own signal, carrying the note the scout records for the same text.
+    #[test]
+    fn a_sandbox_failed_tool_result_is_its_own_signal() {
+        let text =
+            "bwrap: apply-seccomp: setting up uid map: nested userns is capability-restricted";
+        let note = crate::headless::failure::sandbox_command_failure(text).unwrap();
+        assert_eq!(
+            one(tool_result(false, text)),
+            Some(AgentSignal::SandboxBroken { note })
+        );
+    }
+
+    /// Pinning: any other tool result, failed or not, is throttled activity.
+    #[test]
+    fn an_ordinary_failed_tool_result_is_activity() {
+        assert_eq!(
+            one(tool_result(false, "cargo: command not found")),
+            Some(AgentSignal::Activity)
+        );
+        let text = "apply-seccomp: nested userns is capability-restricted";
+        assert_eq!(one(tool_result(true, text)), Some(AgentSignal::Activity));
     }
 }

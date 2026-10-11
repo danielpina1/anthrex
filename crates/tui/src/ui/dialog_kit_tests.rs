@@ -307,9 +307,9 @@ fn the_force_prompt_names_its_keys() {
                 "worktree /tmp/shop/feat-api has uncommitted or",
                 "untracked changes",
                 "",
-                "f  force: delete the worktree and everything in it",
-                "k  keep the worktree, remove the window",
                 "n  cancel",
+                "k  keep the worktree, remove the window",
+                "f  force: delete the worktree and everything in it",
             ],
             "{w}x{h}: the rows are the hints"
         );

@@ -23,6 +23,12 @@ use std::path::PathBuf;
 mod alerts_setup;
 pub(crate) use alerts_setup::setup_state;
 
+#[path = "alerts_dropped.rs"]
+mod alerts_dropped;
+#[cfg(test)]
+pub(crate) use alerts_dropped::ASK_GAP;
+pub use alerts_dropped::{DroppedGoals, GOAL_START_BUDGET, RUN_REQUEST_SECS};
+
 /// What an alert is about: its identity, which the focus follows (decision 21).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AlertKey {
@@ -59,6 +65,8 @@ pub enum AlertKey {
     },
     /// Milestone 9.10 decision 34: a repository's set-up, for the goals waiting on it.
     Setup(PathBuf),
+    /// Milestone 9.11 decision 22: a repository's queued goals that could not start.
+    Dropped(PathBuf),
 }
 
 /// Who an alert is for (milestone 9.0.7 decision 7): a run, by its goal (the id when
@@ -377,6 +385,7 @@ pub fn alerts(app: &App) -> Vec<Alert> {
         }
     }
     alerts_setup::profile_alerts(app, &mut out);
+    alerts_dropped::dropped_alerts(app, &mut out);
     // Stable: within a priority the runs' order, then the rules', then the projects'.
     out.sort_by_key(|alert| alert.priority);
     out

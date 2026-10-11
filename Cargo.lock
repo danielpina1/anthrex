@@ -78,7 +78,7 @@ dependencies = [
 
 [[package]]
 name = "anthrex"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "anthrex-config",
  "anthrex-daemon",
@@ -100,7 +100,7 @@ dependencies = [
 
 [[package]]
 name = "anthrex-config"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "anthrex-proto",
  "tempfile",
@@ -110,7 +110,7 @@ dependencies = [
 
 [[package]]
 name = "anthrex-daemon"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "anthrex-config",
  "anthrex-mcp",
@@ -142,7 +142,7 @@ dependencies = [
 
 [[package]]
 name = "anthrex-fake-agent"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "anthrex-config",
  "anthrex-daemon",
@@ -160,7 +160,7 @@ dependencies = [
 
 [[package]]
 name = "anthrex-mcp"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "anthrex-proto",
  "anyhow",
@@ -172,7 +172,7 @@ dependencies = [
 
 [[package]]
 name = "anthrex-proto"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "dirs",
  "libc",
@@ -187,7 +187,7 @@ dependencies = [
 
 [[package]]
 name = "anthrex-testexec"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "libc",
  "tempfile",
@@ -195,7 +195,7 @@ dependencies = [
 
 [[package]]
 name = "anthrex-tui"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "anthrex-config",
  "anthrex-daemon",

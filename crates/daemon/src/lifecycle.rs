@@ -28,6 +28,13 @@ pub struct DaemonOptions {
 /// enough to cover a `daemon stop` immediately followed by a start (decision 24).
 pub const LOCK_WAIT: Duration = Duration::from_secs(5);
 
+/// `<data_dir>/daemon.spawning`: written by a client's `ensure_daemon`
+/// (`crates/tui/src/spawn.rs`) under its claim of the lifetime lock, just before it spawns
+/// a daemon, and removed by that daemon once it holds the lock. While it is fresh, another
+/// client that wins the claim in the gap between the two knows a daemon is already on its
+/// way and spawns none (M9.11.28's fix round, S28-I1).
+pub const SPAWN_MARKER: &str = "daemon.spawning";
+
 /// Creates the socket directory (mode 0700) and removes a stale socket file.
 /// Fails if a live daemon answers on the socket, or if the directory belongs to
 /// somebody else.
@@ -172,6 +179,15 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     if std::env::var_os("ANTHREX_TEST_STDERR_PROBE").is_some() {
         let _ = std::io::Write::write_all(&mut std::io::stderr(), b"anthrex-test-stderr-probe\n");
     }
+    // Test-only (decision 30, `crates/cli/tests/daemon_stop_stuck.rs`): one blocking task
+    // that never finishes in a test's lifetime, standing in for a stuck git or file call,
+    // so the test can prove the stopped daemon's process still exits. Inert in every real
+    // deployment, as the probe above.
+    if std::env::var_os("ANTHREX_TEST_STALL_BLOCKING").is_some() {
+        drop(tokio::task::spawn_blocking(|| {
+            std::thread::sleep(std::time::Duration::from_secs(3600))
+        }));
+    }
     std::fs::create_dir_all(&opts.data_dir)?;
     // Whole-branch-review Minor m5: `acquire_or_yield` runs its retry loop
     // synchronously on whatever thread calls it (`std::thread::sleep`, not
@@ -214,6 +230,9 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
             );
         }
     };
+    // The spawn this daemon may have come from is complete: the lock is ours, so a
+    // client that wins a claim from now on has no spawn in flight to wait for.
+    let _ = std::fs::remove_file(opts.data_dir.join(SPAWN_MARKER));
     let _log_guard = init_logging(&opts.data_dir)?;
 
     // Decision 12: loaded once, on `spawn_blocking`, before the socket is bound, so the
@@ -268,7 +287,7 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     // consumes `config`, so the probe itself can run later — immediately before
     // `server::serve`, not here. Only decision 12's state-file load needs to precede the
     // bind; the probe was moved up alongside it by accident in an earlier change, and a
-    // `codex` that takes longer than `spawn::ensure_daemon`'s 3 s socket-wait (well inside
+    // `codex` that takes longer than `spawn::ensure_daemon`'s socket-wait (3 s then, well inside
     // the probe's own 5 s budget) made every auto-spawning entry point report a failed
     // start even though the daemon was starting up fine.
     let codex_bin = config.codex_bin.clone();

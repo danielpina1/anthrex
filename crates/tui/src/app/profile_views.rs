@@ -132,6 +132,17 @@ impl App {
                 // A late view (its entry expired) fills the open screen still loading
                 // on it, else is dropped (decision 16, minor 2); a late outcome shown.
                 let late = request_id.and_then(|id| self.replies.expired_view(id).cloned());
+                // Review M7: a late status may still hold a waited-for goal's drop.
+                if let (
+                    Some(PendingWhat::Profile {
+                        dir,
+                        ask: ProfileAsk::Status,
+                    }),
+                    ProfileReply::Status(status),
+                ) = (&late, reply.as_ref())
+                {
+                    self.note_profile_status(&dir.clone(), status);
+                }
                 match late.zip(*request_id) {
                     Some((PendingWhat::Profile { dir, ask }, id))
                         if self.profile_awaits(&dir, ask, id) =>
@@ -146,6 +157,11 @@ impl App {
             }
         };
         self.replies.take(*request_id);
+        // Milestone 9.11 decision 22: any status of a project may hold the drop of a
+        // goal that left its queue.
+        if let (ProfileAsk::Status, ProfileReply::Status(status)) = (ask, reply.as_ref()) {
+            self.note_profile_status(&dir, status);
+        }
         // Decision 37: a `Show` that is no longer its side's latest (a re-fetch went
         // out after it) describes an older state; the re-fetch's reply fills the side.
         if let ProfileAsk::Show { proposed } = ask

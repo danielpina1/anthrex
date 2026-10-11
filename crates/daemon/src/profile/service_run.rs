@@ -3,8 +3,10 @@
 //! edit --yes`, the confirmation). Every state change goes through
 //! [`ProfileService::save_if_current`], so a rejected proposal is never written back.
 //!
-//! No lock is held here across an `.await`: the table is only read through
-//! `current`/`register`/`unregister`, each of which takes and drops it at once.
+//! The table lock is never held across an `.await`: it is only read through
+//! `current`/`register`/`unregister`, each of which takes and drops it at once. The
+//! project's async `writes` lock is held across `save_if_current`'s note, write and
+//! rollback, and across the auto-confirm's store.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -32,6 +34,10 @@ use crate::worktree::repo_worktrees_dir;
 
 /// The question an onboarding scout answers (its `ScoutInfo.question`).
 pub const ONBOARDING_QUESTION: &str = "How is this repository set up, built and tested?";
+
+/// M9.11.33b's seam (tests only): `(reached, resume)`.
+#[cfg(test)]
+pub(super) type GapHook = (Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>);
 
 /// One proposal's work.
 pub(super) struct Job {
@@ -99,6 +105,62 @@ impl ProfileService {
                 verify::discard_named(&git, &root_dir, &path, &repo, secs, timeout)
             })
             .await
+    }
+
+    /// Saves `record` only while `generation` still owns its proposal, ordered against
+    /// `reject` by `writes`. `false`: the proposal was rejected, nothing was written.
+    /// M9.11.33b: memory is noted **before** the file is written, so whoever reads the
+    /// file's `Ready` (`profile status`, a goal) finds the snapshot `Ready` already; a
+    /// failed write notes back what the file still holds.
+    pub(super) async fn save_if_current(&self, generation: u64, record: &ProposalRecord) -> bool {
+        let _writes = self.hold_writes(&record.project).await;
+        if !self.current(&record.project, generation) {
+            return false;
+        }
+        self.note_proposal(&record.project, Some(record));
+        self.ready_gap().await;
+        let (dir, written, fail) = (self.repo_dir(&record.project), record.clone(), self.fails());
+        let saved = blocking(move || {
+            if fail {
+                return Err("the test failed this save".to_string());
+            }
+            store::save_proposal(&dir, &written).map_err(|e| e.to_string())
+        })
+        .await;
+        if let Err(error) = saved {
+            tracing::warn!(%error, "could not save a profile proposal");
+            let dir = self.repo_dir(&record.project);
+            let kept = blocking(move || store::load_proposal(&dir))
+                .await
+                .ok()
+                .flatten();
+            self.note_proposal(&record.project, kept.as_ref());
+        }
+        true
+    }
+
+    /// The seam's stop: tells the test it is in the gap, then waits for its release.
+    #[cfg(test)]
+    async fn ready_gap(&self) {
+        let hook = crate::lock(&self.ready_gap).clone();
+        if let Some((reached, resume)) = hook {
+            reached.notify_one();
+            resume.notified().await;
+        }
+    }
+
+    #[cfg(not(test))]
+    async fn ready_gap(&self) {}
+
+    /// The rollback's seam: whether the test made this save fail.
+    #[cfg(test)]
+    fn fails(&self) -> bool {
+        self.fail_save.load(Ordering::SeqCst)
+    }
+
+    #[cfg(not(test))]
+    fn fails(&self) -> bool {
+        false
     }
 
     /// Saves `job.record` with `state` (while current). `false`: rejected meanwhile.
@@ -392,7 +454,7 @@ impl ProfileService {
         // Decision 18: `--anyway` stores the edit as typed whatever its check found.
         let anyway = job.anyway && job.record.edit.is_some();
         if job.record.auto_confirm && (anyway || self.may_auto_confirm(&job.record)) {
-            let _writes = self.writes.lock().await;
+            let _writes = self.hold_writes(&pre.project).await;
             if self.current(&pre.project, job.generation) {
                 let mut record = job.record.clone();
                 if anyway {

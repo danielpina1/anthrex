@@ -321,15 +321,22 @@ fn check_task_config(worktree: &Path, pin: &Pin) -> Result<(), String> {
         ));
     }
     let checkout = key(worktree);
-    let expected = |sha256| crate::run::git::checkout_config(&pin.common_dir, &checkout, sha256);
-    let (sha1, sha256) = (expected(false), expected(true));
-    let limit = sha1.len().max(sha256.len()) as u64 + 1;
+    let common = &pin.common_dir;
+    // Milestone 9.11 fix round 1 (I1): the current text, or exactly the one anthrex
+    // 0.1.x wrote (the next `PrepareWorktree` rewrites it), in either object format.
+    let accepted = [
+        crate::run::git::checkout_config(common, &checkout, false),
+        crate::run::git::checkout_config(common, &checkout, true),
+        crate::run::git::checkout_config_v0_1(common, &checkout, false),
+        crate::run::git::checkout_config_v0_1(common, &checkout, true),
+    ];
+    let limit = accepted.iter().map(String::len).max().unwrap_or(0) as u64 + 1;
     let mut found = Vec::new();
     (&mut file)
         .take(limit)
         .read_to_end(&mut found)
         .map_err(|err| format!("its config cannot be read: {err}"))?;
-    if found != sha1.as_bytes() && found != sha256.as_bytes() {
+    if !accepted.iter().any(|text| found == text.as_bytes()) {
         return Err("its config is not the one the engine wrote".to_string());
     }
     Ok(())

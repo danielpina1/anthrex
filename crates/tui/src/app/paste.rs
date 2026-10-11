@@ -1,6 +1,20 @@
 //! Decision 30's paste routing and the bracketed-paste sanitising for the PTY. Moved
 //! out of `app/mod.rs` (`AGENTS.md` hard rule 8) so the module keeps room for the
 //! plan-gate keys.
+//!
+//! # The paste boundary is the outer terminal's (milestone 9.11 decision 27)
+//!
+//! crossterm (0.29) ends a paste at the first `ESC [ 201 ~` the outer terminal sends
+//! (`lib.rs`'s event loop receives it already split), so anthrex cannot recover a
+//! boundary crossterm has split, and it adds no timing filter and changes no key's
+//! meaning to guess one. The policy is therefore:
+//!
+//! - a paste event's text never reaches a child with a paste marker in it: every
+//!   `ESC [ 200 ~` and `ESC [ 201 ~` is removed here (`sanitize_paste`), including one
+//!   that removing another would manufacture, before the client adds its own markers;
+//! - bytes the terminal sends after an end marker are typed input, as any key is;
+//! - anthrex relies on the outer terminal to strip or escape `ESC [ 201 ~` inside the
+//!   pasted text itself, as xterm, iTerm2, kitty, WezTerm, Alacritty, Ghostty and VTE do.
 
 use super::{App, Effect, Modal};
 use proto::ClientMsg;

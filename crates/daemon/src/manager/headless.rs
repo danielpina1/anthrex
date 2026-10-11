@@ -102,6 +102,8 @@ pub(super) struct HeadlessWindow {
     pub(super) ending: bool,
     /// Milestone 9 decision 11a: restored from a record that did not parse.
     pub(super) placeholder: bool,
+    /// Decision 9 (M9.11.9): its last processes' terminal events (`headless_terminal.rs`).
+    pub(super) terminal: VecDeque<super::TerminalRecord>,
 }
 
 /// A kill or interrupt that reached a window between its old process and its new one.
@@ -126,6 +128,7 @@ impl HeadlessWindow {
             spec,
             diagnostics: VecDeque::new(),
             turn_ended_in_process: false,
+            terminal: VecDeque::new(),
             busy: false,
             start_waiter: None,
             start_failure: None,
@@ -411,6 +414,9 @@ impl WindowManager {
         // delivered turn is still open, so the window's status stays as it is.
         let unprompted =
             matches!(event, SessionEvent::TurnEnded { .. }) && window.cursor.ended_unprompted();
+        if !unprompted {
+            super::headless_terminal::record(&mut window.terminal, id, pid, event);
+        }
         if current {
             window.observe_start(event);
         }

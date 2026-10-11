@@ -31,6 +31,8 @@ mod design_io;
 mod design_ops;
 mod design_restore;
 mod effects;
+mod effects_ops;
+mod event_loop;
 // Milestone 9.1.7: read by the tier executor (M9.1.9); until then only its tests call it.
 #[cfg_attr(not(test), allow(dead_code))]
 mod graph;
@@ -64,10 +66,10 @@ use proto::RunsSnapshot;
 use tokio::sync::{RwLock, broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
-use super::engine::{AgentSignal, EngineState, Event, EventKind, INTERRUPT_GRACE_SECS, ReplyId};
+use super::engine::{AgentSignal, EngineState, EventKind, INTERRUPT_GRACE_SECS, ReplyId};
 use super::git::GitQueue;
 use super::slots::{self, TestScheduler};
-use super::snapshot::snapshot;
+use super::snapshot::{fit_frame, snapshot};
 use super::test_cache::TestCache;
 #[cfg(test)]
 use crate::manager::ManagerConfig;
@@ -155,6 +157,13 @@ pub struct RunService {
     /// probes when the service stops.
     models: Arc<crate::models::ModelService>,
     models_cancel: tokio_util::sync::CancellationToken,
+    /// Tests only (M9.11.8): run on each effect `execute` takes, before it is carried out.
+    #[cfg(test)]
+    execute_hook: Mutex<Option<effects::ExecuteHook>>,
+    /// Tests only (M9.11.13): run when an op returns, with its kind's name, before its
+    /// result is journaled.
+    #[cfg(test)]
+    after_op: Mutex<Option<effects::AfterOpHook>>,
 }
 
 /// Unix seconds, the reducer's clock.
@@ -251,6 +260,10 @@ impl RunService {
             tuning: Default::default(),
             models,
             models_cancel,
+            #[cfg(test)]
+            execute_hook: Mutex::new(None),
+            #[cfg(test)]
+            after_op: Mutex::new(None),
         })
     }
 
@@ -289,21 +302,7 @@ impl RunService {
         let rx = crate::lock(&self.rx).take();
         let service = self.clone();
         let gate = self.loop_gate.clone().try_lock_owned().ok();
-        let handle = tokio::spawn(async move {
-            let _gate = gate;
-            let Some(mut rx) = rx else { return };
-            while let Some(msg) = rx.recv().await {
-                match msg {
-                    Msg::Event(kind) => service.handle(kind).await,
-                    Msg::Usage => service.drain_usage().await,
-                    Msg::Stop(ack) => {
-                        service.stop_now().await;
-                        let _ = ack.send(());
-                        return;
-                    }
-                }
-            }
-        });
+        let handle = tokio::spawn(service.event_loop(gate, rx));
         *crate::lock(&self.loop_abort) = Some(handle.abort_handle());
         self.finish_held_accepts();
         handle
@@ -320,7 +319,8 @@ impl RunService {
         // The engine guard drops at the end of this `let`, before the scout table's
         // lock is taken (AGENTS.md rule 2).
         let snap = snapshot(&crate::lock(&self.state), unix_now());
-        self.with_scouts(snap)
+        // Decision 10: the frame guard, on the snapshot as sent.
+        fit_frame(self.with_scouts(snap))
     }
 
     fn send(&self, kind: EventKind) {
@@ -339,39 +339,6 @@ impl RunService {
         }
         rx.await
             .unwrap_or_else(|_| Err("the daemon is shutting down".to_string()))
-    }
-
-    /// One event: a step under the engine lock, then its effects with the lock released.
-    async fn handle(self: &Arc<Self>, kind: EventKind) {
-        let now = unix_now();
-        let tick = matches!(kind, EventKind::Tick);
-        let kind = slots::stamp(self.mark_killed(kind), self.scheduler.slots());
-        let reply = guard::reply_of(&kind);
-        let prepared = {
-            let mut state = crate::lock(&self.state);
-            match guard::guarded_step(&mut state, Event { now, kind }) {
-                Ok(fx) => {
-                    self.metered.refresh_live(&state);
-                    self.release_ended_orchestrators(&state);
-                    Some(self.mark_writes(guard::prepare_guarded(&state, fx, now)))
-                }
-                Err(panic) => {
-                    tracing::error!(%panic, "the run engine panicked on an event; the event is dropped");
-                    None
-                }
-            }
-        };
-        let Some(prepared) = prepared else {
-            let waiting = reply.and_then(|id| crate::lock(&self.replies).remove(&id));
-            if let Some(tx) = waiting {
-                let _ = tx.send(Err(guard::STEP_PANICKED.to_string()));
-            }
-            return;
-        };
-        self.execute(prepared, now).await;
-        if tick {
-            self.on_tick(now).await;
-        }
     }
 
     /// Fills in `killed_by_engine` for the exit of a process the engine killed.
@@ -405,36 +372,6 @@ impl RunService {
                 }
             }
             other => other,
-        }
-    }
-
-    /// The manager's session feed, translated (`observe.rs`) and sent in the order it
-    /// arrives.
-    async fn forward(
-        self: Arc<Self>,
-        mut signals: broadcast::Receiver<WindowSignal>,
-        shutdown: CancellationToken,
-    ) {
-        let mut last_activity = HashMap::new();
-        loop {
-            let received = tokio::select! {
-                _ = shutdown.cancelled() => return,
-                received = signals.recv() => received,
-            };
-            match received {
-                Ok(signal) => {
-                    if let Some(agent) = translate(&signal, &mut last_activity, Instant::now()) {
-                        self.send(EventKind::Signal {
-                            window_id: signal.window_id,
-                            signal: agent,
-                        });
-                    }
-                }
-                Err(broadcast::error::RecvError::Lagged(missed)) => {
-                    tracing::warn!(missed, "the run engine lagged on the session feed");
-                }
-                Err(broadcast::error::RecvError::Closed) => return,
-            }
         }
     }
 
@@ -536,7 +473,8 @@ impl RunService {
         self.clear_ended_orchestrators(&snap);
         let (snap, generation) = self.overlaid(snap);
         crate::lock(&self.book).proposals_published = generation;
-        let _ = self.pushes.send(Arc::new(snap));
+        // Decision 10: the frame guard, on the snapshot as sent.
+        let _ = self.pushes.send(Arc::new(fit_frame(snap)));
     }
 
     fn watch_root(&self, root: &Path) {

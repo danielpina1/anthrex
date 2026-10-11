@@ -164,6 +164,18 @@ mod placeholder;
 #[path = "../app_tests/alerts_tier3.rs"]
 mod alerts_tier3;
 
+#[path = "../app_tests/clock.rs"]
+mod clock;
+
+#[path = "../app_tests/prefix_modal.rs"]
+mod prefix_modal;
+
+#[path = "../app_tests/wheel.rs"]
+mod wheel;
+
+#[path = "../app_tests/dropped_goals.rs"]
+mod dropped_goals;
+
 fn win(id: u32, name: &str, status: Status) -> WindowInfo {
     WindowInfo {
         id,
@@ -271,22 +283,23 @@ fn focus_requested_before_the_first_size_report_subscribes_once_sized() {
 
 #[test]
 fn later_size_changes_are_debounced_into_a_resize() {
+    // Milestone 9.11 decision 23: on the injected clock, not a real sleep.
     let mut app = app_with(vec![win(1, "a", Status::Idle)]);
-    assert!(app.set_terminal_size(120, 40).is_empty());
+    let t0 = Instant::now();
+    assert!(app.set_terminal_size_at(120, 40, t0).is_empty());
     assert!(
-        app.on_tick().is_empty(),
+        app.on_tick_at(t0).is_empty(),
         "resize is not sent before the debounce window"
     );
-    std::thread::sleep(RESIZE_DEBOUNCE + Duration::from_millis(5));
     assert_eq!(
-        app.on_tick(),
+        app.on_tick_at(t0 + RESIZE_DEBOUNCE),
         vec![Effect::Send(ClientMsg::Resize {
             window_id: 1,
             cols: 120,
             rows: 40
         })]
     );
-    assert!(app.on_tick().is_empty());
+    assert!(app.on_tick_at(t0 + RESIZE_DEBOUNCE * 2).is_empty());
 }
 
 #[test]

@@ -38,7 +38,7 @@ pub fn save(path: &Path, doc: &SettingsDoc, cancel: &AtomicBool) -> Result<Saved
         return Err(problems);
     }
     // A symlinked config.toml stays a link: the target is what gets replaced.
-    let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let resolved = resolve(path);
     let path = resolved.as_path();
     let (text, mode) = match std::fs::read_to_string(path) {
         Ok(text) => (text, file_mode(path)),
@@ -98,6 +98,20 @@ pub fn save(path: &Path, doc: &SettingsDoc, cancel: &AtomicBool) -> Result<Saved
     })
 }
 
+/// The file a save writes: `path` canonicalised, or, when that fails because `path` is
+/// a link to a file not yet created (milestone 9.11 decision 33, E4), the link's target,
+/// joined to the link's directory when relative, so the save creates the target and the
+/// link stays. Anything else is `path` itself.
+fn resolve(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| match std::fs::read_link(path) {
+        Ok(target) if target.is_relative() => path
+            .parent()
+            .map_or_else(|| target.clone(), |dir| dir.join(&target)),
+        Ok(target) => target,
+        Err(_) => path.to_path_buf(),
+    })
+}
+
 /// Final review I1: the refusal text of a save over a file that changed after the daemon
 /// read it.
 pub const CHANGED_SINCE_LOADED: &str = "config.toml changed since anthrex read it (its [models] rows or old model keys were edited); restart the daemon or reopen C-b S, then change it again";
@@ -107,7 +121,7 @@ pub const CHANGED_SINCE_LOADED: &str = "config.toml changed since anthrex read i
 /// save writes the live table, so saving over such a file would silently revert the
 /// edit. A missing file reads as the defaults. Blocking.
 pub fn changed_since_loaded(path: &Path, live: &Orchestrator) -> Option<String> {
-    let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let resolved = resolve(path);
     let text = match std::fs::read_to_string(&resolved) {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),

@@ -151,7 +151,8 @@ async fn reconnect_now_supersedes_an_in_flight_automatic_attempt() {
     // Stands in for the real `anthrex` binary: records that it was launched as
     // `daemon start --foreground`, which is the one observable proof that this
     // press's `daemon_exe` reached a real attempt, then exits without binding the
-    // socket (so `ensure_daemon`'s own poll just runs out its 3s budget harmlessly).
+    // socket (so `ensure_daemon`'s own poll just runs out its `ENSURE_DAEMON_SOCKET_WAIT`
+    // budget harmlessly: 10s since milestone 9.11's decision 31, 3s before).
     let marker = dir.path().join("started.log");
     let script = dir.path().join("fake_daemon.sh");
     testexec::write_executable(
@@ -207,14 +208,19 @@ async fn reconnect_now_supersedes_an_in_flight_automatic_attempt() {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 
+    // The attempt is ended before the isolation variable goes (stream S re-review N1):
+    // nothing of it may run with `ANTHREX_DATA_DIR` unset, or it would resolve the user's
+    // real data directory. The stub never binds the socket, so the attempt would poll for
+    // `ENSURE_DAEMON_SOCKET_WAIT` (10 s); it has already spawned (the marker above), so it
+    // never claims or spawns again and is only polling the socket, which an abort ends at
+    // its next yield. Awaiting the handle afterwards makes sure it has.
+    if let Some(inflight) = driver.inflight.take() {
+        inflight.abort();
+        let _ = inflight.await;
+    }
+
     // SAFETY: see above.
     unsafe { std::env::remove_var("ANTHREX_DATA_DIR") };
-
-    // Let the fresh attempt finish on its own (the stub never binds the socket, so it
-    // eventually times out) so nothing of this test's outlives it.
-    if let Some(inflight) = driver.inflight.take() {
-        let _ = tokio::time::timeout(Duration::from_secs(5), inflight).await;
-    }
 }
 
 /// Decision 31's give-up path (`on_attempt_finished`'s `Err` arm when `after_failure`

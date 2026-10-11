@@ -20,10 +20,10 @@ still runs, with the legacy sandbox flags, but its workers cannot commit on Linu
 
 ## 1. Download
 
-Pick your target from the table and download its archive and checksum. For 0.1.2:
+Pick your target from the table and download its archive and checksum. For 0.2.0:
 
 ```bash
-VERSION=v0.1.2
+VERSION=v0.2.0
 TARGET=aarch64-apple-darwin   # or x86_64-apple-darwin, x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu
 BASE=https://github.com/danielpina1/anthrex/releases/download/$VERSION
 
@@ -71,7 +71,7 @@ To install system-wide instead, use `sudo install -m 755 anthrex-unpacked/anthre
 Check the install:
 
 ```bash
-anthrex --version   # anthrex 0.1.2
+anthrex --version   # anthrex 0.2.0
 ```
 
 ## macOS: Gatekeeper
@@ -97,7 +97,7 @@ You need Rust 1.92 or newer ([rustup](https://rustup.rs)) and git.
 ```bash
 git clone https://github.com/danielpina1/anthrex.git
 cd anthrex
-git checkout v0.1.2          # or stay on main for the latest code
+git checkout v0.2.0          # or stay on main for the latest code
 cargo build --release --locked -p anthrex
 install -m 755 target/release/anthrex ~/.local/bin/anthrex
 ```
@@ -105,7 +105,7 @@ install -m 755 target/release/anthrex ~/.local/bin/anthrex
 Or let cargo install it into `~/.cargo/bin`:
 
 ```bash
-cargo install --locked --git https://github.com/danielpina1/anthrex --tag v0.1.2 anthrex
+cargo install --locked --git https://github.com/danielpina1/anthrex --tag v0.2.0 anthrex
 ```
 
 ## Upgrading and uninstalling

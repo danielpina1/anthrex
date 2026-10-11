@@ -224,6 +224,15 @@ pub fn assert_silent_success(output: &Output) {
     );
 }
 
+/// Runs `anthrex --version` once per test process, so the first exec of a freshly built
+/// binary (2.5-3 s measured from inside a test process) is paid outside any start bound.
+pub fn warm_anthrex() {
+    static WARM: std::sync::Once = std::sync::Once::new();
+    WARM.call_once(|| {
+        let _ = Command::new(ANTHREX).arg("--version").output();
+    });
+}
+
 pub struct TestDaemon {
     dir: tempfile::TempDir,
     data: PathBuf,
@@ -257,10 +266,21 @@ impl TestDaemon {
             .stdout(log.try_clone().unwrap())
             .stderr(log);
         configure(&mut command);
+        warm_anthrex();
         let child = command.spawn().unwrap();
         let data = dir.path().join("data");
         let mut daemon = Self { dir, data, child };
-        let deadline = Instant::now() + Duration::from_secs(3);
+        // Task M9.11.28b (and its review, S28b-m1). The literal 3 s this replaced failed
+        // once under load, on the first exec of a freshly built `anthrex` (2.5-3 s measured
+        // from inside a test process; "Measured primitive costs" treats it as unbounded).
+        // That cost is paid before the clock starts: `warm_anthrex` runs the binary once
+        // per test process. What is left is the daemon's own start: a lifetime lock that
+        // a test may hold (`LOCK_WAIT`, which `daemon_start_lock.rs` exercises) and its
+        // pre-bind loads, which a fresh data directory keeps trivial; the client's start
+        // bound, `ENSURE_DAEMON_SOCKET_WAIT` (`LOCK_WAIT` + `PRE_BIND_ALLOWANCE`), covers
+        // both. A daemon that exits early is seen at once in the loop, so only a hung
+        // start waits this out.
+        let deadline = Instant::now() + tui::spawn::ENSURE_DAEMON_SOCKET_WAIT;
         while !daemon.socket().exists() {
             assert!(
                 daemon.child.try_wait().unwrap().is_none(),
