@@ -13,6 +13,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use super::{WorktreeError, run_git};
+pub use common::worktree_names::DirtyReason;
 
 /// The per-worktree files and directories whose existence means git has an operation
 /// paused in this worktree, each with the reason a removal would give for refusing.
@@ -55,84 +56,6 @@ const OPERATION_MARKERS: [(&str, DirtyReason); 7] = [
     ("sequencer", DirtyReason::Sequence),
     ("BISECT_LOG", DirtyReason::Bisect),
 ];
-
-/// Why a worktree is not safe to remove — which of [`dirty_reason`]'s questions fired.
-///
-/// It exists so the refusal can say what is actually true. A single `bool` left
-/// [`WorktreeError::Dirty`] with one sentence for six different states, and that sentence
-/// —"uncommitted or untracked changes" — is *false* for the states that hold commits
-/// rather than files. That matters more than tidiness: the daemon's message is the sole
-/// basis for the user's force-or-keep decision (design decision 24), and a user told
-/// about uncommitted changes who runs `git status`, sees a spotlessly clean tree, and
-/// concludes the daemon is confused will force — destroying the paused rebase, the
-/// unreachable commits or the bisect that `git status` never mentioned.
-///
-/// Every variant's wording describes what would happen to the worktree's **files and
-/// commits**, never to the agent's process: the dirty check runs before the agent is
-/// signalled, so on the common path it is still running while this text is on screen.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DirtyReason {
-    /// `rebase-merge` or `rebase-apply`: a rebase stopped part-way.
-    Rebase,
-    /// `MERGE_HEAD`: a merge stopped, usually at a conflict.
-    Merge,
-    /// `CHERRY_PICK_HEAD`: a cherry-pick stopped, usually at a conflict.
-    CherryPick,
-    /// `REVERT_HEAD`: a revert stopped, usually at a conflict.
-    Revert,
-    /// `sequencer`: a multi-commit cherry-pick or revert has picks left to replay, whose
-    /// current conflict was resolved with plain `git commit` rather than `--continue`.
-    Sequence,
-    /// `BISECT_LOG`: a bisect in progress.
-    Bisect,
-    /// `status --porcelain` reported something: modified or untracked files.
-    Changes,
-    /// `HEAD` reaches commits that no branch, tag or remote does.
-    UnreachableHead,
-}
-
-impl DirtyReason {
-    /// The sentence that follows `worktree <path> ` in the refusal.
-    fn describe(self) -> &'static str {
-        match self {
-            Self::Rebase => {
-                "has a rebase in progress; removing it discards the rebase and every \
-                 commit it has already replayed"
-            }
-            Self::Merge => {
-                "has a merge in progress; removing it discards the merge and everything \
-                 resolved in it so far"
-            }
-            Self::CherryPick => {
-                "has a cherry-pick in progress; removing it discards the cherry-pick and \
-                 everything resolved in it so far"
-            }
-            Self::Revert => {
-                "has a revert in progress; removing it discards the revert and everything \
-                 resolved in it so far"
-            }
-            Self::Sequence => {
-                "has a cherry-pick or revert in progress; removing it discards the commits \
-                 it still has to replay"
-            }
-            Self::Bisect => {
-                "has a bisect in progress; removing it discards every good and bad answer \
-                 recorded so far"
-            }
-            Self::Changes => "has uncommitted or untracked changes",
-            Self::UnreachableHead => {
-                "is detached at commits no branch, tag or remote reaches; removing it \
-                 discards those commits"
-            }
-        }
-    }
-}
-
-impl std::fmt::Display for DirtyReason {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.describe())
-    }
-}
 
 /// Design decision 12 (extended by the M5.3 review's ruling, and again by the
 /// whole-branch review's findings 2 and 5): whether the worktree at `path` holds anything
