@@ -3,7 +3,7 @@ mod support;
 use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
-use support::{RunningCommand, isolated_command, tempdir};
+use support::{RunningCommand, isolated_command, tempdir, warm_anthrex};
 
 /// Generous margin over a derived bound for a test that spawns several real processes
 /// (the daemon, `ls`, `daemon stop`) end to end, matching the constant of the same name
@@ -482,6 +482,11 @@ fn daemon_start_does_not_wait_on_a_slow_codex_probe() {
     // stall itself (decision 31, pre-flight P6).
     const SLOW_PROBE_STALL: Duration = Duration::from_secs(4);
     let bin = ordering_codex(dir.path(), SLOW_PROBE_STALL);
+    // M9.12.4: `elapsed` below spans two execs of `anthrex` (`daemon start` and the
+    // daemon it spawns). The first exec of a freshly built binary (2.5-3 s, unbounded per
+    // docs/timing-budgets.md "Measured primitive costs") is paid here, before the clock:
+    // under cargo-nextest this timing test runs alone and may be the binary's first exec.
+    warm_anthrex();
 
     let mut command = isolated_command(dir.path(), &["daemon", "start"]);
     command
