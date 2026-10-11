@@ -223,14 +223,26 @@ mod tests {
         );
     }
 
-    /// Milestone 9.12 task M9.12.13: the smoke's teardown (`scripts/smoke_task_tmp.py`,
-    /// `PINNED`) hashes as this does; it checks the same name, so a change here that
-    /// the script does not follow stops the smoke at its start.
+    /// Milestone 9.12 task M9.12.13 (fix round 1): the smoke's teardown
+    /// (`scripts/smoke_task_tmp.py`) hashes as this does. Its `PINNED` pair is read
+    /// from the script itself and must be this function's own hash of its path; the
+    /// script's `check_pinned` checks its own hash against the same pair at the smoke's
+    /// start. Together they fail on any drift between the two hashes.
     #[test]
-    fn a_task_tmp_name_is_pinned() {
+    fn the_smokes_pinned_name_is_this_hash() {
+        let script = include_str!("../../../../../scripts/smoke_task_tmp.py");
+        let line = script
+            .lines()
+            .find(|l| l.starts_with("PINNED = ("))
+            .expect("smoke_task_tmp.py has a `PINNED = (...)` line");
+        let quoted: Vec<&str> = line.split('"').skip(1).step_by(2).collect();
+        let [path, name] = quoted[..] else {
+            panic!("`{line}` is not `PINNED = (\"<path>\", \"<name>\")`");
+        };
         assert_eq!(
-            task_tmp(Path::new("/x/runs/r/tasks/t")).file_name(),
-            Some(std::ffi::OsStr::new("ebb460a1810f194c"))
+            task_tmp(Path::new(path)).file_name(),
+            Some(std::ffi::OsStr::new(name)),
+            "smoke_task_tmp.py pins {path} to {name}; tmp.rs hashes it differently"
         );
     }
 

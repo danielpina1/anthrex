@@ -8,9 +8,12 @@ only with its checkout, so a stage that removes its data directory with runs sti
 it would leave theirs behind. `remove_task_tmps_beneath(base)` mirrors the daemon's
 `remove_task_tmps_beneath`: it removes the directory of every directory under `base`
 (and of the worktree checkouts' repository directories, which are never made), under
-each spelling of `base`, and nothing else. `PINNED` is the same name the Rust test
-`a_task_tmp_name_is_pinned` checks, so the two hashes cannot drift apart unnoticed:
-`check_pinned` fails the smoke first.
+each spelling of `base`, and nothing else.
+
+`PINNED` is a path and its name. The Rust test `the_smokes_pinned_name_is_this_hash`
+(`tmp.rs`) reads this file's `PINNED` line and asserts the name is Rust's own hash of
+the path; `check_pinned`, at the smoke's start, asserts it is this module's hash. A
+change to either hash that the other does not follow fails one of the two.
 
 It only removes directories whose names are hashed from paths under `base`, which only
 the stage's own daemon makes. It never signals anything.
@@ -22,7 +25,7 @@ import sys
 
 # `tmp.rs`'s WORKTREE_CHECKOUTS.
 WORKTREE_CHECKOUTS = ("integration", ".full")
-# `tmp.rs`'s `a_task_tmp_name_is_pinned`.
+# Read by `tmp.rs`'s `the_smokes_pinned_name_is_this_hash`: keep it on one line.
 PINNED = ("/x/runs/r/tasks/t", "ebb460a1810f194c")
 
 _OFFSET = 0xCBF29CE484222325
@@ -62,7 +65,7 @@ def check_pinned():
     """The pinned name, or an AssertionError naming the drift."""
     path, name = PINNED
     got = task_name(path)
-    assert got == name, f"smoke_task_tmp.py hashes {path} to {got}, tmp.rs to {name}"
+    assert got == name, f"smoke_task_tmp.py hashes {path} to {got}, not the pinned {name}"
 
 
 def _owner_access(top):
