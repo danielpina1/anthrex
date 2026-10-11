@@ -7,7 +7,7 @@ release is a pre-release and any release may change behaviour or the protocol.
 
 ## [Unreleased]
 
-## [0.2.0] — 2026-10-10
+## [0.2.0] — 2026-10-11
 
 The protocol version is now 21 (19 for model roles, 20 for orchestrator-first alerts, 21
 for the simple repository profile): a client needs a daemon of the same release. Stop

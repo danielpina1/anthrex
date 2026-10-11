@@ -2150,6 +2150,10 @@ From the stream G review and its fix round 1.
   - `ls-files --others` then recurses into the directory and skips `.git`, so only its working files are salvaged. Any commits in its object store go with the checkout.
   - Git itself cannot open such a repository either.
   - A walk for `.git` entries that keeps the checkout when any of them is unrecognised would close the gap.
+- **Stream G's final re-review minors** (fix round 2, all non-blocking):
+  - **An intermediate directory of a ref path can be swapped.** `O_NOFOLLOW` covers only the last component, so a worker-left process could swap a directory in the path for a link to `/dev`. With `O_NOCTTY|O_NONBLOCK` and the regular-file check, the effect is an open and a close of the device: nothing is read and no controlling terminal is taken. An `openat` walk from the nested `.git` descriptor would close it.
+  - **No test pins the 10,000-entry cap of the refs and worktrees walk (n3), or that `restore_owner_access` changes a mode only when the owner lacks a permission (n4).**
+  - **The legacy-config bytes test does not cover `quoted`'s escaping**, which is shared with the current config writer rather than frozen with the 0.1.x text; a change to `quoted` would change what the legacy check accepts.
 
 ### Stream P
 
@@ -2198,6 +2202,16 @@ From the stream X review and the M9.11.33b review.
 
 - **Two unattributed stress failures.** Under 20 rounds of 12 parallel copies, `status_codex::a_screen_drawn_in_two_writes_is_scanned_whole` failed once (`(Working, false)` in `signalled` after 5 s, with copies running about ten times slower than alone); two early whole-file runs of `profile_queue.rs` failed without a log. Neither recurred in the logged runs since.
 - **M9.11.38c's Linux re-exec has run only on CI** (nexus1 unreachable): `manager/lifecycle.rs`'s `shutdown_waits_for_cleanup_after_the_group_leader_exits` now asserts `running 1 test` in its child; the PR's ubuntu job is its first Linux run.
+
+### The independent whole-PR review of #57 (2026-10-11)
+
+Five minors from the merge review of milestone 9.11, none blocking:
+
+- **A git-probe reaping test can skip its check** (`daemon/tests/git_probe.rs:376-386`). It returns early when no grandchild pid was recorded, so the stall variant never checks that the grandchild is reaped, and the no-stall variant skips the check when the kill wins the race. Record the pid before the race, or fail when it is missing.
+- **A wheel scroll can leave an orchestrator wake unsubmitted** (`daemon/src/run/driver/wake.rs:121-127`, `tui/src/app/mouse.rs`). Wheel scrolls go through `write_client_input` as client input, so a scroll during the 200 ms `SUBMIT_DELAY` leaves the wake pasted but unsubmitted while `OrchestratorWoken` is recorded. Scrolls should not count as typing.
+- **The nested probe's `read_dir` follows a link at the directory itself** (`daemon/src/run/git/salvage_nested.rs:280`, `:298`). That applies to the nested `.git/refs` and `.git/worktrees`, which contradicts the module's "never through a link" doc. Open each with `O_DIRECTORY|O_NOFOLLOW` and read through the descriptor.
+- **A cancelled queued goal makes the client poll `profile status`** about once a second for up to `GOAL_START_BUDGET` (`tui/src/app/alerts_dropped.rs`). This is the same item as stream T's N1 above.
+- **A worker can trigger `SandboxBroken` by printing the sandbox tool's error text** (`daemon/src/run/observe.rs`). The signal is read from tool output a worker controls. Its effect is a note in the next block or failure, not a change of power. Tie it to the tool result's exit status, or to a daemon-side probe.
 
 ### The machine, across every stream
 
