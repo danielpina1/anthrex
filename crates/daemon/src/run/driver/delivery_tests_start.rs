@@ -92,9 +92,11 @@ fn ask_wait() -> Duration {
         + Duration::from_secs(30)
 }
 
-/// The host-op tests' `service_with`, with [`rig_config`].
+/// The host-op tests' `service_with`, with [`rig_config`]. Its runs' checkouts are
+/// under `data`'s directory, the rig's, which removes them with itself (M9.12.13).
 fn service(host: Arc<dyn crate::host::CodeHost>, data: &Path) -> Arc<RunService> {
-    let config = ManagerConfig::for_tests("/tmp/ax-unused.sock".into(), "/bin/sh".into());
+    let mut config = ManagerConfig::for_tests("/tmp/ax-unused.sock".into(), "/bin/sh".into());
+    config.worktrees_root = data.with_file_name("worktrees");
     let (manager, _events) = WindowManager::new(config);
     let ctx = RunContext::new(
         data.to_path_buf(),
@@ -191,7 +193,18 @@ async fn local_mode_calls_no_host() {
         let RunReply::Started { run_id, .. } = reply else {
             panic!("{asked:?}: {reply:?}");
         };
-        let delivery = crate::lock(&s.state).runs[&run_id].delivery.clone();
+        let (delivery, integration) = {
+            let state = crate::lock(&s.state);
+            let run = &state.runs[&run_id];
+            (run.delivery.clone(), run.integration_path())
+        };
+        // Milestone 9.12 task M9.12.13: the run's checkouts are the rig's, never under
+        // the shared default worktrees root, where nothing would remove them.
+        assert!(
+            integration.starts_with(rig.tmp.path()),
+            "{} is outside the rig",
+            integration.display()
+        );
         assert_eq!(delivery.mode, DeliveryMode::Local);
         assert_eq!((delivery.repo, delivery.remote_seal), (None, None));
         assert!(!delivery.watching);
