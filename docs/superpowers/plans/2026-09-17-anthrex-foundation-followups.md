@@ -2216,3 +2216,9 @@ Five minors from the merge review of milestone 9.11, none blocking:
 ### The machine, across every stream
 
 - **macOS's first-exec stall still fails stand-in tests in bulk under load.** With XProtect busy, the first exec of a freshly written script took 11-48 s on the implementers' machine while other streams built; every test that execs a fresh stand-in inside its bound (git wrapper scripts, warm-up-less rigs) then failed together, 25 to 43 at a time, and passed once the load fell. Milestone 9.11 warmed the rigs it owned (M9.11.36, .38b, the CLI harness's `warm_anthrex`); `docs/timing-budgets.md` records the pattern and its earlier warm-up fixes. A shared warm-up helper for every stand-in writer would retire the pattern.
+
+## From milestone 9.12 (2026-10-11, recorded by M9.12.4's fix round 1), for later
+
+- **One file gate for the e2e tests.** `crates/cli/tests/run_e2e_stages.rs` (`wait_for`, `missed`), `run_e2e_pr_ci.rs`, `run_e2e_pr_merged.rs` and `run_e2e_merge.rs` (`gate`, `missed`) each carry a copy of the same scripted file gate (`sh` steps of 1500 x 0.2 s, a `.missed` marker, an `expect` on `/go`). Move it to `crates/cli/tests/support/run_plans.rs` once, and point the four files at it.
+- **Two test files past hard rule 8's size.** `crates/cli/tests/hook_command.rs` (about 990 lines) and `crates/fake-agent/tests/script.rs` (about 690) grew past 600 before M9.12; split each by responsibility (M9.12.7's binary merge is a natural moment for the first).
+
