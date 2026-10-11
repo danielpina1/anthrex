@@ -417,8 +417,9 @@ fn e2e_second_conflict_blocks_the_task() {
     t1_steps.extend([sh(RESOLVE), done("resolved")]);
     h.script("worker-t1-1", &t1_steps);
     h.script("worker-t2-1", &[write_shared("from t2"), done("t2")]);
-    // Held until t1's hand-back. t3 starts with the run (`max_writers = 3`); before the
-    // test writes `release` it waits for t1's spill and t2's merge (one `RUN_WAIT`), the
+    // Held until t1's hand-back. t3 starts with the run (`max_writers = 3`), or later if
+    // the scheduler holds it behind t2 on `b/**`; the gate's bound counts from the run's
+    // start either way, so it covers both. Before the test writes `release` it waits for t1's spill and t2's merge (one `RUN_WAIT`), the
     // override (one request) and the hand-back (one `RUN_WAIT`), plus a `REQUEST_WAIT`
     // of slack.
     let mut t3_steps = gate(&release, 2 * RUN_WAIT + 2 * REQUEST_WAIT);
