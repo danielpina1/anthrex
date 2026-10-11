@@ -7,11 +7,13 @@ nextest-version = { required = "0.9.146" }
 
 [profile.default]
 # Decision 2: SLOW each minute, terminated at ten (a hung test once cost nucleos 5.6
-# hours). The slowest test measured in M9.12.1, run alone under nextest:
+# hours). The slowest test measured in M9.12.1, run alone under nextest, was
 # `run_e2e_merge::e2e_red_candidate_goes_back_to_the_worker`, 338.1 s (its sibling
-# `e2e_second_conflict_blocks_the_task` 337.4 s). That is above decision 2's 300 s
-# stop line ("Spec and brief defects" 10), so those two have an override of their own
-# below; every other test measured stays far inside 600 s.
+# `e2e_second_conflict_blocks_the_task` 337.4 s), above decision 2's 300 s stop line
+# ("Spec and brief defects" 10). M9.12.4 found why (each waited out a 300 s scripted
+# gate that could never see the merge it waited for) and fixed the scripts: both take
+# about 8 s now, and the slowest test is `run_e2e_crash`'s
+# `e2e_crash_after_each_intent_kind_reconciles`, about 49 s, far inside 600 s.
 slow-timeout = { period = "60s", terminate-after = 10 }
 # Decision 3: a retry hides the flake docs/timing-budgets.md wants found at its root,
 # and every failed test is diagnosed before a push, so the run never stops early.
@@ -191,17 +193,6 @@ filter = '''
 '''
 threads-required = "num-test-threads"
 test-group = "timing"
-
-# "Spec and brief defects" 10: these two take about 338 s alone (337.4 s and 338.1 s
-# under nextest in M9.12.1), most likely waiting out a scripted 300 s loop, so the
-# default 600 s would hold them by a factor of only 1.8. 20 minutes keeps the factor
-# above three. M9.12.4 removes this override once their scripts end on their event.
-[[profile.default.overrides]]
-filter = '''
-    test(/(^|::)e2e_second_conflict_blocks_the_task$/)
-  | test(/(^|::)e2e_red_candidate_goes_back_to_the_worker$/)
-'''
-slow-timeout = { period = "60s", terminate-after = 20 }
 
 # Decision 5: tests that spawn a PTY, run real git, start a daemon (in-process `serve`,
 # the `anthrex` binary, or a scripted socket peer standing in for one) or exec a

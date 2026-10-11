@@ -5,6 +5,7 @@
 
 mod support;
 
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use proto::{
@@ -12,7 +13,7 @@ use proto::{
     TestMode,
 };
 use serde_json::{Value, json};
-use support::run_harness::{RUN_WAIT, RunHarness};
+use support::run_harness::{REQUEST_WAIT, RUN_WAIT, RunHarness};
 use support::run_plans::*;
 
 /// `hang`: the turn stays open, silent, until it is interrupted or killed.
@@ -24,21 +25,41 @@ fn blocked(kind: &str, reason: &str) -> Value {
     json!({"mcp_call": {"tool": "task_blocked", "args": {"kind": kind, "reason": reason}}})
 }
 
-/// Waits with `sh` until `path` exists: a deadline loop of at most one `RUN_WAIT`
-/// (1500 × 0.2 s = 300 s).
-pub fn wait_for_file(path: &std::path::Path) -> Value {
-    sh(&format!(
-        "for i in $(seq 1 1500); do [ -e '{}' ] && exit 0; sleep 0.2; done; exit 1",
-        path.display()
-    ))
+/// One `sh` step's share of a gate: 1500 polls of 0.2 s, inside `fake-agent`'s
+/// `SH_TIMEOUT` (330 s).
+const SH_SHARE: Duration = Duration::from_secs(300);
+
+/// Worker steps that hold the turn open until the test writes `path`, for at least
+/// `within`: the test's own bound on everything before it writes `path`
+/// (`run_e2e_stages.rs`'s gate, ruling C-26, 1). The gate is as many `sh` steps as
+/// `within` needs. A gate that runs out leaves [`missed`]'s marker, which the test
+/// asserts is absent, and an `expect` fails the worker (exit 3). The exit alone is not
+/// loud enough: the engine resumes a dead worker's session, and the script goes on.
+///
+/// M9.12.4 ("Spec and brief defects" 10): the worker used to wait for the merge it
+/// needed itself, `git log --all | grep 'anthrex: merge <task>'` in its checkout. Since
+/// M8a's final fix batch F1c (3a) a checkout is its own repository with no refs, so that
+/// log never shows a run branch: the loop ran until `fake-agent`'s `SH_TIMEOUT` (330 s)
+/// ended the step, and the run went on, the order still right only because 330 s is
+/// long. Each test now waits for the merge in the snapshot and opens the gate itself.
+fn gate(path: &Path, within: Duration) -> Vec<Value> {
+    let steps = within.as_secs().div_ceil(SH_SHARE.as_secs());
+    let (p, m) = (path.display(), missed(path).display().to_string());
+    let mut out: Vec<Value> = (0..steps)
+        .map(|_| {
+            sh(&format!(
+                "for i in $(seq 1 1500); do [ -e '{p}' ] && break; sleep 0.2; done; \
+                 if [ -e '{p}' ]; then echo '{{\"go\":true}}'; else touch '{m}'; echo '{{\"go\":false}}'; fi"
+            ))
+        })
+        .collect();
+    out.push(json!({"expect": {"pointer": "/go", "equals": true}}));
+    out
 }
 
-/// Waits with `sh` until the run branch has `task`'s merge (the brief's loop: 1500 ×
-/// 0.2 s = 300 s = one `RUN_WAIT`).
-fn wait_for_merge_of(task: &str) -> Value {
-    sh(&format!(
-        "for i in $(seq 1 1500); do git log --all --format=%s | grep -q 'anthrex: merge {task}' && exit 0; sleep 0.2; done; exit 1"
-    ))
+/// The marker a [`gate`] that ran out leaves beside `path`.
+fn missed(path: &Path) -> PathBuf {
+    path.with_extension("missed")
 }
 
 const STALL_AFTER_SECS: u64 = 5;
@@ -382,23 +403,27 @@ fn e2e_conflict_is_handed_back_and_resolved() {
 fn e2e_second_conflict_blocks_the_task() {
     let h = conflict_harness();
     let release = h.dir.path().join("release-t3");
-    h.script(
-        "worker-t1-1",
-        &[
-            t1_spills(),
-            done("t1"),
-            read("conflicts with the run branch"),
-            wait_for_merge_of("t3"),
-            sh(RESOLVE),
-            done("resolved"),
-        ],
-    );
+    let go = h.dir.path().join("go-t1");
+    // t1 resolves only once t3 has merged, so t3's merge lands between t1's two
+    // candidates. t1 reaches its gate at its hand-back; what the test does before it
+    // writes `go` from there is the wait for t3's merge (one `RUN_WAIT`), plus a
+    // `REQUEST_WAIT` of slack.
+    let mut t1_steps = vec![
+        t1_spills(),
+        done("t1"),
+        read("conflicts with the run branch"),
+    ];
+    t1_steps.extend(gate(&go, RUN_WAIT + REQUEST_WAIT));
+    t1_steps.extend([sh(RESOLVE), done("resolved")]);
+    h.script("worker-t1-1", &t1_steps);
     h.script("worker-t2-1", &[write_shared("from t2"), done("t2")]);
-    // Held until t1's hand-back, so t3's merge lands between the two candidates.
-    h.script(
-        "worker-t3-1",
-        &[wait_for_file(&release), write_shared("from t3"), done("t3")],
-    );
+    // Held until t1's hand-back. t3 starts with the run (`max_writers = 3`); before the
+    // test writes `release` it waits for t1's spill and t2's merge (one `RUN_WAIT`), the
+    // override (one request) and the hand-back (one `RUN_WAIT`), plus a `REQUEST_WAIT`
+    // of slack.
+    let mut t3_steps = gate(&release, 2 * RUN_WAIT + 2 * REQUEST_WAIT);
+    t3_steps.extend([write_shared("from t3"), done("t3")]);
+    h.script("worker-t3-1", &t3_steps);
     let id = h.start(
         &conflict_plan(&[
             claude_task("t1", "a/**"),
@@ -410,14 +435,21 @@ fn e2e_second_conflict_blocks_the_task() {
     spilled_and_t2_merged(&h, &id);
     override_t1(&h, &id);
     h.wait_run(&id, |r| t(r, "t1").conflicts == 1, RUN_WAIT);
+    assert!(
+        !missed(&release).exists(),
+        "t3's gate ran out before `release`"
+    );
     std::fs::write(&release, "").unwrap();
 
-    // t2, then t3 (which waits for t2 on b/**), then t1's second candidate.
-    let run = h.wait_run(
-        &id,
-        |r| t(r, "t1").state == TaskState::Blocked && t(r, "t3").state == TaskState::Merged,
-        3 * RUN_WAIT,
-    );
+    // t3's path (t2 has merged, so nothing holds b/**), then t1's second candidate.
+    let run = h.wait_run(&id, |r| t(r, "t3").state == TaskState::Merged, RUN_WAIT);
+    // The premise: t1 is still at its gate, so its second candidate meets t3's merge.
+    let t1 = t(&run, "t1");
+    assert_eq!(t1.conflicts, 1, "t1 moved before `go`: {t1:?}");
+    assert_ne!(t1.state, TaskState::Blocked, "t1 moved before `go`: {t1:?}");
+    assert!(!missed(&go).exists(), "t1's gate ran out before `go`");
+    std::fs::write(&go, "").unwrap();
+    let run = h.wait_run(&id, |r| t(r, "t1").state == TaskState::Blocked, RUN_WAIT);
     let t1 = t(&run, "t1");
     assert_eq!(
         t1.block.as_ref().map(|b| b.reason),
@@ -447,20 +479,21 @@ const FLAG_CHECK: &str = "if [ -e a/flag ] && [ -e b/need-no-flag ]; then echo '
 #[test]
 fn e2e_red_candidate_goes_back_to_the_worker() {
     let h = RunHarness::with_repo("", &[], true, &[("check.sh", FLAG_CHECK)]);
+    let go = h.dir.path().join("go-t2");
     h.script("worker-t1-1", &[add_file("a/flag"), done("flag")]);
     h.script("reviewer-t1-1", &[approve()]);
-    h.script(
-        "worker-t2-1",
-        &[
-            // t1 merges first, so t2's candidate is the red one.
-            wait_for_merge_of("t1"),
-            add_file("b/need-no-flag"),
-            done("need no flag"),
-            read("merged cleanly into the run branch, but the check failed on the merged result"),
-            sh("git rm -q b/need-no-flag && git commit -qm 'drop need-no-flag'"),
-            done("dropped it"),
-        ],
-    );
+    // t1 merges first, so t2's candidate is the red one. t2 starts with the run
+    // (`max_writers = 2`); before the test writes `go` it waits for t1's merge (one
+    // `RUN_WAIT`), plus a `REQUEST_WAIT` of slack.
+    let mut t2_steps = gate(&go, RUN_WAIT + REQUEST_WAIT);
+    t2_steps.extend([
+        add_file("b/need-no-flag"),
+        done("need no flag"),
+        read("merged cleanly into the run branch, but the check failed on the merged result"),
+        sh("git rm -q b/need-no-flag && git commit -qm 'drop need-no-flag'"),
+        done("dropped it"),
+    ]);
+    h.script("worker-t2-1", &t2_steps);
     h.script("reviewer-t2-1", &[approve()]);
     h.script("reviewer-t2-2", &[approve()]);
     let plan = format!(
@@ -470,8 +503,15 @@ fn e2e_red_candidate_goes_back_to_the_worker() {
     .replace("check = \"true\"", "check = \"sh check.sh\"");
     let id = h.start(&plan, true);
 
-    // t1's path, then t2's two.
-    let run = h.wait_run(&id, complete, 2 * RUN_WAIT);
+    // t1's path, then t2's (its red candidate goes back to the same session).
+    let run = h.wait_run(&id, |r| t(r, "t1").state == TaskState::Merged, RUN_WAIT);
+    // The premise: t2 is still at its gate, so it has no candidate yet.
+    let t2 = t(&run, "t2");
+    assert_eq!(t2.bounces.merge, 0, "t2 moved before `go`: {t2:?}");
+    assert_ne!(t2.state, TaskState::Merged, "t2 moved before `go`: {t2:?}");
+    assert!(!missed(&go).exists(), "t2's gate ran out before `go`");
+    std::fs::write(&go, "").unwrap();
+    let run = h.wait_run(&id, complete, RUN_WAIT);
     let t2 = t(&run, "t2");
     assert_eq!(t2.state, TaskState::Merged);
     assert_eq!(t2.bounces.merge, 1, "{:?}", t2.bounces);
