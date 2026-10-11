@@ -145,7 +145,7 @@ def _wait_for_file(path, within):
     """Worker steps that wait, with the turn open, for `path` for at least `within`
     seconds: `sh` steps of at most 300 s each (inside `fake-agent`'s 330 s
     `SH_TIMEOUT`), a `.missed` marker when the wait ran out, and an `expect` that
-    fails the worker (`crates/cli/tests/run_e2e_pr_ci.rs`'s `wait_for`)."""
+    fails the worker (`crates/cli/tests/it/run_e2e_pr_ci.rs`'s `wait_for`)."""
     missed = path + ".missed"
     steps = []
     for _ in range(int(-(-within // 300))):

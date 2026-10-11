@@ -25,7 +25,7 @@ use support::TestDaemon;
 /// keeps changing; then one small fsynced write; plus [`SAVE_SLACK`].
 ///
 /// The fake-agent script fires `SessionStart` and then blocks on `read_line`, mirroring
-/// milestone 3's own convention (`crates/cli/tests/claude_status.rs`'s `turn_script`) —
+/// milestone 3's own convention (`crates/cli/tests/it/claude_status.rs`'s `turn_script`) —
 /// enough to observe the session id without the process exiting mid-test.
 #[test]
 fn session_id_learned_from_a_hook_is_saved() {

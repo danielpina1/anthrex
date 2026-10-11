@@ -932,7 +932,7 @@ def _write_resume_runtime_script(resume_dir):
 def run_hook(window_id, source, payload, timeout=10):
     """Fires a real hook the way a real agent's own hook command would: a real
     `anthrex hook` child process, over the real socket - the same mechanism
-    `crates/cli/tests/persistence.rs`'s `session_id_learned_from_a_hook_is_saved`
+    `crates/cli/tests/it/persistence.rs`'s `session_id_learned_from_a_hook_is_saved`
     checks at the Rust integration level, driven here from outside the window's own
     process (the fake runtime script above never fires a hook itself) rather than
     from within a scripted fake agent. `anthrex hook` always exits 0 regardless of

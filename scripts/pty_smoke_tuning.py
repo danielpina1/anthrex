@@ -15,7 +15,7 @@ python3 scripts/pty-smoke.py` runs it alone).
 
 The repository's history is the recorded `refit.jsonl` (task M9.5.8): `anthrex run
 stats` refits the S budget to `55 calls 18m` and lists its proposals. Then one M task
-races (`e2e_race_both_pass_crowns_one` of `crates/cli/tests/run_e2e_race.rs`): both
+races (`e2e_race_both_pass_crowns_one` of `crates/cli/tests/it/run_e2e_race.rs`): both
 racers commit and finish, their reviewers meet and approve together, exactly one lane is
 crowned, and `anthrex run accept` puts `a.txt` on `main`.
 """

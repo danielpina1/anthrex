@@ -166,7 +166,7 @@ fn daemon_is_reachable(socket: &Path) -> bool {
 /// become true moments after the winner *stops*, e.g. via `anthrex daemon stop` — as
 /// its cue to become a second, unrequested daemon.
 pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
-    // Test-only: `crates/cli/tests/daemon_spawn_stderr.rs`'s
+    // Test-only: `crates/cli/tests/it/daemon_spawn_stderr.rs`'s
     // `detached_daemon_captures_its_stderr_to_a_file` needs to assert that a detached
     // daemon's *actual* stderr writes reach `daemon.stderr.log`, not just that the file
     // exists — `open_stderr_sink` (`crates/tui/src/spawn.rs`) creates the file as a
@@ -179,7 +179,7 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     if std::env::var_os("ANTHREX_TEST_STDERR_PROBE").is_some() {
         let _ = std::io::Write::write_all(&mut std::io::stderr(), b"anthrex-test-stderr-probe\n");
     }
-    // Test-only (decision 30, `crates/cli/tests/daemon_stop_stuck.rs`): one blocking task
+    // Test-only (decision 30, `crates/cli/tests/it/daemon_stop_stuck.rs`): one blocking task
     // that never finishes in a test's lifetime, standing in for a stuck git or file call,
     // so the test can prove the stopped daemon's process still exits. Inert in every real
     // deployment, as the probe above.

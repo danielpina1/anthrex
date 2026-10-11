@@ -1,6 +1,6 @@
 //! Task M6.5.10: the conversation subscription, end to end inside one process — a real
 //! manager, a real socket, the real server, and hooks driven straight into the manager
-//! (`crates/cli/tests/conversation.rs` drives them through the real `anthrex` binary and
+//! (`crates/cli/tests/it/conversation.rs` drives them through the real `anthrex` binary and
 //! fake-agent instead).
 //!
 //! Every wait is a deadline loop on the condition it needs, bounded by the constants the

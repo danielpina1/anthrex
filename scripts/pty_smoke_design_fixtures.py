@@ -4,7 +4,7 @@ and its file and git helpers. Split from `scripts/pty_smoke_design.py`, which im
 them, for the brief's rule that a new file starts under 400 lines.
 
 The documents are those of `crates/cli/tests/support/run_design.rs`, which pass the real
-template, numbering and brief checks (`crates/cli/tests/run_design_fixtures.rs`); the
+template, numbering and brief checks (`crates/cli/tests/it/run_design_fixtures.rs`); the
 orchestrator's steps are `orch_design_steps` of `support/run_design_orch.rs` with the
 changes at the spec gate of `e2e_changes_at_each_gate_makes_a_new_version`.
 """
