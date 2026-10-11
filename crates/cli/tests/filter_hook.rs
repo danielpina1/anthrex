@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use daemon::output_filter::FILTER_HOOK_DEADLINE;
 use serde_json::{Value, json};
-use support::{ANTHREX, RunningCommand, assert_silent_success, pin_agents, tempdir};
+use support::{ANTHREX, RunningCommand, assert_silent_success, pin_agents, tempdir, warm_anthrex};
 
 /// A process spawn on top of the hook's own deadline (docs/timing-budgets.md).
 const LIMIT: Duration = Duration::from_secs(20);
@@ -321,6 +321,10 @@ fn hook_exits_zero_silently_on_garbage_and_oversized_input() {
 
 #[test]
 fn hook_finishes_within_its_deadline() {
+    // M9.12.4: the first exec of a freshly built `anthrex` (2.5-3 s, unbounded per
+    // docs/timing-budgets.md "Measured primitive costs") is paid here, before the clock:
+    // under cargo-nextest this timing test runs alone and may be the binary's first exec.
+    warm_anthrex();
     let dir = tempdir();
     let logs = dir.path().join("logs");
     let started = Instant::now();
