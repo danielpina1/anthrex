@@ -17,12 +17,20 @@ impl Agent {
     async fn new(output: bool) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let stub = dir.path().join("stub.sh");
+        // `warm` exits at once: the stub is exec'd once below, so macOS's first-exec
+        // assessment (up to 3.50 s with eight at once) is paid before `output`'s 5 s
+        // (M9.12.4 review, Minor 1).
         let body = if output {
-            "#!/bin/sh\nwhile :; do echo tick; sleep 0.2; done\n"
+            "#!/bin/sh\n[ \"$1\" = warm ] && exit 0\nwhile :; do echo tick; sleep 0.2; done\n"
         } else {
-            "#!/bin/sh\nexec sleep 300\n"
+            "#!/bin/sh\n[ \"$1\" = warm ] && exit 0\nexec sleep 300\n"
         };
         testexec::write_executable(&stub, body);
+        let warm = std::process::Command::new(&stub)
+            .arg("warm")
+            .output()
+            .unwrap();
+        assert!(warm.status.success(), "warming the stub: {warm:?}");
         let mut config = ManagerConfig::for_tests(dir.path().join("daemon.sock"), "/bin/sh".into());
         config.claude_bin = stub.to_str().unwrap().into();
         let (manager, events) = WindowManager::new(config);
