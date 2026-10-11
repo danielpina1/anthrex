@@ -12,8 +12,8 @@ nextest-version = { required = "0.9.146" }
 # `e2e_second_conflict_blocks_the_task` 337.4 s), above decision 2's 300 s stop line
 # ("Spec and brief defects" 10). M9.12.4 found why (each waited out a 300 s scripted
 # gate that could never see the merge it waited for) and fixed the scripts: both take
-# about 8 s now, and the slowest test is `run_e2e_crash`'s
-# `e2e_crash_after_each_intent_kind_reconciles`, about 49 s, far inside 600 s.
+# 6-7 s in the full suite now, and the slowest test is `run_e2e_crash`'s
+# `e2e_crash_after_each_intent_kind_reconciles`, 50-52 s (M9.12.4), far inside 600 s.
 slow-timeout = { period = "60s", terminate-after = 10 }
 # Decision 3: a retry hides the flake docs/timing-budgets.md wants found at its root,
 # and every failed test is diagnosed before a push, so the run never stops early.

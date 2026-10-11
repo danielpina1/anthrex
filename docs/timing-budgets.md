@@ -114,7 +114,7 @@ Every bound below is derived from the harness's own configuration
 |---|---|---|---|---|
 | `e2e_stall_escalates_to_a_fresh_session_on_the_peer_runtime`, its `wait_run` | `crates/cli/tests/run_e2e_merge.rs` | `2 * RUN_WAIT + 2 * stall_after_secs` (610s) | Two task paths (`k = 2`: session 1, then the fresh session 2), plus the two stalls waited out on the critical path (`stall_after_secs = 5` each). The interrupt ends `hang` at once (`fake-agent`), so no `INTERRUPT_GRACE` is spent. | **Recorded.** |
 | The ladder and merge tests' other `wait_run`s | `run_e2e_merge.rs` | `k * RUN_WAIT` with the brief's `k`: 3 for `e2e_mis_sized_…` and `e2e_second_conflict_…`, 2 for `e2e_conflict_…` and `e2e_red_candidate_…` | The `RUN_WAIT` row's `k` rule. | **Recorded.** |
-| The scripted gates (`wait_for_file`, `wait_for_merge_of`) | `run_e2e_merge.rs`, `run_e2e_safety.rs` (`sh` loops of 1500 × 0.2s) | `300s` (one `RUN_WAIT`) | The path the gate waits for is one task path at most (`t3`'s own, or the test's next step after a `wait_run` of at most one `RUN_WAIT`). Under `fake-agent`'s `SH_TIMEOUT` (330s). | **Recorded.** A gate, never a sleep: each loop exits as soon as its file or merge exists. |
+| The scripted gates (`wait_for_file`, `wait_for_merge_of`) | `run_e2e_merge.rs`, `run_e2e_safety.rs` (`sh` loops of 1500 × 0.2s) | `300s` (one `RUN_WAIT`) | The path the gate waits for is one task path at most (`t3`'s own, or the test's next step after a `wait_run` of at most one `RUN_WAIT`). Under `fake-agent`'s `SH_TIMEOUT` (330s). | **Recorded.** A gate, never a sleep: each loop exits as soon as its file or merge exists. **M9.12.4:** the merge gate never could: a checkout has had no refs since F1c, so `wait_for_merge_of` always ran until `fake-agent`'s 330 s `SH_TIMEOUT`. Both merge tests now gate on a file the test writes; see "Recorded, from M9.12" below. |
 | `e2e_crash_after_each_intent_kind_reconciles`: the wait for the crash | `crates/cli/tests/run_e2e_crash.rs` (`wait_dead`) | `RUN_WAIT` | The daemon crashes at the first intent of the kind, at most one task path in. | **Recorded.** |
 | The same test's `wait_run` per kind | `run_e2e_crash.rs` | `2 * RUN_WAIT` | The part before the crash and the part after it are a path each (`k = 2`). | **Recorded.** |
 | The same test's `ANTHREX_TEST_DELAY_DONE_MS` | `run_e2e_crash.rs` (`DELAY_DONE_MS`) | `300ms`, a **lower** bound on the hold | Not a wait: every op's `done` line (but a `CreateWindow`'s) is held this long, far over a `run.json` save plus an intent append (a few fsyncs, milliseconds), so an engine that acts on a result before its line is written reaches the next intent first. A loaded machine can only make the mutant's window wider, never a correct daemon fail. Adds about 0.3s per op to each path, inside `RUN_WAIT`'s 20s of scripted waits. | **Recorded.** |
@@ -784,6 +784,112 @@ Stream C (the flaky tests):
 | `a_zombie_is_not_alive`, the wait for `Z` | `crates/daemon/tests/headless_sessions.rs` | `DEADLINE` (10 s) | `sh -c 'exit 0'` exits within milliseconds. A hang guard. | **Recorded** (C8, M9.11.38). |
 | `e2e_the_queue_survives_a_daemon_restart`, `the_restart_waits_for_the_first_scout_to_claim_its_script` | `crates/cli/tests/profile_queue.rs` (`CLAIM_WAIT`) | `19 s` (`+ SCOUT_STALL`, 5 s, for the variant's first claim) | Measured from the scout's window being up: `fake-agent`'s exec (a first exec, serialised with this file's parallel first execs, ≤ 3.5 s for eight, rounded to 4 s), its `git rev-parse` under `GIT_TIMEOUT` (5 s), one `create_new`, plus 10 s of slack. | **Fixed** (C14, M9.11.38a). |
 
+### Recorded, from M9.12 (cargo-nextest, 2026-10-11)
+
+Milestone 9.12 moved the suite from libtest to cargo-nextest (`.config/nextest.toml`), and
+its decision 9 asked for every bound in this document, and every timing test and deadline
+bound M9.12.3's sweep found, to be re-derived against what that changes. Three terms are
+new, and every row below is checked against each:
+
+- **N, neighbours.** libtest ran one binary at a time, up to one test per CPU (14 here)
+  inside it. nextest runs up to one test per CPU from any binaries, at most 8 of them in
+  `real-io` (a PTY, real git, a daemon, a stand-in) and the rest light (memory and CPU
+  only). So a test can now have up to 7 `real-io` neighbours from other binaries, but
+  never more heavy neighbours than libtest allowed inside its own binary (13). A timing
+  test (the 74 of the `timing` override) has none: `threads-required =
+  "num-test-threads"` starts it only when nothing else runs and starts nothing beside it,
+  where libtest ran it beside up to 13 siblings. N changes no code's legal worst case: a
+  bound derived from the constants the code runs against (standing rule 1) is unchanged
+  by it, and a derivation that leaned on "measured alone" is safer, not less safe, for a
+  timing test.
+- **P, one process per test.** Every per-binary cache is now filled once per test. The
+  sweep (`grep -rnE 'OnceLock|LazyLock|Once::new|static [A-Z_]+: '` over `crates/*/tests`
+  and the test modules of `crates/*/src`) finds four caches, three of which run a process or write a file:
+  `cli/tests/support/mod.rs`'s `warm_anthrex` (a `Once` that runs `anthrex --version`:
+  per test now, still before the clock it exists for), `fake-agent/tests/headless_support`'s
+  `anthrex()` (a nested `cargo build` only when the sibling binary is missing; `cargo
+  nextest run --workspace` builds it), `fake-agent/tests/orch_support`'s `wrapper()`
+  (**changed**, below) and `daemon/src/profile/tests_tiers.rs`'s runtime (no process).
+  The test binary's own start, and nextest's `--list` run of each binary, happen before
+  any test function, outside every bound.
+- **F, first execs.** A freshly written stand-in pays macOS's assessment on its first
+  exec, serialised across processes: eight at once end at 3.50 s ("Measured primitive
+  costs"). At most 8 `real-io` tests run at once, so at most 8 such first execs overlap,
+  where libtest allowed up to 14 inside one binary; a timing test overlaps none but its
+  own. A second, related term moved: the first exec of a freshly **built** binary
+  (`anthrex`, `fake-agent`: 2.5-3 s measured, unbounded) lands in whichever test execs it
+  first. Under libtest that was fixed by the binaries' alphabetical order (every
+  `anthrex`-exec'ing binary before `hook_command`'s, for one); nextest interleaves the
+  binaries, so a timing test that execs one of them inside its clock now pays it first
+  (**changed**, below). The watcher-arming stall on the first run of a new test
+  executable is now likely paid by nextest's `--list` run; no bound counted on it before,
+  and none does now.
+
+Changed (one commit per test file):
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| `without_a_daemon_it_exits_zero_silently_and_fast`, `held_open_stdin_is_included_in_the_deadline`, `a_silent_daemon_costs_at_most_a_second`, `a_payload_over_the_size_limit_is_still_dropped_whole`, `one_deadline_covers_stdin_handshake_and_ack` | `crates/cli/tests/hook_command.rs` (`LIMIT`) | `3 s`, unchanged; `warm_anthrex()` before each clock | `HOOK_DEADLINE` (1 s) plus an assessed `anthrex` spawn (33-85 ms loaded). The first exec of a fresh build (2.5-3 s) is not in that sum; under libtest it was always paid by an earlier binary, under nextest (F) it can land here. | **Changed** (M9.12.4): the term is paid before the clock, the recorded pattern ("Fixed, from the codex-probe ordering flake"). |
+| `hook_finishes_within_its_deadline` | `crates/cli/tests/filter_hook.rs` | `FILTER_HOOK_DEADLINE + 2 s`, unchanged; `warm_anthrex()` before the clock | As M8b.8's row, whose spawn term is an assessed spawn. | **Changed** (M9.12.4), as above. |
+| `daemon_start_does_not_wait_on_a_slow_codex_probe`: `elapsed < SLOW_PROBE_STALL` | `crates/cli/tests/codex_version.rs` | `4 s`, unchanged; `warm_anthrex()` before the clock | Two assessed `anthrex` execs (`daemon start` and the daemon it spawns), the bind, and the socket wait; the stub is warmed already (`ordering_codex`). A first exec of a fresh build (2.5-3 s) inside it leaves under 1.5 s for the rest. | **Changed** (M9.12.4), as above. |
+| `hook_timeout_includes_blocked_stdin_delivery` | `crates/fake-agent/tests/script.rs` | `>= 4.5 s` and `< 8 s`, unchanged; `fake-agent --version` before the clock | The hook's 5 s timeout, measured from `fake-agent`'s own step, plus the run's spawn and exit. A first exec of a fresh `fake-agent` build (2.5-3 s) on top reaches the 8 s bound. | **Changed** (M9.12.4), as above. |
+| An orchestrator's hooks through the shared `anthrex` wrapper | `crates/fake-agent/tests/orch_support/mod.rs` (`wrapper`) | fake-agent's `STEP_TIMEOUT` (5 s) per hook, unchanged; the wrapper exec'd once per test process before use | P and F together: the `OnceLock` is per test now, and on a fresh target directory up to 8 `real-io` tests may each find the file missing and write their own copy, up to 8 new files to assess (3.50 s) inside a first hook's 5 s. | **Changed** (M9.12.4): each test process runs the wrapper's `hook` branch once (logging to `/dev/null`) before any `fake-agent` uses it. |
+| `e2e_second_conflict_blocks_the_task`, `e2e_red_candidate_goes_back_to_the_worker`: the scripted gates | `crates/cli/tests/run_e2e_merge.rs` (`gate`, `missed`) | t1's gate `RUN_WAIT + REQUEST_WAIT`, t3's `2 * RUN_WAIT + 2 * REQUEST_WAIT`, t2's `RUN_WAIT + REQUEST_WAIT`, each as `sh` steps of 300 s inside `SH_TIMEOUT` (330 s); the test's waits `RUN_WAIT` per path (t3's, then t1's second candidate; t1's, then t2's) | Each gate is the test's own bound on everything it does before it writes the gate's file, plus a request of slack (the `run_e2e_stages.rs` row's technique). | **Fixed** (M9.12.4, "Spec and brief defects" 10): they took 335-338 s, the suite's wall-time floor. The worker waited for a merge with `git log --all \| grep 'anthrex: merge <task>'` in its own checkout, which since M8a's F1c (3a, `4773b246`, a day after these tests) is its own repository with no refs: the loop never matched, and 1500 polls of 0.2 s plus a `git log` each outlast `fake-agent`'s `SH_TIMEOUT` (330 s), so the step ended there and the run went on. Seen live: the merge in the user's repository, `git log --all` in the worker's checkout listing only `initial`, the loop still polling. Now the test waits for the merge in the snapshot and writes the gate's file; a gate that runs out fails the worker and leaves a marker the test asserts absent. Measured on this Mac: 336.7 s and 336.9 s before (both green; 330 s of it the `sh` step's timeout), 8.2 s each after; the file's five tests 18.3 s. RED for the gate: cut to 1 poll per step, `e2e_red_candidate_…` fails at 5 s ("t2's gate ran out before `go`") and `e2e_second_conflict_…` at its 300 s `wait_run`. |
+| `a_queued_goal_waits_and_a_confirm_starts_it`: the queue file gone | `crates/daemon/src/profile/tests_queue_service.rs` | was asserted once, right after the starter was called; now `REQUEST_WAIT` (75 s), the file's deadline loop every 20 ms | The starter is called with the goal in `starting`, on file; the file goes only in `start_returned`, after the starter's future ends: one `spawn_blocking` remove under `writes`. Not a nextest term: an order the test never waited for. | **Fixed** (M9.12.4, stress run 4 of the first five: "assertion failed: !…QUEUE_FILE.exists()"). RED: a 300 ms pause at `start_returned`'s top (a probe, not kept) fails the old assertion every time; the loop passes. |
+
+Unchanged, the timing tests (each runs alone, so N is gone for all of them; P and F are
+checked per test):
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| `create_repo_gives_up_on_a_git_that_does_not_answer` | `cli/src/run_cmd/delivery_tests.rs` | `< 5 s` | M9.7.12's row; its stand-in is warmed (FW-18) and nothing else is exec'd. | **Unchanged.** |
+| `connect_times_out_on_a_silent_server` (both) | `cli/src/client.rs`, `tui/tests/connection.rs` | `< 7 s` | The handshake's 5 s on a socket the test holds silent; no exec. | **Unchanged.** |
+| `a_hanging_decider_is_cut_at_the_bound`, `a_hanging_decider_falls_back_at_its_timeout_and_leaves_no_process` | `cli/tests/decider_call_run_name.rs`, `decider_call.rs` | `< BOUND + SPAWN_SLACK`; `<= timeout + KILL_GRACE + SPAWN_SLACK` | The call is in the test process; its stand-ins come from `Fixture::new`, which warms them and `fake-agent` ("Fixed, from the decider-call flake"); the hang is ended by the timeout whatever the exec costs. | **Unchanged.** |
+| `restart_request_does_not_block_the_connection` | `cli/tests/persistence.rs` | `< 500 ms` | One request on a `TestDaemon` (which warms `anthrex` before it starts); no exec in the window. | **Unchanged.** |
+| `running_command_finishes_when_a_descendant_keeps_output_handles_open` | `cli/tests/codex_version.rs` | `< 750 ms` | `/bin/sh` and `sleep`, both long assessed. | **Unchanged.** |
+| `a_client_handshake_is_answered_while_the_codex_probe_is_still_running` | `codex_version.rs` | `< PROBE_STALL` | `anthrex ls` after the test's own daemon is up, so `anthrex` is assessed; the stub is warmed. | **Unchanged.** |
+| `codex_probe_timeout_kills_and_reaps_its_owned_process`, `codex_probe_does_not_wait_forever_for_inherited_stdout` | `codex_version.rs` (`probe`) | `< LS_BOUND` (15 s) | The probe's 5 s timeout ends the stub whatever its exec costs; a first `anthrex` exec (2.5-3 s) and the spawns fit the 10 s of slack. | **Unchanged.** |
+| `wake_is_delivered_only_when_idle_and_quiet`, `e2e_plan_path_scouts_plans_and_reads_the_approval` | `cli/tests/run_e2e_orch_wake.rs`, `run_e2e_orch/gate.rs` | `< 5 s`; `(wait_secs + 5) * 1000` ms per call | Both clocks start after the harness's daemon (the same `anthrex`) is up, so every exec they time is assessed. | **Unchanged.** |
+| `acquire_waits_for_release`, `acquire_or_yield_still_acquires_the_lock_when_never_already_running` | `daemon/src/lockfile.rs` | `< 1.5 s` | `flock` calls in the test process. | **Unchanged.** |
+| `a_probe_past_its_deadline_is_killed_reaped_and_reported` | `daemon/src/models/tests.rs` | 2.6 s | M9.8.6's row; the stand-in is warmed. | **Unchanged.** |
+| `a_head_or_a_trailer_arriving_a_byte_at_a_time_is_scanned_in_linear_time`, `tag_removal_is_linear_on_a_32_kib_heading` | `daemon/src/metering/http_tests.rs`, `run/design/template_tests_linear.rs` | 500 ms; 40 ms | Pure CPU, measured alone in their rows; alone is what they get now. | **Unchanged.** |
+| The read path's eight (`run_status_returns_at_once_without_since`, `run_status_waits_until_the_digest_changes`, `run_status_times_out_with_the_same_revision`, `terminal_run_ends_the_wait`, `the_deadline_spans_lagged_resubscriptions`, `long_poll_holds_no_engine_lock`, `resolution_holds_no_lock_across_the_read`, `a_long_poll_resolved_before_an_adopt_answers_for_the_new_run`) | `daemon/src/run/driver/orch_read_tests.rs`, `chain_tests.rs` | as their M9.11 and M9.3.6a rows | The rig's in-process `serve` and `mcp::forward`; no exec in the timed span. | **Unchanged.** |
+| `the_handoff_history_read_is_bounded`, `a_stuck_continue_past_the_tool_deadline_starts_nothing` | `chain_goal_tests.rs`, `chain_goal_deadline_tests.rs` | `< git_timeout_secs + 5 s`; `< CAP + 5 s` | A FIFO read, and a deadline that answers whatever the stuck stand-in does. | **Unchanged.** |
+| `wake_writes_happen_outside_every_lock`, `adopt_runs_off_the_manager_lock`, `the_tick_publishes_outside_the_engine_lock` | `wake_tests.rs`, `chain_ops_tests.rs`, `orch_tests.rs` | `< 100 ms`; `< 500 ms`; 3 s | Uncontended lock probes while a step is held; the stand-ins they launch are up before the probe. | **Unchanged.** |
+| `the_installed_probe_gives_up_after_its_timeout`, `a_read_back_that_times_out_changes_nothing`, `a_host_op_that_times_out_answers_timed_out`, `preflight_messages_are_exact` | `build_installed_tests.rs`, `design_restore_tests.rs`, `host_ops_tests.rs`, `delivery_tests.rs` | as their rows | `tokio::time::timeout` over in-process work or `Sleepy`; no exec. | **Unchanged.** |
+| `restart_resumes_claude_and_codex_sessions` | `daemon/tests/lifecycle_resume.rs` | `< CODEX_PROBE_TIMEOUT / 2` | `argv.sh` warmed before the daemon starts ("Fixed, from the decider-call flake"). | **Unchanged.** |
+| The OTLP three (`untokened_connections_are_closed_first_when_full`, `past_the_connection_cap_…`, `a_slow_client_does_not_block_another`) | `daemon/tests/otlp_server.rs`, `otlp_server/tokens.rs` | under `OTLP_READ_TIMEOUT`; `SLOW_BOUND` | In-process sockets. | **Unchanged.** |
+| `stderr_is_bounded_and_does_not_block_the_child` | `daemon/tests/subprocess.rs` | `< 10 s` | `/bin/sh` only; the injected timeout. | **Unchanged.** |
+| The lock-latency asserts (`a_slow_worktree_create_does_not_block_the_manager`, `a_program_that_ignores_stdin_never_blocks_write_input_or_list`, `list_is_answered_while_a_create_is_running`, `create_run_window_does_not_hold_the_manager_lock_across_spawn`) | `daemon/tests/manager_worktree/admission.rs`, `manager.rs`, `server/worktree.rs`, `orchestrator_window.rs` | `< 100 ms`, `< 500 ms`, `< 1 s` | One uncontended manager lock while git or a PTY is held; alone, the probe has the machine to itself. | **Unchanged.** |
+| `an_exited_window_is_removed_without_waiting` | `manager_worktree/removal/ordering.rs` | `< 10 s` against a 60 s grace | Five git calls (190-475 ms, "Measured primitive costs"). | **Unchanged.** |
+| The handshake three (`a_client_that_never_says_hello_is_dropped`, `a_client_with_a_partial_frame_is_dropped_after_the_timeout`, `a_client_that_disconnects_mid_handshake_ends_the_connection_promptly`) | `daemon/tests/server.rs` | `<= 7 s`; `< 1 s` | `HANDSHAKE_TIMEOUT` on an in-process server. | **Unchanged.** |
+| The shell kills (`create_subscribe_input_and_kill_flow`, `kill_terminates_and_remove_forgets`, `shutdown_ends_every_window`, `kill_ends_an_interactive_shell_within_a_second`) | `daemon/tests/server.rs`, `manager.rs`, `manager/lifecycle.rs` | `< 1.5 s`; `< 1 s` | `SIGHUP` to a system shell. | **Unchanged.** |
+| `hanging_git_times_out`, `inherited_stdout_does_not_outlive_the_detection_deadline` | `daemon/tests/project.rs` | `< 2 s`; `< DETECT_TIMEOUT + 2 s` | The injected 300 ms or `DETECT_TIMEOUT` ends the stand-in whatever it costs; its one first exec (0.44 s, alone) fits the slack; the second's clock starts after the stand-in's helper has written its pid. | **Unchanged.** |
+| `a_timeout_marks_the_state_stale`, `a_timeout_before_the_fork_marks_the_state_stale` | `daemon/tests/git_probe.rs` | `timeout + REAP_SLACK` | `write_script` warms the stand-in. | **Unchanged.** |
+| `a_racing_second_start_is_refused_and_does_not_become_a_phantom_daemon` | `daemon/tests/lifecycle.rs` | `< 500 ms` | In-process `run`. | **Unchanged.** |
+| `a_timeout_during_create_cleans_up`, `create_and_its_cleanup_each_run_to_their_own_injected_deadline` | `daemon/tests/worktree.rs` | `< 6 s`; `< 4 s` | The injected deadlines kill the hook whatever it costs; the hook runs through the system shell. | **Unchanged.** |
+| `a_confined_command_that_times_out_is_killed_with_its_group`, the four `run_exec.rs` tests | `daemon/tests/run_confine.rs`, `run_exec.rs` | `timeout + OUTPUT_GRACE + SLACK` and as listed | `sh -c` under the check's timeout; `sandbox-exec` is a system binary. | **Unchanged.** |
+| `a_busy_tuning_file_starts_untuned_at_the_bound` | `daemon/tests/tuning_io.rs` | 5 s against a 50 ms bound | A lock the test holds. | **Unchanged.** |
+| `subprocess_deadline_stops_a_hung_owned_child` | `fake-agent/tests/script.rs` | `< 1 s` | `/bin/sh` under the injected 200 ms. | **Unchanged.** |
+| `send_never_suspends_and_reports_a_dead_connection` | `tui/tests/connection.rs` | `< 500 ms` for 5000 sends | In memory. | **Unchanged.** |
+
+Unchanged, the rest of this document (every row, by section; each a hang guard or a
+deadline loop derived from the code's constants, an absence window, or a production
+bound):
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| Every row from "The defect shape" through "Recorded, from M9.11 (stabilization)" not named above | as each row | as each row | N, P and F change no constant a row is derived from. A row whose derivation counts a stand-in's first exec either warms it first (the codex-probe, decider-call, `git_probe`, models, wake-rig, Codex-question-rig, lag-test, `create_repo` and `install_stand_in` rows) or allows at least 3.50 s for it (`CLAIM_WAIT`'s 4 s; `MODELS_WAIT`'s and `DISCOVERY_TIMEOUT`'s 10 s; every `REQUEST_WAIT`, `RUN_WAIT` and larger). The smoke scripts' rows do not run under nextest. | **Unchanged.** |
+| `the_first_hook_disables_the_output_fallback`: the window's first output | `crates/daemon/tests/agent_hooks.rs` (`Agent::output`) | 5 s, a `tokio::time::timeout` hang guard | One PTY spawn of a fresh, unwarmed stub (a loop printing `tick` every 200 ms): F's 3.50 s for eight overlapping first execs, the spawn and the first `echo`. Under 5 s, 1.5 s of margin; libtest's own worst case (up to 14 overlapping in one binary) was larger. | **Unchanged.** The thinnest margin the F sweep found; the stub loops forever, so it cannot be warmed by one exec without a new branch in it. |
+| `RUN_WAIT`'s `k` rows for `run_e2e_merge.rs` (M8a.25), and its scripted gates' row | `run_e2e_merge.rs` | as M8a.25 | The `k` per test is the same; the two tests above split their final wait into a wait per path. | **Changed** for the two tests above; the rest of the file is unchanged. |
+| Every deadline loop of M9.12.3 Step 1's sweep (1,102 lines) that is not a timing test | `crates/*/src`, `crates/*/tests` | as each | A deadline loop or `timeout` whose bound only ends a wait; the same argument as the row above. Every one that waits on a fresh stand-in's first exec was found by the stand-in sweep below. | **Unchanged.** |
+
+The stand-in sweep for F: every file that writes an executable (`write_executable` or a
+`0o7…` mode, 75 files) was read for a wall-clock bound under 5 s that a fresh first exec
+falls inside. Besides the rows marked changed, every such bound warms its stand-in first,
+or ends at an injected timeout that does not depend on the exec, or starts its clock only
+after the stand-in has reported in.
+
 ### Fixed, from M9.5.8's flake fix (ruling F-1, 2026-10-03)
 
 | Test | File | Bound | Derivation | Status |
@@ -956,6 +1062,10 @@ close to genuine danger today.
    step is never pre-empted, so a higher-priority or earlier request waits for every
    step already running to end (`crates/daemon/src/run/slots/book.rs`), and an exclusive
    step waits for all of them.
+
+   The suite runs under cargo-nextest (`.config/nextest.toml`): up to one test per CPU,
+   at most 8 of them in `real-io`, one process per test; timing tests run alone. Derive a
+   new bound against that, not against libtest's one-binary-at-a-time order.
 
 6. **Never start the suite with SIGINT ignored.** `headless_sessions::interrupt_by_sigint_reaches_the_child`
    and `headless_turns::interrupt_follows_cli_caps` send SIGINT to a child and wait for it to
