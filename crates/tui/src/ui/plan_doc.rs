@@ -24,7 +24,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use unicode_width::UnicodeWidthStr;
 
-/// The table's heading in `plan.md` (`daemon::run::design::plan_md`).
+/// The table's heading in `plan.md` (`plan_md` in the daemon's run design module).
 const COVERAGE: &str = "## Coverage";
 /// The first column's label.
 const REQUIREMENT: &str = "requirement";
