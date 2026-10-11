@@ -207,3 +207,101 @@ fn no_merged_test_mutates_the_process_environment() {
     let hits = hits(crates);
     assert!(hits.is_empty(), "{}", hits.join("\n"));
 }
+
+// ---------------------------------------------------------------------------------
+// The engine-purity rule (milestone 9.12, decisions 16 and 17); the scanner is `engine`.
+
+mod engine;
+use engine::{engine_hits, engine_scan, production_lines};
+
+#[test]
+fn the_scanner_finds_each_forbidden_form() {
+    let forbidden = [
+        "use tokio::sync::mpsc;",
+        "tokio::spawn(f)",
+        "use std::fs;",
+        "let t = std::fs::read(p)?;",
+        "use std::{collections::BTreeMap, process::Command};",
+        "use std::{\n    collections::BTreeMap,\n    thread,\n};",
+        "let v = std::env::var(\"X\");",
+        "let t = SystemTime::now();",
+        "let e = UNIX_EPOCH;",
+        "let t = Instant::now();",
+        "unsafe { libc::kill(1, 0) };",
+        "let s = portable_pty::native_pty_system();",
+    ];
+    for text in forbidden {
+        assert!(!engine_scan(text).is_empty(), "not found: {text}");
+    }
+    let allowed = [
+        "use std::time::Duration;",
+        "use std::path::PathBuf;",
+        "use std::{collections::BTreeMap, time::Duration};",
+        "// tokio is not used here",
+        "/// no std::fs",
+        "let s = \"std::fs and tokio\";",
+    ];
+    for text in allowed {
+        assert_eq!(engine_scan(text), [], "found in: {text}");
+    }
+    // The line of a grouped import's offending name, not of the `use`.
+    assert_eq!(
+        engine_scan("use std::{\n    collections::BTreeMap,\n    thread,\n};"),
+        [(3, "std::thread")]
+    );
+}
+
+#[test]
+fn the_scanner_skips_test_code() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = dir.path().join("engine");
+    let put = |rel: &str, text: &str| {
+        let path = engine.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    put(
+        "mod.rs",
+        "#[cfg(test)]\n#[path = \"x_tests.rs\"]\nmod tests;\n\
+         #[cfg(test)]\nmod more {\n    use std::fs;\n}\n\
+         pub(crate) fn f() {}\n\
+         #[cfg(test)]\npub(crate) use ended::REBASELINED;\n\
+         #[cfg(test)]\npub(super) fn waits(run: &Run) -> bool {\n    let x = { 1 };\n    std::thread::yield_now();\n    x == 1\n}\n\
+         #[cfg(test)]\n#[allow(dead_code)]\nstruct S {\n    t: std::time::SystemTime,\n}\n",
+    );
+    put("x_tests.rs", "use std::fs;\n");
+    put("tests/a.rs", "use tokio::time;\n");
+    put(
+        "y.rs",
+        "let s = \"#[cfg(test)] use std::fs\";\nuse std::fs;\n",
+    );
+    let hits = engine_hits(&engine);
+    assert_eq!(hits.len(), 1, "{hits:#?}");
+    assert!(hits[0].starts_with("run/engine/y.rs:2: std::fs in engine code"));
+    assert!(hits[0].ends_with("use std::fs;"));
+
+    // The production code after a skipped item is still scanned.
+    let text = "#[cfg(test)]\npub(super) fn waits() {\n    use std::fs;\n}\nuse std::fs;\n\
+                #[cfg(test)]\npub(crate) use a::B;\nuse std::process;\n";
+    assert_eq!(engine_scan(text), [(5, "std::fs"), (8, "std::process")]);
+    let kept: Vec<usize> = production_lines(text).iter().map(|l| l.0).collect();
+    assert_eq!(kept, [5, 8]);
+}
+
+#[test]
+fn the_engine_imports_no_runtime_io_or_clock() {
+    // M9.12.11 passes this through `testexec::checkout_dir` (decision 25).
+    let crates = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let engine = crates.join("daemon/src/run/engine");
+    assert!(
+        engine.join("mod.rs").is_file(),
+        "the walk starts at {}",
+        engine.display()
+    );
+    let hits = engine_hits(&engine);
+    assert!(
+        hits.is_empty(),
+        "the engine imports runtime, I/O or clock APIs:\n{}",
+        hits.join("\n")
+    );
+}
