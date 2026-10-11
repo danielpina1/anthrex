@@ -21,3 +21,7 @@ pub fn check_branch_syntax(branch: &str) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "branch_tests.rs"]
+mod tests;
