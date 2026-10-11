@@ -24,9 +24,16 @@ const PLAN: &str = "goal = \"x\"\n\n[[task]]\nid = \"t1\"\ntitle = \"T\"\nsize =
 
 /// A manager configuration whose agent programs are nonexistent paths: a run these
 /// tests start never reaches a real `claude` or `codex` (M9.13: a planned run starts
-/// its orchestrator).
+/// its orchestrator). Its worktrees root is `worktrees` beside the socket, in the
+/// test's own directory (M9.12.13's follow-up: a run's checkouts made under the shared
+/// default root after the test's reply outlived the test on macOS CI).
 fn pinned(socket: std::path::PathBuf) -> ManagerConfig {
-    ManagerConfig::for_tests(socket, "/bin/sh".into())
+    let root = socket
+        .parent()
+        .expect("the socket is in the test's directory");
+    let mut config = ManagerConfig::for_tests(socket.clone(), "/bin/sh".into());
+    config.worktrees_root = root.join("worktrees");
+    config
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -328,6 +335,15 @@ async fn rig_on(
         config.cli_caps = daemon::headless::argv::CLI_CAPS;
     }
     let (manager, _events) = WindowManager::new(config);
+    // M9.12.13's follow-up: a run the rig starts makes its checkouts under its own
+    // directory, never under the shared default root, where one made after the
+    // test's reply (macOS CI) outlived the test.
+    let root = &manager.config().worktrees_root;
+    assert!(
+        root.starts_with(dir),
+        "{} is outside the rig",
+        root.display()
+    );
     let git = GitWiring::new(config::Git {
         enabled: false,
         ..config::Git::default()
