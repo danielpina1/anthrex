@@ -19,8 +19,8 @@ pub const PREFLIGHT_BOUND: Duration =
 
 /// Ruling T9-3: how long a start waits for its tuning, the repository's tuning lock and
 /// the file work together (one history read and one small write); past it the run
-/// starts untuned and says so ([`TUNING_BUSY`]). Every start bound that counts the
-/// build counts it (`docs/timing-budgets.md`).
+/// starts untuned and says so (the daemon's `run::driver::tuning::TUNING_BUSY`). Every
+/// start bound that counts the build counts it (`docs/timing-budgets.md`).
 pub const TUNING_START_BOUND: Duration = Duration::from_secs(10);
 
 /// How long the probe may take. It stats two paths; only a hung file system is slower.

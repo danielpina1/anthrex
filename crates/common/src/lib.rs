@@ -1,6 +1,7 @@
 //! Pure helpers and two self-contained file helpers (`logfile`, `lockfile`) that both the
-//! daemon and the client use. Depends on `proto` and `libc` only: never on the daemon,
-//! `config`, `tokio` or a PTY (decision 10).
+//! daemon and the client use. Depends on `proto`, `libc` and `anyhow` only (`lockfile`'s
+//! errors; decision 10's 2026-10-11 ruling): never on the daemon, `config`, `tokio` or a
+//! PTY (decision 10).
 
 pub mod bounds;
 pub mod branch;

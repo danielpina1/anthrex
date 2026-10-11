@@ -52,10 +52,10 @@ pub fn repo_worktrees_dir(worktrees_root: &Path, project_root: &Path) -> PathBuf
 ///
 /// **One derivation, two readers**, and that is the whole reason it is a function rather
 /// than two `join`s. `WindowManager::create`'s phase A calls this to claim the directory
-/// against other creates, under the manager lock, before any git runs; [`ops::create`]
-/// calls it to decide where `git worktree add` writes. If those two ever computed
-/// different paths for one create, the claim would guard a directory nobody makes while
-/// the real one stayed unclaimed — and the loser of a race would then run
+/// against other creates, under the manager lock, before any git runs; the daemon's
+/// `worktree::create` calls it to decide where `git worktree add` writes. If those two ever
+/// computed different paths for one create, the claim would guard a directory nobody makes
+/// while the real one stayed unclaimed — and the loser of a race would then run
 /// `git worktree remove --force` over the winner's live checkout. They were two copies of
 /// the arithmetic over two separately resolved roots until the whole-branch review's
 /// finding 4; now there is one of each.
@@ -65,11 +65,12 @@ pub fn worktree_dir(worktrees_root: &Path, project_root: &Path, branch: &str) ->
     repo_worktrees_dir(worktrees_root, project_root).join(branch_dir_name(branch))
 }
 
-/// Why a worktree is not safe to remove — which of [`dirty_reason`]'s questions fired.
+/// Why a worktree is not safe to remove — which of the daemon's
+/// `worktree::dirty_reason`'s questions fired.
 ///
-/// It exists so the refusal can say what is actually true. A single `bool` left
-/// [`WorktreeError::Dirty`] with one sentence for six different states, and that sentence
-/// —"uncommitted or untracked changes" — is *false* for the states that hold commits
+/// It exists so the refusal can say what is actually true. A single `bool` left the
+/// daemon's `WorktreeError::Dirty` with one sentence for six different states, and that
+/// sentence —"uncommitted or untracked changes" — is *false* for the states that hold commits
 /// rather than files. That matters more than tidiness: the daemon's message is the sole
 /// basis for the user's force-or-keep decision (design decision 24), and a user told
 /// about uncommitted changes who runs `git status`, sees a spotlessly clean tree, and

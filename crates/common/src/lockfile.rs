@@ -127,7 +127,7 @@ impl DaemonLock {
         }
     }
 
-    /// Injectable twin of [`acquire`] (following `project::detect_roots_with`'s
+    /// Injectable twin of [`Self::acquire`] (following `project::detect_roots_with`'s
     /// convention): on every failed lock attempt, also asks `already_running` whether
     /// the thing this wait exists to produce has already shown up some other way.
     ///

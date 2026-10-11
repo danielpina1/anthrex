@@ -1,16 +1,17 @@
 //! Layout helpers and the hardened git invocation for milestone 5's linked worktrees.
 //!
 //! This module owns two things, and only these two: where a worktree lives on disk
-//! (`hash8`, `branch_dir_name`, `repo_worktrees_dir`), and the one helper every git
-//! command this milestone runs goes through, hardened per design decisions 1 to 3 —
-//! `--no-optional-locks` and a scrubbed environment on every invocation (AGENTS.md hard
-//! rules 10 and 11), `LC_ALL=C` and `GIT_TERMINAL_PROMPT=0` so messages are stable and
-//! git never blocks on a credential prompt, and a caller-supplied deadline rather than a
-//! bare timeout, converted to whatever [`subprocess::run_captured`] needs at each call.
+//! (`hash8`, `branch_dir_name`, `repo_worktrees_dir` and `worktree_dir`, defined in
+//! `common::worktree_names` since milestone 9.12 and re-exported here), and the one helper
+//! every git command this milestone runs goes through, hardened per design decisions 1 to 3
+//! — `--no-optional-locks` and a scrubbed environment on every invocation (AGENTS.md hard
+//! rules 10 and 11), `LC_ALL=C` and `GIT_TERMINAL_PROMPT=0` so messages are stable and git
+//! never blocks on a credential prompt, and a caller-supplied deadline rather than a bare
+//! timeout, converted to whatever [`subprocess::run_captured`] needs at each call.
 //! [`run_git`] is `#[doc(hidden)] pub` rather than private only so that
-//! `crates/daemon/tests/worktree_env.rs` can exercise it in a test binary of its own —
-//! see that file for why. It is not part of this module's real API; every other caller
-//! lives inside this module and its submodules — `create`, `dirty_reason`, `remove` and
+//! `crates/daemon/tests/worktree_env.rs` can exercise it in a test binary of its own — see
+//! that file for why. It is not part of this module's real API; every other caller lives
+//! inside this module and its submodules — `create`, `dirty_reason`, `remove` and
 //! `discard_new`, plus this file's own tests.
 //!
 //! `create`, `remove`, `discard_new` and `dirty_reason` — the orchestration that actually
