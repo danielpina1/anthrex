@@ -891,7 +891,7 @@ def run_worktree_form_stage(repo):
 # structurally incapable of reaching `manager/restore.rs`/`restart.rs`'s real
 # `session_id` logic. `run_resume_stage` below closes that gap using a fake runtime
 # script (never a real agent - this suite's own rule, and the pattern task M6.7
-# established for `crates/daemon/tests/lifecycle.rs`'s
+# established for `crates/daemon/tests/it/lifecycle.rs`'s
 # `restart_resumes_claude_and_codex_sessions`, replayed here against the real `anthrex`
 # binary and a real daemon process instead of `daemon::run` called in-process).
 ANTHREX_CONFIG_PATH = ENV["ANTHREX_CONFIG"]
@@ -1011,7 +1011,7 @@ def run_resume_stage():
     own daemon starts below run with those two variables removed from the environment,
     so the config file it writes here is what actually resolves `claude_bin`/
     `codex_bin` - the same production config path
-    `crates/daemon/tests/lifecycle.rs`'s own `restart_resumes_claude_and_codex_sessions`
+    `crates/daemon/tests/it/lifecycle.rs`'s own `restart_resumes_claude_and_codex_sessions`
     exercises in-process, replayed here against the real binary.
 
     Reads the resumed argv from a file the fake runtime script writes, rather than
@@ -1104,7 +1104,7 @@ def run_resume_stage():
             fail(f"resumed claude argv still carried the original prompt:\n{claude_argv}")
         # Design decision 16: `resume <id>` must be the trailing pair of Codex's argv,
         # not merely present anywhere in it - pinned here the same way
-        # `crates/daemon/tests/lifecycle.rs`'s own resume test pins it.
+        # `crates/daemon/tests/it/lifecycle.rs`'s own resume test pins it.
         if not codex_argv.strip().endswith(f"[resume] [{codex_session}]"):
             fail(f"resumed codex argv did not end with resume {codex_session}:\n{codex_argv}")
         if f"[--] [{seed_prompt}]" in codex_argv:
