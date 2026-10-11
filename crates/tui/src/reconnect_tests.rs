@@ -1,20 +1,12 @@
 //! Drives the real `ConnectionDriver` — the same connection-lifecycle state
-//! `event_loop` selects on — against a real daemon socket, with no terminal at all.
+//! `event_loop` selects on — with no terminal at all: superseding an in-flight attempt
+//! and parking when every branch is disabled.
 //!
-//! Every other test that exercises decisions 30-35 does so through `App`'s pure
-//! functions directly (`app_tests/reconnect.rs`) or through `reconnect::attempt` in
-//! isolation (`tests/connection.rs`). Neither one proves the actual `tokio::select!`
-//! wiring in this file's `ConnectionDriver::step` — the guards, the `async {}`
-//! deferral around each `Option`-shaped branch, the "unless one is in flight" check —
-//! ever runs correctly end to end. `event_loop` itself cannot be driven directly in a
-//! test (`EventStream::new()` needs a real terminal), which is exactly why
-//! `ConnectionDriver` was split out as its own struct in the first place: this is the
-//! piece that can be tested for real, and this file is that test.
-//!
-//! `drives_a_real_reconnect_twice` is this task's answer to "what does this change
-//! let a user do that nothing in the suite has ever done": lose the link, recover,
-//! and lose it *again* — the second use `docs/timing-budgets.md`'s standing rules
-//! warn a green suite can otherwise never have exercised.
+//! `drives_a_real_reconnect_twice`, which loses the link to a real in-process daemon,
+//! recovers and loses it again, is in `cli/tests/it/tui_reconnect.rs` since milestone
+//! 9.12 (decision 11): the client no longer depends on the daemon. `event_loop` itself
+//! cannot be driven directly in a test (`EventStream::new()` needs a real terminal),
+//! which is why `ConnectionDriver` is its own struct, public for that test.
 
 use super::*;
 use std::time::Instant;

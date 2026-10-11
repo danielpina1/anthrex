@@ -40,7 +40,7 @@ real-io = { max-threads = 8 }
 #
 # cli (the `anthrex` binary's unit tests and `crates/cli/tests`):
 #  1 create_repo_gives_up_on_a_git_that_does_not_answer: cli/src/run_cmd/delivery_tests.rs:210, < 5 s; row "create_repo_gives_up_on_a_git_that_does_not_answer".
-#  2 connect_times_out_on_a_silent_server: cli/src/client.rs:291 and tui/tests/connection.rs:177 (both tests of this name), < 7 s; the handshake's 5 s timeout is the property.
+#  2 connect_times_out_on_a_silent_server: cli/src/client.rs:291 and cli/tests/it/tui_connection.rs:161 (both tests of this name), < 7 s; the handshake's 5 s timeout is the property.
 #  3 a_hanging_decider_is_cut_at_the_bound: cli/tests/it/decider_call_run_name.rs:138, < BOUND + SPAWN_SLACK; the helper's bound is the property.
 #  4 a_hanging_decider_falls_back_at_its_timeout_and_leaves_no_process: cli/tests/it/decider_call.rs:222, <= timeout + KILL_GRACE + SPAWN_SLACK; row ">= 5s and <= 12s".
 #  5 restart_request_does_not_block_the_connection: cli/tests/it/persistence.rs:135, < 500 ms; the request loop not blocked is the property.
@@ -113,7 +113,7 @@ real-io = { max-threads = 8 }
 # fake-agent and tui (crates/*/tests):
 # 70 subprocess_deadline_stops_a_hung_owned_child: fake-agent/tests/script.rs:198, < 1 s; the injected 200 ms deadline is the property.
 # 71 hook_timeout_includes_blocked_stdin_delivery: fake-agent/tests/script.rs:671, < 8 s; the hook's 5 s timeout is the property.
-# 72 send_never_suspends_and_reports_a_dead_connection: tui/tests/connection.rs:127, < 500 ms for 5000 sends; never suspending is the property.
+# 72 send_never_suspends_and_reports_a_dead_connection: cli/tests/it/tui_connection.rs:121, < 500 ms for 5000 sends; never suspending is the property.
 # 73 e2e_plan_path_scouts_plans_and_reads_the_approval: cli/tests/it/run_e2e_orch/gate.rs:98, each logged `run_status` call's `ms` <= (wait_secs + 5) * 1000 (decision 16); row "Every scripted run_status answered within wait_secs + 5 s" (M9.12.3 review, Important 1: a logged duration, a shape the first sweep did not parse).
 [[profile.default.overrides]]
 filter = '''
@@ -230,7 +230,7 @@ test-group = "timing"
 #   server::tests: PTY windows (`Window::spawn_with_output_capacity`; found by behaviour, not matched by the grep).
 #   worktree::input::tests, worktree::tests: real git, git stand-ins.
 # anthrex-tui (unit tests):
-#   draw_tests, reconnect_tests: a scripted daemon socket; reconnect_tests an in-process `serve` with a WindowManager.
+#   draw_tests, reconnect_tests: a scripted daemon socket; reconnect_tests a daemon stand-in script (its in-process `serve` test moved to cli's tui_reconnect, M9.12.9).
 # anthrex (the CLI binary's unit tests):
 #   client::tests, ls_cmd::tests, run_cmd::design::daemon_tests: a scripted daemon socket.
 #   run_cmd::delivery::tests: a git stand-in.

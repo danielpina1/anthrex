@@ -846,7 +846,7 @@ checked per test):
 | Test | Site | Bound | The code's own legal worst case | Status |
 |---|---|---|---|---|
 | `create_repo_gives_up_on_a_git_that_does_not_answer` | `cli/src/run_cmd/delivery_tests.rs` | `< 5 s` | M9.7.12's row; its stand-in is warmed (FW-18) and nothing else is exec'd. | **Unchanged.** |
-| `connect_times_out_on_a_silent_server` (both) | `cli/src/client.rs`, `tui/tests/connection.rs` | `< 7 s` | The handshake's 5 s on a socket the test holds silent; no exec. | **Unchanged.** |
+| `connect_times_out_on_a_silent_server` (both) | `cli/src/client.rs`, `cli/tests/it/tui_connection.rs` (from `tui/tests/connection.rs`, M9.12.9) | `< 7 s` | The handshake's 5 s on a socket the test holds silent; no exec. | **Unchanged.** |
 | `a_hanging_decider_is_cut_at_the_bound`, `a_hanging_decider_falls_back_at_its_timeout_and_leaves_no_process` | `cli/tests/it/decider_call_run_name.rs`, `decider_call.rs` | `< BOUND + SPAWN_SLACK`; `<= timeout + KILL_GRACE + SPAWN_SLACK` | The call is in the test process; its stand-ins come from `Fixture::new`, which warms them and `fake-agent` ("Fixed, from the decider-call flake"); the hang is ended by the timeout whatever the exec costs. | **Unchanged.** |
 | `restart_request_does_not_block_the_connection` | `cli/tests/it/persistence.rs` | `< 500 ms` | One request on a `TestDaemon` (which warms `anthrex` before it starts); no exec in the window. | **Unchanged.** |
 | `running_command_finishes_when_a_descendant_keeps_output_handles_open` | `cli/tests/it/codex_version.rs` | `< 750 ms` | `/bin/sh` and `sleep`, both long assessed. | **Unchanged.** |
@@ -874,7 +874,7 @@ checked per test):
 | `a_confined_command_that_times_out_is_killed_with_its_group`, `check_timeout_kills_the_process_group`, `a_check_that_exits_leaves_no_background_process_behind`, `check_timeout_holds_under_an_output_flood`, `output_grace_is_a_hard_cap_for_a_writer_that_left_the_group` | `daemon/tests/it/run_confine.rs`, `run_exec.rs` | `timeout + OUTPUT_GRACE + SLACK` and as listed | `sh -c` under the check's timeout; `sandbox-exec` is a system binary. | **Unchanged.** |
 | `a_busy_tuning_file_starts_untuned_at_the_bound` | `daemon/tests/it/tuning_io.rs` | 5 s against a 50 ms bound | A lock the test holds. | **Unchanged.** |
 | `subprocess_deadline_stops_a_hung_owned_child` | `fake-agent/tests/script.rs` | `< 1 s` | `/bin/sh` under the injected 200 ms. | **Unchanged.** |
-| `send_never_suspends_and_reports_a_dead_connection` | `tui/tests/connection.rs` | `< 500 ms` for 5000 sends | In memory. | **Unchanged.** |
+| `send_never_suspends_and_reports_a_dead_connection` | `cli/tests/it/tui_connection.rs` (from `tui/tests/connection.rs`, M9.12.9) | `< 500 ms` for 5000 sends | In memory. | **Unchanged.** |
 
 Unchanged, the rest of this document (every row, by section; each a hang guard or a
 deadline loop derived from the code's constants, an absence window, or a production
