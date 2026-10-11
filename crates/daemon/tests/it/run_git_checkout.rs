@@ -15,10 +15,10 @@ fn a_checkout_interrupted_before_its_files_is_finished_by_the_next_attempt() {
     let repo = repo();
     let base = commit_file(&repo.root, "f.txt", "base\n", "base");
     let (_wt, wt) = wt_dir();
-    let data = tempfile::tempdir().unwrap();
+    let data = crate::support::TestDir::new();
     let path = wt.join("runs/ck01/t1");
     let dir = data.path().join("tasks/t1");
-    let tools = tempfile::tempdir().unwrap();
+    let tools = crate::support::TestDir::new();
     // The daemon dies while the checkout's files are put in place.
     let dying = wrapper_git(
         tools.path(),
@@ -98,7 +98,7 @@ fn a_link_at_objects_info_is_refused_and_nothing_is_written_through_it() {
     let repo = repo();
     let base = commit_file(&repo.root, "f.txt", "base\n", "base");
     let (_wt, wt) = wt_dir();
-    let data = tempfile::tempdir().unwrap();
+    let data = crate::support::TestDir::new();
     let path = wt.join("runs/ck02/t1");
     let dir = data.path().join("tasks/t1");
     let prepare = || {
@@ -113,7 +113,7 @@ fn a_link_at_objects_info_is_refused_and_nothing_is_written_through_it() {
         )
     };
     prepare().unwrap();
-    let victim = tempfile::tempdir().unwrap();
+    let victim = crate::support::TestDir::new();
     std::fs::write(victim.path().join("alternates"), "VICTIM\n").unwrap();
     let info = Repo::at(&dir).objects().join("info");
     std::fs::remove_dir_all(&info).unwrap();
@@ -141,7 +141,7 @@ fn a_failed_import_while_re_making_a_checkout_keeps_the_workers_head() {
     let repo = repo();
     let base = commit_file(&repo.root, "f.txt", "base\n", "base");
     let (_wt, wt) = wt_dir();
-    let data = tempfile::tempdir().unwrap();
+    let data = crate::support::TestDir::new();
     let path = wt.join("runs/ck03/t1");
     let dir = data.path().join("tasks/t1");
     let prepare = |git: &std::ffi::OsStr| {
@@ -151,7 +151,7 @@ fn a_failed_import_while_re_making_a_checkout_keeps_the_workers_head() {
     let work = commit_file(&path, "w.txt", "w\n", "work");
     std::fs::remove_dir_all(&path).unwrap();
 
-    let tools = tempfile::tempdir().unwrap();
+    let tools = crate::support::TestDir::new();
     let failing = wrapper_git(
         tools.path(),
         r#"case " $* " in *" index-pack "*) exit 99;; esac"#,

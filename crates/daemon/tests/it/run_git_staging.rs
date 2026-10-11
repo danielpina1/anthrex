@@ -21,7 +21,7 @@ use support::run_git::{T, commit_file, head, out, real_git, repo, try_git, wt_di
 
 struct Setup {
     repo: TempRepo,
-    _wt: tempfile::TempDir,
+    _wt: crate::support::TestDir,
     task: PathBuf,
     admin: PathBuf,
     base: String,

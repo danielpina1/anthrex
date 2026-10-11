@@ -11,7 +11,7 @@ use support::run_git::{
     T, commit_file, head, out, real_git, repo, try_git, worktree_block, wrapper_git, write, wt_dir,
 };
 
-fn task_worktree(repo: &TempRepo, run: &str, task: &str) -> (tempfile::TempDir, PathBuf) {
+fn task_worktree(repo: &TempRepo, run: &str, task: &str) -> (crate::support::TestDir, PathBuf) {
     let base = head(&repo.root);
     let (keep, wt) = wt_dir();
     let path = wt.join(format!("runs/{run}/{task}"));
@@ -305,7 +305,7 @@ fn delete_branches_removes_every_run_branch_but_keeps_salvage_refs() {
 fn delete_branches_also_removes_the_runs_private_remote_refs_but_never_the_remotes() {
     let repo = repo();
     let base = head(&repo.root);
-    let remote = tempfile::tempdir().unwrap();
+    let remote = crate::support::TestDir::new();
     out(remote.path(), &["init", "-q", "--bare"]);
     let bare = remote.path().to_string_lossy().into_owned();
     let stage = "refs/heads/anthrex/pr01/stage-1";
@@ -391,7 +391,7 @@ fn salvage_never_overwrites_a_ref_created_under_it() {
     let task_head = head(&task);
     write(&task, "wip.txt", "uncommitted\n");
     // Another writer creates the salvage ref just before salvage's own `update-ref`.
-    let tools = tempfile::tempdir().unwrap();
+    let tools = crate::support::TestDir::new();
     let git = wrapper_git(
         tools.path(),
         // Any option (`--no-deref`, fix round 4) may sit between `update-ref` and the ref.
@@ -470,7 +470,7 @@ fn delete_branches_skips_a_checked_out_branch_and_never_follows_a_symref() {
 fn remove_worktree_leaves_the_users_missing_worktree_registered() {
     let repo = repo();
     let (_keep, engine) = task_worktree(&repo, "pr01", "t1");
-    let theirs = tempfile::tempdir().unwrap();
+    let theirs = crate::support::TestDir::new();
     let users = theirs.path().canonicalize().unwrap().join("mine");
     out(
         &repo.root,

@@ -317,6 +317,68 @@ pub fn commit_more(dir: &std::path::Path, count: usize) {
 /// A real repository in a temporary directory: one commit holding `README` and a
 /// `.gitignore` that ignores `ignored-*`, on the deterministic branch `main`.
 ///
+/// Milestone 9.12 task M9.12.13: a test's temporary directory that takes the task
+/// temporary directories of the checkouts made under it
+/// (`daemon::run::git::remove_task_tmps_beneath`) when it goes, and those of the
+/// repository directories named with [`TestDir::also`] (a path the daemon hashed but
+/// never made). Read as the `tempfile::TempDir` it holds.
+pub struct TestDir {
+    dir: tempfile::TempDir,
+    also: std::sync::Mutex<Vec<PathBuf>>,
+}
+
+impl TestDir {
+    pub fn new() -> TestDir {
+        TestDir {
+            dir: tempfile::tempdir().unwrap(),
+            also: Default::default(),
+        }
+    }
+
+    /// The repository directory `repo_dir`, under this directory, whose task temporary
+    /// directory goes too.
+    #[allow(dead_code)] // Not every binary that mounts the support module names one.
+    pub fn also(&self, repo_dir: PathBuf) {
+        let resolved = self.dir.path().canonicalize().unwrap();
+        assert!(
+            repo_dir.starts_with(self.dir.path()) || repo_dir.starts_with(&resolved),
+            "{} is not under {}",
+            repo_dir.display(),
+            self.dir.path().display()
+        );
+        self.also
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(repo_dir);
+    }
+}
+
+impl std::ops::Deref for TestDir {
+    type Target = tempfile::TempDir;
+
+    fn deref(&self) -> &tempfile::TempDir {
+        &self.dir
+    }
+}
+
+impl Drop for TestDir {
+    fn drop(&mut self) {
+        let also = std::mem::take(
+            &mut *self
+                .also
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
+        let removed = also
+            .iter()
+            .try_for_each(|repo_dir| daemon::run::git::remove_task_tmp(repo_dir))
+            .and_then(|()| daemon::run::git::remove_task_tmps_beneath(self.dir.path()));
+        if let (Err(error), false) = (removed, std::thread::panicking()) {
+            panic!("{error}");
+        }
+    }
+}
+
 /// The `.gitignore` is in that first commit deliberately: every linked worktree this
 /// repository grows starts from a commit that already has it, so an ignored file in a
 /// worktree really is ignored there. A `.gitignore` committed later, after the worktree

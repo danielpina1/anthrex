@@ -22,8 +22,8 @@ use support::run_git::{T, commit_file, out, real_git, repo, wrapper_git, write, 
 
 struct World {
     repo: TempRepo,
-    _wt: tempfile::TempDir,
-    _victims: tempfile::TempDir,
+    _wt: crate::support::TestDir,
+    _victims: crate::support::TestDir,
     run: String,
     integration: PathBuf,
     task: PathBuf,
@@ -64,7 +64,7 @@ fn world(run: &str) -> World {
         &["rev-parse", "--path-format=absolute", "--git-path", "index"],
     ));
     let user_index_bytes = std::fs::read(&user_index).unwrap();
-    let victims = tempfile::tempdir().unwrap();
+    let victims = crate::support::TestDir::new();
     let missing = victims.path().join("nowhere").join("made-by-git");
     World {
         repo,
@@ -234,7 +234,7 @@ fn a_link_planted_after_the_checks_is_never_written_through() {
                 String::new()
             }
         };
-        let tools = tempfile::tempdir().unwrap();
+        let tools = crate::support::TestDir::new();
         let marker = tools.path().join("planted");
         let git = wrapper_git(
             tools.path(),

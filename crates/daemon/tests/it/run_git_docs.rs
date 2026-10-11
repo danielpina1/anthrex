@@ -25,8 +25,8 @@ const PLAN: &str = "# Plan: reset\n\n## Stage 1\n";
 /// and its integration worktree, and a data directory for the driver's index.
 struct Rig {
     repo: TempRepo,
-    _wt: tempfile::TempDir,
-    data: tempfile::TempDir,
+    _wt: crate::support::TestDir,
+    data: crate::support::TestDir,
     integration: PathBuf,
     base: String,
 }
@@ -50,7 +50,7 @@ impl Rig {
         Rig {
             repo,
             _wt: wt,
-            data: tempfile::tempdir().unwrap(),
+            data: crate::support::TestDir::new(),
             integration,
             base,
         }

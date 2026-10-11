@@ -260,7 +260,7 @@ mod tests {
 
     #[test]
     fn a_checkout_gets_itself_its_tmp_and_the_caches() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::run::git::TestDir::new();
         let root = dir.path().canonicalize().unwrap();
         let checkout = root.join("wt/runs/r1/t1");
         std::fs::create_dir_all(&checkout).unwrap();
@@ -303,7 +303,7 @@ mod tests {
 
     #[test]
     fn a_cache_over_the_repository_or_the_data_directory_is_refused() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::run::git::TestDir::new();
         let root = dir.path().canonicalize().unwrap();
         let checkout = root.join("wt/runs/r1/t1");
         std::fs::create_dir_all(&checkout).unwrap();
@@ -326,7 +326,7 @@ mod tests {
 
     #[test]
     fn a_checkout_swapped_for_a_link_is_refused() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::run::git::TestDir::new();
         let root = dir.path().canonicalize().unwrap();
         let checkout = root.join("wt/runs/r1/t1");
         std::fs::create_dir_all(checkout.parent().unwrap()).unwrap();

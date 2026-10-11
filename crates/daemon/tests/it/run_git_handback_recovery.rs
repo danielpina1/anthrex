@@ -16,7 +16,7 @@ use support::run_git::{T, commit_file, head, out, real_git, repo, try_git, wrapp
 
 struct World {
     _repo: TempRepo,
-    _wt: tempfile::TempDir,
+    _wt: crate::support::TestDir,
     run: String,
     integration: PathBuf,
     task: PathBuf,
@@ -86,7 +86,7 @@ fn a_hand_back_refused_after_its_merge_undoes_it_and_the_next_one_succeeds() {
     // branch since F1b; this is the compare-and-swap's defence in depth).
     let tree = out(&w.task, &["rev-parse", "HEAD^{tree}"]);
     let side = out(&w.task, &["commit-tree", &tree, "-p", &tip, "-m", "side"]);
-    let tools = tempfile::tempdir().unwrap();
+    let tools = crate::support::TestDir::new();
     let marker = tools.path().join("raced");
     let git = wrapper_git(
         tools.path(),

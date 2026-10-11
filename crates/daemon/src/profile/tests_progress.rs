@@ -75,13 +75,13 @@ fn planned_counts_what_run_commands_runs() {
         ),
     ];
     for (name, profile, expected) in cases {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::run::git::TestDir::new();
         let ticks = Arc::new(AtomicU64::new(5));
         let counter = Arc::new(CheckCounter {
             ticks: ticks.clone(),
             ..CheckCounter::default()
         });
-        let steps = steps(dir.path()).counted(counter.clone());
+        let steps = steps(&dir).counted(counter.clone());
         run_commands(
             dir.path(),
             &profile,
@@ -256,7 +256,7 @@ async fn an_unparseable_profile_sends_its_text_capped() {
 /// with the count at its total, and one more tick pushes it.
 #[test]
 fn progress_reaches_the_total_when_a_planned_command_is_skipped() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::run::git::TestDir::new();
     let skipping = profile(|p| {
         p.module_graph = Some("cargo".into());
         p.module_names = Some(proto::ModuleNames::Cargo);
@@ -273,7 +273,7 @@ fn progress_reaches_the_total_when_a_planned_command_is_skipped() {
         3,
         "check, the graph and the module test"
     );
-    let steps = steps(dir.path()).counted(counter.clone());
+    let steps = steps(&dir).counted(counter.clone());
     let v = run_counted(
         dir.path(),
         &skipping,
@@ -295,7 +295,7 @@ fn progress_reaches_the_total_when_a_planned_command_is_skipped() {
 /// invalid bytes, each three bytes once replaced, do not grow it past 64 KiB.
 #[test]
 fn a_binary_profile_text_stays_within_the_cap() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::run::git::TestDir::new();
     let path = dir.path().join(PROFILE_FILE);
     std::fs::write(&path, vec![0xFF_u8; UNREADABLE_TEXT_MAX]).unwrap();
     let text = store::load_text(&path).expect("the text is sent");

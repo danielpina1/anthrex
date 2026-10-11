@@ -279,7 +279,7 @@ mod tests {
     /// repository in the run's data directory, as `PrepareWorktree` makes it), the
     /// service and the op context.
     struct Rig {
-        _tmp: tempfile::TempDir,
+        _tmp: crate::run::git::TestDir,
         root: PathBuf,
         task: PathBuf,
         repo: PathBuf,
@@ -289,7 +289,7 @@ mod tests {
 
     impl Rig {
         fn new() -> Rig {
-            let tmp = tempfile::tempdir().unwrap();
+            let tmp = crate::run::git::TestDir::new();
             let top = tmp.path().canonicalize().unwrap();
             let root = top.join("repo");
             std::fs::create_dir_all(&root).unwrap();

@@ -176,7 +176,7 @@ fn commit_tree_and_cas_advance_the_run_branch() {
 }
 
 struct Integration {
-    _keep: tempfile::TempDir,
+    _keep: crate::support::TestDir,
     path: PathBuf,
     branch: String,
     base: String,

@@ -14,14 +14,18 @@ use super::verify::run_commands;
 /// Verification's step runner for a test checkout at `dir`: a scheduler of 2 slots on
 /// a runtime kept for the test binary, the checkout's data directory beside it, and a
 /// git common directory that overlaps no step directory (ruling C-27, I-2).
-pub(super) fn steps(dir: &Path) -> super::verify::Steps {
+///
+/// M9.12.13: each step's temporary directory is named from a repository directory
+/// (`<dir>/.anthrex-data/tasks/<dir's name>`) that is never made, so `dir` is told to
+/// remove it.
+pub(super) fn steps(dir: &crate::run::git::TestDir) -> super::verify::Steps {
     steps_on(crate::run::slots::TestScheduler::new(2), dir)
 }
 
 /// [`steps`] on the scheduler `sched`.
 pub(super) fn steps_on(
     sched: std::sync::Arc<crate::run::slots::TestScheduler>,
-    dir: &Path,
+    dir: &crate::run::git::TestDir,
 ) -> super::verify::Steps {
     static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
     let runtime = RUNTIME.get_or_init(|| {
@@ -31,11 +35,13 @@ pub(super) fn steps_on(
             .build()
             .unwrap()
     });
+    let data = dir.path().join(".anthrex-data");
+    dir.also(crate::run::git::checkout_repo_dir(&data, dir.path()));
     super::verify::Steps::new(
         sched,
         runtime.handle().clone(),
-        dir.join(".git"),
-        dir.join(".anthrex-data"),
+        dir.path().join(".git"),
+        data,
         tokio_util::sync::CancellationToken::new(),
     )
 }
@@ -46,8 +52,8 @@ pub(super) fn strings(items: &[&str]) -> Vec<String> {
 
 /// A scratch checkout: `mods/{b,a}`, and scripts that log their name and arguments to
 /// `log.txt` in order.
-pub(super) fn scratch(graph_ok: bool, check_ok: bool) -> tempfile::TempDir {
-    let dir = tempfile::tempdir().unwrap();
+pub(super) fn scratch(graph_ok: bool, check_ok: bool) -> crate::run::git::TestDir {
+    let dir = crate::run::git::TestDir::new();
     let root = dir.path();
     for module in ["mods/b", "mods/a", "mods/.hidden", "docs"] {
         std::fs::create_dir_all(root.join(module)).unwrap();
@@ -128,7 +134,7 @@ fn verification_runs_the_new_commands_in_order_and_drops_failures() {
     // A command graph and directory names: the first module by name is `a`.
     let dir = scratch(true, true);
     let proposed = tiered();
-    let v = run_commands(dir.path(), &proposed, None, timeout, 1, &steps(dir.path()));
+    let v = run_commands(dir.path(), &proposed, None, timeout, 1, &steps(&dir));
     assert_eq!(
         log(dir.path()),
         [
@@ -180,7 +186,7 @@ fn verification_runs_the_new_commands_in_order_and_drops_failures() {
         module_names: Some(ModuleNames::Cargo),
         ..tiered()
     };
-    let v = run_commands(dir.path(), &proposed, None, timeout, 1, &steps(dir.path()));
+    let v = run_commands(dir.path(), &proposed, None, timeout, 1, &steps(&dir));
     assert!(!check_of(&v, "module_graph").ok, "{v:?}");
     assert_eq!(check_of(&v, "module_graph").command, "cargo");
     assert_eq!(v.module_test, None);
@@ -225,7 +231,7 @@ fn verification_runs_the_new_commands_in_order_and_drops_failures() {
     // A graph that prints something other than a module graph is unknown.
     let dir = scratch(true, true);
     std::fs::write(dir.path().join("graph.sh"), "echo '{\"a\": [\"zz\"]}'\n").unwrap();
-    let v = run_commands(dir.path(), &tiered(), None, timeout, 1, &steps(dir.path()));
+    let v = run_commands(dir.path(), &tiered(), None, timeout, 1, &steps(&dir));
     let graph = check_of(&v, "module_graph");
     assert!(!graph.ok);
     assert!(
@@ -251,7 +257,7 @@ fn a_module_command_with_no_module_directory_is_not_verified() {
         None,
         Duration::from_secs(30),
         1,
-        &steps(dir.path()),
+        &steps(&dir),
     );
     let test = check_of(&v, "module_test");
     assert!(!test.ok);

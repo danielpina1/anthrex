@@ -21,7 +21,7 @@ use support::run_git::{T, commit_file, head, out, real_git, repo, wrapper_git, w
 
 struct World {
     repo: TempRepo,
-    _wt: tempfile::TempDir,
+    _wt: crate::support::TestDir,
     run: String,
     integration: PathBuf,
     task: PathBuf,
@@ -143,7 +143,7 @@ fn a_git_symlink_to_another_worktree_never_moves_the_pin_or_the_grant() {
     std::os::unix::fs::symlink(w.integration.join(".git"), w.task.join(".git")).unwrap();
 
     let common = w.repo.root.join(".git").canonicalize().unwrap();
-    let data = tempfile::tempdir().unwrap();
+    let data = crate::support::TestDir::new();
     let roots = worker_git_roots(data.path(), "t1");
     for _ in 0..8 {
         let granted = worker_git_dirs(&common, &w.task, &roots).unwrap();
@@ -233,7 +233,7 @@ fn a_head_flipped_during_the_hand_back_moves_no_base() {
     let w = world("hp03");
     commit_file(&w.task, "t.txt", "task\n", "task work");
     let run_head = commit_file(&w.integration, "r.txt", "run\n", "run work");
-    let tools = tempfile::tempdir().unwrap();
+    let tools = crate::support::TestDir::new();
     let git = racing_git(
         tools.path(),
         &w.task,
@@ -258,7 +258,7 @@ fn a_head_flipped_during_the_hand_back_moves_no_base() {
 fn a_head_flipped_during_a_repoint_moves_no_base() {
     let w = world("hp04");
     let from = commit_file(&w.integration, "r.txt", "run\n", "run work");
-    let tools = tempfile::tempdir().unwrap();
+    let tools = crate::support::TestDir::new();
     let git = racing_git(
         tools.path(),
         &w.task,

@@ -20,8 +20,8 @@ use support::run_git::{T, commit_file, out, real_git, repo, wrapper_git, wt_dir}
 
 struct Checkout {
     _repo: support::TempRepo,
-    _wt: tempfile::TempDir,
-    data: tempfile::TempDir,
+    _wt: crate::support::TestDir,
+    data: crate::support::TestDir,
     common: PathBuf,
     task: PathBuf,
     admin: PathBuf,
@@ -33,7 +33,7 @@ fn checkout(run: &str) -> Checkout {
     let repo = repo();
     let base = commit_file(&repo.root, "f.txt", "base\n", "base");
     let (wt, wt_path) = wt_dir();
-    let data = tempfile::tempdir().unwrap();
+    let data = crate::support::TestDir::new();
     let task = wt_path.join(format!("runs/{run}/t1"));
     prepare_task_worktree(
         real_git(),
@@ -66,7 +66,7 @@ fn checkout(run: &str) -> Checkout {
 
 #[test]
 fn a_link_at_a_denied_path_refuses_the_grant() {
-    let elsewhere = tempfile::tempdir().unwrap();
+    let elsewhere = crate::support::TestDir::new();
     let target = elsewhere.path().join("file");
     std::fs::write(&target, "theirs\n").unwrap();
     // A file the grant denies, and a directory it denies.
@@ -121,7 +121,7 @@ fn planting(dir: &Path, admin: &Path, name: &str) -> PathBuf {
 fn a_commondir_planted_during_a_call_discards_its_result() {
     for name in ["commondir", "shallow"] {
         let c = checkout(&format!("gp-{name}"));
-        let bin = tempfile::tempdir().unwrap();
+        let bin = crate::support::TestDir::new();
         let git = planting(bin.path(), &c.admin, name);
         // The check before the call passes: nothing is planted yet.
         let refused = daemon::worktree::run_git(

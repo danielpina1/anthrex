@@ -11,6 +11,7 @@ use proto::RepoProfile;
 use super::tests_tiers::{steps, steps_on};
 use super::verify::run_commands;
 use crate::run::driver::tier_step::step_base;
+use crate::run::git::TestDir;
 use crate::run::slots::{LOAD_VAR, Priority, SLOT_VARS, SlotRequest, TestScheduler, Want};
 
 /// A profile whose only command is `check`.
@@ -33,7 +34,7 @@ fn env_of(path: &Path) -> BTreeMap<String, String> {
 
 #[test]
 fn a_verified_command_runs_in_its_own_step_directory() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::run::git::TestDir::new();
     let out = dir.path().join("env.txt");
     let profile = checking(&format!("env > '{}'", out.display()));
     let v = run_commands(
@@ -42,7 +43,7 @@ fn a_verified_command_runs_in_its_own_step_directory() {
         None,
         Duration::from_secs(30),
         1,
-        &steps(dir.path()),
+        &steps(&dir),
     );
     assert!(v.check.as_ref().is_some_and(|c| c.ok), "{v:?}");
     let env = env_of(&out);
@@ -74,10 +75,10 @@ fn a_verified_command_runs_in_its_own_step_directory() {
 
 #[test]
 fn a_verified_command_waits_for_a_scheduler_grant() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::run::git::TestDir::new();
     let ran = dir.path().join("ran");
     let sched = TestScheduler::new(1);
-    let steps = steps_on(sched.clone(), dir.path());
+    let steps = steps_on(sched.clone(), &dir);
     // A run's candidate holds the one slot.
     let held = steps.handle.block_on(sched.acquire(SlotRequest {
         priority: Priority::Candidate,
@@ -117,10 +118,10 @@ fn a_verified_command_waits_for_a_scheduler_grant() {
 /// up its place, and runs none of its commands.
 #[test]
 fn a_cancelled_verification_stops_waiting_for_a_slot() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::run::git::TestDir::new();
     let ran = dir.path().join("ran");
     let sched = TestScheduler::new(1);
-    let steps = steps_on(sched.clone(), dir.path());
+    let steps = steps_on(sched.clone(), &dir);
     let cancel = steps.cancel.clone();
     let held = steps.handle.block_on(sched.acquire(SlotRequest {
         priority: Priority::Candidate,
@@ -166,10 +167,10 @@ fn a_cancelled_verification_stops_waiting_for_a_slot() {
 
 /// Runs `profile` on a thread while one of the scheduler's two slots is held; whether
 /// its `check` ran before the slot was let go.
-fn check_ran_beside_a_held_slot(profile: RepoProfile, ran: &Path) -> bool {
-    let dir = ran.parent().unwrap().to_path_buf();
+fn check_ran_beside_a_held_slot(profile: RepoProfile, dir: &TestDir) -> bool {
     let sched = TestScheduler::new(2);
-    let steps = steps_on(sched.clone(), &dir);
+    let steps = steps_on(sched.clone(), dir);
+    let (ran, dir) = (dir.path().join("ran"), dir.path().to_path_buf());
     let held = steps.handle.block_on(sched.acquire(SlotRequest {
         priority: Priority::Candidate,
         critical: false,
@@ -205,7 +206,7 @@ fn check_ran_beside_a_held_slot(profile: RepoProfile, ran: &Path) -> bool {
 /// (which runs them) waits for every slot; without them it shares.
 #[test]
 fn a_whole_check_with_timing_tests_is_exclusive() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::run::git::TestDir::new();
     let ran = dir.path().join("ran");
     let check = format!("touch '{}'", ran.display());
     let timed = RepoProfile {
@@ -214,9 +215,9 @@ fn a_whole_check_with_timing_tests_is_exclusive() {
         ..RepoProfile::default()
     };
     assert!(
-        !check_ran_beside_a_held_slot(timed, &ran),
+        !check_ran_beside_a_held_slot(timed, &dir),
         "the whole check ran beside another test command"
     );
     std::fs::remove_file(&ran).unwrap();
-    assert!(check_ran_beside_a_held_slot(checking(&check), &ran));
+    assert!(check_ran_beside_a_held_slot(checking(&check), &dir));
 }

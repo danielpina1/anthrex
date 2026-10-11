@@ -56,7 +56,7 @@ fn real_git() -> String {
 /// A repository whose base holds `base` files, a task worktree started there, and a
 /// service whose git is a wrapper logging each invocation's arguments to `git.log`.
 struct Rig {
-    _tmp: tempfile::TempDir,
+    _tmp: crate::run::git::TestDir,
     log: PathBuf,
     root: PathBuf,
     worktree: PathBuf,
@@ -82,7 +82,7 @@ impl Rig {
     fn with_wrapper(base: &[(&str, &str)], extra: Option<&str>) -> Rig {
         let logs = extra.is_some();
         let extra = extra.unwrap_or_default();
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::run::git::TestDir::new();
         let top = tmp.path().canonicalize().unwrap();
         let log = top.join("git.log");
         let wrapper = top.join("git-wrapper.sh");

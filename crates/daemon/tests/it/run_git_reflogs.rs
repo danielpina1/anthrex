@@ -18,7 +18,7 @@ use support::run_git::{T, commit_file, out, real_git, repo, wt_dir};
 
 struct World {
     repo: TempRepo,
-    _wt: tempfile::TempDir,
+    _wt: crate::support::TestDir,
     run: String,
     integration: PathBuf,
     task: PathBuf,
@@ -120,7 +120,7 @@ fn engine_worktrees_have_no_reflogs() {
         std::fs::create_dir_all(log.parent().unwrap()).unwrap();
         std::fs::write(&log, "old\n").unwrap();
     }
-    let data = tempfile::tempdir().unwrap();
+    let data = crate::support::TestDir::new();
     let roots = worker_git_roots(data.path(), "t1");
     let granted = worker_git_dirs(&w.common, &w.task, &roots).unwrap();
     for log in w.reflogs() {
@@ -154,7 +154,7 @@ fn a_reflog_link_is_refused_and_never_written_through() {
     for (index, which) in [0usize, 1].iter().enumerate() {
         let w = world(&format!("rl1{index}"));
         let run_head = w.clean_case();
-        let tools = tempfile::tempdir().unwrap();
+        let tools = crate::support::TestDir::new();
         let victim = tools.path().join("victim");
         std::fs::write(&victim, "victim\n").unwrap();
         let log = &w.reflogs()[*which];

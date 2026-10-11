@@ -41,8 +41,8 @@ fn profile(writable: &[PathBuf]) -> String {
 struct Setup {
     run: String,
     repo: support::TempRepo,
-    _wt: tempfile::TempDir,
-    data: tempfile::TempDir,
+    _wt: crate::support::TestDir,
+    data: crate::support::TestDir,
     common: PathBuf,
     task: PathBuf,
     base: String,
@@ -102,7 +102,7 @@ fn setup(run: &str) -> Setup {
     let base = commit_file(&repo.root, "g.txt", "loose\n", "g");
     let loose = out(&repo.root, &["rev-parse", "main:g.txt"]);
     let (wt, wt_path) = wt_dir();
-    let data = tempfile::tempdir().unwrap();
+    let data = crate::support::TestDir::new();
     let task = wt_path.join(format!("runs/{run}/t1"));
     prepare_task_worktree(
         real_git(),
@@ -563,7 +563,7 @@ fn the_grant_never_follows_the_worktrees_git_file() {
     );
 
     // A directory no worktree of the repository names is refused.
-    let stray = tempfile::tempdir().unwrap();
+    let stray = crate::support::TestDir::new();
     let err = worker_git_dirs(&s.common, stray.path(), &roots).unwrap_err();
     assert!(err.contains("is not a linked worktree of"), "{err}");
 

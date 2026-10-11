@@ -87,8 +87,10 @@ pub use sandbox::{
     GrantShape, WORKTREE_GIT_DENIED_DIRS, WORKTREE_GIT_DENIED_FILES, WORKTREE_GIT_DIRS,
     WORKTREE_GIT_FILES, WorkerGrant, private_dir, worker_git_dirs, worker_git_grant,
 };
-pub(crate) use tmp::remove as remove_task_tmp;
-pub use tmp::{task_tmp, tmp_root};
+#[cfg(test)]
+pub(crate) use tmp::TestDir;
+pub use tmp::remove as remove_task_tmp;
+pub use tmp::{remove_task_tmps_beneath, task_tmp, tmp_root};
 pub use worktrees::{
     absolute_git_dir, create_run_branch, lock_worktree, pin_worktrees, prepare_review,
     prepare_review_in, prepare_scratch, prepare_scratch_in, prepare_task_worktree,

@@ -21,7 +21,7 @@ use support::run_git::{T, commit_file, real_git, repo, wt_dir};
 const LONG: Duration = Duration::from_secs(60);
 
 fn shell(command: &str) -> ShellOutcome {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::support::TestDir::new();
     run_shell(dir.path(), command, &[], &[], LONG)
 }
 
@@ -79,7 +79,7 @@ fn alive(pid: i32) -> bool {
 
 #[test]
 fn check_timeout_kills_the_process_group() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::support::TestDir::new();
     let bg = dir.path().join("bg");
     let timeout = Duration::from_secs(1);
     let started = Instant::now();
@@ -117,7 +117,7 @@ fn check_timeout_kills_the_process_group() {
 
 #[test]
 fn a_check_that_exits_leaves_no_background_process_behind() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::support::TestDir::new();
     let bg = dir.path().join("bg");
     // The background sleep holds the output pipe open after the shell exits.
     let started = Instant::now();
@@ -153,7 +153,7 @@ fn a_check_that_exits_leaves_no_background_process_behind() {
 
 #[test]
 fn check_tail_survives_invalid_utf8_and_huge_lines() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::support::TestDir::new();
     let ascii = dir.path().join("ascii");
     let wide = dir.path().join("wide");
     let bad = dir.path().join("bad");
@@ -196,7 +196,7 @@ const SLACK: Duration = Duration::from_secs(2);
 
 #[test]
 fn check_timeout_holds_under_an_output_flood() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::support::TestDir::new();
     let timeout = Duration::from_secs(1);
     let started = Instant::now();
     let outcome = run_shell(
@@ -218,7 +218,7 @@ fn check_timeout_holds_under_an_output_flood() {
 
 #[test]
 fn output_grace_is_a_hard_cap_for_a_writer_that_left_the_group() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::support::TestDir::new();
     let pidfile = dir.path().join("pid");
     let started = Instant::now();
     let outcome = run_shell(
@@ -269,7 +269,7 @@ const TEST_PASSED: &str = "PASS {test}";
 
 struct ProofRepo {
     repo: TempRepo,
-    _wt: tempfile::TempDir,
+    _wt: crate::support::TestDir,
     wt: PathBuf,
 }
 
@@ -392,7 +392,7 @@ fn proof_runs_setup_once_per_new_worktree() {
     let p = proof_repo();
     let red = commit_file(&p.repo.root, "tests/t_reset.sh", RESET_TEST, "red");
     let green = commit_file(&p.repo.root, "impl.txt", "fn reset() {}\n", "green");
-    let log_dir = tempfile::tempdir().unwrap();
+    let log_dir = crate::support::TestDir::new();
     let log = log_dir.path().join("setup.log");
     let mut proof = op(&p, "t1", &red, &green, "t_reset");
     proof.setup = Some(format!("echo \"$PROOF_MARK\" >> '{}'", log.display()));
@@ -436,7 +436,7 @@ fn a_failing_setup_is_reported_and_runs_again_next_time() {
         Err(ProofError::SetupFailed { output }) => assert_eq!(output, "setup broke"),
         other => panic!("expected SetupFailed, got {other:?}"),
     }
-    let log_dir = tempfile::tempdir().unwrap();
+    let log_dir = crate::support::TestDir::new();
     let log = log_dir.path().join("setup.log");
     proof.setup = Some(format!("echo fixed > '{}'", log.display()));
     let runs = prove(&proof);
@@ -489,7 +489,7 @@ fn a_missing_setup_marker_runs_setup_again() {
     let p = proof_repo();
     let red = commit_file(&p.repo.root, "tests/t_reset.sh", RESET_TEST, "red");
     let green = commit_file(&p.repo.root, "impl.txt", "fn reset() {}\n", "green");
-    let log_dir = tempfile::tempdir().unwrap();
+    let log_dir = crate::support::TestDir::new();
     let log = log_dir.path().join("setup.log");
     let mut proof = op(&p, "t1", &red, &green, "t_reset");
     proof.setup = Some(format!("echo ran >> '{}'", log.display()));
@@ -539,7 +539,7 @@ fn proof_runs_only_its_git_steps_through_the_write_hook() {
         "red",
     );
     let green = commit_file(&p.repo.root, "impl.txt", "fn reset() {}\n", "green");
-    let flag_dir = tempfile::tempdir().unwrap();
+    let flag_dir = crate::support::TestDir::new();
     let flag = flag_dir.path().join("in-hook");
     let mut proof = op(&p, "t1", &red, &green, "t_reset");
     proof.env = vec![("HOOK_FLAG".into(), flag.display().to_string())];

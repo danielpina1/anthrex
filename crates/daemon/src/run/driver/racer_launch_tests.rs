@@ -62,7 +62,7 @@ fn git(dir: &Path, args: &[&str]) -> String {
 /// Codex, both `working`, sandboxed), with the checkouts `prepared` (`t1`, `t1.a`,
 /// `t1.b`) made from the base commit, and the service that holds the run.
 struct Rig {
-    _tmp: tempfile::TempDir,
+    _tmp: crate::run::git::TestDir,
     root: PathBuf,
     data_dir: PathBuf,
     service: Arc<RunService>,
@@ -82,7 +82,7 @@ impl Rig {
         dialect: CodexSandboxDialect,
         change: impl FnOnce(&mut Run),
     ) -> Rig {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::run::git::TestDir::new();
         let top = tmp.path().canonicalize().unwrap();
         let root = top.join("repo");
         std::fs::create_dir_all(&root).unwrap();

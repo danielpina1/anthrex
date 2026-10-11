@@ -19,8 +19,8 @@ use support::run_git::{T, commit_file, head, out, real_git, repo, wt_dir};
 
 struct World {
     repo: TempRepo,
-    _wt: tempfile::TempDir,
-    _tools: tempfile::TempDir,
+    _wt: crate::support::TestDir,
+    _tools: crate::support::TestDir,
     task: PathBuf,
     base: String,
     /// The file a planted filter touches when anything runs it.
@@ -41,7 +41,7 @@ fn world(run: &str) -> World {
         T,
     )
     .unwrap();
-    let tools = tempfile::tempdir().unwrap();
+    let tools = crate::support::TestDir::new();
     let marker = tools.path().canonicalize().unwrap().join("escaped");
     World {
         repo,

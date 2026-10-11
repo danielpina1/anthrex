@@ -16,8 +16,8 @@ use std::path::{Path, PathBuf};
 /// with its integration worktree in place.
 pub struct World {
     pub repo: crate::support::TempRepo,
-    _wt: tempfile::TempDir,
-    _data: tempfile::TempDir,
+    _wt: crate::support::TestDir,
+    _data: crate::support::TestDir,
     pub run: Run,
 }
 
@@ -25,7 +25,7 @@ impl World {
     pub fn new() -> Self {
         let repo = repo();
         let (wt, wt_path) = wt_dir();
-        let data = tempfile::tempdir().unwrap();
+        let data = crate::support::TestDir::new();
         let base = head(&repo.root);
         let run = run_at(data.path(), &repo.root, &wt_path, &base);
         create_run_branch(

@@ -10,11 +10,11 @@ use std::path::{Path, PathBuf};
 
 pub struct World {
     pub repo: TempRepo,
-    _wt: tempfile::TempDir,
+    _wt: super::TestDir,
     pub wt: PathBuf,
-    _data: tempfile::TempDir,
+    _data: super::TestDir,
     pub data: PathBuf,
-    _outside: tempfile::TempDir,
+    _outside: super::TestDir,
     /// A stand-in for the user's `$HOME` and for a cache directory, outside everything.
     pub outside: PathBuf,
 }
@@ -23,9 +23,15 @@ pub fn world() -> World {
     let repo = repo();
     commit_file(&repo.root, "README", "base\n", "base");
     let (wt, wt_path) = wt_dir();
-    let data = tempfile::tempdir().unwrap();
+    let data = super::TestDir::new();
     let data_path = data.path().canonicalize().unwrap().join("runs/cf01");
-    let outside = tempfile::tempdir().unwrap();
+    // M9.12.13: an integration check's temporary directory is named from a repository
+    // directory the integration worktree never has.
+    data.also(checkout_repo_dir(
+        &data_path,
+        &wt_path.join("runs/cf01/integration"),
+    ));
+    let outside = super::TestDir::new();
     let outside_path = outside.path().canonicalize().unwrap();
     World {
         repo,

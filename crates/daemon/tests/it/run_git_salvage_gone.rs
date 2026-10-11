@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use support::TempRepo;
 use support::run_git::{T, commit_file, head, out, real_git, repo, try_git, wt_dir};
 
-fn task_worktree(repo: &TempRepo, run: &str, task: &str) -> (tempfile::TempDir, PathBuf) {
+fn task_worktree(repo: &TempRepo, run: &str, task: &str) -> (crate::support::TestDir, PathBuf) {
     let base = head(&repo.root);
     let (keep, wt) = wt_dir();
     let path = wt.join(format!("runs/{run}/{task}"));

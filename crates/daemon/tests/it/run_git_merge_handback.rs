@@ -40,7 +40,7 @@ fn task_worktree(
     run: &str,
     file: &str,
     content: &str,
-) -> (tempfile::TempDir, PathBuf) {
+) -> (crate::support::TestDir, PathBuf) {
     let base = head(&repo.root);
     let (keep, wt) = wt_dir();
     let path = wt.join(format!("runs/{run}/t1"));

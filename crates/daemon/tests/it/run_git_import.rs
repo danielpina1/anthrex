@@ -24,8 +24,8 @@ use support::run_git::{T, commit_file, head, out, real_git, repo, try_git, wrapp
 
 struct World {
     repo: TempRepo,
-    _wt: tempfile::TempDir,
-    _data: tempfile::TempDir,
+    _wt: crate::support::TestDir,
+    _data: crate::support::TestDir,
     run: String,
     common: PathBuf,
     objects: PathBuf,
@@ -38,7 +38,7 @@ fn world(run: &str) -> World {
     commit_file(&repo.root, "f.txt", "base\n", "f");
     let base = commit_file(&repo.root, "g.txt", "one\ntwo\nthree\nfour\nfive\n", "g");
     let (wt, wt_path) = wt_dir();
-    let data = tempfile::tempdir().unwrap();
+    let data = crate::support::TestDir::new();
     let common = PathBuf::from(out(
         &repo.root,
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
@@ -285,7 +285,7 @@ fn an_interrupted_import_is_finished_by_the_next() {
     for step in ["index-pack", "update-ref"] {
         let w = world(&format!("im04{}", &step[..1]));
         let tip = w.commit("a.txt", "a\n");
-        let tools = tempfile::tempdir().unwrap();
+        let tools = crate::support::TestDir::new();
         let git = wrapper_git(
             tools.path(),
             &format!(r#"case " $* " in *" {step} "*) exit 99;; esac"#),

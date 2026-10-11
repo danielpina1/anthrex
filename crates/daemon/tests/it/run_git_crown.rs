@@ -19,8 +19,8 @@ use support::run_git::{T, commit_file, head, out, real_git, repo, try_git, write
 /// from it with its repository `<data>/tasks/t1.a`, as `PrepareWorktree` makes it.
 struct Lane {
     repo: support::TempRepo,
-    _wt: tempfile::TempDir,
-    data: tempfile::TempDir,
+    _wt: crate::support::TestDir,
+    data: crate::support::TestDir,
     path: PathBuf,
     base: String,
 }
@@ -30,7 +30,7 @@ impl Lane {
         let repo = repo();
         let base = commit_file(&repo.root, "src/a.txt", "a\n", "base");
         let (wt, wt_path) = wt_dir();
-        let data = tempfile::tempdir().unwrap();
+        let data = crate::support::TestDir::new();
         let path = wt_path.join("runs/r/t1.a");
         prepare_task_worktree(
             real_git(),
@@ -122,7 +122,7 @@ fn crown_creates_the_task_branch_at_the_lane_head() {
     let lane = Lane::new();
     let sha = lane.commit("src/b.txt", "b\n");
     let head_file = std::fs::read_to_string(lane.git_dir().join("HEAD")).unwrap();
-    let scripts = tempfile::tempdir().unwrap();
+    let scripts = crate::support::TestDir::new();
     let git = recording_git(scripts.path());
 
     let result = crown(git.as_os_str(), lane.root(), "anthrex/r/t1", &sha, T).unwrap();
@@ -160,7 +160,7 @@ fn crown_is_idempotent_and_refuses_a_moved_branch() {
     let sha = lane.commit("src/b.txt", "b\n");
     crown(real_git(), lane.root(), "anthrex/r/t1", &sha, T).unwrap();
 
-    let scripts = tempfile::tempdir().unwrap();
+    let scripts = crate::support::TestDir::new();
     let git = recording_git(scripts.path());
     let again = crown(git.as_os_str(), lane.root(), "anthrex/r/t1", &sha, T).unwrap();
     assert_eq!(again, OpResult::Crowned { head: sha.clone() });
@@ -174,7 +174,7 @@ fn crown_is_idempotent_and_refuses_a_moved_branch() {
         lane.root(),
         &["update-ref", "refs/heads/anthrex/r/t1", &lane.base],
     );
-    let scripts = tempfile::tempdir().unwrap();
+    let scripts = crate::support::TestDir::new();
     let git = recording_git(scripts.path());
     let moved = crown(git.as_os_str(), lane.root(), "anthrex/r/t1", &sha, T).unwrap();
     assert!(matches!(moved, OpResult::RefMoved { .. }), "{moved:?}");
@@ -192,7 +192,7 @@ fn crown_is_idempotent_and_refuses_a_moved_branch() {
 /// crown's create-only update takes that zero oid (a sha1 one would be refused).
 #[test]
 fn crown_uses_the_repositorys_zero_oid() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::support::TestDir::new();
     let root = dir.path().canonicalize().unwrap();
     out(&root, &["init", "-q", "--object-format=sha256"]);
     out(&root, &["config", "user.name", "Run Tester"]);

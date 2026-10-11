@@ -26,7 +26,7 @@ fn commit_on(root: &Path, branch: &str, path: &str, content: &str) -> String {
 }
 
 /// A task worktree for run `run` at the repository's head.
-fn task_worktree(repo: &TempRepo, run: &str) -> (tempfile::TempDir, PathBuf) {
+fn task_worktree(repo: &TempRepo, run: &str) -> (crate::support::TestDir, PathBuf) {
     let base = head(&repo.root);
     let (keep, wt) = wt_dir();
     let path = wt.join(format!("runs/{run}/t1"));
@@ -46,7 +46,7 @@ fn hand_back_reports_the_tip_it_actually_merged_onto() {
     let (_keep, task) = task_worktree(&repo, "hb7");
     let claimed = commit_file(&task, "b.txt", "task\n", "task work");
     let run_head = commit_on(&repo.root, "anthrex/hb7/integration", "a.txt", "run\n");
-    let tools = tempfile::tempdir().unwrap();
+    let tools = crate::support::TestDir::new();
     let once = tools.path().join("once");
     let git = wrapper_git(
         tools.path(),
@@ -81,7 +81,7 @@ esac"#,
 /// A task and a run branch that both change `shared.txt` (and one other file each);
 /// the conflicted hand-back is in the worktree. Returns the worktree, `onto` and the
 /// run head.
-fn conflicted(repo: &TempRepo, run: &str) -> (tempfile::TempDir, PathBuf, String, String) {
+fn conflicted(repo: &TempRepo, run: &str) -> (crate::support::TestDir, PathBuf, String, String) {
     commit_file(&repo.root, "shared.txt", "base\n", "shared");
     let (keep, task) = task_worktree(repo, run);
     commit_file(&task, "b.txt", "task side\n", "task b");

@@ -19,7 +19,7 @@ use support::run_git::{T, commit_file, out, real_git, repo, wrapper_git, wt_dir}
 
 struct World {
     repo: TempRepo,
-    _wt: tempfile::TempDir,
+    _wt: crate::support::TestDir,
     run: String,
     integration: PathBuf,
     task: PathBuf,
@@ -210,7 +210,7 @@ fi"#,
 fn a_task_branch_flipped_during_the_hand_back_moves_no_base() {
     let w = world("sr04");
     let run_head = commit_file(&w.integration, "r.txt", "run\n", "run work");
-    let tools = tempfile::tempdir().unwrap();
+    let tools = crate::support::TestDir::new();
     let git = flipping_git(tools.path(), &w.own_file());
 
     let result = hand_back(git.as_os_str(), &w.task, &run_head, T);
@@ -225,7 +225,7 @@ fn a_task_branch_flipped_during_the_hand_back_moves_no_base() {
 fn a_task_branch_flipped_during_a_repoint_moves_no_base() {
     let w = world("sr05");
     let from = commit_file(&w.integration, "r.txt", "run\n", "run work");
-    let tools = tempfile::tempdir().unwrap();
+    let tools = crate::support::TestDir::new();
     let git = flipping_git(tools.path(), &w.own_file());
 
     let result = prepare_worktree(

@@ -37,6 +37,7 @@ from pty_smoke_run import (
     _git,
     _write_script,
 )
+from smoke_task_tmp import remove_task_tmps_beneath
 
 # One task path for each lane, as the e2e test's `2 * RUN_WAIT`.
 RACE_WAIT = 2 * RUN_WAIT
@@ -246,4 +247,6 @@ def tuning_stage(pty_proc, bin_path, run_cmd, fail, base_env):
         _stop_daemon(run_cmd, env, socket, daemon, "11g")
         if not os.environ.get("ANTHREX_SMOKE_KEEP"):
             shutil.rmtree(repo, ignore_errors=True)
+            # M9.12.13: its runs' task temporary directories go with it.
+            remove_task_tmps_beneath(root)
             shutil.rmtree(root, ignore_errors=True)

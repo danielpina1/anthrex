@@ -61,8 +61,8 @@ struct Setup {
     root: PathBuf,
     run: String,
     base: String,
-    _wt: tempfile::TempDir,
-    data: tempfile::TempDir,
+    _wt: crate::support::TestDir,
+    data: crate::support::TestDir,
     common: PathBuf,
     task: PathBuf,
     admin: PathBuf,
@@ -72,7 +72,7 @@ fn setup(run: &str) -> Setup {
     let repo = repo();
     let base = commit_file(&repo.root, "f.txt", "base\n", "base");
     let (wt, wt_path) = wt_dir();
-    let data = tempfile::tempdir().unwrap();
+    let data = crate::support::TestDir::new();
     let task = wt_path.join(format!("runs/{run}/t1"));
     prepare_task_worktree(
         real_git(),
@@ -182,7 +182,7 @@ fn a_reprepare_keeps_config_denied_in_a_live_sandbox() {
     let s = setup("bw04");
     let grant = s.grant(GrantShape::WholeDir);
     assert!(grant.deny.contains(&s.admin.join("config")));
-    let flags = tempfile::tempdir().unwrap();
+    let flags = crate::support::TestDir::new();
     let ready = s.task.join(".sandbox-ready");
     let go = flags.path().join("go");
     let config = s.admin.join("config");

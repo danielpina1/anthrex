@@ -57,7 +57,7 @@ fn git(dir: &Path, args: &[&str]) -> String {
 /// A repository at a base commit, lane a's checkout prepared from it, the service and
 /// the op context of run `r1`.
 struct Rig {
-    _tmp: tempfile::TempDir,
+    _tmp: crate::run::git::TestDir,
     root: PathBuf,
     lane: PathBuf,
     service: Arc<RunService>,
@@ -66,7 +66,7 @@ struct Rig {
 
 impl Rig {
     fn new() -> Rig {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::run::git::TestDir::new();
         let top = tmp.path().canonicalize().unwrap();
         let root = top.join("repo");
         std::fs::create_dir_all(&root).unwrap();

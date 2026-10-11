@@ -51,8 +51,8 @@ fn program() -> &'static OsStr {
 
 /// A run `r1` on a temporary repository whose task `t1` races, both lane checkouts and
 /// lane a's proof checkout prepared from the base.
-fn racing() -> (tempfile::TempDir, Run) {
-    let tmp = tempfile::tempdir().unwrap();
+fn racing() -> (crate::run::git::TestDir, Run) {
+    let tmp = crate::run::git::TestDir::new();
     let top = tmp.path().canonicalize().unwrap();
     let root = top.join("repo");
     std::fs::create_dir_all(&root).unwrap();

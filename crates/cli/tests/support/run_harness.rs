@@ -529,8 +529,15 @@ impl RunHarness {
 }
 
 impl Drop for RunHarness {
+    /// Milestone 9.12 task M9.12.13: once its daemon is stopped, the task temporary
+    /// directories its runs' checkouts left in the daemon's shared root go with the
+    /// harness's own directory.
     fn drop(&mut self) {
         self.stop_daemon();
+        let removed = daemon::run::git::remove_task_tmps_beneath(self.dir.path());
+        if let (Err(error), false) = (removed, std::thread::panicking()) {
+            panic!("{error}");
+        }
     }
 }
 

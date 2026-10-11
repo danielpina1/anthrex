@@ -31,6 +31,7 @@ import tempfile
 import time
 
 from pty_smoke_run import POLL, RUN_CMD_TIMEOUT, _git, _write_script, git_env
+from smoke_task_tmp import remove_task_tmps_beneath
 
 # The bounds of `crates/cli/tests/support/run_pr.rs`, restated across the language
 # boundary from the daemon's host constants (`crates/daemon/src/host/mod.rs`:
@@ -459,6 +460,8 @@ def pr_stage(pty_proc, bin_path, run_cmd, fail, base_env):
             _reap(proc)
         _stop_daemon(run_cmd, env, socket, daemon)
         if not os.environ.get("ANTHREX_SMOKE_KEEP"):
+            # M9.12.13: its runs' task temporary directories go with it.
+            remove_task_tmps_beneath(root)
             shutil.rmtree(root, ignore_errors=True)
 
 

@@ -359,7 +359,12 @@ fn a_task_checkout_deleted_by_hand_comes_back_with_its_work() {
 fn pre_warmed(
     edited: &str,
     moved: &str,
-) -> (TempRepo, tempfile::TempDir, std::path::PathBuf, String) {
+) -> (
+    TempRepo,
+    crate::support::TestDir,
+    std::path::PathBuf,
+    String,
+) {
     let repo = repo();
     commit_file(&repo.root, "Cargo.lock", "lock v1\n", "lock");
     let first = commit_file(&repo.root, "setup.cfg", "cfg v1\n", "cfg");

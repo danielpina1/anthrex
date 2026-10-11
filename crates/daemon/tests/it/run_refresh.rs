@@ -41,7 +41,7 @@ fn merge_on_run_branch(root: &Path, path: &str, content: &str, subject: &str) ->
 }
 
 /// A task worktree for `t1` at the repository's head: (keep, worktree, start).
-fn task(repo: &TempRepo) -> (tempfile::TempDir, PathBuf, String) {
+fn task(repo: &TempRepo) -> (crate::support::TestDir, PathBuf, String) {
     let start = head(&repo.root);
     let (keep, wt) = wt_dir();
     let path = wt.join(format!("runs/{RUN}/t1"));
@@ -228,7 +228,7 @@ fn a_refresh_counts_every_merged_commit_and_lists_the_newest() {
 
 /// A refreshed task: one own commit, then a refresh merge of one run commit. (keep,
 /// worktree, start, run head, the merge).
-fn refreshed(repo: &TempRepo) -> (tempfile::TempDir, PathBuf, String, String, String) {
+fn refreshed(repo: &TempRepo) -> (crate::support::TestDir, PathBuf, String, String, String) {
     let (keep, wt, start) = task(repo);
     commit_file(&wt, "src/own.rs", "own\n", "task work");
     let run_head = merge_on_run_branch(&repo.root, "docs/other.md", "x\n", "docs: other");

@@ -68,8 +68,8 @@ pub fn head(dir: &Path) -> String {
 }
 
 /// A fresh, canonical directory for engine worktrees (`<wt>` in decision 16).
-pub fn wt_dir() -> (tempfile::TempDir, PathBuf) {
-    let dir = tempfile::tempdir().unwrap();
+pub fn wt_dir() -> (super::TestDir, PathBuf) {
+    let dir = super::TestDir::new();
     let path = dir.path().canonicalize().unwrap();
     (dir, path)
 }

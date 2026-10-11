@@ -28,11 +28,22 @@ use support::tempdir;
 const LET_GO_WAIT: Duration = Duration::from_secs(30);
 
 struct Rig {
-    _dir: tempfile::TempDir,
+    dir: tempfile::TempDir,
     repo: PathBuf,
     profiles: Arc<ProfileService>,
     sched: Arc<TestScheduler>,
     shutdown: CancellationToken,
+}
+
+/// M9.12.13: the task temporary directories of the checkouts made under the rig's
+/// directory go with it.
+impl Drop for Rig {
+    fn drop(&mut self) {
+        let removed = daemon::run::git::remove_task_tmps_beneath(self.dir.path());
+        if let (Err(error), false) = (removed, std::thread::panicking()) {
+            panic!("{error}");
+        }
+    }
 }
 
 async fn rig() -> Rig {
@@ -75,7 +86,7 @@ async fn rig() -> Rig {
     };
     store::save(&repo_dir, &profile, &meta).unwrap();
     Rig {
-        _dir: dir,
+        dir,
         repo,
         sched: runs.scheduler().clone(),
         profiles,
@@ -168,6 +179,21 @@ async fn a_rejected_verification_waiting_for_a_slot_lets_go() {
             Instant::now() < deadline,
             "the new edit never asked for a slot"
         );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    // M9.12.13: the new edit is rejected too, while it still waits, so no verification
+    // runs (and makes a checkout's temporary directory) once the slot is let go and the
+    // test's directory is gone.
+    let reply = rig
+        .profiles
+        .request(ProfileRequest::Reject {
+            dir: rig.repo.clone(),
+        })
+        .await;
+    assert!(message(&reply).is_some(), "{reply:?}");
+    let deadline = Instant::now() + LET_GO_WAIT;
+    while rig.sched.waiting() != 0 {
+        assert!(Instant::now() < deadline, "the second reject never let go");
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     drop(held);

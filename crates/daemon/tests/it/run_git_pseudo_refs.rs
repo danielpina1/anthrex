@@ -20,7 +20,7 @@ use support::run_git::{T, commit_file, head, out, real_git, repo, try_git, wrapp
 
 struct World {
     repo: TempRepo,
-    _wt: tempfile::TempDir,
+    _wt: crate::support::TestDir,
     run: String,
     integration: PathBuf,
     task: PathBuf,
@@ -216,7 +216,7 @@ fn pseudo_refs_planted_after_the_checks_steer_nothing() {
             clean_case(&w)
         };
         let refs = w.other_refs();
-        let tools = tempfile::tempdir().unwrap();
+        let tools = crate::support::TestDir::new();
         let victim = tools.path().join("victim");
         std::fs::write(&victim, "victim\n").unwrap();
         let git = planting_git(tools.path(), &w, &victim, !conflict);

@@ -64,7 +64,7 @@ fn case_a_an_untiered_check_with_tier_placeholders_is_dropped() {
         None,
         Duration::from_secs(30),
         1,
-        &steps(dir.path()),
+        &steps(&dir),
     );
     assert_eq!(log(dir.path())[0], "check.sh 1");
     let (kept, dropped) = apply_verification(&proposed, &v, Path::new("/work/app"));
@@ -94,7 +94,7 @@ fn case_a_an_untiered_check_with_tier_placeholders_is_dropped() {
         None,
         Duration::from_secs(30),
         1,
-        &steps(dir.path()),
+        &steps(&dir),
     );
     let (kept, dropped) = apply_verification(&proposed, &v, Path::new("/work/app"));
     let keys: Vec<&str> = dropped.iter().map(|d| d.key.as_str()).collect();
@@ -128,7 +128,7 @@ fn case_b_a_module_command_without_a_filter_slot_is_dropped_not_the_filters() {
         None,
         Duration::from_secs(30),
         1,
-        &steps(dir.path()),
+        &steps(&dir),
     );
     assert!(check_of(&v, "module_test").ok && check_of(&v, "module_tests").ok);
     let (kept, dropped) = apply_verification(&proposed, &v, Path::new("/work/app"));
@@ -222,7 +222,7 @@ fn a_partial_wildcard_component_names_no_module_for_verification_or_path_module(
         None,
         Duration::from_secs(30),
         1,
-        &steps(dir.path()),
+        &steps(&dir),
     );
     let test = check_of(&v, "module_test");
     assert!(!test.ok);

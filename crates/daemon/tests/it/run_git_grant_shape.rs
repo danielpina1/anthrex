@@ -33,8 +33,8 @@ const DENIED: [&str; 10] = [
 
 struct Checkout {
     _repo: support::TempRepo,
-    _wt: tempfile::TempDir,
-    data: tempfile::TempDir,
+    _wt: crate::support::TestDir,
+    data: crate::support::TestDir,
     common: PathBuf,
     task: PathBuf,
     admin: PathBuf,
@@ -46,7 +46,7 @@ fn checkout(run: &str) -> Checkout {
     let repo = repo();
     let base = commit_file(&repo.root, "f.txt", "base\n", "base");
     let (wt, wt_path) = wt_dir();
-    let data = tempfile::tempdir().unwrap();
+    let data = crate::support::TestDir::new();
     let task = wt_path.join(format!("runs/{run}/t1"));
     prepare_task_worktree(
         real_git(),
@@ -279,7 +279,7 @@ fn the_daemons_git_reads_no_config_through_a_planted_commondir() {
         pinned::common_dir_env(&pin),
         Some(("GIT_COMMON_DIR", pin.git_dir.as_path()))
     );
-    let evil = tempfile::tempdir().unwrap();
+    let evil = crate::support::TestDir::new();
     std::fs::create_dir_all(evil.path().join("refs")).unwrap();
     std::fs::create_dir_all(evil.path().join("objects")).unwrap();
     std::fs::write(
@@ -366,7 +366,7 @@ fn a_config_worktree_with_content_is_still_refused() {
 #[test]
 fn links_left_at_denied_paths_refuse_the_grant() {
     let c = checkout("gs03");
-    let elsewhere = tempfile::tempdir().unwrap();
+    let elsewhere = crate::support::TestDir::new();
     let target_file = elsewhere.path().join("file");
     std::fs::write(&target_file, "theirs\n").unwrap();
     let roots = worker_git_roots(c.data.path(), "t1");
@@ -441,7 +441,7 @@ fn a_shallow_file_in_a_task_checkout_is_refused() {
 #[test]
 fn the_probe_names_the_common_dir_of_a_standalone_checkout_only() {
     let c = checkout("gs06");
-    let scripts = tempfile::tempdir().unwrap();
+    let scripts = crate::support::TestDir::new();
     let git = support::recording_git(scripts.path());
     daemon::git::probe::probe(git.as_os_str(), &c.task, T).expect("the checkout probes");
     let log = std::fs::read_to_string(scripts.path().join("git.log")).unwrap();
