@@ -6,6 +6,7 @@ use proto::{ClientKind, ClientMsg, DaemonMsg, HookSource, Runtime, Status};
 use serde_json::json;
 use support::{
     RunningCommand, TestDaemon, assert_silent_success, isolated_command, runtime, tempdir,
+    warm_anthrex,
 };
 use tokio::net::{UnixListener, UnixStream};
 
@@ -20,11 +21,20 @@ use tokio::net::{UnixListener, UnixStream};
 /// spawn variance (the investigation distilled into docs/timing-budgets.md found the
 /// previous 1500ms bound left only 500ms for the spawn, producing a 58% failure rate
 /// when the binary was looped).
+///
+/// The spawn term is a spawn of an `anthrex` macOS has already assessed. The first exec
+/// of a freshly built binary is not (2.5-3 s measured, unbounded per "Measured primitive
+/// costs"), and it lands in whichever test execs the binary first. Under libtest this
+/// file's binary ran after `codex_version`'s, `daemon_*`'s and `decider_*`'s, which exec
+/// `anthrex` first; under cargo-nextest (M9.12.4) the binaries' tests interleave and these
+/// run alone, so each timing test below calls `warm_anthrex` before its clock starts and
+/// pays that first exec outside `LIMIT`.
 const LIMIT: Duration = Duration::from_secs(3);
 const FLAGS: &[&str] = &["hook", "--window", "1", "--source", "claude"];
 
 #[test]
 fn without_a_daemon_it_exits_zero_silently_and_fast() {
+    warm_anthrex();
     let dir = tempdir();
     let start = Instant::now();
     let output = RunningCommand::start(isolated_command(dir.path(), FLAGS).arg("{}")).finish(LIMIT);
@@ -57,6 +67,7 @@ fn bad_arguments_exit_zero() {
 
 #[test]
 fn held_open_stdin_is_included_in_the_deadline() {
+    warm_anthrex();
     let dir = tempdir();
     let start = Instant::now();
     let mut child = RunningCommand::start(&mut isolated_command(dir.path(), FLAGS));
@@ -104,6 +115,7 @@ async fn welcome(stream: &mut UnixStream) {
 
 #[test]
 fn a_silent_daemon_costs_at_most_a_second() {
+    warm_anthrex();
     let dir = tempdir();
     let rt = runtime();
     rt.block_on(async {
@@ -811,6 +823,7 @@ fn tool_result_truncated_and_stringified_overwrite_whatever_the_runtime_sent() {
 /// stay clear of that same `ARG_MAX` limit.
 #[test]
 fn a_payload_over_the_size_limit_is_still_dropped_whole() {
+    warm_anthrex();
     let dir = tempdir();
     let rt = runtime();
     rt.block_on(async {
@@ -840,6 +853,7 @@ fn a_payload_over_the_size_limit_is_still_dropped_whole() {
 
 #[test]
 fn one_deadline_covers_stdin_handshake_and_ack() {
+    warm_anthrex();
     let dir = tempdir();
     let rt = runtime();
     rt.block_on(async {
