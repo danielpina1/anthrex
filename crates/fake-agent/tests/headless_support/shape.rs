@@ -3,7 +3,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::path::Path;
 
 use serde_json::Value;
 
@@ -137,7 +136,7 @@ impl Schema {
 /// The recorded stream files of `runtime` in the fixture directory `dir` (`headless`,
 /// `deciders`), without the input fixture, which is what was written to stdin.
 pub fn fixture_files(dir: &str, runtime: &str) -> Vec<std::path::PathBuf> {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+    let dir = testexec::checkout_dir(env!("CARGO_MANIFEST_DIR"))
         .join("../daemon/tests/fixtures")
         .join(dir);
     let mut files = Vec::new();

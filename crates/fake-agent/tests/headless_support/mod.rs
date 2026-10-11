@@ -52,7 +52,7 @@ pub fn anthrex() -> PathBuf {
         if sibling.is_file() {
             return sibling;
         }
-        let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.toml");
+        let manifest = testexec::checkout_dir(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.toml");
         let target = fake_agent()
             .parent()
             .and_then(Path::parent)
@@ -519,7 +519,7 @@ pub fn lines(path: &Path) -> Vec<String> {
 
 /// A recorded fixture file of M8a.1.
 pub fn fixture(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+    testexec::checkout_dir(env!("CARGO_MANIFEST_DIR"))
         .join("../daemon/tests/fixtures/headless")
         .join(name)
 }

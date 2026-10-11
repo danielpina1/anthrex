@@ -198,7 +198,8 @@ fn the_environment_scan_finds_calls_however_imported() {
 #[test]
 fn no_merged_test_mutates_the_process_environment() {
     // M9.12.11 passes this through `testexec::checkout_dir` (decision 25).
-    let crates = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let package = testexec::checkout_dir(env!("CARGO_MANIFEST_DIR"));
+    let crates = package.parent().unwrap();
     assert!(
         crates.join("daemon/tests/it/main.rs").is_file(),
         "the walk starts at {}",
@@ -291,7 +292,8 @@ fn the_scanner_skips_test_code() {
 #[test]
 fn the_engine_imports_no_runtime_io_or_clock() {
     // M9.12.11 passes this through `testexec::checkout_dir` (decision 25).
-    let crates = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let package = testexec::checkout_dir(env!("CARGO_MANIFEST_DIR"));
+    let crates = package.parent().unwrap();
     let engine = crates.join("daemon/src/run/engine");
     assert!(
         engine.join("mod.rs").is_file(),
@@ -304,4 +306,73 @@ fn the_engine_imports_no_runtime_io_or_clock() {
         "the engine imports runtime, I/O or clock APIs:\n{}",
         hits.join("\n")
     );
+}
+
+/// Every `env!("CARGO_MANIFEST_DIR")` and `option_env!("CARGO_MANIFEST_DIR")` in `text`'s
+/// code that is not directly the argument of `checkout_dir(`, as line numbers.
+fn unguarded_manifest_dirs(text: &str) -> Vec<usize> {
+    let code = code_only(text);
+    let mut lines = Vec::new();
+    for (at, _) in code.match_indices("env!") {
+        let b = code.as_bytes();
+        let start = if code[..at].ends_with("option_") {
+            at - "option_".len()
+        } else {
+            at
+        };
+        if start > 0 && is_ident(b[start - 1]) {
+            continue;
+        }
+        let args = text[at + "env!".len()..].trim_start();
+        let Some(args) = args.strip_prefix('(') else {
+            continue;
+        };
+        if !args.trim_start().starts_with("\"CARGO_MANIFEST_DIR\"") {
+            continue;
+        }
+        let guarded = text[..start]
+            .trim_end()
+            .strip_suffix('(')
+            .is_some_and(|before| before.trim_end().ends_with("checkout_dir"));
+        if !guarded {
+            lines.push(code[..at].matches('\n').count() + 1);
+        }
+    }
+    lines
+}
+
+#[test]
+fn the_manifest_scan_wants_checkout_dir_around_each_use() {
+    let text = "let a = testexec::checkout_dir(env!(\"CARGO_MANIFEST_DIR\"));\n\
+                let b = checkout_dir(\n    option_env!(\"CARGO_MANIFEST_DIR\").unwrap(),\n);\n\
+                let c = Path::new(env!(\"CARGO_MANIFEST_DIR\"));\n\
+                // env!(\"CARGO_MANIFEST_DIR\")\n\
+                let d = \"env!(\\\"CARGO_MANIFEST_DIR\\\")\";\n\
+                let e = env!(\"CARGO_PKG_NAME\");\n\
+                let f = std::env::var(\"CARGO_MANIFEST_DIR\");\n";
+    assert_eq!(unguarded_manifest_dirs(text), [5]);
+}
+
+#[test]
+fn every_compile_time_manifest_dir_is_guarded() {
+    let crates = testexec::checkout_dir(env!("CARGO_MANIFEST_DIR"));
+    let crates = crates.parent().unwrap();
+    let mut files = Vec::new();
+    rust_files(crates, &mut files);
+    files.sort();
+    let mut hits = Vec::new();
+    for file in files {
+        let rel = file.strip_prefix(crates).unwrap();
+        if rel.components().any(|c| c.as_os_str() == "target") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&file).unwrap();
+        for line in unguarded_manifest_dirs(&text) {
+            hits.push(format!(
+                "{}:{line}: env!(\"CARGO_MANIFEST_DIR\") is not passed through testexec::checkout_dir",
+                rel.display()
+            ));
+        }
+    }
+    assert!(hits.is_empty(), "{}", hits.join("\n"));
 }

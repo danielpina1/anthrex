@@ -24,6 +24,28 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+/// The package directory the running test is in, checked against the one it was compiled
+/// in (`built_in` is `env!("CARGO_MANIFEST_DIR")`). A target directory shared between
+/// checkouts can hand one checkout a test binary built in another; every path such a test
+/// reads from `built_in` would then be the other checkout's. Cargo and nextest both run a
+/// test in its package directory, so the working directory is the one to compare. Both
+/// sides are canonicalised (macOS's `/tmp` is `/private/tmp`, and `getcwd` returns the
+/// resolved one). Panics when they differ. Returns the canonical directory.
+pub fn checkout_dir(built_in: &str) -> PathBuf {
+    let compiled = Path::new(built_in).canonicalize().unwrap_or_else(|e| {
+        panic!("this test binary was compiled in {built_in}, which cannot be resolved: {e}")
+    });
+    let running = std::env::current_dir()
+        .and_then(|d| d.canonicalize())
+        .expect("the working directory");
+    assert!(
+        compiled == running,
+        "this test binary was compiled in {built_in} and is running in {}: a shared target directory handed this checkout a binary built in another one, so every path it reads would be the other checkout's. Touch the test's file to force a rebuild.",
+        running.display()
+    );
+    running
+}
+
 /// Writes `body` to `path` with mode 0755, as [`write_executable_mode`].
 pub fn write_executable(path: impl AsRef<Path>, body: impl AsRef<[u8]>) -> PathBuf {
     write_executable_mode(path, body, 0o755)

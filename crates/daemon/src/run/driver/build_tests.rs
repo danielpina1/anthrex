@@ -237,8 +237,8 @@ mod tuning {
         let project = work.canonicalize().unwrap();
         let repo_dir = crate::profile::repo_dir(&data, &project);
         std::fs::create_dir_all(&repo_dir).unwrap();
-        let history =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/history/refit.jsonl");
+        let history = testexec::checkout_dir(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/history/refit.jsonl");
         std::fs::copy(history, repo_dir.join("history.jsonl")).unwrap();
         (work, repo_dir, service)
     }

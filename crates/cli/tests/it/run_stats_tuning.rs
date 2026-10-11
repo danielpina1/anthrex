@@ -6,7 +6,7 @@
 
 use crate::support;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Output;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -20,7 +20,8 @@ use support::run_harness::{RunHarness, git_in};
 
 /// The recorded history of task M9.5.8: S qualifies with 34 samples.
 fn refit_history() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../daemon/tests/fixtures/history/refit.jsonl")
+    testexec::checkout_dir(env!("CARGO_MANIFEST_DIR"))
+        .join("../daemon/tests/fixtures/history/refit.jsonl")
 }
 
 fn now() -> u64 {

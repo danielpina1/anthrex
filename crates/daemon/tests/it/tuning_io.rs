@@ -18,7 +18,7 @@ const NOW: u64 = 1_790_500_000;
 
 /// The recorded history `refit.jsonl` (task M9.5.8): S qualifies with 34 samples.
 fn refit_history() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/history/refit.jsonl")
+    testexec::checkout_dir(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/history/refit.jsonl")
 }
 
 /// A repository data directory under a fresh temp dir, with `refit.jsonl` as its

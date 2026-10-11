@@ -30,7 +30,8 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
 
 #[test]
 fn no_rig_builds_a_manager_config_with_the_real_agent_programs() {
-    let crates = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let package = testexec::checkout_dir(env!("CARGO_MANIFEST_DIR"));
+    let crates = package.parent().unwrap();
     let allowed = crates.join("daemon/src/manager/config.rs");
     let this = Path::new(file!()).file_name().unwrap().to_owned();
     let mut files = Vec::new();
@@ -72,7 +73,8 @@ const AGENT_VARS: [&str; 4] = [
 
 #[test]
 fn every_test_that_starts_anthrex_or_reads_variables_pins_the_agents() {
-    let crates = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let package = testexec::checkout_dir(env!("CARGO_MANIFEST_DIR"));
+    let crates = package.parent().unwrap();
     let this = Path::new(file!()).file_name().unwrap().to_owned();
     let mut files = Vec::new();
     rust_files(crates, &mut files);

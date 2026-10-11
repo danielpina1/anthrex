@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 const DEADLINE: Duration = Duration::from_secs(10);
 
 fn fixture(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+    testexec::checkout_dir(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/headless")
         .join(name)
 }

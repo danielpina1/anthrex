@@ -182,10 +182,8 @@ fn e2e_goal_touching_a_hub_file_takes_the_plan_path() {
 #[test]
 fn e2e_a_goal_that_falls_back_to_the_plan_path_is_tuned_once() {
     let h = harness("claude", "hub = [\"core/**\"]\n", &[], &[]);
-    let history = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../daemon/tests/fixtures/history/refit.jsonl"
-    );
+    let history = testexec::checkout_dir(env!("CARGO_MANIFEST_DIR"))
+        .join("../daemon/tests/fixtures/history/refit.jsonl");
     std::fs::copy(history, h.repo_dir().join("history.jsonl")).unwrap();
     h.decider("triage", 1, triage_single(&["core/x.txt"]));
     let out = h.start_goal("change the core", &[]);

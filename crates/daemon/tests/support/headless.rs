@@ -14,7 +14,7 @@ pub const DEADLINE: Duration = Duration::from_secs(10);
 pub const RUN_ID: &str = "run-17";
 
 pub fn fixture(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+    testexec::checkout_dir(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/headless")
         .join(name)
 }

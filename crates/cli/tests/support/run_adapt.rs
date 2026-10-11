@@ -433,7 +433,7 @@ impl RunHarness {
     /// Copies `crates/daemon/tests/fixtures/history/<name>` to this repository's
     /// `history.jsonl`.
     pub fn history(&self, name: &str) {
-        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let fixture = testexec::checkout_dir(env!("CARGO_MANIFEST_DIR"))
             .join("../daemon/tests/fixtures/history")
             .join(name);
         let dir = self.repo_dir();
