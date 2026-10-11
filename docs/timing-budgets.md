@@ -893,6 +893,13 @@ falls inside. Besides the rows marked changed, every such bound warms its stand-
 or ends at an injected timeout that does not depend on the exec, or starts its clock only
 after the stand-in has reported in.
 
+### Recorded, from M9.12.13 (the leak fixes' rig stops, 2026-10-11)
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| Every test of the read-path rig, the role-route rig and `server_runs.rs`'s tagged rigs: the rig's `stop()` | `run/driver/orch_read_rig.rs`, `run/driver/role_route_tests.rs`, `daemon/tests/it/server_runs.rs` (`STOP_BOUND`) | `STOP_WAIT` + `KILL_GRACE` + `CLEANUP_TIMEOUT` + 30 s = 73 s | `RunService::stop` waits `STOP_WAIT` (30 s, named for this in `run/driver.rs`) for the loop's acknowledgement, then aborts and saves; `WindowManager::shutdown` gives each window `KILL_GRACE` (3 s) and its cleanup `CLEANUP_TIMEOUT` (10 s); 30 s for the last saves and the joins on a loaded machine. | **Recorded.** A hang guard: a test that holds the engine's lock across `stop()` fails in 73 s with a message naming the lock (shown once by holding it), instead of at nextest's 600 s. |
+| `a_rejected_verification_waiting_for_a_slot_lets_go`: the rig's `stop()` | `cli/tests/it/profile_verify_cancel.rs` | `LET_GO_WAIT` (30 s) for the verification checkout to go; `STOP_WAIT` + 10 s for the run service | The test's own `LET_GO_WAIT` derivation for a cancelled job's end (its clean-up removes the checkout); `RunService::stop` as above, with no windows. | **Recorded.** |
+
 ### Fixed, from M9.5.8's flake fix (ruling F-1, 2026-10-03)
 
 | Test | File | Bound | Derivation | Status |
