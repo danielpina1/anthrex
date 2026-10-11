@@ -1,3 +1,7 @@
+//! The client's `Connection` and `reconnect::attempt` against a real in-process daemon.
+//! Moved from `tui/tests/connection.rs` (milestone 9.12 decision 11): the client no longer
+//! depends on the daemon, and this binary depends on both.
+
 use daemon::manager::{ManagerConfig, WindowManager};
 use daemon::run::driver::RunService;
 use daemon::server::{GitWiring, serve};
