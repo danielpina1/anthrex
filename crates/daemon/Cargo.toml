@@ -4,10 +4,97 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+# Milestone 9.12, decision 13: one integration-test binary, `tests/it/main.rs`, plus the
+# files kept alone (decision 14) below.
+autotests = false
 
 [lib]
 name = "daemon"
 path = "src/lib.rs"
+
+[[test]]
+name = "it"
+path = "tests/it/main.rs"
+
+# Alone: calls std::env::set_var or remove_var (decision 14).
+[[test]]
+name = "git_env"
+path = "tests/git_env.rs"
+
+# Alone: calls std::env::set_var or remove_var (decision 14).
+[[test]]
+name = "git_env_scrub"
+path = "tests/git_env_scrub.rs"
+
+# Alone: calls std::env::set_var or remove_var (decision 14).
+[[test]]
+name = "headless_env"
+path = "tests/headless_env.rs"
+
+# Alone: calls std::env::set_var or remove_var (decision 14).
+[[test]]
+name = "host_contains_env"
+path = "tests/host_contains_env.rs"
+
+# Alone: calls std::env::set_var or remove_var (decision 14).
+[[test]]
+name = "lifecycle_resume"
+path = "tests/lifecycle_resume.rs"
+
+# Alone: calls std::env::set_var or remove_var (decision 14).
+[[test]]
+name = "manager_shutdown_removal_env"
+path = "tests/manager_shutdown_removal_env.rs"
+
+# Alone: calls std::env::set_var or remove_var (decision 14).
+[[test]]
+name = "models_env"
+path = "tests/models_env.rs"
+
+# Alone: calls std::env::set_var or remove_var (decision 14).
+[[test]]
+name = "orchestrator_window"
+path = "tests/orchestrator_window.rs"
+
+# Alone: calls std::env::set_var or remove_var (decision 14).
+[[test]]
+name = "run_exec_env"
+path = "tests/run_exec_env.rs"
+
+# Alone: calls std::env::set_var or remove_var (decision 14).
+[[test]]
+name = "run_exec_secret_env"
+path = "tests/run_exec_secret_env.rs"
+
+# Alone: calls std::env::set_var or remove_var (decision 14).
+[[test]]
+name = "run_git_docs_env"
+path = "tests/run_git_docs_env.rs"
+
+# Alone: calls std::env::set_var or remove_var (decision 14).
+[[test]]
+name = "run_git_env"
+path = "tests/run_git_env.rs"
+
+# Alone: calls std::env::set_var or remove_var (decision 14).
+[[test]]
+name = "run_git_pathspec_env"
+path = "tests/run_git_pathspec_env.rs"
+
+# Alone: calls std::env::set_var or remove_var (decision 14).
+[[test]]
+name = "run_tier_env"
+path = "tests/run_tier_env.rs"
+
+# Alone: calls std::env::set_var or remove_var (decision 14).
+[[test]]
+name = "worktree_env"
+path = "tests/worktree_env.rs"
+
+# Alone: no sibling may fork() while its flock fd closes (decision 14).
+[[test]]
+name = "lockfile"
+path = "tests/lockfile.rs"
 
 [dependencies]
 proto.workspace = true

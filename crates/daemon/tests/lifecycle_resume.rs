@@ -11,7 +11,7 @@ use proto::{ClientMsg, DaemonMsg, Runtime, Status};
 use std::path::PathBuf;
 use std::time::Duration;
 
-#[path = "lifecycle/common.rs"]
+#[path = "it/lifecycle/common.rs"]
 mod common;
 use common::*;
 
