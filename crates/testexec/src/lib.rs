@@ -15,6 +15,10 @@
 //! being replaced is never seen half-written). No fork of the test process can inherit
 //! a descriptor the test process never had.
 
+mod reexec;
+
+pub use reexec::{assert_one_test_ran, libtest_name};
+
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
