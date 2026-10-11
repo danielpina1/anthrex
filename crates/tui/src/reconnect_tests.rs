@@ -21,6 +21,7 @@ use crate::app::Link;
 use daemon::manager::{ManagerConfig, WindowManager};
 use daemon::run::driver::RunService;
 use daemon::server::{GitWiring, serve};
+use std::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 /// Starts a daemon listening at exactly `socket`, so a dropped connection can be
