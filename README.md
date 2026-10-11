@@ -379,7 +379,8 @@ flowchart LR
 
 ```bash
 cargo build --workspace --all-targets
-cargo test --workspace
+cargo nextest run --workspace     # cargo install cargo-nextest --locked --version 0.9.146
+cargo test --workspace --doc
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all --check
 python3 scripts/pty-smoke.py      # drives the real binary through a PTY, end to end

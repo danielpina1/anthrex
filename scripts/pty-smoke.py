@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Scripted PTY smoke test for anthrex.
 
-`cargo test` covers the pieces; this covers the thing itself. It drives the real
+`cargo nextest run` covers the pieces; this covers the thing itself. It drives the real
 target/debug/anthrex binary through a pseudo-terminal the way a person would -
 attaching, creating windows, typing, pasting, detaching - and asserts on the
 rendered screen text. Run it from the repo root:
