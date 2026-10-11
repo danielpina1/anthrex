@@ -98,6 +98,7 @@ path = "tests/lockfile.rs"
 
 [dependencies]
 proto.workspace = true
+common.workspace = true
 config.workspace = true
 globset.workspace = true
 regex.workspace = true

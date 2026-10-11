@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/proto", "crates/config", "crates/daemon", "crates/tui", "crates/cli", "crates/fake-agent", "crates/mcp", "crates/testexec"]
+members = ["crates/proto", "crates/common", "crates/config", "crates/daemon", "crates/tui", "crates/cli", "crates/fake-agent", "crates/mcp", "crates/testexec"]
 
 [workspace.package]
 version = "0.2.0"
@@ -10,6 +10,7 @@ license = "MIT"
 
 [workspace.dependencies]
 proto = { path = "crates/proto", package = "anthrex-proto" }
+common = { path = "crates/common", package = "anthrex-common" }
 config = { path = "crates/config", package = "anthrex-config" }
 daemon = { path = "crates/daemon", package = "anthrex-daemon" }
 tui = { path = "crates/tui", package = "anthrex-tui" }
