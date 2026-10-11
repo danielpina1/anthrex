@@ -64,11 +64,16 @@ def matching_processes():
         pid, ppid, stat, args = fields
         if "Z" in stat:
             continue
-        program, rest = split_program(args)
-        name = os.path.basename(program)
-        if (name == "anthrex" and rest.split()[:1] == ["daemon"]) or name == "fake-agent":
+        if matches(args):
             found[int(pid)] = (int(ppid), args)
     return found
+
+
+def matches(args):
+    """Whether `ps`'s args for one process are an anthrex daemon or a fake-agent."""
+    program, rest = split_program(args)
+    name = os.path.basename(program)
+    return (name == "anthrex" and rest.split()[:1] == ["daemon"]) or name == "fake-agent"
 
 
 def split_program(args):
@@ -77,15 +82,17 @@ def split_program(args):
     `ps` joins argv with spaces, so argv[0] is not always its first word: a binary under
     a directory whose name has a space (`/Users/me/My Repos/target/debug/anthrex daemon`)
     spans several. argv[0] is the shortest leading run of words whose basename is one
-    this gate matches and which is that bare name or an existing file; otherwise, the
-    first word.
+    this gate matches and which is that bare name (no `/`) or an existing file;
+    otherwise, the first word. The file check is what keeps a directory named after a
+    match (`/Users/me/anthrex copy/target/debug/anthrex daemon`) from ending the run at
+    `/Users/me/anthrex`.
     """
     words = args.split(" ")
     for k in range(1, len(words) + 1):
         program = " ".join(words[:k])
         if os.path.basename(program) not in ("anthrex", "fake-agent"):
             continue
-        if " " not in program or os.path.isfile(program):
+        if "/" not in program or os.path.isfile(program):
             return program, " ".join(words[k:])
     first, _, rest = args.partition(" ")
     return first, rest
@@ -200,8 +207,35 @@ def selftest():
     spaced_program = os.path.join(spaced_dir, "fake-agent")
     with open(spaced_program, "w"):
         pass
+    # A stand-in under a directory literally named `anthrex copy`, whose parent path has
+    # no space: the word `.../anthrex` is a directory, not argv[0], and must not end the
+    # match early.
+    copy_bin = os.path.join(before_dir, "anthrex copy", "target", "debug")
+    os.makedirs(copy_bin, exist_ok=True)
+    copy_program = os.path.join(copy_bin, "fake-agent")
+    copy_daemon = os.path.join(copy_bin, "anthrex")
+    for path in (copy_program, copy_daemon):
+        with open(path, "w"):
+            pass
+    # What `ps` shows, matched or not; an unrelated process is never matched.
+    for args, want in (
+        (f"{copy_program} 60", True),
+        (f"{copy_daemon} daemon --foreground", True),
+        (f"{spaced_program} 60", True),
+        ("fake-agent 60", True),
+        ("/tmp/x/anthrex daemon", True),
+        (f"{copy_daemon} attach", False),
+        ("vim /tmp/x/fake-agent", False),
+        (f"vim {copy_program}", False),
+        ("/bin/sh -c /tmp/anthrex daemon", False),
+        (f"/bin/sh -c {copy_daemon} daemon", False),
+        ("cargo run -p anthrex -- daemon", False),
+    ):
+        if matches(args) != want:
+            failures.append(f"matches({args!r}) is {not want}, not {want}")
     child = None
     spaced = None
+    copied = None
     fd, snap = tempfile.mkstemp(suffix=".json")
     os.close(fd)
     try:
@@ -211,6 +245,7 @@ def selftest():
         os.makedirs(leaked_dir, exist_ok=True)
         child = subprocess.Popen(["fake-agent", "60"], executable="/bin/sleep")
         spaced = subprocess.Popen([spaced_program, "60"], executable="/bin/sleep")
+        copied = subprocess.Popen([copy_program, "60"], executable="/bin/sleep")
 
         status, out = run_self("check", snap, "--wait", "1")
         print(out, end="")
@@ -220,6 +255,8 @@ def selftest():
             failures.append(f"check did not name the leaked process {child.pid}")
         if f"leaked process: pid {spaced.pid} " not in out:
             failures.append(f"check did not name the leaked process {spaced.pid}, whose path has a space")
+        if f"leaked process: pid {copied.pid} " not in out:
+            failures.append(f"check did not name the leaked process {copied.pid}, under `anthrex copy`")
         if os.path.realpath(leaked_dir) not in out:
             failures.append(f"check did not name the leaked directory {leaked_dir}")
         if f"pid {before.pid} " in out:
@@ -233,6 +270,9 @@ def selftest():
         spaced.terminate()  # its own child, by its pid
         spaced.wait()
         spaced = None
+        copied.terminate()  # its own child, by its pid
+        copied.wait()
+        copied = None
         os.rmdir(leaked_dir)
 
         status, out = run_self("check", snap)
@@ -246,6 +286,9 @@ def selftest():
         if spaced is not None:
             spaced.terminate()  # its own child, by its pid
             spaced.wait()
+        if copied is not None:
+            copied.terminate()  # its own child, by its pid
+            copied.wait()
         before.terminate()  # the only signal: its own child, by its pid
         before.wait()
         shutil.rmtree(leaked_dir, ignore_errors=True)
