@@ -376,3 +376,98 @@ fn every_compile_time_manifest_dir_is_guarded() {
     }
     assert!(hits.is_empty(), "{}", hits.join("\n"));
 }
+
+// ---------------------------------------------------------------------------------
+// The test-target rule (milestone 9.12, final review I1); the scanner is `targets`.
+
+mod targets;
+use targets::{mod_decls, target_hits};
+
+#[test]
+fn the_mod_scan_reads_each_declaration_form() {
+    let text = "#[path = \"../support/mod.rs\"]\nmod support;\n\
+                #[cfg(target_os = \"macos\")]\npub(crate) mod a;\n\
+                #[cfg(test)] #[path = \"x/b.rs\"] mod b;\n\
+                // mod c;\n\
+                let s = \"mod d;\";\n\
+                mod e {\n}\n\
+                fn my_mod() {}\n";
+    assert_eq!(
+        mod_decls(text),
+        [
+            ("support".to_string(), Some("../support/mod.rs".to_string())),
+            ("a".to_string(), None),
+            ("b".to_string(), Some("x/b.rs".to_string())),
+        ]
+    );
+}
+
+#[test]
+fn the_target_scan_follows_every_mount_form() {
+    let dir = tempfile::tempdir().unwrap();
+    let crates = dir.path();
+    let krate = crates.join("k");
+    let put = |rel: &str, text: &str| {
+        let path = krate.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    put(
+        "Cargo.toml",
+        "[package]\nname = \"k\"\nautotests = false\n\
+         [[test]]\nname = \"it\"\npath = \"tests/it/main.rs\"\n\
+         [[test]]\nname = \"alone\"\npath = \"tests/alone.rs\"\n",
+    );
+    // A kept-alone binary with a `#[path]` module, which owns its directory.
+    put("tests/alone.rs", "#[path = \"alone/x.rs\"]\nmod x;\n");
+    put("tests/alone/x.rs", "mod y;\n");
+    put("tests/alone/y.rs", "");
+    put(
+        "tests/it/main.rs",
+        "#[path = \"../support/mod.rs\"]\nmod support;\nmod a;\n\
+         #[cfg(unix)]\npub(crate) mod b;\n// mod c;\nmod d;\n",
+    );
+    put("tests/it/a.rs", "mod inner;\n");
+    put("tests/it/a/inner.rs", "");
+    put("tests/it/b/mod.rs", "mod deep;\n");
+    put("tests/it/b/deep.rs", "");
+    put("tests/it/d.rs", "#[path = \"d/z.rs\"]\nmod z;\n");
+    put("tests/it/d/z.rs", "mod w;\n");
+    put("tests/it/d/w.rs", "");
+    put("tests/support/mod.rs", "pub mod helper;\n");
+    put("tests/support/helper.rs", "");
+    put("tests/fixtures/data.rs", "");
+    // Never compiled: commented out, no `[[test]]`, and no `mod` line.
+    put("tests/it/c.rs", "");
+    put("tests/stray.rs", "");
+    put("tests/it/a/orphan.rs", "");
+    let hits = target_hits(crates, &krate);
+    let named: Vec<&str> = hits.iter().map(|h| h.split(':').next().unwrap()).collect();
+    assert_eq!(
+        named,
+        [
+            "k/tests/it/a/orphan.rs",
+            "k/tests/it/c.rs",
+            "k/tests/stray.rs"
+        ],
+        "{hits:#?}"
+    );
+    assert!(hits[2].contains("no [[test]] entry"), "{}", hits[2]);
+}
+
+#[test]
+fn every_integration_test_file_is_compiled() {
+    let package = testexec::checkout_dir(env!("CARGO_MANIFEST_DIR"));
+    let crates = package.parent().unwrap();
+    let mut hits = Vec::new();
+    for krate in ["daemon", "cli"] {
+        let dir = crates.join(krate);
+        assert!(
+            dir.join("tests/it/main.rs").is_file(),
+            "the walk starts at {}",
+            dir.display()
+        );
+        hits.extend(target_hits(crates, &dir));
+    }
+    assert!(hits.is_empty(), "{}", hits.join("\n"));
+}
