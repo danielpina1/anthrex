@@ -41,6 +41,14 @@ fn zero_tests_ran_is_refused() {
     ));
 }
 
+#[test]
+#[should_panic(expected = "did not run exactly one test")]
+fn one_test_ran_but_failed_is_refused() {
+    assert_one_test_ran(&output_with_stdout(
+        "\nrunning 1 test\ntest x ... FAILED\n\ntest result: FAILED. 0 passed; 1 failed\n",
+    ));
+}
+
 /// Only the re-executed child runs this (`--ignored`); the parent below names it.
 #[test]
 #[ignore = "run only by the_child_really_runs, through a re-executed test binary"]

@@ -17,11 +17,15 @@ pub fn libtest_name(module_path: &str, name: &str) -> String {
     }
 }
 
-/// Panics unless a libtest child's stdout contains the line `running 1 test`.
+/// Panics unless a libtest child's stdout contains the line `running 1 test` and a line
+/// starting `test result: ok. 1 passed`: one test ran, and it passed.
 pub fn assert_one_test_ran(output: &Output) {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.lines().any(|line| line == "running 1 test"),
+        stdout.lines().any(|line| line == "running 1 test")
+            && stdout
+                .lines()
+                .any(|line| line.starts_with("test result: ok. 1 passed")),
         "the re-executed test binary did not run exactly one test (a renamed test?); its stdout was:\n{stdout}"
     );
 }
