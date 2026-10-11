@@ -1,3 +1,6 @@
+//! Alone in its own test binary (milestone 9.12, decision 14): it calls `std::env::set_var`
+//! or `remove_var`.
+//!
 //! `worktree::run_git`'s `--no-optional-locks` placement and environment scrubbing
 //! (design decisions 1 and 2), alone in its own test binary.
 //!

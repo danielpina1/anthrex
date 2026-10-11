@@ -1,3 +1,6 @@
+//! Alone in its own test binary (milestone 9.12, decision 14): it calls `std::env::set_var`
+//! or `remove_var`.
+//!
 //! M9.8.6 fix round 1 (MR §4.1, ruling F29): a model probe runs with the same scrubbed
 //! environment as a headless session (`headless::session::session_env`), not only the
 //! credential list: an inherited `CLAUDECODE` or `ANTHREX_WINDOW_ID` never reaches it.

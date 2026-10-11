@@ -1,3 +1,6 @@
+//! Alone in its own test binary (milestone 9.12, decision 14): it calls `std::env::set_var`
+//! or `remove_var`.
+//!
 //! M6.7's end-to-end resume test over a real `daemon::run`, alone in its own test binary
 //! because it sets `ANTHREX_CLAUDE_BIN` and `ANTHREX_CODEX_BIN` in this process's
 //! environment (M8b.17 review): in edition 2024 that races any `environ` reader or process

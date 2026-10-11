@@ -1,3 +1,6 @@
+//! Alone in its own test binary (milestone 9.12, decision 14): it calls `std::env::set_var`
+//! or `remove_var`.
+//!
 //! M8a.10, decision 26 for engine commands: `setup`, `check` and proof runs lose every
 //! inherited `CLAUDE_CODE_*` variable, `CLAUDECODE` and `ANTHREX_WINDOW_ID`, and get the
 //! profile's `env` — alone in its own test binary, because it sets variables in this

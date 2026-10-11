@@ -1,3 +1,6 @@
+//! Alone in its own test binary (milestone 9.12, decision 14): it calls `std::env::set_var`
+//! or `remove_var`.
+//!
 //! Milestone 9.1 decision 28 (task M9.1.9, `step_environment_puts_the_socket_and_data_dir_under_its_tmpdir`'s
 //! half that needs the daemon's own coordinates in this process's environment): a tier
 //! step run unconfined, as every step is on Linux with `--unconfined-checks`, sees

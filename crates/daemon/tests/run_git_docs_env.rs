@@ -1,3 +1,6 @@
+//! Alone in its own test binary (milestone 9.12, decision 14): it calls `std::env::set_var`
+//! or `remove_var`.
+//!
 //! Milestone 9.6 task M9.6.12 (AGENTS.md hard rule 11, the task's addendum): every git
 //! call of the documents commit passes `-C <dir> --no-optional-locks` and `-c
 //! core.protectHFS=true -c core.protectNTFS=true`, reaches git with none of rule 11's

@@ -1,3 +1,6 @@
+//! Alone in its own test binary (milestone 9.12, decision 14): it calls `std::env::set_var`
+//! or `remove_var`.
+//!
 //! `enabled_from_env` (design decision 21), alone in its own test binary.
 //!
 //! It lives here rather than beside the rest of the registry's tests because it mutates

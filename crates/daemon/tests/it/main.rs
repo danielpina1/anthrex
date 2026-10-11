@@ -83,6 +83,7 @@ mod server_git;
 mod server_restore_git;
 mod server_runs;
 mod server_winch;
+mod source_rules;
 mod subprocess;
 mod test_rigs_pin_agents;
 mod tuning_io;
