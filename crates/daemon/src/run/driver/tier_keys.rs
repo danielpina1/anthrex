@@ -11,7 +11,7 @@
 use super::super::graph::TOOLCHAIN_UNKNOWN;
 use super::Job;
 use crate::run::git::{self, TreeEntry};
-use crate::run::tiers::cache_key::{CacheKey, key, with_path};
+use crate::run::tiers::cache_key::{CacheKey, key, with_env};
 use crate::run::tiers::inputs::key_tree;
 use crate::run::tiers::{Affected, CacheCtx, ModuleGraph, Scope, Step, StepKind, TierSpec};
 
@@ -129,13 +129,6 @@ pub(super) fn cache_ctx(
     if ctx.toolchain == TOOLCHAIN_UNKNOWN {
         return None;
     }
-    let path = spec
-        .env
-        .iter()
-        .rev()
-        .find(|(name, _)| name == "PATH")
-        .map(|(_, value)| value.clone())
-        .unwrap_or_else(|| std::env::var("PATH").unwrap_or_default());
-    ctx.toolchain = with_path(&ctx.toolchain, &path);
+    ctx.toolchain = with_env(&ctx.toolchain, &spec.env);
     Some(ctx)
 }

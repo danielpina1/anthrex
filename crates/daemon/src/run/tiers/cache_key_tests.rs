@@ -88,3 +88,77 @@ fn build_step_key_ignores_the_affected_set() {
     // The tests steps differ.
     assert_ne!(one[1], two[1]);
 }
+
+mod toolchain_env {
+    use super::cache_key::{TOOLCHAIN_ENV_VARS, with_env_from};
+
+    fn env(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .collect()
+    }
+
+    fn none(_: &str) -> Option<String> {
+        None
+    }
+
+    fn part(step: &[(&str, &str)], daemon: &dyn Fn(&str) -> Option<String>) -> String {
+        with_env_from("rustc 1", &env(step), daemon)
+    }
+
+    #[test]
+    fn rustflags_moves_the_toolchain() {
+        let base = part(&[("PATH", "/bin")], &none);
+        let step = part(&[("PATH", "/bin"), ("RUSTFLAGS", "-Copt-level=1")], &none);
+        assert_ne!(base, step);
+        let daemon = |n: &str| (n == "RUSTFLAGS").then(|| "-Copt-level=1".to_string());
+        assert_eq!(part(&[("PATH", "/bin")], &daemon), step);
+        // The step env's value wins over the daemon's.
+        let other = |n: &str| (n == "RUSTFLAGS").then(|| "-Copt-level=3".to_string());
+        assert_eq!(
+            part(&[("PATH", "/bin"), ("RUSTFLAGS", "-Copt-level=1")], &other),
+            step
+        );
+    }
+
+    #[test]
+    fn each_listed_variable_counts() {
+        let base = part(&[("PATH", "/bin")], &none);
+        let mut seen = vec![base.clone()];
+        for name in TOOLCHAIN_ENV_VARS {
+            let moved = part(&[("PATH", "/bin"), (name, "x")], &none);
+            assert_ne!(moved, base, "{name}");
+            assert!(!seen.contains(&moved), "{name} collides");
+            seen.push(moved);
+        }
+    }
+
+    #[test]
+    fn without_any_the_part_is_todays() {
+        // The old `with_path("rustc 1", "/bin")` output, pinned.
+        assert_eq!(
+            part(&[("PATH", "/bin")], &none),
+            "rustc 1 path:1e38b39ca6823f4b"
+        );
+    }
+
+    #[test]
+    fn slot_variables_and_the_target_dir_never_count() {
+        let base = part(&[("PATH", "/bin")], &none);
+        for name in [
+            "CARGO_BUILD_JOBS",
+            "NEXTEST_TEST_THREADS",
+            "RUST_TEST_THREADS",
+            "ANTHREX_TEST_SLOTS",
+            "ANTHREX_TEST_LOAD",
+            "CARGO_TARGET_DIR",
+        ] {
+            assert_eq!(
+                part(&[("PATH", "/bin"), (name, "7")], &none),
+                base,
+                "{name}"
+            );
+        }
+    }
+}
