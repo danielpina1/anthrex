@@ -59,6 +59,7 @@ pub async fn serve(
     ));
     git_wiring::register_restored_roots(&manager, &git_registry);
     let admission = admit::AdmitService::new(runs.scheduler().clone(), runs.testing());
+    admission.spawn_sweep(manager.clone(), shutdown.clone());
 
     loop {
         tokio::select! {
@@ -420,10 +421,12 @@ async fn handle_client(
                 window_id,
                 source,
                 payload,
-            } => Some(ack_or_error(
-                "hook",
-                manager.handle_hook(window_id, source, &payload),
-            )),
+            } => {
+                // Decision 22: an admission hold's release comes first, never blocking.
+                admission.on_hook(window_id, source, &payload);
+                let handled = manager.handle_hook(window_id, source, &payload);
+                Some(ack_or_error("hook", handled))
+            }
             ClientMsg::Shutdown => {
                 tracing::info!("shutdown requested by client");
                 shutdown.cancel();

@@ -41,6 +41,9 @@ pub(super) fn apply(
         HookKind::UserPromptSubmit => user_prompt_submit(draft, hook, now_unix_secs),
         HookKind::PreToolUse => pre_tool_use(draft, hook, now_unix_secs, now, caps),
         HookKind::PostToolUse => post_tool_use(draft, hook, now, caps),
+        // Milestone 9.14 (F4): registered for admission's release only; the
+        // conversation keeps reading the failed call's result from the transcript.
+        HookKind::PostToolUseFailure => false,
         HookKind::PermissionRequest => permission_request(draft, hook, now_unix_secs),
         HookKind::Notification => notification(draft, hook, now_unix_secs),
         HookKind::Stop | HookKind::StopFailure | HookKind::SessionEnd | HookKind::TurnComplete => {

@@ -1,6 +1,7 @@
-//! Milestone 9.14 (M9.14.8): `anthrex admit`, the worker's admission hook, against a
-//! real daemon whose `[testing] test_slots = 1`, its agents pinned to `fake-agent`. Each
-//! `anthrex admit` gets its payload on stdin, and stdin closed.
+//! Milestone 9.14 (M9.14.8, M9.14.9): `anthrex admit`, the worker's admission hook, and
+//! the hook events that release its holds, against a real daemon whose `[testing]
+//! test_slots` is 1 (or 2), its agents pinned to `fake-agent`. Each `anthrex admit` gets
+//! its payload on stdin, and stdin closed.
 
 use crate::support;
 
@@ -8,8 +9,8 @@ use std::path::Path;
 use std::process::Output;
 use std::time::{Duration, Instant};
 
-use daemon::admit::ADMIT_CLIENT_GRACE;
-use proto::{HANDSHAKE_TIMEOUT, Runtime};
+use daemon::admit::{ADMIT_CLIENT_GRACE, ADMIT_SWEEP};
+use proto::{ClientKind, ClientMsg, HANDSHAKE_TIMEOUT, Runtime};
 use serde_json::{Value, json};
 use support::{RunningCommand, TestDaemon, assert_silent_success, isolated_command, tempdir};
 
@@ -28,9 +29,13 @@ struct Rig {
 
 impl Rig {
     fn start() -> Rig {
+        Rig::with_slots(1)
+    }
+
+    fn with_slots(slots: u32) -> Rig {
         let config = tempdir();
         let path = config.path().join("config.toml");
-        std::fs::write(&path, "[testing]\ntest_slots = 1\n").unwrap();
+        std::fs::write(&path, format!("[testing]\ntest_slots = {slots}\n")).unwrap();
         let daemon = TestDaemon::start_configured(&[json!({"read_line": true})], |command| {
             command
                 .env("ANTHREX_CONFIG", &path)
@@ -44,7 +49,12 @@ impl Rig {
 
     /// A `fake-agent` Claude window.
     fn window(&self) -> u32 {
-        self.daemon.client().create(Runtime::Claude, "agent")
+        self.named("agent")
+    }
+
+    /// A `fake-agent` Claude window named `name` (names are unique per daemon).
+    fn named(&self, name: &str) -> u32 {
+        self.daemon.client().create(Runtime::Claude, name)
     }
 
     /// `anthrex admit --window <window> --wait-secs <wait>` with `payload` on stdin.
@@ -54,6 +64,17 @@ impl Rig {
         let mut child = RunningCommand::start(&mut self.daemon.command(&args));
         child.input(payload.to_string().into_bytes());
         child
+    }
+
+    /// `anthrex hook --window <window> --source claude <payload>`, which returns once the
+    /// daemon has acknowledged the event (or at `HOOK_DEADLINE`, 1 s).
+    fn hook(&self, window: u32, payload: &Value) {
+        let window = window.to_string();
+        let mut command = self
+            .daemon
+            .command(&["hook", "--window", &window, "--source", "claude"]);
+        command.arg(payload.to_string());
+        finish(RunningCommand::start(&mut command), LIMIT);
     }
 
     fn log(&self) -> String {
@@ -71,7 +92,11 @@ impl Rig {
 
     /// Waits (deadline loop) until the log has `message` for `tool_use_id`.
     fn wait_for(&self, message: &str, tool_use_id: &str) {
-        let deadline = Instant::now() + LIMIT;
+        self.wait_for_within(message, tool_use_id, LIMIT);
+    }
+
+    fn wait_for_within(&self, message: &str, tool_use_id: &str, limit: Duration) {
+        let deadline = Instant::now() + limit;
         while self.lines(message, tool_use_id) == 0 {
             assert!(
                 Instant::now() < deadline,
@@ -163,4 +188,144 @@ fn a_held_tool_use_asked_again_is_admitted_at_once() {
     rig.wait_for("admit already held", "a");
     assert_eq!(rig.lines("admit granted", "a"), 1, "{}", rig.log());
     assert_eq!(rig.lines("admit already held", "a"), 1, "{}", rig.log());
+}
+
+/// A Claude hook event `name` for `tool_use_id`, as the status hook forwards it.
+fn event(name: &str, tool_use_id: Option<&str>) -> Value {
+    let mut payload = json!({"hook_event_name": name, "session_id": "s", "tool_name": "Bash",
+        "tool_input": {"command": "cargo test"}});
+    if let Some(id) = tool_use_id {
+        payload["tool_use_id"] = json!(id);
+    }
+    payload
+}
+
+/// B's own W: the bound every release test below asserts against.
+const W: Duration = Duration::from_secs(60);
+
+/// A (window `a`, tool use `a`) holds the only slot and B (window `b`, tool use `b`)
+/// waits behind it with W; returns B and when it started.
+fn held_and_waiting(rig: &Rig, a: u32, b: u32) -> (RunningCommand, Instant) {
+    finish(rig.admit(a, 60, &bash(Some("a"), "cargo test")), LIMIT);
+    rig.wait_for("admit granted", "a");
+    let start = Instant::now();
+    let waiting = rig.admit(b, W.as_secs(), &bash(Some("b"), "cargo build"));
+    rig.wait_for("admit asked", "b");
+    (waiting, start)
+}
+
+/// Decision 22: A's `PostToolUse` releases its hold, so B is granted. Bound: B's own W
+/// (60 s). The release path's legal worst case is `HOOK_DEADLINE` (1 s, `anthrex hook`)
+/// plus a grant made inside the release call (`slots/mod.rs`), so the margin is ~59 s;
+/// the loop is capped at W.
+#[test]
+fn a_post_tool_use_releases_the_hold() {
+    let rig = Rig::start();
+    let (a, b) = (rig.named("a"), rig.named("b"));
+    let (waiting, start) = held_and_waiting(&rig, a, b);
+    rig.hook(a, &event("PostToolUse", Some("a")));
+    finish(waiting, W);
+    assert!(start.elapsed() < W, "{:?}", start.elapsed());
+    rig.wait_for("admit released", "a");
+    rig.wait_for("admit granted", "b");
+}
+
+/// Fact F4: a failed `Bash` fires `PostToolUseFailure` instead of `PostToolUse`, and it
+/// releases the hold the same way. Bound: as `a_post_tool_use_releases_the_hold`.
+#[test]
+fn a_post_tool_use_failure_releases_the_hold() {
+    let rig = Rig::start();
+    let (a, b) = (rig.named("a"), rig.named("b"));
+    let (waiting, start) = held_and_waiting(&rig, a, b);
+    let mut failure = event("PostToolUseFailure", Some("a"));
+    failure["error"] = json!("exit status 101");
+    failure["is_interrupt"] = json!(false);
+    failure["duration_ms"] = json!(1200);
+    rig.hook(a, &failure);
+    finish(waiting, W);
+    assert!(start.elapsed() < W, "{:?}", start.elapsed());
+    rig.wait_for("admit released", "a");
+}
+
+/// Decision 22: the window's `Stop` releases every hold it has. A1 and A2 (window 1, each
+/// `Want::Half` of 2 slots, so 1) hold both slots; B (window 2) waits. Bound: as
+/// `a_post_tool_use_releases_the_hold`.
+#[test]
+fn stop_releases_every_hold_of_the_window() {
+    let rig = Rig::with_slots(2);
+    let (a, b) = (rig.named("a"), rig.named("b"));
+    finish(rig.admit(a, 60, &bash(Some("a1"), "cargo test")), LIMIT);
+    finish(rig.admit(a, 60, &bash(Some("a2"), "cargo test")), LIMIT);
+    rig.wait_for("admit granted", "a1");
+    rig.wait_for("admit granted", "a2");
+    let start = Instant::now();
+    let waiting = rig.admit(b, W.as_secs(), &bash(Some("b"), "cargo build"));
+    rig.wait_for("admit asked", "b");
+    rig.hook(a, &event("Stop", None));
+    finish(waiting, W);
+    assert!(start.elapsed() < W, "{:?}", start.elapsed());
+    rig.wait_for("admit released", "a1");
+    rig.wait_for("admit released", "a2");
+}
+
+/// Decision 23 (C2, C17): B, a hand-rolled socket client (never a process, so nothing is
+/// signalled), asks and then goes away by dropping its stream; C asks after it. A's
+/// `PostToolUse` must reach C: had B's abandoned ask kept its place, B would be granted
+/// first and C would wait its full W. Bound: as `a_post_tool_use_releases_the_hold`,
+/// after its log waits.
+#[test]
+fn a_client_that_goes_away_gives_up_its_place() {
+    let rig = Rig::start();
+    let (a, b) = (rig.named("a"), rig.named("b"));
+    finish(rig.admit(a, 60, &bash(Some("a"), "cargo test")), LIMIT);
+    rig.wait_for("admit granted", "a");
+
+    let rt = support::runtime();
+    let socket = rig.daemon.socket();
+    let gone = rt.block_on(async {
+        let mut stream = tokio::net::UnixStream::connect(&socket).await.unwrap();
+        let hello = ClientMsg::Hello {
+            proto_version: proto::PROTO_VERSION,
+            client: ClientKind::Hook,
+        };
+        proto::write_frame(&mut stream, &hello).await.unwrap();
+        let admit = ClientMsg::Admit {
+            window_id: b,
+            tool_use_id: "b".into(),
+            slots: None,
+            wait_secs: W.as_secs(),
+            label: "agent w2 cargo test".into(),
+        };
+        proto::write_frame(&mut stream, &admit).await.unwrap();
+        stream
+    });
+    rig.wait_for("admit asked", "b");
+
+    let start = Instant::now();
+    let waiting = rig.admit(b, W.as_secs(), &bash(Some("c"), "cargo build"));
+    rig.wait_for("admit asked", "c");
+    rt.block_on(async move { drop(gone) });
+    rig.wait_for("admit abandoned", "b");
+
+    rig.hook(a, &event("PostToolUse", Some("a")));
+    finish(waiting, W);
+    assert!(start.elapsed() < W, "{:?}", start.elapsed());
+    rig.wait_for("admit granted", "c");
+    assert_eq!(rig.lines("admit granted", "b"), 0, "{}", rig.log());
+}
+
+/// Decision 22 (C8 (b)): the sweep releases the holds of a window that is no longer
+/// listed. Bound: B's W (60 s); the release path's legal worst case is the removal
+/// itself plus one `ADMIT_SWEEP` (10 s) after it; the loop is capped at W.
+#[test]
+fn removing_the_window_releases_its_holds() {
+    assert!(ADMIT_SWEEP * 2 < W);
+    let rig = Rig::start();
+    let (a, b) = (rig.named("a"), rig.named("b"));
+    let (waiting, start) = held_and_waiting(&rig, a, b);
+    let removed = rig.daemon.anthrex(&["rm", &a.to_string()]);
+    assert!(removed.status.success(), "{removed:?}");
+    finish(waiting, W);
+    assert!(start.elapsed() < W, "{:?}", start.elapsed());
+    rig.wait_for_within("admit released", "a", ADMIT_SWEEP + WALL_CLOCK_SLACK);
 }

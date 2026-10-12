@@ -54,6 +54,9 @@ const _: () = assert!(ADMIT_CLIENT_GRACE.as_secs() > proto::HANDSHAKE_TIMEOUT.as
 pub const ADMIT_PAYLOAD_MAX: usize = 1024 * 1024;
 /// An ask's log label, `agent w<window> <command>`, is cut to this many characters.
 pub const ADMIT_LABEL_MAX_CHARS: usize = 80;
+/// Decision 22: how often the daemon sweeps holds older than `admit_hold_max_secs` and
+/// holds of windows that are not live.
+pub const ADMIT_SWEEP: Duration = Duration::from_secs(10);
 
 /// A Claude session's admission hook (decision 17): the wait `W` (decision 21), the
 /// slots it asks (`Some(n)`: `Want::Count(n)`; `None`: `Want::Half`, decision 20) and
@@ -299,14 +302,14 @@ pub enum Release {
     Nothing,
 }
 
-/// Decision 22: a tool use's `PostToolUse` releases its hold; a `PreToolUse` releases
-/// the window's other holds (a call admitted and then denied gets no `Post*` event);
-/// the end of a turn or a session releases them all. An event without a
-/// `tool_use_id` releases nothing by id.
+/// Decision 22: a tool use's `PostToolUse` or `PostToolUseFailure` (fact F4) releases
+/// its hold; a `PreToolUse` releases the window's other holds (a call admitted and then
+/// denied gets no `Post*` event); the end of a turn or a session releases them all. An
+/// event without a `tool_use_id` releases nothing by id.
 pub fn release_for(parsed: &ParsedHook) -> Release {
     let id = parsed.tool_use_id.clone();
     match (parsed.kind, id) {
-        (HookKind::PostToolUse, Some(id)) => Release::One(id),
+        (HookKind::PostToolUse | HookKind::PostToolUseFailure, Some(id)) => Release::One(id),
         (HookKind::PreToolUse, Some(id)) => Release::AllBut(id),
         (
             HookKind::Stop
@@ -384,3 +387,7 @@ impl<G> HoldBook<G> {
 #[cfg(test)]
 #[path = "admit_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "admit_matcher_tests.rs"]
+mod matcher_tests;

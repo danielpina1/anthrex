@@ -94,6 +94,8 @@ pub fn orch_argv_with(
         resume: None,
         caps: &CLI_CAPS,
         role: Some(&role),
+        admit_interactive: false,
+        admit_wait_secs: 0,
     };
     let args = plan(&spec, &ctx).args;
     match runtime {

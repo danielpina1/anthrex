@@ -1,160 +1,10 @@
-//! Milestone 9.14 task M9.14.7: the heavy matcher, the hook group, release and the
-//! hold book (decisions 18, 20, 22 and 23; pure).
+//! Milestone 9.14 tasks M9.14.7–M9.14.9: the hook group, release, the hold book and
+//! the interactive opt-in (decisions 17, 20, 22 and 23; pure). The matcher's tests are in
+//! `admit_matcher_tests.rs`.
 
 use super::*;
 use proto::HookSource;
 use serde_json::json;
-
-fn heavy(command: &str) -> bool {
-    is_heavy(command, &[])
-}
-
-fn assert_heavy(commands: &[&str]) {
-    for command in commands {
-        assert!(heavy(command), "{command:?} should be heavy");
-    }
-}
-
-fn assert_light(commands: &[&str]) {
-    for command in commands {
-        assert!(!heavy(command), "{command:?} should not be heavy");
-    }
-}
-
-#[test]
-fn heavy_commands_match_after_leading_cd_and_assignments() {
-    assert_heavy(&["cd crates/x && RUST_LOG=1 cargo test -q", "cargo test"]);
-    assert_light(&[
-        "cargo testing",
-        "echo cargo test",
-        "echo 'a && cargo test'",
-        "cargo fmt",
-        "cargo tree",
-        "cargo --version",
-        "",
-    ]);
-}
-
-#[test]
-fn a_segment_after_and_or_semicolon_or_pipe_counts() {
-    assert_heavy(&[
-        "git status && cargo build",
-        "true || cargo check",
-        "ls; cargo clippy",
-        "cargo-nextest run | tee x",
-        "sleep 1 & cargo test",
-        "echo a\ncargo test",
-    ]);
-    // A redirection's `&` is not a separator.
-    assert_light(&["cargo fmt 2>&1", "echo \"x; cargo test\""]);
-}
-
-#[test]
-fn cargo_aliases_toolchains_global_flags_and_wrappers_count() {
-    assert_heavy(&[
-        "cargo t",
-        "cargo b",
-        "cargo c",
-        "cargo r",
-        "cargo d",
-        "cargo +nightly test",
-        "cargo -q test",
-        "cargo --locked build",
-        "cargo --offline test",
-        "cargo --config k=v test",
-        "cargo --config=k=v test",
-        "cargo -Z unstable-options check",
-        "cargo --color never clippy",
-        "cargo --manifest-path a/Cargo.toml test",
-        "/home/u/.cargo/bin/cargo test",
-        "time cargo test",
-        "nice cargo build",
-        "env RUST_LOG=1 cargo test",
-        "command cargo check",
-        "nohup cargo build",
-        "exec cargo test",
-    ]);
-    assert_light(&["cargo +nightly fmt", "cargo -q tree", "time ls"]);
-}
-
-/// Task 7 review I1: a backslash-newline continuation is no word of its own.
-#[test]
-fn a_line_continuation_does_not_hide_the_program() {
-    assert_heavy(&[
-        "cd x && \\\n  cargo test",
-        "RUST_LOG=1 \\\n cargo test",
-        "cargo \\\n test",
-        "cargo test \\\n --workspace",
-    ]);
-}
-
-/// Task 7 review M1: a wrapper's options (and the values `nice -n`, `env -u` take)
-/// are skipped.
-#[test]
-fn wrapper_options_are_skipped() {
-    assert_heavy(&[
-        "nice -n 19 cargo build",
-        "nice -n19 cargo build",
-        "time -p cargo test",
-        "env -i cargo test",
-        "env -u X cargo test",
-        "env -i A=1 cargo test",
-    ]);
-    assert_light(&["nice -n 19 ls", "env -u X cargo fmt"]);
-}
-
-/// Task 7 review M2: a subshell's or a group's opening word, and a reserved word,
-/// never hide the program.
-#[test]
-fn grouping_and_reserved_words_do_not_hide_the_program() {
-    assert_heavy(&[
-        "(cd x && cargo test)",
-        "( cargo test )",
-        "{ cargo test; }",
-        "if cargo check; then echo ok; fi",
-        "for c in a b; do cargo test; done",
-        "while true; do cargo build; done",
-        "! cargo test",
-        "true && echo a || { cargo build; }",
-        "if false; then :; else cargo test; fi",
-    ]);
-    assert_light(&["(cd x && cargo fmt)", "{ ls; }", "if true; then echo; fi"]);
-}
-
-/// Task 7 review M4: a redirection written without a space ends the subcommand.
-#[test]
-fn a_glued_redirection_does_not_hide_the_subcommand() {
-    assert_heavy(&[
-        "cargo test>log",
-        "cargo build 2>err",
-        "cargo build&>log",
-        "cargo test<in",
-        "cargo test>>log",
-    ]);
-    assert_light(&["cargo fmt>log", "cargo tree&>log"]);
-}
-
-/// Task 7 review M5 (the controller's ruling): `fix`, `rustc` and `rustdoc` compile
-/// as `check` and `build` do.
-#[test]
-fn fix_rustc_and_rustdoc_count() {
-    assert_heavy(&[
-        "cargo fix --allow-dirty",
-        "cargo rustc -- -C x",
-        "cargo rustdoc",
-    ]);
-}
-
-#[test]
-fn profile_prefixes_count_too() {
-    let prefixes = vec!["./slow-test".to_string(), "make test".to_string()];
-    assert!(is_heavy("./slow-test --all", &prefixes));
-    assert!(is_heavy("ls && ./slow-test", &prefixes));
-    assert!(is_heavy("make test -j2", &prefixes));
-    assert!(!is_heavy("./slow-testing --all", &prefixes));
-    assert!(!is_heavy("make tests", &prefixes));
-    assert!(!is_heavy("./slow-test --all", &[]));
-}
 
 #[test]
 fn the_hook_command_and_group_are_exact() {
@@ -404,4 +254,117 @@ fn the_worker_settings_carry_three_pre_tool_use_groups() {
 
     // Without admission, the settings are what they were.
     assert_eq!(pre_tool_use_groups(&worker_spec(None, None)).len(), 1);
+}
+
+/// The `--settings` that `launch::plan` gives an interactive Claude window (decision 17).
+fn interactive_settings(
+    role: Option<&crate::launch::role::RoleLaunch>,
+    admit_interactive: bool,
+    admit_wait_secs: u64,
+) -> serde_json::Value {
+    let spec = proto::WindowSpec {
+        name: Some("api".into()),
+        runtime: proto::Runtime::Claude,
+        cwd: "/tmp/repo".into(),
+        worktree_branch: None,
+        model: None,
+        initial_prompt: None,
+    };
+    let ctx = crate::launch::LaunchContext {
+        window_id: 4,
+        name: "api",
+        socket_path: Path::new("/tmp/a.sock"),
+        shell: "/bin/zsh",
+        exe: Path::new("/opt/anthrex/bin/anthrex"),
+        claude_bin: "/opt/agents/claude",
+        codex_bin: "/opt/agents/codex",
+        codex_hook_source: None,
+        codex_bypass_hook_trust: false,
+        resume: None,
+        caps: &crate::headless::argv::CLI_CAPS,
+        role,
+        admit_interactive,
+        admit_wait_secs,
+    };
+    let args = crate::launch::plan(&spec, &ctx).args;
+    let at = args.iter().position(|a| a == "--settings").unwrap();
+    serde_json::from_str(&args[at + 1]).unwrap()
+}
+
+fn plain_settings() -> serde_json::Value {
+    crate::launch::claude::settings(Path::new("/opt/anthrex/bin/anthrex"), 4)
+}
+
+/// Decision 17 (C7, C22): a user's Claude window gets the admission group only with
+/// `[testing] admit_interactive = true` and a daemon-wide wait above 0; it asks
+/// `Want::Half` (no `--slots`) and its `timeout` is W + `ADMIT_HOOK_SLACK_SECS`.
+#[test]
+fn an_interactive_window_gets_the_group_only_when_opted_in() {
+    assert_eq!(interactive_settings(None, false, 300), plain_settings());
+    assert_eq!(interactive_settings(None, true, 0), plain_settings());
+
+    let settings = interactive_settings(None, true, 300);
+    let groups = settings["hooks"]["PreToolUse"].as_array().unwrap();
+    assert_eq!(groups.len(), 2, "{groups:?}");
+    assert_eq!(groups[0], plain_settings()["hooks"]["PreToolUse"][0]);
+    let admission = json!({
+        "matcher": "Bash",
+        "hooks": [{
+            "type": "command",
+            "command": "'/opt/anthrex/bin/anthrex' admit --window 4 --wait-secs 300",
+            "timeout": 330,
+        }],
+    });
+    assert_eq!(groups[1], admission);
+    // Everything but the admission group is the plain settings.
+    let mut without = settings.clone();
+    without["hooks"]["PreToolUse"].as_array_mut().unwrap().pop();
+    assert_eq!(without, plain_settings());
+
+    // The daemon caps the wait at `ADMIT_WAIT_MAX_SECS`.
+    let capped = interactive_settings(None, true, config::ADMIT_WAIT_MAX_SECS + 100);
+    let command = capped["hooks"]["PreToolUse"][1]["hooks"][0]["command"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let max = config::ADMIT_WAIT_MAX_SECS;
+    assert!(
+        command.ends_with(&format!("--wait-secs {max}")),
+        "{command}"
+    );
+}
+
+/// Decision 17 (C7): `launch::plan` builds the orchestrator's settings as a user
+/// window's, and the orchestrator never gets the admission group.
+#[test]
+fn the_orchestrator_never_gets_the_group() {
+    let role = crate::launch::role::RoleLaunch {
+        run_ref: proto::RunRef {
+            run_id: "r-7a2c".into(),
+            task_id: None,
+            role: proto::AgentRole::Orchestrator,
+            session: 1,
+            lane: None,
+        },
+        mcp: crate::headless::McpTarget {
+            role: proto::AgentRole::Orchestrator,
+            run_id: "r-7a2c".into(),
+            task_id: None,
+            scout_id: None,
+            epic: None,
+            chain: None,
+            lane: None,
+            agent_label: None,
+        },
+        instructions: "THE CONTRACT".into(),
+        effort: proto::Effort::HIGH,
+        claude_allowed_tools: vec!["Read".into()],
+        claude_disallowed_tools: vec![],
+        env: vec![],
+        remove_env: vec![],
+    };
+    assert_eq!(
+        interactive_settings(Some(&role), true, 300),
+        plain_settings()
+    );
 }

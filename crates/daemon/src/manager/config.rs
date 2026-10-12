@@ -11,6 +11,11 @@ pub struct ManagerConfig {
     /// `runtimes.codex.bypass_hook_trust` (config decision 4), copied into every window's
     /// `LaunchContext`. A changed config needs a daemon restart to take effect.
     pub codex_bypass_hook_trust: bool,
+    /// Milestone 9.14 decision 17 (C7): `[testing] admit_interactive` and
+    /// `admit_wait_secs`, copied into every window's `LaunchContext`. `new` and
+    /// `from_vars` leave them false and 0 (no admission); `lifecycle::run` sets them.
+    pub admit_interactive: bool,
+    pub admit_wait_secs: u64,
     /// `<data_dir>/worktrees`, the `worktrees_root` every window's linked worktree is
     /// laid out under. `new` and `from_vars` pick a temporary directory so a manager
     /// built without a data directory — every test that does not exercise worktrees —
@@ -147,6 +152,8 @@ impl ManagerConfig {
             codex_bin: "codex".to_string(),
             codex_hook_source: None,
             codex_bypass_hook_trust: false,
+            admit_interactive: false,
+            admit_wait_secs: 0,
             worktrees_root: std::env::temp_dir().join("anthrex-worktrees"),
             operation_timeout: worktree::OPERATION_TIMEOUT,
             cleanup_timeout: worktree::CLEANUP_TIMEOUT,
@@ -190,6 +197,8 @@ impl ManagerConfig {
                 .unwrap_or_else(|| runtimes.codex.command.clone()),
             codex_hook_source: None,
             codex_bypass_hook_trust: runtimes.codex_bypass_hook_trust,
+            admit_interactive: false,
+            admit_wait_secs: 0,
             worktrees_root: std::env::temp_dir().join("anthrex-worktrees"),
             operation_timeout: worktree::OPERATION_TIMEOUT,
             cleanup_timeout: worktree::CLEANUP_TIMEOUT,
