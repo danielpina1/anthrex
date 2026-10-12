@@ -90,7 +90,10 @@ fn the_third_block_after_two_orchestrator_retries_is_user_only() {
     assert_eq!(block.reason, BlockReason::Environment);
     // The orchestrator is refused at once.
     let effects = orch_retry(&mut fx);
-    assert!(!error(&effects).is_empty());
+    assert_eq!(
+        error(&effects),
+        "task t1 was retried by the orchestrator 2 times; only the user can retry it now"
+    );
     assert_eq!(count(&fx), 2);
 }
 

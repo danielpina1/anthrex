@@ -147,7 +147,6 @@ pub(super) fn intercept(
     true
 }
 
-/// Decision 10: the user path's own refusal first, then a block only the user can fix.
 /// Decision 17: the refusal for a task the orchestrator has retried as often as it may.
 fn at_retry_cap(run: &Run, task_id: &str) -> Option<String> {
     let task = run.tasks.iter().find(|t| t.id() == task_id)?;
@@ -157,6 +156,7 @@ fn at_retry_cap(run: &Run, task_id: &str) -> Option<String> {
     })
 }
 
+/// Decision 10: the user path's own refusal first, then a block only the user can fix.
 fn user_only_task(run: &Run, task_id: &str, rule: Option<String>) -> Option<String> {
     if rule.is_some() {
         return rule;
