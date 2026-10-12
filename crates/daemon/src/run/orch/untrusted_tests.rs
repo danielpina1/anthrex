@@ -12,6 +12,7 @@ use crate::run::delivery::{
     PrRecord, SeenComment, StageDelivery, ThreadRecord, ThreadState, Watermark,
 };
 use crate::run::model::Run;
+use crate::run::orch::WorkerNote;
 use crate::run::orch::digest::digest;
 use crate::run::orch::test_support::{block, run_with, task_mut, task_toml};
 
@@ -192,4 +193,74 @@ fn task_source_names_review_and_ci_fixes() {
         let got = task_source(run.task("t5").unwrap());
         assert_eq!(got.as_deref(), Some(want), "{origin:?}");
     }
+}
+
+/// Task 8 review I1 (ruling): `t5`'s worker wrote `text` as a `kind` note, as
+/// `task_note` stores it (the note, and its history line).
+fn noted(run: &mut Run, kind: proto::TaskNoteKind, text: &str) {
+    let note = WorkerNote {
+        at: NOW - 60,
+        kind,
+        text: text.into(),
+        seq: 0,
+        lane: None,
+    };
+    assert!(crate::run::orch::add_worker_note(run, "t5", note));
+    let label = crate::run::orch::json::label(&kind);
+    let t5 = task_mut(run, "t5");
+    t5.history.push(crate::run::model::TaskEvent {
+        at: NOW - 60,
+        text: format!("note ({label}): {text}"),
+    });
+}
+
+/// Task 8 review I1 (ruling): a fix task's note the digest shows is a source, in
+/// `task_notes` or as the task entry's `last`, after a stage comment and a fix task's
+/// block; a plan task's note is the run's own text.
+#[test]
+fn a_fix_tasks_note_is_a_source() {
+    let cases: [(TaskOrigin, &[&str], &str); 3] = [
+        (TaskOrigin::Review, &[], "task t5's note (review fix)"),
+        (TaskOrigin::Plan, &["7:t30"], "task t5's note (review fix)"),
+        (TaskOrigin::Ci, &[], "task t5's note (ci fix)"),
+    ];
+    for (origin, addresses, want) in cases {
+        let mut run = with_t5(origin, addresses);
+        assert_eq!(source(&run), None, "{origin:?}: no note");
+        noted(&mut run, proto::TaskNoteKind::Risk, COMMENT);
+        let d = digest(&run, NOW);
+        assert!(d["task_notes"].to_string().contains(COMMENT), "{d}");
+        assert_eq!(digest_source(&d, &run).as_deref(), Some(want), "{origin:?}");
+        // The task entry's `last` alone (its note cut from `task_notes`).
+        let mut last_only = d.clone();
+        last_only["task_notes"] = json!([]);
+        last_only["attention"] = json!([]);
+        assert_eq!(digest_source(&last_only, &run).as_deref(), Some(want));
+        // The run's `attention` line alone, as a running run lists it
+        // (`snapshot_orch::noted_lines`: `t5 noted a risk: …`).
+        let mut attention_only = d.clone();
+        attention_only["task_notes"] = json!([]);
+        for entry in attention_only["tasks"].as_array_mut().unwrap() {
+            entry["last"] = json!(null);
+        }
+        attention_only["attention"] = json!([format!("t5 noted a risk: {COMMENT}")]);
+        assert_eq!(digest_source(&attention_only, &run).as_deref(), Some(want));
+        // A block of the same task is named first.
+        block(
+            task_mut(&mut run, "t5"),
+            BlockReason::Question,
+            "which file?",
+        );
+        let block_source = want.replace("note", "block");
+        assert_eq!(source(&run), Some(block_source), "{origin:?}");
+    }
+}
+
+#[test]
+fn a_plan_tasks_note_is_not_a_source() {
+    let mut run = with_t5(TaskOrigin::Plan, &[]);
+    noted(&mut run, proto::TaskNoteKind::Risk, COMMENT);
+    let d = digest(&run, NOW);
+    assert!(d["task_notes"].to_string().contains(COMMENT), "{d}");
+    assert_eq!(digest_source(&d, &run), None);
 }

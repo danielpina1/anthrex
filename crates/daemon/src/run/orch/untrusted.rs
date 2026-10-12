@@ -41,7 +41,7 @@ pub fn read_line(source: &str) -> String {
 
 /// `review` for a review fix task (origin `review`, or one that addresses threads),
 /// `ci` for a CI fix task; `None` for any other task.
-fn fix_kind(task: &Task) -> Option<&'static str> {
+pub(crate) fn fix_kind(task: &Task) -> Option<&'static str> {
     if task.origin == TaskOrigin::Review || !task.spec.addresses.is_empty() {
         Some("review")
     } else if task.origin == TaskOrigin::Ci {
@@ -69,15 +69,46 @@ pub fn digest_source(digest: &Value, run: &Run) -> Option<String> {
             ));
         }
     }
-    let tasks = digest["tasks"].as_array().into_iter().flatten();
-    tasks.into_iter().find_map(|entry| {
+    let tasks = || digest["tasks"].as_array().into_iter().flatten();
+    let fix = |id: &str| run.task(id).and_then(fix_kind);
+    let block = tasks().find_map(|entry| {
         if entry["block"].is_null() {
             return None;
         }
         let id = entry["id"].as_str()?;
-        let kind = fix_kind(run.task(id)?)?;
-        Some(format!("task {id}'s block ({kind} fix)"))
-    })
+        Some(format!("task {id}'s block ({} fix)", fix(id)?))
+    });
+    block.or_else(|| note_source(digest, tasks(), fix))
+}
+
+/// Task 8 review I1 (ruling): a fix task's note the digest shows, in `task_notes`, as
+/// its task entry's `last` (`{HH:MM} note ({kind}): …`), or as an `attention` line
+/// (`{id} noted a {kind}: …`).
+fn note_source<'a>(
+    digest: &'a Value,
+    tasks: impl Iterator<Item = &'a Value>,
+    fix: impl Fn(&str) -> Option<&'static str>,
+) -> Option<String> {
+    let line = |id: &str| Some(format!("task {id}'s note ({} fix)", fix(id)?));
+    let notes = digest["task_notes"].as_array().into_iter().flatten();
+    let in_notes = notes.filter_map(|n| n["task"].as_str()).find_map(line);
+    let is_note = |last: &str| {
+        last.split_once(' ')
+            .is_some_and(|(_, t)| t.starts_with("note ("))
+    };
+    in_notes
+        .or_else(|| {
+            tasks
+                .filter(|e| e["last"].as_str().is_some_and(is_note))
+                .filter_map(|e| e["id"].as_str())
+                .find_map(line)
+        })
+        .or_else(|| {
+            let attention = digest["attention"].as_array().into_iter().flatten();
+            attention
+                .filter_map(|l| l.as_str()?.split_once(" noted a ").map(|(id, _)| id))
+                .find_map(line)
+        })
 }
 
 /// Decision 19's second rule: a `task_result` of a review or CI fix task.
