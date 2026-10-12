@@ -190,6 +190,19 @@ fn a_held_tool_use_asked_again_is_admitted_at_once() {
     assert_eq!(rig.lines("admit already held", "a"), 1, "{}", rig.log());
 }
 
+/// Task 8 review M6 (pinning): an ask for a window the daemon does not have is answered
+/// with an `Error` at once, and the client exits 0, silently, without waiting.
+#[test]
+fn an_ask_for_an_unknown_window_exits_zero_at_once() {
+    let rig = Rig::start();
+    rig.window();
+    let start = Instant::now();
+    finish(rig.admit(99, 60, &bash(Some("z"), "cargo test")), LIMIT);
+    assert!(start.elapsed() < LIMIT, "{:?}", start.elapsed());
+    rig.wait_for("admit asked", "z");
+    assert_eq!(rig.lines("admit granted", "z"), 0, "{}", rig.log());
+}
+
 /// A Claude hook event `name` for `tool_use_id`, as the status hook forwards it.
 fn event(name: &str, tool_use_id: Option<&str>) -> Value {
     let mut payload = json!({"hook_event_name": name, "session_id": "s", "tool_name": "Bash",

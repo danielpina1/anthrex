@@ -253,9 +253,10 @@ async fn handle_client(
     let models = runs.models();
     let mut run_api = run_api::RunApi::new(runs, out_tx.clone());
 
-    // Decision 23 (C2): cancelled as the read loop exits, so a detached admit ask whose
-    // client went away gives up its place (its `out_tx` clone keeps the writer alive).
+    // Decision 23 (C2): cancelled as the read loop exits (the guard covers any early exit),
+    // so a detached admit ask whose client went away gives up its place.
     let closed = shutdown.child_token();
+    let _closed_on_exit = closed.clone().drop_guard();
     let mut subscription: Option<Subscription> = None;
     let mut connection_error = None;
     loop {
