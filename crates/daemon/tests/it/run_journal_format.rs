@@ -31,9 +31,9 @@ fn run_file(data: &Path) -> std::path::PathBuf {
 #[test]
 fn a_saved_run_records_its_format() {
     let data = tempfile::tempdir().unwrap();
-    assert_eq!(RUN_FORMAT, 2);
+    assert_eq!(RUN_FORMAT, 3);
     let json = saved_json(data.path());
-    assert_eq!(json["format"], serde_json::json!(2), "{json}");
+    assert_eq!(json["format"], serde_json::json!(3), "{json}");
 }
 
 /// Pinning (milestone 9.13, decision 36's bump to 2): a `run.json` a 9.11 or 9.12
@@ -45,6 +45,22 @@ fn a_format_1_run_loads() {
     json.as_object_mut()
         .unwrap()
         .insert("format".into(), serde_json::json!(1));
+    std::fs::write(run_file(data.path()), serde_json::to_vec(&json).unwrap()).unwrap();
+    let (runs, problems) = load_all(data.path());
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].0.id, RUN_ID);
+}
+
+/// Pinning (milestone 9.14, pre-flight ruling C3's bump to 3): a `run.json` a 9.13
+/// daemon wrote, stamped format 2, still loads.
+#[test]
+fn a_format_2_run_loads() {
+    let data = tempfile::tempdir().unwrap();
+    let mut json = saved_json(data.path());
+    json.as_object_mut()
+        .unwrap()
+        .insert("format".into(), serde_json::json!(2));
     std::fs::write(run_file(data.path()), serde_json::to_vec(&json).unwrap()).unwrap();
     let (runs, problems) = load_all(data.path());
     assert!(problems.is_empty(), "{problems:?}");
@@ -71,7 +87,7 @@ async fn a_run_from_a_newer_anthrex_is_left_alone() {
     let data = dir.path().join("data");
     let mut json = saved_json(&data);
     let object = json.as_object_mut().unwrap();
-    object.insert("format".into(), serde_json::json!(3));
+    object.insert("format".into(), serde_json::json!(4));
     object.insert(
         "a_field_from_the_future".into(),
         serde_json::json!({"kept": true}),
@@ -88,7 +104,7 @@ async fn a_run_from_a_newer_anthrex_is_left_alone() {
     assert_eq!(
         problems,
         [format!(
-            "run {RUN_ID} skipped: written by a newer anthrex (run format 3; this one reads up to 2); left as it is"
+            "run {RUN_ID} skipped: written by a newer anthrex (run format 4; this one reads up to 3); left as it is"
         )]
     );
     assert!(
@@ -146,7 +162,7 @@ fn a_run_whose_format_is_not_a_whole_number_is_left_alone() {
         assert_eq!(
             problems,
             [format!(
-                "run {RUN_ID} skipped: written by a newer anthrex (run format {format}; this one reads up to 2); left as it is"
+                "run {RUN_ID} skipped: written by a newer anthrex (run format {format}; this one reads up to 3); left as it is"
             )],
             "{format}"
         );

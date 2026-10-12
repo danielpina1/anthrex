@@ -224,7 +224,7 @@ pub(super) async fn bounded<T: Send + 'static>(
 /// Decision 24: what a step of each class asks for.
 fn want(priority: Priority) -> Want {
     match priority {
-        Priority::Gate | Priority::Verify => Want::Half,
+        Priority::Gate | Priority::Verify | Priority::Agent => Want::Half,
         Priority::Candidate | Priority::FullStage | Priority::FullIdle => Want::All,
     }
 }

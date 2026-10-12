@@ -14,6 +14,7 @@ pub(crate) fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, 
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
+pub mod admit;
 pub mod agent_state;
 pub mod conversation;
 pub mod decider;

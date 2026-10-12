@@ -189,6 +189,8 @@ pub struct TestingLimits {
     pub bisect_fix_max: u8,
     pub flaky_quarantine_after: u32,
     pub flaky_window_days: u32,
+    /// Milestone 9.14 decision 24: the admission wait; a 9.13 `run.json` reads 300.
+    pub admit_wait_secs: u64,
 }
 
 impl From<&config::Testing> for TestingLimits {
@@ -198,6 +200,7 @@ impl From<&config::Testing> for TestingLimits {
             bisect_fix_max: t.bisect_fix_max,
             flaky_quarantine_after: t.flaky_quarantine_after,
             flaky_window_days: t.flaky_window_days,
+            admit_wait_secs: t.admit_wait_secs,
         }
     }
 }

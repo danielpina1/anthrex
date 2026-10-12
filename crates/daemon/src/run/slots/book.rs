@@ -22,7 +22,8 @@ pub const SLOT_VARS: [&str; 4] = [
 /// The share of the daemon's slots held right after a grant (decision 26).
 pub const LOAD_VAR: &str = "ANTHREX_TEST_LOAD";
 
-/// A request's class, highest first (decision 24).
+/// A request's class, highest first (decision 24). `Agent` (milestone 9.14 decision
+/// 19) is an agent's own heavy command, admitted through its hook: the lowest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Priority {
@@ -31,25 +32,29 @@ pub enum Priority {
     FullStage,
     FullIdle,
     Verify,
+    Agent,
 }
 
-/// How many slots a step asks for (decision 24).
+/// How many slots a step asks for (decision 24); `Count(n)` is an agent's ask, its
+/// worker cap (milestone 9.14 decision 20).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Want {
     One,
     Half,
     All,
+    Count(u32),
 }
 
 impl Want {
     /// The slots this asks for out of `slots`: one; half, rounded up and at least one;
-    /// or all of them.
+    /// all of them; or `n`, clamped to `1..=slots`.
     pub fn of(self, slots: u32) -> u32 {
         match self {
             Want::One => 1,
             Want::Half => slots.div_ceil(2).max(1),
             Want::All => slots.max(1),
+            Want::Count(n) => n.clamp(1, slots.max(1)),
         }
     }
 }
