@@ -315,3 +315,51 @@ fn limits_are_frozen_at_run_start() {
     assert_eq!(old.delivery.mode, proto::DeliveryMode::Local);
     assert_eq!(old.delivery.limits, defaults);
 }
+
+/// Milestone 9.13 decision 1: the 8 agent-config entries, then the 14 runs-later ones,
+/// are built in; configuration adds after them and nothing removes one.
+#[test]
+fn runs_later_paths_are_built_in_and_cannot_be_removed() {
+    let empty = |p: &mut ProfileSpec| p.protected = Some(Vec::new());
+    let none = resolve_profile(&super::profile_spec(empty), &super::profile_spec(empty));
+    let expected: Vec<String> = [
+        ".claude/**",
+        ".mcp.json",
+        ".codex/**",
+        "**/CLAUDE.md",
+        "**/AGENTS.md",
+        "**/AGENTS.override.md",
+        "**/CLAUDE.local.md",
+        ".agents/**",
+        ".github/workflows/**",
+        ".github/actions/**",
+        ".gitlab-ci.yml",
+        ".circleci/**",
+        ".buildkite/**",
+        "Jenkinsfile",
+        "azure-pipelines.yml",
+        ".githooks/**",
+        ".husky/**",
+        ".pre-commit-config.yaml",
+        "**/.cargo/config",
+        "**/.cargo/config.toml",
+        "**/rust-toolchain",
+        "**/rust-toolchain.toml",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    assert_eq!(none.protected, expected);
+    assert_eq!(none.protected.len(), 22);
+
+    let ops = super::profile_spec(|p| p.protected = Some(vec!["ops/**".to_string()]));
+    let added = resolve_profile(&super::profile_spec(empty), &ops);
+    let mut with_ops = expected.clone();
+    with_ops.push("ops/**".to_string());
+    assert_eq!(added.protected, with_ops);
+    assert!(
+        added
+            .protected
+            .contains(&".github/workflows/**".to_string())
+    );
+}

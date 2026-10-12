@@ -55,6 +55,7 @@ pub mod phases;
 pub mod plan;
 mod plan_repo;
 pub mod proof;
+mod protected_lists;
 pub mod reach;
 pub mod reconcile;
 pub mod refit;

@@ -50,8 +50,8 @@ pub struct RepoProfile {
     pub source: Vec<String>,
     #[serde(default)]
     pub generated: Vec<String>,
-    /// Extra entries only: M8a's `BUILTIN_PROTECTED` always applies, and an empty list
-    /// never disables it.
+    /// Extra entries only: the daemon's built-in list (`builtin_protected()`) always
+    /// applies, and an empty list never disables it.
     #[serde(default)]
     pub protected: Vec<String>,
     #[serde(default)]

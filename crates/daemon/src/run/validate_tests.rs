@@ -464,3 +464,24 @@ mod kinds;
 
 #[path = "validate_tests_stages.rs"]
 mod stages;
+
+/// Milestone 9.13 decision 4: a protected file `owns` names literally is noted as a
+/// grant the user approves with the plan; a covering glob keeps today's note.
+#[test]
+fn a_literal_grant_is_noted() {
+    let ci = vec![".github/workflows/ci.yml".to_string()];
+    assert_eq!(
+        protected_notes(&ci, &ci),
+        vec![
+            "owns names protected .github/workflows/ci.yml; the user approves this grant with the plan"
+                .to_string()
+        ]
+    );
+    assert_eq!(
+        protected_notes(&[".github/**".to_string()], &ci),
+        vec![
+            "owns .github/** covers protected .github/workflows/ci.yml; name it exactly in owns if this task must change it (rule 6.protected)"
+                .to_string()
+        ]
+    );
+}

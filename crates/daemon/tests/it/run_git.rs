@@ -8,7 +8,7 @@ use crate::support;
 
 use daemon::run::git::{preflight, project_settings, protected_files};
 use daemon::run::globs::ProtectedMatcher;
-use daemon::run::plan::BUILTIN_PROTECTED;
+use daemon::run::plan::builtin_protected;
 use std::path::{Path, PathBuf};
 use support::TempRepo;
 use support::run_git::{T, commit_file, head, out, real_git, repo, write, wt_dir};
@@ -250,7 +250,7 @@ fn protected_files_lists_tracked_matches_only() {
         ("notes/Claude.MD", "mixed\n"),
     ]);
     write(&repo.root, "CLAUDE.md", "untracked\n");
-    let builtin: Vec<String> = BUILTIN_PROTECTED.iter().map(|s| s.to_string()).collect();
+    let builtin: Vec<String> = builtin_protected();
     let matcher = ProtectedMatcher::new(&builtin).unwrap();
 
     let files = protected_files(real_git(), &repo.root, &base, &matcher, T).unwrap();

@@ -483,3 +483,30 @@ fn a_blank_goal_is_refused_with_build_runs_wording() {
     }
     assert_eq!(blank_goal(" fix the link "), None);
 }
+
+fn owns(items: &[&str]) -> Vec<String> {
+    items.iter().map(|s| s.to_string()).collect()
+}
+
+/// Milestone 9.13 (pinning): a crate glob names and covers no built-in protected path, so
+/// the fast path still takes it.
+#[test]
+fn a_crate_glob_keeps_the_fast_path() {
+    let protected = crate::run::plan::builtin_protected();
+    assert_eq!(
+        owned_protected(&owns(&["crates/daemon/**"]), &protected, &[]),
+        None
+    );
+}
+
+/// Milestone 9.13 decision 1: a workflow in `owns`, named or covered, is a grant the
+/// user has not seen, so the task leaves the fast path.
+#[test]
+fn owning_a_workflow_leaves_the_fast_path() {
+    let protected = crate::run::plan::builtin_protected();
+    assert_eq!(
+        owned_protected(&owns(&[".github/workflows/ci.yml"]), &protected, &[]),
+        Some(".github/workflows/ci.yml".to_string())
+    );
+    assert!(owned_protected(&owns(&[".github/**"]), &protected, &[]).is_some());
+}

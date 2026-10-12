@@ -11,7 +11,7 @@ use crate::support;
 use daemon::git::probe::{PROBE_TIMEOUT, probe};
 use daemon::run::git::{pin_worktrees, prepare_worktree, salvage, verify_done};
 use daemon::run::globs::{OwnsMatcher, ProtectedMatcher};
-use daemon::run::plan::BUILTIN_PROTECTED;
+use daemon::run::plan::builtin_protected;
 use daemon::worktree::pinned::PinAs;
 use std::path::{Path, PathBuf};
 use support::TempRepo;
@@ -82,13 +82,7 @@ fn evil_repo(dir: &Path, marker: &Path) {
 fn engine_calls(w: &World) {
     let _ = probe(real_git(), &w.task, PROBE_TIMEOUT);
     let generated = OwnsMatcher::new(&[]).unwrap();
-    let protected = ProtectedMatcher::new(
-        &BUILTIN_PROTECTED
-            .iter()
-            .map(|s| s.to_string())
-            .collect::<Vec<_>>(),
-    )
-    .unwrap();
+    let protected = ProtectedMatcher::new(&builtin_protected()).unwrap();
     let _ = verify_done(
         real_git(),
         &w.task,

@@ -233,17 +233,19 @@ fn plan_protected_adds_to_config_and_builtins() {
 
     let profile = resolve_profile(&plan, &config);
 
-    let mut expected: Vec<String> = BUILTIN_PROTECTED.iter().map(|s| s.to_string()).collect();
+    let mut expected: Vec<String> = builtin_protected();
     expected.push("ops/prompts/**".to_string());
     expected.push("docs/agents/**".to_string());
     assert_eq!(profile.protected, expected);
 
-    // Neither side can remove a built-in: an empty list still leaves all five.
+    // Neither side can remove a built-in: an empty list still leaves all 22 (milestone
+    // 9.13 decision 1: 8 agent-config entries, then 14 runs-later ones).
     let none = resolve_profile(
         &profile_spec(|p| p.protected = Some(Vec::new())),
         &ProfileSpec::default(),
     );
-    assert_eq!(none.protected.len(), BUILTIN_PROTECTED.len());
+    assert_eq!(none.protected, builtin_protected());
+    assert_eq!(none.protected.len(), 22);
 }
 
 fn protected_note(glob: &str, path: &str) -> String {
@@ -277,7 +279,14 @@ fn owns_covering_a_protected_file_warns_without_rejecting() {
             protected_note("**", ".claude/settings.json"),
         ]
     );
-    assert_eq!(task(&run, "t2").notes, Vec::<String>::new());
+    // Milestone 9.13 decision 4: a literal grant is noted too.
+    assert_eq!(
+        task(&run, "t2").notes,
+        vec![
+            "owns names protected AGENTS.md; the user approves this grant with the plan"
+                .to_string()
+        ]
+    );
     assert_eq!(
         task(&run, "t3").notes,
         vec![protected_note(".claude/**", ".claude/settings.json")]

@@ -3,7 +3,7 @@
 //! `orchestrator.rs` to keep that file under the 600-line rule.
 //!
 //! `protected` holds the user's additions only: the built-ins the daemon's
-//! `run::plan::BUILTIN_PROTECTED` names are added by `resolve_profile` (M8a.5), which
+//! `run::plan::builtin_protected()` names are added by `resolve_profile` (M8a.5), which
 //! this crate cannot see (`crates/config/Cargo.toml` depends on `proto`, `toml` and
 //! `unicode-width` only).
 

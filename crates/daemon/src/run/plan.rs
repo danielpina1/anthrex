@@ -19,19 +19,8 @@ use super::validate::{
     EditScope, combined_cycles, implicit_deps, resolve_task_lenient, validate_tasks,
 };
 
-/// Decision 56's built-in protected paths. Configuration and the plan add to them;
-/// neither can remove one.
-pub const BUILTIN_PROTECTED: &[&str] = &[
-    ".claude/**",
-    ".mcp.json",
-    ".codex/**",
-    "**/CLAUDE.md",
-    "**/AGENTS.md",
-    // Milestone 9.11 decision 33 (D6): the agents' override, local and shared files.
-    "**/AGENTS.override.md",
-    "**/CLAUDE.local.md",
-    ".agents/**",
-];
+// Decision 56's built-in protected paths (milestone 9.13 decision 1 moved and split them).
+pub use super::protected_lists::{AGENT_CONFIG_PROTECTED, RUNS_LATER_PROTECTED, builtin_protected};
 
 /// `check_timeout_secs` when neither the plan nor the config sets it: the spec's 30
 /// minutes.
@@ -145,7 +134,7 @@ pub fn resolve_profile(plan: &ProfileSpec, config: &ProfileSpec) -> Profile {
     fn pick<T: Clone>(plan: &Option<T>, config: &Option<T>) -> Option<T> {
         plan.clone().or_else(|| config.clone())
     }
-    let mut protected: Vec<String> = BUILTIN_PROTECTED.iter().map(|s| s.to_string()).collect();
+    let mut protected = builtin_protected();
     for extra in config
         .protected
         .iter()

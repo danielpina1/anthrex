@@ -128,7 +128,7 @@ generated = ["gen/**", "vendor/**"]
 
 #[test]
 fn profile_protected_is_read_as_additions() {
-    // Decision 56: the config crate cannot see `daemon::run::plan::BUILTIN_PROTECTED`,
+    // Decision 56: the config crate cannot see `daemon::run::plan::builtin_protected()`,
     // so this reads back exactly what was written; `resolve_profile` (M8a.5) adds the
     // built-ins (Ruling Q12 of the brief refresh, tested there as
     // `plan_protected_adds_to_config_and_builtins`).

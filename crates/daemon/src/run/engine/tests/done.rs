@@ -469,3 +469,33 @@ fn an_overridden_task_is_exempt_from_protected() {
     assert_accepted(&fx, &effects, TaskState::Proof);
     assert_eq!(fx.task("t1").failures, 0);
 }
+
+/// Milestone 9.13 decision 3: a changed workflow bounces with the runs-later line.
+#[test]
+fn a_changed_workflow_bounces_with_the_runs_later_text() {
+    let (mut fx, window) = working();
+    let op = claim(&mut fx, window);
+    let effects = verify(&mut fx, op, protected(&[".github/workflows/ci.yml"]));
+    assert_protected_bounce(&fx, &effects, &[".github/workflows/ci.yml"], window);
+    let Err(text) = one_reply(&effects) else {
+        unreachable!()
+    };
+    assert!(
+        text.contains(
+            "\n.github/workflows/ci.yml runs outside the run's sandbox (CI, git hooks, cargo or toolchain config); this task may change it only if its owns names it exactly\n"
+        ),
+        "{text}"
+    );
+}
+
+/// Milestone 9.13 (pinning): `owns` names the workflow exactly, so the git layer reports
+/// no protected change and the task passes `done`, as it does today.
+#[test]
+fn a_workflow_named_in_owns_passes() {
+    let owns = "[\"crates/a/**\", \".github/workflows/ci.yml\"]";
+    let (mut fx, window) = working_owning(PROFILE, owns, "");
+    let op = claim(&mut fx, window);
+    let effects = verify(&mut fx, op, |_| {});
+    assert_accepted(&fx, &effects, TaskState::Proof);
+    assert_eq!(fx.task("t1").bounces.done, 0);
+}

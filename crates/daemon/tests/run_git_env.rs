@@ -17,7 +17,7 @@ use daemon::run::git::{
     verify_done,
 };
 use daemon::run::globs::{OwnsMatcher, ProtectedMatcher};
-use daemon::run::plan::BUILTIN_PROTECTED;
+use daemon::run::plan::builtin_protected;
 use std::ffi::OsString;
 use support::recording_git;
 use support::run_git::{T, commit_file, head, out, real_git, repo, wt_dir};
@@ -80,13 +80,7 @@ fn every_run_git_call_passes_no_optional_locks_and_no_git_env() {
     let scripts = tempfile::tempdir().unwrap();
     let git = recording_git(scripts.path());
     let git = git.as_os_str();
-    let protected = ProtectedMatcher::new(
-        &BUILTIN_PROTECTED
-            .iter()
-            .map(|s| s.to_string())
-            .collect::<Vec<_>>(),
-    )
-    .unwrap();
+    let protected = ProtectedMatcher::new(&builtin_protected()).unwrap();
     let generated = OwnsMatcher::new(&["Cargo.lock".to_string()]).unwrap();
 
     let previous: Vec<(&str, Option<OsString>)> = ["GIT_DIR", "GIT_INDEX_FILE", "GIT_COMMON_DIR"]

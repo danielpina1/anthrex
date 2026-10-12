@@ -13,7 +13,7 @@ use daemon::run::git::{
     create_run_branch, hand_back, prepare_worktree, salvage, verify_done, worker_git_dirs,
 };
 use daemon::run::globs::{OwnsMatcher, ProtectedMatcher};
-use daemon::run::plan::BUILTIN_PROTECTED;
+use daemon::run::plan::builtin_protected;
 use daemon::run::role_launch::worker_git_roots;
 use std::path::{Path, PathBuf};
 use support::TempRepo;
@@ -89,13 +89,7 @@ fn a_head_naming_the_base_branch_steers_no_engine_call() {
     assert!(err.contains("HEAD"), "{err}");
 
     let generated = OwnsMatcher::new(&[]).unwrap();
-    let protected = ProtectedMatcher::new(
-        &BUILTIN_PROTECTED
-            .iter()
-            .map(|s| s.to_string())
-            .collect::<Vec<_>>(),
-    )
-    .unwrap();
+    let protected = ProtectedMatcher::new(&builtin_protected()).unwrap();
     // Final fix batch F1b: the done check judges nothing and records nothing for a
     // `HEAD` that names a branch; the engine rejects the claim.
     let checked = verify_done(

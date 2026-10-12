@@ -333,3 +333,32 @@ fn an_escaped_path_names_only_itself() {
         }
     }
 }
+
+/// Milestone 9.13 decision 1 (NA §2 risk): the runs-later entries catch CI, hook, cargo
+/// and toolchain files wherever they are meant to, case folded, and nothing else.
+#[test]
+fn runs_later_patterns_match_where_they_should() {
+    let matcher = ProtectedMatcher::new(&crate::run::plan::builtin_protected()).unwrap();
+    for path in [
+        ".github/workflows/ci.yml",
+        ".GitHub/Workflows/CI.yml",
+        ".github/workflows",
+        "crates/x/.cargo/config.toml",
+        ".cargo/config",
+        "rust-toolchain",
+        "sub/rust-toolchain.toml",
+        ".husky/pre-commit",
+        "Jenkinsfile",
+    ] {
+        assert!(matcher.matches(path), "{path} is not protected");
+    }
+    for path in [
+        "Cargo.toml",
+        "build.rs",
+        "crates/daemon/src/run/driver/build.rs",
+        "package.json",
+        "docs/github/workflows.md",
+    ] {
+        assert!(!matcher.matches(path), "{path} is protected");
+    }
+}

@@ -517,7 +517,8 @@ fn new_task(
 
 /// Decision 56's plan warning: for each tracked protected file (in the order given)
 /// that `owns` matches without naming it literally, one note naming the first `owns`
-/// entry that matches it.
+/// entry that matches it. Milestone 9.13 decision 4: one `owns` names literally is a
+/// grant, and its note says the user approves it with the plan.
 pub fn protected_notes(owns: &[String], protected_files: &[String]) -> Vec<String> {
     let matchers: BTreeMap<&str, OwnsMatcher> = owns
         .iter()
@@ -530,6 +531,9 @@ pub fn protected_notes(owns: &[String], protected_files: &[String]) -> Vec<Strin
     let mut notes = Vec::new();
     for path in protected_files {
         if super::globs::names_literally(owns, path) {
+            notes.push(format!(
+                "owns names protected {path}; the user approves this grant with the plan"
+            ));
             continue;
         }
         if let Some(glob) = owns
