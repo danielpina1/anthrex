@@ -13,7 +13,7 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use proto::{ClientMsg, DaemonMsg, HookSource, Status};
+use proto::{ClientMsg, DaemonMsg, HookSource, Status, WindowInfo};
 use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -230,12 +230,7 @@ impl AdmitService {
 
     fn sweep(&self, manager: &WindowManager, now: Instant) {
         // The manager's lock is taken and let go before the book's.
-        let live: HashSet<u32> = manager
-            .list()
-            .into_iter()
-            .filter(|w| w.status != Status::Exited)
-            .map(|w| w.id)
-            .collect();
+        let live = live_windows(manager.list());
         let (expired, gone) = {
             let mut book = crate::lock(&self.holds);
             let expired = book.sweep(now, self.hold_max, &|_| true);
@@ -245,6 +240,15 @@ impl AdmitService {
         log_released(expired, "expired");
         log_released(gone, "window_gone");
     }
+}
+
+/// The windows whose holds the sweep keeps (C8 (b)): listed by the manager and not
+/// `Status::Exited` (a listed headless window whose process died).
+fn live_windows(listed: Vec<WindowInfo>) -> HashSet<u32> {
+    (listed.into_iter())
+        .filter(|w| w.status != Status::Exited)
+        .map(|w| w.id)
+        .collect()
 }
 
 /// Logs `admit released` for each hold, then drops its grant (outside the book's lock).
@@ -273,5 +277,50 @@ fn held_slots(reply: &DaemonMsg) -> u32 {
     match reply {
         DaemonMsg::Admitted { slots, .. } => *slots,
         _ => 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::live_windows;
+    use proto::{Runtime, Status, WindowInfo, WindowKind};
+    use std::path::PathBuf;
+
+    fn window(id: u32, status: Status) -> WindowInfo {
+        WindowInfo {
+            id,
+            name: format!("w{id}"),
+            runtime: Runtime::Claude,
+            cwd: PathBuf::from("/w"),
+            project: PathBuf::from("/w"),
+            worktree: None,
+            branch: None,
+            status,
+            tool: None,
+            since_secs: 0,
+            last_output_secs: 0,
+            session_id: None,
+            model: None,
+            subagents: Vec::new(),
+            exit: None,
+            kind: WindowKind::Headless,
+            run: None,
+            signals_seen: false,
+            placeholder: false,
+        }
+    }
+
+    /// Task 9 review Minor 2 (C8 (b)): an exited window the manager still lists is not
+    /// live, so the sweep releases its holds; every other status is live.
+    #[test]
+    fn an_exited_but_listed_window_is_not_live() {
+        let listed = vec![
+            window(1, Status::Working),
+            window(2, Status::Exited),
+            window(3, Status::Idle),
+        ];
+        let mut live: Vec<u32> = live_windows(listed).into_iter().collect();
+        live.sort();
+        assert_eq!(live, [1, 3]);
     }
 }
