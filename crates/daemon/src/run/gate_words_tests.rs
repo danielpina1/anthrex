@@ -49,11 +49,15 @@ fn env_prefix_and_dot_slash_are_stripped() {
 
 #[test]
 fn make_adds_its_makefile() {
+    // PR #60 review I3: each program's names, the one it prefers first.
     assert_eq!(
         words_of("make test"),
-        strings(&["make", "test", "Makefile", "makefile", "GNUmakefile"])
+        strings(&["make", "test", "GNUmakefile", "makefile", "Makefile"])
     );
-    assert_eq!(words_of("just ci"), strings(&["just", "ci", "justfile"]));
+    assert_eq!(
+        words_of("just ci"),
+        strings(&["just", "ci", "justfile", "Justfile", ".justfile"])
+    );
     assert_eq!(
         words_of("tox -e py"),
         strings(&["tox", "-e", "py", "tox.ini"])
@@ -153,4 +157,53 @@ fn protect_appends_escaped_paths_once() {
     assert_eq!(protected[2], escape_path("a[1].sh"));
     protect(&mut protected, &files);
     assert_eq!(protected.len(), 3);
+}
+
+/// PR #60 review I3 (Master's ruling, with the controller's refinement): every implicit
+/// name a gate program would prefer over the one it uses at the base is pinned absent;
+/// with none at the base, all of its names are. `pyproject.toml`, `setup.cfg` and
+/// `package.json` never are.
+#[test]
+fn preferred_implicit_names_are_pinned_absent() {
+    let absent_of = |check: &str, present: &[&str]| absent(&words_of(check), &strings(present));
+    // make prefers GNUmakefile, then makefile, then Makefile.
+    assert_eq!(
+        absent_of("make test", &["Makefile"]),
+        strings(&["GNUmakefile", "makefile"])
+    );
+    assert_eq!(
+        absent_of("make test", &["makefile", "Makefile"]),
+        strings(&["GNUmakefile"])
+    );
+    assert_eq!(
+        absent_of("make test", &["GNUmakefile"]),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        absent_of("make test", &[]),
+        strings(&["GNUmakefile", "makefile", "Makefile"])
+    );
+    // just finds `justfile` in any case, then `.justfile`: the other spelling of the
+    // one it uses is pinned too.
+    assert_eq!(absent_of("just ci", &["justfile"]), strings(&["Justfile"]));
+    assert_eq!(
+        absent_of("just ci", &[".justfile"]),
+        strings(&["justfile", "Justfile"])
+    );
+    assert_eq!(
+        absent_of("just ci", &[]),
+        strings(&["justfile", "Justfile", ".justfile"])
+    );
+    // tox.ini comes before setup.cfg and pyproject.toml, which are never pinned.
+    assert_eq!(absent_of("tox -e py", &[]), strings(&["tox.ini"]));
+    assert_eq!(absent_of("tox -e py", &["tox.ini"]), Vec::<String>::new());
+    assert_eq!(absent_of("nox", &[]), strings(&["noxfile.py"]));
+    for check in ["npm test", "pytest", "tox", "yarn", "pnpm test"] {
+        let names = absent_of(check, &[]);
+        for never in ["pyproject.toml", "setup.cfg", "package.json"] {
+            assert!(!names.iter().any(|n| n == never), "{check}: {names:?}");
+        }
+    }
+    // A program whose names were not all read (the word cap cut them) pins none absent.
+    assert_eq!(absent(&strings(&["make"]), &[]), Vec::<String>::new());
 }

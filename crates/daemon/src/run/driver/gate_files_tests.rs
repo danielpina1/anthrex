@@ -65,6 +65,13 @@ fn pinned(root: &Path, base: &str, path: &str) -> PinnedFile {
     }
 }
 
+fn absent_pin(path: &str) -> PinnedFile {
+    PinnedFile {
+        path: path.to_string(),
+        blob: String::new(),
+    }
+}
+
 #[test]
 fn gate_files_are_read_at_start() {
     let tmp = tempfile::tempdir().unwrap();
@@ -76,11 +83,15 @@ fn gate_files_are_read_at_start() {
     let words = words_of("sh scripts/check.sh test link.sh make");
     assert!(words.contains(&"Makefile".to_string()), "{words:?}");
     let files = read(OsStr::new(GIT), root, &base, &words, TIMEOUT).unwrap();
+    // PR #60 review I3: the names make prefers over the tracked `Makefile` are pinned
+    // absent (`blob` empty).
     assert_eq!(
         files,
         vec![
             pinned(root, &base, "Makefile"),
             pinned(root, &base, "scripts/check.sh"),
+            absent_pin("GNUmakefile"),
+            absent_pin("makefile"),
         ]
     );
     // `read` itself adds no implicit file.
@@ -143,4 +154,90 @@ fn a_pathspec_magic_word_is_literal() {
     let words = vec![":(glob)**".to_string()];
     let files = read(OsStr::new(GIT), root, &base, &words, TIMEOUT).unwrap();
     assert_eq!(files, Vec::new());
+}
+
+/// PR #60 review I3: with only `Makefile` tracked, a checkout where a `GNUmakefile`
+/// appeared (a file, or a symbolic link) is refused before `make test` runs; the base
+/// checkout passes, on a case-insensitive volume too (`makefile` is not `Makefile`).
+#[test]
+fn verify_refuses_a_created_gnumakefile() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let base = repo(root);
+    let files = read(
+        OsStr::new(GIT),
+        root,
+        &base,
+        &words_of("make test"),
+        TIMEOUT,
+    )
+    .unwrap();
+    assert!(files.contains(&absent_pin("GNUmakefile")), "{files:?}");
+    assert!(files.contains(&absent_pin("makefile")), "{files:?}");
+    assert_eq!(verify(root, &files), Ok(()));
+    write(&root.join("GNUmakefile"), "test: ; true\n");
+    assert_eq!(verify(root, &files), Err("GNUmakefile".to_string()));
+    std::fs::remove_file(root.join("GNUmakefile")).unwrap();
+    std::os::unix::fs::symlink("Makefile", root.join("GNUmakefile")).unwrap();
+    assert_eq!(verify(root, &files), Err("GNUmakefile".to_string()));
+    std::fs::remove_file(root.join("GNUmakefile")).unwrap();
+    // A dangling link counts too.
+    std::os::unix::fs::symlink("nowhere", root.join("GNUmakefile")).unwrap();
+    assert_eq!(verify(root, &files), Err("GNUmakefile".to_string()));
+}
+
+/// PR #60 review I3: run start pins `GNUmakefile` absent beside the tracked `Makefile`
+/// and protects it (`gate_words::protect`), so a task whose branch creates one is
+/// bounced at the done gate unless its `owns` names it exactly (a grant).
+#[test]
+fn the_done_gate_bounces_a_created_gnumakefile_unless_granted() {
+    use crate::run::gate_words::protect;
+    use crate::run::git::{prepare_worktree, verify_done};
+    use crate::run::globs::{OwnsMatcher, ProtectedMatcher};
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("repo");
+    let base = repo(&root);
+    let files = read(
+        OsStr::new(GIT),
+        &root,
+        &base,
+        &words_of("make test"),
+        TIMEOUT,
+    )
+    .unwrap();
+    let mut protected = crate::run::plan::builtin_protected();
+    protect(&mut protected, &files);
+    let wt = tmp.path().join("wt");
+    let branch = "anthrex/gm01/t1";
+    prepare_worktree(OsStr::new(GIT), &root, branch, &base, &wt, TIMEOUT).unwrap();
+    write(&wt.join("src/a.rs"), "a\n");
+    write(&wt.join("GNUmakefile"), "test: ; true\n");
+    git(&wt, &["add", "-A"]);
+    git(&wt, &["commit", "-q", "-m", "work"]);
+    let generated = OwnsMatcher::new(&[]).unwrap();
+    let matcher = ProtectedMatcher::new(&protected).unwrap();
+    let check = |owns: &[&str]| {
+        let owns: Vec<String> = owns.iter().map(|s| s.to_string()).collect();
+        let (g, m) = (&generated, &matcher);
+        verify_done(
+            OsStr::new(GIT),
+            &wt,
+            &base,
+            &base,
+            &owns,
+            g,
+            m,
+            None,
+            TIMEOUT,
+        )
+        .unwrap()
+    };
+    let r = check(&["src/**", "*"]);
+    assert_eq!(
+        r.protected_changed,
+        vec!["GNUmakefile".to_string()],
+        "{r:?}"
+    );
+    let r = check(&["src/**", "GNUmakefile"]);
+    assert!(r.protected_changed.is_empty(), "{r:?}");
 }

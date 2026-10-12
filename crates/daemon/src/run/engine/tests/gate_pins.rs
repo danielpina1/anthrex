@@ -60,6 +60,21 @@ fn granted() -> Fixture {
     fx
 }
 
+/// PR #60 review I3: a name pinned absent (`blob` empty) is granted as any gate file
+/// is, by a released task's `owns` naming it exactly.
+#[test]
+fn a_granted_absent_name_is_not_pinned() {
+    let mut fx = super::wake_notes::approved();
+    let absent = PinnedFile {
+        path: "GNUmakefile".to_string(),
+        blob: String::new(),
+    };
+    fx.run_mut().gate_files = vec![file("Makefile"), absent.clone()];
+    assert_eq!(pinned(fx.run()), [file("Makefile"), absent]);
+    fx.task_mut("t1").spec.owns = vec!["GNUmakefile".to_string()];
+    assert_eq!(paths(fx.run()), ["Makefile"]);
+}
+
 #[test]
 fn a_granted_gate_file_is_not_pinned() {
     assert_eq!(GATE_CHANGED.replace("{path}", SCRIPT), changed());
