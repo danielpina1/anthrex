@@ -121,6 +121,11 @@ fn a_directory_word_loses_its_trailing_slash() {
     assert_eq!(words_of("pytest tests//"), strings(&["pytest", "tests"]));
     assert_eq!(words_of("ruff check ."), strings(&["ruff", "check"]));
     assert_eq!(words_of("eslint . / // ./"), strings(&["eslint"]));
+    // Task 6 review M-2: a directory spelled with a trailing `/.` is never pinned.
+    assert_eq!(
+        words_of("sh scripts/. scripts/./ a/b/./. ./scripts/."),
+        strings(&["sh"])
+    );
     assert_eq!(
         words_of("sh scripts/check.sh"),
         strings(&["sh", "scripts/check.sh"])

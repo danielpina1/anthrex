@@ -285,3 +285,38 @@ fn a_user_override_of_a_pinned_gate_file_says_it_stays_pinned() {
     fx.task_mut("t2").spec.owns.push(SCRIPT.to_string());
     assert_eq!(user_override(&mut fx), lead);
 }
+
+/// Task 6 review I-1: a base sync (`from: 0`) the gate check refused is due again, as a
+/// base sync, so the user's resume does not lose it.
+#[test]
+fn a_refused_base_sync_is_due_again() {
+    use super::delivery_sync::{base_sync, base_syncs, conflicting, fetched};
+    use super::delivery_watch_adopt::{poll_stage, two_stages};
+    let (mut fx, _) = two_stages(true);
+    let h1 = fx.run().stage_head(1).unwrap().to_string();
+    poll_stage(&mut fx, 1, conflicting(11, &h1));
+    fetched(&mut fx, &commit(50), None);
+    let (op, spec) = base_sync(&fx);
+    assert!(fx.run().delivery.base_sync_due.is_empty(), "taken");
+    fx.done(op, refused());
+    assert_eq!(fx.run().state, RunState::Halted);
+    let due = &fx.run().delivery.base_sync_due;
+    assert_eq!(due.get(&spec.to), Some(&spec.from_head), "{due:?}");
+    // After the user's resume it is due, or already issued again.
+    user_resume(&mut fx);
+    let due = fx.run().delivery.base_sync_due.contains_key(&spec.to);
+    assert!(due || !base_syncs(&fx).is_empty());
+}
+
+/// The same for a stage propagate (`from > 0`): its target is in `propagate_due` again.
+#[test]
+fn a_refused_stage_propagate_is_due_again() {
+    use super::propagate::{propagate, stages};
+    let (mut fx, windows) = stages(true);
+    super::propagate::merge_t1(&mut fx, &windows);
+    let (op, spec) = propagate(&fx);
+    assert!(fx.run().propagate_due.is_empty(), "taken");
+    fx.done(op, refused());
+    assert_eq!(fx.run().state, RunState::Halted);
+    assert!(fx.run().propagate_due.contains(&spec.to));
+}

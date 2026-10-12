@@ -80,6 +80,9 @@ fn clear_waiting(
                 complete::cancel_now(run, i, why, now, fx);
             }
         }
+        // A propagate or base sync: due again (task 6 review I-1), since emitting it took
+        // its due entry.
+        (OpKind::Propagate(spec), None) => super::propagate::lost(run, spec),
         // A gate's op (the check, the proof, tier 1).
         (_, Some(i)) if run.tasks[i].gate_op == Some(op) => run.tasks[i].gate_op = None,
         // The final check holds nothing: completion issues it again. A tier-3 job, a

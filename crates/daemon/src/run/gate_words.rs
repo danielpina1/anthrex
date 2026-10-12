@@ -97,6 +97,7 @@ fn clean(raw: &str) -> Option<String> {
     word = word.trim_end_matches('/');
     let dropped = word.is_empty()
         || word == "."
+        || word.ends_with("/.")
         || absolute
         || word.starts_with('~')
         || word.contains(['$', '*', '?', '[', ']', '{', '}', '`'])
