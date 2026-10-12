@@ -21,6 +21,7 @@ use super::{RunService, unix_now};
 use crate::run::chain::suffix_taken;
 use crate::run::confine;
 use crate::run::design::GoalOrigin;
+use crate::run::gate_words::{gate_words, protect};
 use crate::run::git::{self, Git, os};
 use crate::run::globs::ProtectedMatcher;
 use crate::run::journal::runs_dir;
@@ -325,7 +326,14 @@ impl RunService {
 
         // Decision 17 (carry): the protected files, by the chosen profile's matcher,
         // before `build_run` turns them into the plan's warnings (decision 56).
-        let profile = resolve_profile(&plan.profile, &config.profile);
+        let mut profile = resolve_profile(&plan.profile, &config.profile);
+        // Milestone 9.13 decisions 9 and 10: the gate's own files at the base join the
+        // profile before its matcher; a failed read fails the start (ruling C26).
+        let (g, root, base) = (git.clone(), pre.root.clone(), pre.base_sha.clone());
+        let words = gate_words(&profile);
+        pre.gate_files =
+            blocking(move || super::gate_files::read(&g, &root, &base, &words, timeout)).await?;
+        protect(&mut profile.protected, &pre.gate_files);
         let matcher = ProtectedMatcher::new(&profile.protected)?;
         let (g, root, base) = (git.clone(), pre.root.clone(), pre.base_sha.clone());
         pre.protected_files =

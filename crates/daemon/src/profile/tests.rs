@@ -275,6 +275,7 @@ fn confinement_still_comes_from_the_users_config() {
         base_branch: "main".into(),
         base_sha: "b".repeat(40),
         protected_files: Vec::new(),
+        gate_files: Vec::new(),
     };
     let ctx = BuildContext {
         tuning: Default::default(),
@@ -541,6 +542,7 @@ fn a_stale_profile_gets_the_attention_line() {
         base_branch: "main".into(),
         base_sha: "b".repeat(40),
         protected_files: Vec::new(),
+        gate_files: Vec::new(),
     };
     let ctx = BuildContext {
         tuning: Default::default(),

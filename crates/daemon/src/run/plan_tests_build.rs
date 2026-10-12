@@ -363,3 +363,70 @@ fn runs_later_paths_are_built_in_and_cannot_be_removed() {
             .contains(&".github/workflows/**".to_string())
     );
 }
+
+fn gate_file(path: &str) -> crate::run::gate_words::PinnedFile {
+    crate::run::gate_words::PinnedFile {
+        path: path.to_string(),
+        blob: "a".repeat(40),
+    }
+}
+
+/// Milestone 9.13 decision 10: a gate file is protected like any other: a glob covering
+/// it gets decision 56's note, naming it gets decision 4's grant note, and the run
+/// records it and adds it to its frozen protected list.
+#[test]
+fn owns_covering_a_gate_file_is_noted_and_naming_it_grants() {
+    let mut pre = preflight();
+    pre.gate_files = vec![gate_file("scripts/check.sh")];
+    pre.protected_files = vec!["scripts/check.sh".to_string()];
+    let text = plan_with(
+        PROFILE,
+        &[
+            task_toml("t1", "S", r#"["scripts/**"]"#, ""),
+            task_toml("t2", "S", r#"["scripts/check.sh"]"#, ""),
+        ],
+    );
+    let config = config::Orchestrator::default();
+    let run = build_full(&text, &config, pre).unwrap_or_else(|e| panic!("{}", show(&e)));
+    assert_eq!(
+        run.tasks[0].notes,
+        vec![
+            "owns scripts/** covers protected scripts/check.sh; name it exactly in owns if this task must change it (rule 6.protected)"
+                .to_string()
+        ]
+    );
+    assert_eq!(
+        run.tasks[1].notes,
+        vec![
+            "owns names protected scripts/check.sh; the user approves this grant with the plan"
+                .to_string()
+        ]
+    );
+    assert_eq!(run.gate_files, vec![gate_file("scripts/check.sh")]);
+    assert_eq!(
+        run.profile.protected.last().map(String::as_str),
+        Some("scripts/check.sh")
+    );
+}
+
+/// Milestone 9.13 (run format stays 2): `gate_files` is written only when there are
+/// some, and a format-1 `run.json`, which has no such key, loads with none.
+#[test]
+fn a_run_without_gate_files_loads_with_none() {
+    let mut pre = preflight();
+    pre.gate_files = vec![gate_file("scripts/check.sh")];
+    let config = config::Orchestrator::default();
+    let run = build_full(EXAMPLE_PLAN, &config, pre).unwrap_or_else(|e| panic!("{}", show(&e)));
+    let mut json = serde_json::to_value(&run).unwrap();
+    let object = json.as_object_mut().unwrap();
+    assert_eq!(
+        object["gate_files"],
+        serde_json::json!([{"path": "scripts/check.sh", "blob": "a".repeat(40)}])
+    );
+    object.remove("gate_files");
+    object.insert("format".into(), serde_json::json!(1));
+    let old: crate::run::model::Run = serde_json::from_value(json).unwrap();
+    assert!(old.gate_files.is_empty());
+    let none = serde_json::to_value(run_ok(EXAMPLE_PLAN)).unwrap();
+    assert!(none.get("gate_files").is_none());
+}

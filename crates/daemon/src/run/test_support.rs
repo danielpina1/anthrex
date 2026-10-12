@@ -97,6 +97,7 @@ pub fn preflight() -> Preflight {
         base_branch: "main".to_string(),
         base_sha: "b".repeat(40),
         protected_files: Vec::new(),
+        gate_files: Vec::new(),
     }
 }
 

@@ -497,6 +497,7 @@ pub fn preflight(git: &OsStr, dir: &Path, timeout: Duration) -> Result<Preflight
         base_branch,
         base_sha,
         protected_files: Vec::new(),
+        gate_files: Vec::new(),
     })
 }
 

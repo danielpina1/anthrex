@@ -232,6 +232,7 @@ fn run_appending(data: &Path, history: &Path) -> (Run, OpKind) {
         base_branch: "main".into(),
         base_sha: "b".repeat(40),
         protected_files: Vec::new(),
+        gate_files: Vec::new(),
     };
     let config = config::Orchestrator::default();
     let ctx = BuildContext {

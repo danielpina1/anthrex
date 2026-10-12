@@ -41,6 +41,7 @@ pub mod engine;
 pub mod env;
 pub mod estimate;
 pub mod exec;
+mod gate_words;
 pub mod git;
 pub mod globs;
 pub mod history;

@@ -58,6 +58,7 @@ pub fn preflight() -> Preflight {
         base_branch: "main".to_string(),
         base_sha: BASE.to_string(),
         protected_files: Vec::new(),
+        gate_files: Vec::new(),
     }
 }
 

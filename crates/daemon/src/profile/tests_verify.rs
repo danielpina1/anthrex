@@ -427,6 +427,7 @@ fn preflight(root: &Path) -> Preflight {
         base_branch: "main".into(),
         base_sha: "0".repeat(40),
         protected_files: Vec::new(),
+        gate_files: Vec::new(),
     }
 }
 

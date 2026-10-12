@@ -50,6 +50,7 @@ pub fn run_at(data_dir: &Path, root: &Path, wt_dir: &Path, base_sha: &str) -> Ru
         base_branch: "main".into(),
         base_sha: base_sha.into(),
         protected_files: Vec::new(),
+        gate_files: Vec::new(),
     };
     let config = config::Orchestrator::default();
     let ctx = BuildContext {
