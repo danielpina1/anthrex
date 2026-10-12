@@ -263,11 +263,13 @@ pub fn apply_edit(
         }
         (Err(error), _) => return Err(error),
     };
+    // Milestone 9.13 (task 3 review I1): only a built-in the edit adds is refused; a
+    // profile stored before the built-ins grew may already list one as an extra.
     let builtins = builtin_protected();
     if let Some(builtin) = edited
         .protected
         .iter()
-        .find(|entry| builtins.contains(entry))
+        .find(|entry| builtins.contains(entry) && !stored.protected.contains(entry))
     {
         return Err(format!(
             "protected: {builtin} is built in and always applies; list only extra entries"
