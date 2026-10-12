@@ -171,6 +171,17 @@ pub(super) fn on_orch_event(
             };
             fx.push(Effect::Reply { reply, result });
         }
+        // Milestone 9.13 decision 20: the first read is kept, with one log line.
+        OrchEvent::UntrustedRead { run_id, at, source } => {
+            if let Some(run) = state.runs.get_mut(&run_id)
+                && run.orch.untrusted.is_none()
+            {
+                let line = crate::run::orch::untrusted::read_line(&source);
+                run.orch.untrusted =
+                    Some(crate::run::orch::untrusted::UntrustedRecord { at, source });
+                super::requests::log(run, now, line);
+            }
+        }
         OrchEvent::RoleRouteEnded {
             run_id,
             record_id,

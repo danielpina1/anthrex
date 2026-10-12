@@ -127,8 +127,8 @@ pub(super) fn orchestrator(run: &Run) -> Option<OrchestratorInfo> {
             })
             .collect(),
         handled_total: run.orch.handled_total,
-        // M9.13.8 fills this from the run record.
-        untrusted: None,
+        // Milestone 9.13 decision 18: the run's sticky record.
+        untrusted: run.orch.untrusted.as_ref().map(|u| u.info()),
     })
 }
 

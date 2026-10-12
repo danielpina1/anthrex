@@ -155,6 +155,14 @@ pub enum OrchEvent {
         window_id: u32,
         launch: u64,
     },
+    /// Milestone 9.13 decision 20: the orchestrator's `run_status` or `task_result`
+    /// answered text from outside the run (`orch::untrusted`), sent before the answer,
+    /// on the channel a later call of the orchestrator takes.
+    UntrustedRead {
+        run_id: String,
+        at: u64,
+        source: String,
+    },
 }
 
 /// How a run scout's or sub-planner's session ended: its report or epic accepted, or
@@ -191,7 +199,8 @@ impl OrchEvent {
             | OrchEvent::ChainWindowGone { .. }
             | OrchEvent::AdoptLost { .. }
             | OrchEvent::McpReady { .. }
-            | OrchEvent::FirstSignal { .. } => None,
+            | OrchEvent::FirstSignal { .. }
+            | OrchEvent::UntrustedRead { .. } => None,
         }
     }
 }

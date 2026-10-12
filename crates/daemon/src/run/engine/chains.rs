@@ -118,6 +118,10 @@ fn adopt(run: &mut Run, prev: &Run, window_id: u32, now: u64, fx: &mut Vec<Effec
         at += spent;
         o.usage_at_adopt = Some(at);
     }
+    // Milestone 9.13 decision 18: the session's taint goes with it, and only here.
+    if prev.orch.untrusted.is_some() {
+        run.orch.untrusted = prev.orch.untrusted.clone();
+    }
     let ended = (prev.short(), outcome(prev));
     let wake = next_goal_wake(run.short(), ended, run.orch.yes, &run.goal);
     // Ruling T14-2: a design run's adopted window learns the design flow here.
@@ -180,6 +184,12 @@ pub(super) fn adopt_lost(
     let restarting = run.pending_ops.values().any(
         |p| matches!(p.kind, super::OpKind::RestartOrchestrator { window_id: w } if w == window_id),
     );
+    // Milestone 9.13 decision 18 (pre-flight ruling C8): a window this run never took
+    // held a session that never lived in it, so `adopt`'s copy of its taint goes; the
+    // restart of the run's own session keeps the run's.
+    if !restarting {
+        run.orch.untrusted = None;
+    }
     let text = match restarting {
         true => format!(
             "window {window_id} is gone; run {}'s orchestrator starts a fresh session",

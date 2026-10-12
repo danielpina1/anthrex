@@ -42,6 +42,7 @@ pub mod rules;
 #[cfg(test)]
 pub(crate) mod test_support;
 pub mod tools;
+pub mod untrusted;
 
 pub use attention::{START_PROMPT, WAKE_HELD, orchestrator_lines};
 pub use limits::{AgentLimits, DesignLimits, OrchLimits, PlannerLimits};
@@ -150,6 +151,10 @@ pub struct RunOrch {
     pub ask: Option<AskRecord>,
     #[serde(skip_serializing_if = "is_zero_u64")]
     pub ask_seq: u64,
+    /// Milestone 9.13 decision 18: the session read text from outside the run; the
+    /// first such read, kept for the session's life. Not written while `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub untrusted: Option<untrusted::UntrustedRecord>,
 }
 
 /// Milestone 9.9 decision 15: a question the orchestrator put to the user. The text is

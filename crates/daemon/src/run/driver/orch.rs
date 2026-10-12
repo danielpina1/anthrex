@@ -25,6 +25,7 @@ use crate::run::model::{Run, task_branch};
 use crate::run::orch::context::Asker;
 use crate::run::orch::result::{TaskGit, task_result};
 use crate::run::orch::tools::{OrchCall, parse_call};
+use crate::run::orch::untrusted::{digest_source, task_source};
 
 #[path = "chain_goal.rs"]
 pub(in crate::run::driver) mod chain_goal;
@@ -395,7 +396,7 @@ impl RunService {
                 }
             }
             OrchCall::TaskResult { task_id } => match self.looked_up(&call, Run::clone) {
-                Ok(run) => self.task_result(run, task_id).await,
+                Ok(run) => self.task_result(run, task_id, call.role).await,
                 Err(text) => refused(text),
             },
             // Milestone 9.6: the document's text, read off the engine (`design_io.rs`).
@@ -459,14 +460,20 @@ impl RunService {
             Err(text) => return refused(text),
         };
         let (run_id, digest_revision, seq) = (run.id.clone(), run.orch.digest_rev, notes_seq(&run));
+        // Milestone 9.13 decision 19: only the orchestrator's read taints.
+        let taints = call.role == AgentRole::Orchestrator;
         let built = tokio::task::spawn_blocking(move || {
-            crate::run::orch::digest::digest(&run, now).to_string()
+            let digest = crate::run::orch::digest::digest(&run, now);
+            let source = taints.then(|| digest_source(&digest, &run)).flatten();
+            (digest.to_string(), source)
         })
         .await;
         match built {
-            Ok(text) => {
+            Ok((text, source)) => {
                 // Decision 39: what the answer held is neither kept nor pasted.
                 self.wakes.read(&run_id, seq);
+                // Decision 20: before the answer, on the channel a later call takes.
+                self.untrusted_read(&run_id, now, source);
                 self.send(EventKind::Orch(OrchEvent::DigestRead {
                     run_id,
                     digest_revision,
@@ -483,7 +490,7 @@ impl RunService {
     /// commit (M9.6: only then), all under one `DONE_CHECK_GIT_TIMEOUT` deadline (M9.6
     /// review, M-4): past it the answer carries the git error, whatever the separate
     /// commands still had left. The build runs on `spawn_blocking`.
-    async fn task_result(&self, run: Run, task_id: String) -> RunReply {
+    async fn task_result(&self, run: Run, task_id: String, role: AgentRole) -> RunReply {
         let Some(task) = run.task(&task_id) else {
             return refused(format!("unknown task {task_id}"));
         };
@@ -491,15 +498,35 @@ impl RunService {
             Some(start) => Some(self.task_git(&run, &task_id, start).await),
             None => None,
         };
+        let run_id = run.id.clone();
+        // Milestone 9.13 decision 19: only the orchestrator's read taints.
+        let taints = role == AgentRole::Orchestrator;
         let built = tokio::task::spawn_blocking(move || {
-            run.task(&task_id)
-                .map(|task| task_result(&run, task, git.as_ref()).to_string())
+            run.task(&task_id).map(|task| {
+                let source = taints.then(|| task_source(task)).flatten();
+                (task_result(&run, task, git.as_ref()).to_string(), source)
+            })
         })
         .await;
         match built {
-            Ok(Some(text)) => RunReply::tool_result(true, text),
+            Ok(Some((text, source))) => {
+                self.untrusted_read(&run_id, unix_now(), source);
+                RunReply::tool_result(true, text)
+            }
             Ok(None) => refused("unknown task"),
             Err(error) => refused(format!("a blocking step did not finish: {error}")),
+        }
+    }
+
+    /// Milestone 9.13 decision 20: `OrchEvent::UntrustedRead` for a read with a source.
+    fn untrusted_read(&self, run_id: &str, at: u64, source: Option<String>) {
+        if let Some(source) = source {
+            let run_id = run_id.to_string();
+            self.send(EventKind::Orch(OrchEvent::UntrustedRead {
+                run_id,
+                at,
+                source,
+            }));
         }
     }
 
@@ -554,6 +581,10 @@ mod read_tests_launch;
 #[cfg(test)]
 #[path = "orch_read_tests_design.rs"]
 mod read_tests_design;
+
+#[cfg(test)]
+#[path = "orch_read_tests_taint.rs"]
+mod read_tests_taint;
 
 #[cfg(test)]
 #[path = "design_ops_tests.rs"]
