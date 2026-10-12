@@ -4,7 +4,9 @@
 
 use crate::support;
 
-use daemon::run::git::{DoneChecked, prepare_worktree, verify_done};
+use daemon::run::git::{
+    DoneChecked, RefreshedIn, count_commits_checked, prepare_worktree, verify_done,
+};
 use daemon::run::globs::{OwnsMatcher, ProtectedMatcher};
 use daemon::run::plan::builtin_protected;
 use std::path::PathBuf;
@@ -92,6 +94,29 @@ fn a_symlinked_cargo_dir_is_a_protected_change() {
     );
     let r = check(&t, &["crates/foo/**", "crates/foo/.cargo"]);
     assert!(r.protected_changed.is_empty(), "{r:?}");
+}
+
+/// I2 (b): `.github` linked to `x`, with `x/workflows/ci.yml`. Neither changed path
+/// matches `.github/workflows/**`, but the link is an ancestor of it: protected, in the
+/// done gate and in the override's count. Named exactly, it is a grant.
+#[test]
+fn a_symlinked_github_dir_is_a_protected_change() {
+    let t = linked("github", ".github", "x", "x/workflows/ci.yml", "on: push\n");
+    let r = check(&t, &["**"]);
+    assert_eq!(r.protected_changed, strings(&[".github"]), "{r:?}");
+    assert!(r.outside_owns.is_empty(), "{r:?}");
+    let r = check(&t, &["x/**", ".github"]);
+    assert!(r.protected_changed.is_empty(), "{r:?}");
+    let ((count, _), protected) = count_commits_checked(
+        real_git(),
+        &t.path,
+        (&t.start, &t.start),
+        &RefreshedIn::default(),
+        (&strings(&["**"]), &builtin_protected()),
+        T,
+    )
+    .unwrap();
+    assert_eq!((count, protected), (1, strings(&[".github"])));
 }
 
 /// A symlink that is no ancestor of a protected entry is an ordinary change: a linked

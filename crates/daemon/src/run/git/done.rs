@@ -44,7 +44,7 @@ pub struct DoneChecked {
 /// branch checked out or a rebase stopped gives `head_branch: None` and nothing else).
 /// Then: `<head>`, judged throughout (final fix batch F1, A-I4), the task's own
 /// commits (`<head> ^start ^run_head`), `status`, `MERGE_HEAD`, the spill diff
-/// (`git diff --name-only <run_head>...<head>`), and — only with a `red` — `red`
+/// (`git diff --raw <run_head>...<head>`, whose modes show a symbolic link), and — only with a `red` — `red`
 /// resolved. The changed paths are split per decision 56 (protected, unless `owns`
 /// names them literally) and then decision 55 (the rest outside `owns`: generated or
 /// not). Exemptions (an overridden task) are the engine's, not this function's.
@@ -202,7 +202,7 @@ pub fn verify_done_spilling(
     let spill_range = format!("{run_head}...{head}");
     let mut spill_args = vec![os("diff")];
     spill_args.extend(DIFF_FLAGS.map(os));
-    spill_args.extend([os("--name-only"), os("-z"), os("--no-renames")]);
+    spill_args.extend([os("--raw"), os("-z"), os("--no-renames")]);
     match spill_base {
         Some(base) => spill_args.extend([os("--end-of-options"), os(base), os(&head)]),
         None => spill_args.push(os(&spill_range)),
@@ -222,10 +222,10 @@ pub fn verify_done_spilling(
         head_branch,
         ..DoneChecked::default()
     };
-    let changed: Vec<&str> = nul_fields(&changed).collect();
+    let changed = raw_paths(&changed);
     result.protected_changed = split_protected(&changed, owns, protected);
-    for &path in &changed {
-        if protected.guards_change(path) || owns_matcher.matches(path) {
+    for &(path, link) in &changed {
+        if protected.guards(path, link) || owns_matcher.matches(path) {
             continue;
         }
         if generated.matches(path) {
@@ -349,10 +349,28 @@ pub(crate) fn protected_changes(
     let range = format!("{run_head}...{head}");
     let mut args = vec![os("diff")];
     args.extend(DIFF_FLAGS.map(os));
-    args.extend([os("--name-only"), os("-z"), os("--no-renames"), os(&range)]);
+    args.extend([os("--raw"), os("-z"), os("--no-renames"), os(&range)]);
     let changed = g.ok(worktree, &args)?;
-    let changed: Vec<&str> = nul_fields(&changed).collect();
-    Ok(split_protected(&changed, owns, protected))
+    Ok(split_protected(&raw_paths(&changed), owns, protected))
+}
+
+/// `git diff --raw -z --no-renames`: each changed path, and whether it is a symbolic
+/// link (mode `120000`) on the diff's new side, the head commit (PR #60 review I2 (b)).
+/// A record is `:<old mode> <new mode> <old id> <new id> <status>` NUL `<path>` NUL.
+fn raw_paths(raw: &str) -> Vec<(&str, bool)> {
+    let mut paths = Vec::new();
+    let mut fields = nul_fields(raw);
+    while let Some(meta) = fields.next() {
+        let Some(meta) = meta.strip_prefix(':') else {
+            continue;
+        };
+        let Some(path) = fields.next() else {
+            break;
+        };
+        let link = meta.split(' ').nth(1) == Some("120000");
+        paths.push((path, link));
+    }
+    paths
 }
 
 /// Decision 30's hand-over material: the stat and the diff of the task's net change,

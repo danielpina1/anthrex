@@ -368,7 +368,11 @@ fn runs_later_patterns_match_where_they_should() {
 #[test]
 fn split_and_literal_protected() {
     let matcher = ProtectedMatcher::new(&crate::run::plan::builtin_protected()).unwrap();
-    let paths = s(&["AGENTS.md", "src/a.rs", ".github/workflows/ci.yml"]);
+    let paths = [
+        ("AGENTS.md", false),
+        ("src/a.rs", false),
+        (".github/workflows/ci.yml", false),
+    ];
     let owns = s(&["src/**", ".github/workflows/ci.yml"]);
     assert_eq!(split_protected(&paths, &owns, &matcher), s(&["AGENTS.md"]));
     let owns = s(&[".github/workflows/ci.yml", ".github/**", "src/**"]);
@@ -399,4 +403,56 @@ fn escaped_and_non_ascii_literals_are_grants() {
     // A real class or wildcard is still not a literal; `./` is dropped as the gate does.
     let owns = s(&[".github/workflows/[ab].yml", ".github/*", "./.husky/x"]);
     assert_eq!(literal_protected(&owns, &matcher), s(&[".husky/x"]));
+}
+
+/// PR #60 review I2 (b): a changed path that is a symbolic link in the head commit is
+/// guarded when it is an ancestor directory of a protected entry's literal leading path:
+/// for a rooted entry each of its leading components' paths, for a `**/` entry any path
+/// ending in them. A link elsewhere, or any path that is not a link, is not.
+#[test]
+fn a_linked_ancestor_of_a_protected_entry_is_guarded() {
+    let mut protected = crate::run::plan::builtin_protected();
+    protected.extend(s(&["**/a/b/**", "src/*.sh", "gen/[*]x/**"]));
+    let matcher = ProtectedMatcher::new(&protected).unwrap();
+    for path in [
+        ".github",
+        ".GitHub",
+        ".github/workflows",
+        ".github/actions",
+        ".cargo",
+        "crates/foo/.cargo",
+        ".claude",
+        ".codex",
+        "a",
+        "x/a",
+        "x/a/b",
+        "src",
+        "gen",
+        "gen/*x",
+    ] {
+        assert!(matcher.guards(path, true), "{path}");
+    }
+    for path in [".github", "x/a", "src", "gen"] {
+        assert!(!matcher.guards(path, false), "{path} is not a link");
+    }
+    for path in [
+        "docs/.github",
+        ".github/x",
+        "x/b",
+        "lib",
+        "crates",
+        "gen/yx",
+    ] {
+        assert!(!matcher.guards(path, true), "{path}");
+    }
+    let changed = [
+        (".github", true),
+        ("x/workflows/ci.yml", false),
+        ("src", false),
+    ];
+    assert_eq!(
+        split_protected(&changed, &s(&["**"]), &matcher),
+        s(&[".github"])
+    );
+    assert!(split_protected(&changed, &s(&[".github", "**"]), &matcher).is_empty());
 }
