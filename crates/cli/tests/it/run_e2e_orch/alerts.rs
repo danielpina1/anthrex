@@ -19,6 +19,11 @@ use crate::support::run_plans::{approve, commit, done};
 /// shared constant names it; see `docs/timing-budgets.md`.
 const ABSENCE_WINDOW: Duration = Duration::from_secs(1);
 const ABSENCE_POLL: Duration = Duration::from_millis(100);
+/// How long the environment-block test's orchestrator waits between submitting its
+/// plan and polling the gate: longer than an approved task's worker takes to start
+/// and block once let go, so a test that let it go before the orchestrator had polled
+/// would have its block read by that poll. Not a bound: no assertion depends on it.
+const SLOW_POLL_MS: u64 = 3000;
 
 fn blocked_keys(h: &crate::support::run_harness::RunHarness) -> Vec<AlertKey> {
     let app = tui_now(h);
@@ -62,6 +67,10 @@ fn e2e_an_environment_block_is_the_orchestrators_and_it_retries() {
             vec![add(plan_task("t1", &["a.txt"], json!({})))],
             json!({"submit": true}),
         ),
+        // A slow orchestrator's next poll of the gate comes well after the approval,
+        // as one on a loaded machine's did (the macOS CI flake): it must not read the
+        // block in that poll's digest, which would answer the block's wake-up.
+        json!({"wait_ms": SLOW_POLL_MS}),
         until("/gate/state", json!("approved"), ORCH_WAIT),
         read(Some("t1 blocked (environment)")),
         read(Some("retry now")),
@@ -74,6 +83,12 @@ fn e2e_an_environment_block_is_the_orchestrators_and_it_retries() {
     ];
     let (run, window) = start(&h, &steps);
     approve_plan(&h, &run);
+    // The worker blocks only once the orchestrator has seen the approval and ended its
+    // turn: a `run_status` poll after the block would answer the block's note, so no
+    // wake-up would follow (decision 39, "a read clears too"), and the scripted read
+    // below would wait for ever. From the approval to the turn's end the window is
+    // `Working` (its turn began with the first message), so `Idle` here is that end.
+    h.wait_orchestrator_idle(window);
     std::fs::write(&go, "").unwrap();
     // The orchestrator has read the block's wake-up and waits; the task is blocked.
     h.wait_messages(ORCH, 1, ORCH_WAIT);
