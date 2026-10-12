@@ -139,8 +139,7 @@ pub(super) fn remove(root: &Path, name: &str) -> io::Result<()> {
         Err(error) => return Err(error),
         Ok(_) => {}
     }
-    let trash = root.join(POOL_TRASH_DIR);
-    std::fs::create_dir_all(&trash)?;
+    let trash = trash_dir(root)?;
     let seq = TRASH_SEQ.fetch_add(1, Ordering::Relaxed);
     let target = trash.join(format!("{name}-{}-{seq}", crate::run::driver::unix_now()));
     std::fs::rename(&dir, &target)?;
@@ -162,9 +161,30 @@ fn delete(path: &Path) {
     }
 }
 
-/// Decision 12: deletes whatever `root/trash/` holds (a crash's leftovers).
+/// `root/trash/` as a plain directory, made when missing; anything else there (a link,
+/// a file) is unlinked first, never followed (task-5 review M1).
+fn trash_dir(root: &Path) -> io::Result<PathBuf> {
+    let trash = root.join(POOL_TRASH_DIR);
+    match std::fs::symlink_metadata(&trash) {
+        Ok(meta) if meta.is_dir() => return Ok(trash),
+        Ok(_) => std::fs::remove_file(&trash)?,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    make_dir(&trash)?;
+    Ok(trash)
+}
+
+/// Decision 12: deletes whatever `root/trash/` holds (a crash's leftovers). A `trash`
+/// that is not a plain directory is unlinked, never listed (task-5 review M1).
 pub(super) fn empty_trash(root: &Path) {
-    let Ok(entries) = std::fs::read_dir(root.join(POOL_TRASH_DIR)) else {
+    let trash = root.join(POOL_TRASH_DIR);
+    match std::fs::symlink_metadata(&trash) {
+        Ok(meta) if meta.is_dir() => {}
+        Ok(_) => return delete(&trash),
+        Err(_) => return,
+    }
+    let Ok(entries) = std::fs::read_dir(&trash) else {
         return;
     };
     for entry in entries.flatten() {
@@ -213,15 +233,18 @@ pub(super) fn scrub(root: &Path, name: &str, book: &PoolBook) -> io::Result<()> 
     }
 }
 
-/// The repository directories under `data_dir/repos/` that hold a pool.
+/// The repository directories under `data_dir/repos/` that hold a pool (a plain
+/// `target-pool/` directory), each spelled by [`resolve`] (task-5 review M8).
 pub(super) fn pools_on_disk(data_dir: &Path) -> Vec<PathBuf> {
-    let Ok(entries) = std::fs::read_dir(data_dir.join("repos")) else {
+    let Ok(entries) = std::fs::read_dir(resolve(data_dir).join("repos")) else {
         return Vec::new();
     };
     let mut repos: Vec<PathBuf> = entries
         .flatten()
-        .map(|entry| entry.path())
-        .filter(|repo| repo.join(super::POOL_DIR_NAME).is_dir())
+        .map(|entry| resolve(&entry.path()))
+        .filter(|repo| {
+            std::fs::symlink_metadata(repo.join(super::POOL_DIR_NAME)).is_ok_and(|m| m.is_dir())
+        })
         .collect();
     repos.sort();
     repos
@@ -233,4 +256,22 @@ pub(super) fn absent(owners: Vec<PathBuf>) -> BTreeSet<PathBuf> {
         .into_iter()
         .filter(|owner| std::fs::symlink_metadata(owner).is_err())
         .collect()
+}
+
+/// `path` resolved: its nearest existing ancestor resolved, with the rest of its
+/// components appended (a repository directory may not exist yet at its first lease);
+/// as given when nothing resolves. The one spelling the pool keys a repository by
+/// (task-5 review M8) and compares `disabled_repos` on (C27).
+pub(super) fn resolve(path: &Path) -> PathBuf {
+    for ancestor in path.ancestors() {
+        if let Ok(resolved) = ancestor.canonicalize() {
+            let rest = path.strip_prefix(ancestor).unwrap_or(Path::new(""));
+            return if rest.as_os_str().is_empty() {
+                resolved
+            } else {
+                resolved.join(rest)
+            };
+        }
+    }
+    path.to_path_buf()
 }

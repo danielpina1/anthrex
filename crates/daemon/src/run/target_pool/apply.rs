@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use proto::Runtime;
 
-use super::{Leased, PoolClass, PoolCtx, TARGET_DIR_VAR, TargetPool, blocking};
+use super::{Leased, PoolClass, TARGET_DIR_VAR, TargetPool};
 use crate::lock;
 use crate::run::driver::OpCtx;
 use crate::run::engine::OpKind;
@@ -100,7 +100,7 @@ impl TargetPool {
         let Some(pool) = ctx.pool.as_deref() else {
             return Vec::new();
         };
-        let pool = self.canonical_root(pool.clone()).await;
+        let pool = pool.clone();
         let wanted: Vec<(PathBuf, Env)> = envs(kind)
             .into_iter()
             .filter(|(_, env)| sets_target(env))
@@ -156,21 +156,6 @@ impl TargetPool {
             confine.target_dir = Some(dir.clone());
         }
         notes
-    }
-
-    /// `pool` with its repository root resolved when `disabled_repos` names any, so
-    /// the comparison is on canonical paths (C27; macOS `/tmp` → `/private/tmp`). On a
-    /// blocking thread (AGENTS.md rule 2).
-    async fn canonical_root(&self, mut pool: PoolCtx) -> PoolCtx {
-        if self.disabled_repos.is_empty() {
-            return pool;
-        }
-        let root = pool.repo_root.clone();
-        if let Ok(resolved) = blocking(move || root.canonicalize().map_err(|e| e.to_string())).await
-        {
-            pool.repo_root = resolved;
-        }
-        pool
     }
 }
 

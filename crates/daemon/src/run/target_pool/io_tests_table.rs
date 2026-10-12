@@ -126,7 +126,9 @@ async fn a_gone_checkout_and_a_discarded_one_are_released_dirty_without_cargo() 
     );
     assert_eq!(rig.state(&pool, task(2)), Some(DirState::Dirty));
 
-    // Both are `Dirty`, so the next lease wipes first.
+    // Both are `Dirty`, so the next lease wipes first (task-5 review M3: `task-1`, the
+    // one it picks, holds something too).
+    plant(&rig.pool_dir("task-1"));
     let c = rig.checkout("t3");
     let dir = pool.lease(&rig.ctx, &c, &env()).await.unwrap();
     assert!(is_empty(&dir));
@@ -253,4 +255,109 @@ async fn a_linked_pool_dir_is_replaced_not_followed() {
         std::fs::read_to_string(outside.join("keep")).unwrap(),
         "mine"
     );
+}
+
+/// Task-5 review I1: a holder's re-lease that waits on its directory while its own
+/// release cleans it does not get the directory once the release has freed it, so no
+/// later owner can share it.
+#[tokio::test]
+async fn a_re_lease_racing_its_release_falls_back() {
+    let rig = Rig::new();
+    let pool = Arc::new(pool(1));
+    let a = rig.checkout("t1");
+    let dir = pool.lease(&rig.ctx, &a, &env()).await.unwrap();
+    let (mut cleaning, release_go) = seam(&pool, "cleaning");
+    let release = tokio::spawn({
+        let (pool, ctx, a) = (Arc::clone(&pool), rig.ctx.clone(), a.clone());
+        async move { pool.release(&ctx, None, &a, false).await }
+    });
+    wait_reached(&mut cleaning).await;
+    // The re-lease decides (the book still shows A holding `task-1`), then waits on the
+    // directory the paused release holds.
+    let (mut decided, lease_go) = seam(&pool, "dir lock");
+    let re_lease = tokio::spawn({
+        let (pool, ctx, a) = (Arc::clone(&pool), rig.ctx.clone(), a.clone());
+        async move { pool.lease(&ctx, &a, &env()).await }
+    });
+    wait_reached(&mut decided).await;
+    lease_go.send(()).unwrap();
+    release_go.send(()).unwrap();
+    release.await.unwrap();
+    assert_eq!(
+        re_lease.await.unwrap(),
+        None,
+        "A's re-lease got a freed dir"
+    );
+    let b = rig.checkout("t2");
+    assert_eq!(pool.lease(&rig.ctx, &b, &env()).await, Some(dir));
+    let book = pool.book(&rig.ctx.repo_dir).unwrap();
+    assert_eq!(
+        book.dir(task(1)).unwrap().owner.as_deref(),
+        Some(b.as_path())
+    );
+}
+
+/// Task-5 review M8: one pool has one book, whatever the spelling of its repository
+/// directory (a link, or `..`), so two spellings can never lease one directory twice.
+#[tokio::test]
+async fn one_pool_one_book_whatever_the_spelling() {
+    let rig = Rig::new();
+    std::fs::create_dir_all(rig.data.join("other")).unwrap();
+    let link = rig.root.join("data-link");
+    std::os::unix::fs::symlink(&rig.data, &link).unwrap();
+    let spellings = [
+        link.join("repos/repo-1"),
+        rig.data.join("other/../repos/repo-1"),
+    ];
+    for (n, repo_dir) in spellings.into_iter().enumerate() {
+        let pool = pool(1);
+        let other = PoolCtx {
+            repo_dir,
+            ..rig.ctx.clone()
+        };
+        // The other spelling's book is loaded first, with `task-1` free.
+        let x = rig.checkout(&format!("x{n}"));
+        pool.lease(&other, &x, &env()).await.unwrap();
+        pool.release(&other, None, &x, false).await;
+        let a = rig.checkout(&format!("a{n}"));
+        assert!(
+            pool.lease(&rig.ctx, &a, &env()).await.is_some(),
+            "spelling {n}"
+        );
+        let b = rig.checkout(&format!("b{n}"));
+        assert_eq!(pool.lease(&other, &b, &env()).await, None, "spelling {n}");
+        std::fs::remove_dir_all(rig.pool_root()).unwrap();
+    }
+    // `restore` through the link reads the same book: a lease is kept.
+    let pool = pool(1);
+    let a = rig.checkout("t1");
+    pool.lease(&rig.ctx, &a, &env()).await.unwrap();
+    pool.restore(&link, &["r1".to_string()].into()).await;
+    let b = rig.checkout("t2");
+    assert_eq!(pool.lease(&rig.ctx, &b, &env()).await, None);
+}
+
+/// Task-5 review M1: a `trash` that is a link is never followed: `restore` leaves its
+/// target's files alone, and a wipe does not rename into it.
+#[tokio::test]
+async fn a_linked_trash_is_not_followed() {
+    let rig = Rig::new();
+    let outside = rig.root.join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("keep"), "mine").unwrap();
+    std::fs::create_dir_all(rig.pool_root()).unwrap();
+    std::os::unix::fs::symlink(&outside, rig.pool_dir(POOL_TRASH_DIR)).unwrap();
+
+    let pool = pool(1);
+    pool.restore(&rig.data, &BTreeSet::new()).await;
+    assert_eq!(
+        std::fs::read_to_string(outside.join("keep")).unwrap(),
+        "mine"
+    );
+    let a = rig.checkout("t1");
+    let dir = pool.lease(&rig.ctx, &a, &env()).await.unwrap();
+    plant(&dir);
+    pool.release(&rig.ctx, None, &a, true).await;
+    let entries: Vec<_> = std::fs::read_dir(&outside).unwrap().flatten().collect();
+    assert_eq!(entries.len(), 1, "a wipe renamed into the link's target");
 }

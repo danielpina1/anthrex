@@ -19,6 +19,11 @@ mod book;
 pub mod clean;
 mod disk;
 mod release_clean;
+#[cfg(test)]
+mod seam;
+#[cfg(test)]
+pub(crate) use seam::Seam;
+mod spelling;
 mod upkeep;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -100,8 +105,13 @@ pub(crate) enum Leased {
 /// The daemon-wide pool: one book per repository, loaded lazily (C10).
 pub struct TargetPool {
     enabled: bool,
-    /// `disabled_repos`, canonicalized once at construction (C27).
-    disabled_repos: Vec<PathBuf>,
+    /// `disabled_repos` as configured, and resolved on a blocking thread at the first
+    /// lease or release (C27; task-5 review M6: never on the constructing thread).
+    disabled_raw: Vec<PathBuf>,
+    disabled_repos: std::sync::OnceLock<Vec<PathBuf>>,
+    /// Each repository directory and root as given, resolved once (task-5 review M8):
+    /// the books, tables and directory locks are keyed by one spelling.
+    spellings: Mutex<BTreeMap<PathBuf, PathBuf>>,
     task_dirs: u16,
     engine_dirs: u16,
     cap_bytes: u64,
@@ -128,17 +138,11 @@ pub struct TargetPool {
 impl TargetPool {
     /// The pool `config` describes; `max_writers` sizes an unset `task_dirs` (C26).
     pub fn new(config: &config::TargetPool, max_writers: u8) -> Self {
-        let disabled_repos = config
-            .disabled_repos
-            .iter()
-            .map(|root| {
-                let root = PathBuf::from(root);
-                root.canonicalize().unwrap_or(root)
-            })
-            .collect();
         TargetPool {
             enabled: config.enabled,
-            disabled_repos,
+            disabled_raw: config.disabled_repos.iter().map(PathBuf::from).collect(),
+            disabled_repos: std::sync::OnceLock::new(),
+            spellings: Mutex::new(BTreeMap::new()),
             task_dirs: config.task_dirs_for(max_writers),
             engine_dirs: config.engine_dirs,
             cap_bytes: u64::from(config.max_gb).saturating_mul(GB),
@@ -196,7 +200,12 @@ impl TargetPool {
         let Some(class) = class_of(checkout, &pool.runs_dir, &pool.integration, &pool.full) else {
             return Leased::Skip;
         };
-        if !self.enabled || self.disabled_repos.contains(&pool.repo_root) {
+        if !self.enabled {
+            return Leased::Skip;
+        }
+        let pool = &self.spelled(pool).await;
+        let disabled = self.disabled_repos.get().map(Vec::as_slice).unwrap_or(&[]);
+        if disabled.contains(&pool.repo_root) {
             return Leased::Skip;
         }
         let repo = &pool.repo_dir;
@@ -236,7 +245,21 @@ impl TargetPool {
 
         let root = repo.join(POOL_DIR_NAME);
         let dir_lock = self.dir_lock(&root.join(id.name()));
+        #[cfg(test)]
+        self.pause("dir lock").await;
         let held = dir_lock.lock().await;
+        // Task-5 review I1: a release of this checkout that held the directory may have
+        // freed it meanwhile; the lease stands only while the book still says so.
+        let still = lock(&self.books).get(repo).is_some_and(|book| {
+            book.dir(id).is_some_and(|d| {
+                d.state == DirState::Leased && d.owner.as_deref() == Some(checkout)
+            })
+        });
+        if !still {
+            drop(held);
+            lock(&self.fell_back).insert(checkout.to_path_buf());
+            return Leased::Skip;
+        }
         let name = id.name();
         let prepared =
             blocking(move || disk::prepare(&root, &name, wipe_first).map_err(|e| e.to_string()))
@@ -339,21 +362,6 @@ impl TargetPool {
             tracing::warn!(%error, "target pool: could not delete a directory past the size");
         }
     }
-
-    #[cfg(test)]
-    async fn pause(&self, stage: &'static str) {
-        let seam = {
-            let mut seam = lock(&self.seam);
-            match seam.as_ref() {
-                Some(s) if s.stage == stage => seam.take(),
-                _ => None,
-            }
-        };
-        if let Some(seam) = seam {
-            let _ = seam.reached.send(());
-            let _ = seam.go.lock().await.recv().await;
-        }
-    }
 }
 
 /// `f` on a blocking thread (AGENTS.md rule 2).
@@ -363,22 +371,6 @@ async fn blocking<T: Send + 'static>(
     match tokio::task::spawn_blocking(f).await {
         Ok(result) => result,
         Err(error) => Err(format!("a blocking step did not finish: {error}")),
-    }
-}
-
-/// A test seam: the pool stops at `stage` once, says so on `reached`, and waits for
-/// `go`.
-#[cfg(test)]
-pub(crate) struct Seam {
-    pub stage: &'static str,
-    pub reached: tokio::sync::mpsc::UnboundedSender<()>,
-    pub go: Arc<AsyncMutex<tokio::sync::mpsc::UnboundedReceiver<()>>>,
-}
-
-#[cfg(test)]
-impl TargetPool {
-    pub(crate) fn set_seam(&self, seam: Seam) {
-        *lock(&self.seam) = Some(seam);
     }
 }
 

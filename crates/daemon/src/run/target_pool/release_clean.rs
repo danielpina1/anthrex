@@ -30,6 +30,8 @@ impl TargetPool {
         checkout: &Path,
         clean: bool,
     ) -> ReleaseOutcome {
+        // Task-5 review M8: the one spelling its lease was keyed by.
+        let pool = &self.spelled(pool).await;
         let repo = &pool.repo_dir;
         let id = {
             let _table = self.table(repo).await;
@@ -46,6 +48,8 @@ impl TargetPool {
         let root = repo.join(POOL_DIR_NAME);
         let dir_lock = self.dir_lock(&root.join(id.name()));
         let _held = dir_lock.lock().await;
+        #[cfg(test)]
+        self.pause("cleaning").await;
         let env = lock(&self.envs).remove(checkout).unwrap_or_default();
         let (cap_bytes, checkout_path) = (self.cap_bytes, checkout.to_path_buf());
         let confine = confine.cloned();
