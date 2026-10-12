@@ -32,6 +32,9 @@ mod clamp;
 pub(crate) use clamp::floor_boundary;
 pub use clamp::{DIFF_CUT_MARKER, REVIEW_DIFF_MAX, clamp_diff, clamp_with};
 
+// Decision 56's protected-file bounce (milestone 9.13 decision 3 moved it).
+pub use super::contract_protected::protected_file_message;
+
 /// The worker's system prompt (decision 30, exact). It never varies, so the cached
 /// prefix is stable (spec §14.2).
 pub const WORKER_CONTRACT: &str = "You are a worker in an anthrex orchestration run.
@@ -415,19 +418,6 @@ pub fn generated_files_message(files: &[String]) -> String {
     format!(
         "[anthrex] task_done rejected: you changed generated files outside this task's owns: {files}. Revert them (git checkout <start> -- {files}, then commit), or this task must own them. Then call task_done again."
     )
-}
-
-/// Decision 56's rung-1 message (exact): one line per file.
-pub fn protected_file_message(files: &[String]) -> String {
-    let mut lines = vec!["[anthrex] task_done rejected:".to_string()];
-    lines.extend(files.iter().map(|path| {
-        format!(
-            "{path} configures or instructs future agents; this task may change it only if its owns names it exactly"
-        )
-    }));
-    lines
-        .push("Revert it and call task_done again, or ask for the plan to be amended.".to_string());
-    lines.join("\n")
 }
 
 /// Decision 54: the block text when Claude Code's sandbox cannot start (exact).
