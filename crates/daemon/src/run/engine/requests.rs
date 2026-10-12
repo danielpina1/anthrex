@@ -392,12 +392,18 @@ pub(super) fn retry_on(
     };
     let who = actor.who();
     let task = &run.tasks[i];
+    // PR #60 review I1: a review or CI fix task's line names the block's reason only;
+    // its worker's text would show as the digest's `last` without tainting.
+    let fix = crate::run::orch::untrusted::fix_kind(task).is_some();
     let was = task.block.clone().map_or_else(String::new, |b| {
         let label = serde_json::to_value(b.reason)
             .ok()
             .and_then(|v| v.as_str().map(str::to_string))
             .unwrap_or_default();
-        format!(" (it was blocked({label}): {})", b.text)
+        match fix {
+            true => format!(" (it was blocked ({label}))"),
+            false => format!(" (it was blocked({label}): {})", b.text),
+        }
     });
     // Milestone 9.13 decisions 14-15: a successful retry by the user gives the orchestrator
     // its retries again; one by the orchestrator uses one up. Before the crown branch,

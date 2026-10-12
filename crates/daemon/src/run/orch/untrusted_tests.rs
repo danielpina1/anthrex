@@ -313,3 +313,23 @@ fn a_plan_tasks_block_line_as_last_is_not_a_source() {
     );
     assert_eq!(source(&run), None);
 }
+
+/// PR #60 review I1: a racer's lines are kept with a `racer {lane}: ` prefix once its
+/// lane's view ends (`engine/race_view.rs`); a fix task's block or note line written so
+/// is still its worker's text, and a source as its entry's `last`. A plan task's is not.
+#[test]
+fn a_fix_tasks_racer_line_as_last_is_a_source() {
+    let cases = [
+        ("blocked (question)", "task t5's block (review fix)"),
+        ("note (risk)", "task t5's note (review fix)"),
+    ];
+    for (line, want) in cases {
+        let mut run = with_t5(TaskOrigin::Review, &[]);
+        let text = format!("racer b: {line}: {COMMENT}");
+        event(task_mut(&mut run, "t5"), NOW - 60, &text);
+        assert_eq!(source(&run).as_deref(), Some(want), "{line}");
+        let mut run = with_t5(TaskOrigin::Plan, &[]);
+        event(task_mut(&mut run, "t5"), NOW - 60, &text);
+        assert_eq!(source(&run), None, "{line}");
+    }
+}

@@ -276,6 +276,9 @@ fn enter(run: &mut Run, i: usize, k: usize) -> Held {
 
 fn leave(run: &mut Run, i: usize, k: usize, held: Held) -> Exit {
     let id = run.tasks[i].id().to_string();
+    // PR #60 review I1: a review or CI fix task's lane leaves for its block's reason
+    // only; the `out` line would show its worker's text as the digest's `last`.
+    let fix = crate::run::orch::untrusted::fix_kind(&run.tasks[i]).is_some();
     let task = &mut run.tasks[i];
     let label = task.lane_view.take().expect("a lane's view");
     task.parked_readers = 0;
@@ -321,7 +324,12 @@ fn leave(run: &mut Run, i: usize, k: usize, held: Held) -> Exit {
             TaskState::Review => keep(&mut lane, LaneState::Review),
             TaskState::MergeQueue => Exit::Passed,
             TaskState::Blocked => {
-                let reason = block.as_ref().map(|b| b.text.clone()).unwrap_or_default();
+                let reason = match (&block, fix) {
+                    (Some(b), true) => {
+                        format!("blocked ({})", crate::run::orch::json::label(&b.reason))
+                    }
+                    (b, _) => b.as_ref().map(|b| b.text.clone()).unwrap_or_default(),
+                };
                 // Minor m7: past rung 1 the lane's rung says why it is out.
                 lane.gates.block = block.filter(|_| lane.gates.rung < 2);
                 // The final fix wave's m8: an untyped block waits for the adoption.

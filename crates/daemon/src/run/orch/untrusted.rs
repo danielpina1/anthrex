@@ -73,10 +73,7 @@ pub fn digest_source(digest: &Value, run: &Run) -> Option<String> {
     let fix = |id: &str| run.task(id).and_then(fix_kind);
     // Controller ruling (task 11): a cleared block whose line is still the entry's
     // `last` (`{HH:MM} blocked ({reason}): …`, `dispatch::block`) shows the same text.
-    let is_block_line = |last: &str| {
-        last.split_once(' ')
-            .is_some_and(|(_, t)| t.starts_with("blocked ("))
-    };
+    let is_block_line = |last: &str| line_text(last).starts_with("blocked (");
     let block = tasks().find_map(|entry| {
         let last_blocked = entry["last"].as_str().is_some_and(is_block_line);
         if entry["block"].is_null() && !last_blocked {
@@ -99,10 +96,7 @@ fn note_source<'a>(
     let line = |id: &str| Some(format!("task {id}'s note ({} fix)", fix(id)?));
     let notes = digest["task_notes"].as_array().into_iter().flatten();
     let in_notes = notes.filter_map(|n| n["task"].as_str()).find_map(line);
-    let is_note = |last: &str| {
-        last.split_once(' ')
-            .is_some_and(|(_, t)| t.starts_with("note ("))
-    };
+    let is_note = |last: &str| line_text(last).starts_with("note (");
     in_notes
         .or_else(|| {
             tasks
@@ -116,6 +110,17 @@ fn note_source<'a>(
                 .filter_map(|l| l.as_str()?.split_once(" noted a ").map(|(id, _)| id))
                 .find_map(line)
         })
+}
+
+/// A task entry's `last` (`{HH:MM} {text}`) without its time, and without the
+/// `racer {lane}: ` prefix a racer's lines keep once its lane's view ends
+/// (`engine/race_view.rs`; PR #60 review I1).
+fn line_text(last: &str) -> &str {
+    let text = last.split_once(' ').map_or("", |(_, t)| t);
+    text.strip_prefix("racer ")
+        .and_then(|rest| rest.split_once(": "))
+        .filter(|(lane, _)| !lane.is_empty() && !lane.contains(' '))
+        .map_or(text, |(_, t)| t)
 }
 
 /// Decision 19's second rule: a `task_result` of a review or CI fix task.

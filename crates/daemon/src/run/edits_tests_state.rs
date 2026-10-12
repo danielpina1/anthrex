@@ -356,6 +356,24 @@ fn a_cancel_records_the_dependents_earlier_block() {
     );
 }
 
+/// PR #60 review I1: a review or CI fix task's line names its earlier block's reason,
+/// never its worker's text, which the orchestrator's digest would show untainted.
+#[test]
+fn a_cancel_names_a_fix_tasks_earlier_block_without_its_text() {
+    for origin in [proto::TaskOrigin::Review, proto::TaskOrigin::Ci] {
+        let mut run = chain();
+        set_state(&mut run, "t2", TaskState::Blocked, Some(BlockReason::Human));
+        let t2 = run.tasks.iter_mut().find(|t| t.id() == "t2").unwrap();
+        t2.origin = origin;
+        let (edited, _) = applied(&run, vec![cancel("t1")]);
+        assert_eq!(
+            task(&edited, "t2").history.last().map(|e| e.text.as_str()),
+            Some("blocked: dependency t1 was cancelled (was blocked(human))"),
+            "{origin:?}"
+        );
+    }
+}
+
 #[test]
 fn an_empty_amend_is_refused() {
     assert_eq!(

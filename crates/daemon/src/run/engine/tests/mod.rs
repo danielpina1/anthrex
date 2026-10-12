@@ -120,6 +120,7 @@ mod exit_duplicates;
 mod exit_startup;
 mod fast_path;
 mod first_turn;
+mod fix_history;
 mod fix_routes;
 mod fixes;
 mod fixture;
