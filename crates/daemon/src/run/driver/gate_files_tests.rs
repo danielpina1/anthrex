@@ -194,7 +194,16 @@ fn the_done_gate_bounces_a_created_gnumakefile_unless_granted() {
     use crate::run::gate_words::protect;
     use crate::run::git::{prepare_worktree, verify_done};
     use crate::run::globs::{OwnsMatcher, ProtectedMatcher};
-    let tmp = tempfile::tempdir().unwrap();
+    /// The worktree's task-temporary directory (`git::task_tmp`) goes with the test,
+    /// even when it fails (the leak gate's rule).
+    struct Dir(tempfile::TempDir);
+    impl Drop for Dir {
+        fn drop(&mut self) {
+            let _ = crate::run::git::remove_task_tmps_beneath(self.0.path());
+        }
+    }
+    let tmp = Dir(tempfile::tempdir().unwrap());
+    let tmp = &tmp.0;
     let root = tmp.path().join("repo");
     let base = repo(&root);
     let files = read(
