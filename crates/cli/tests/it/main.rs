@@ -48,6 +48,7 @@ mod run_design_fixtures;
 mod run_e2e_adapt;
 mod run_e2e_adapt_engine;
 mod run_e2e_adapt_profile;
+mod run_e2e_admit;
 mod run_e2e_base;
 mod run_e2e_basic;
 mod run_e2e_bisect;

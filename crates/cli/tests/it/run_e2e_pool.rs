@@ -20,6 +20,7 @@ use daemon::run::target_pool::{
     DirState, LeasesFile, POOL_CLEAN_TIMEOUT, POOL_DIR_NAME, POOL_LEASES_FILE, PoolClass,
 };
 use proto::{FinishAction, RunReply, RunRequest, RunState, TaskState};
+use serde_json::Value;
 use support::run_harness::{RUN_WAIT, RunHarness};
 use support::run_plans::*;
 use support::run_pr::log_lines;
@@ -159,6 +160,48 @@ fn held_by(leases: &LeasesFile, checkout: &str) -> Option<String> {
         .map(|d| format!("task-{}", d.k))
 }
 
+/// The fallback note of t2's worktree (decision 7).
+const T2_FELL_BACK: &str =
+    "target pool: no free task directory for t2; it builds in its own target directory";
+
+/// The `sh` step t2's worker runs before its `task_done`: it waits for `gate`.
+///
+/// Timing: t2 depends on t1, so its worker starts after t1's merge and then waits for
+/// t1's two releases, one `POOL_CLEAN_TIMEOUT` each (240 s), and for t2's worktree
+/// lease, one engine step. The binding bound is `fake-agent`'s `SH_TIMEOUT` (330 s,
+/// `crates/fake-agent/src/headless.rs`, a binary crate, so named here): it cuts the step
+/// before the loop's own `wait_for(2)` (`RUN_WAIT + 2 × POOL_CLEAN_TIMEOUT`, 540 s, in
+/// 0.1 s polls) can, and 330 s exceeds the 240 s it must cover.
+fn wait_gate(gate: &Path) -> Value {
+    let polls = wait_for(2).as_millis() / 100;
+    sh(&format!(
+        "i=0; until [ -e '{}' ]; do i=$((i+1)); [ $i -gt {polls} ] && exit 1; sleep 0.1; done",
+        gate.display()
+    ))
+}
+
+/// Opens `gate` once t1 is merged, neither of its checkouts holds a directory, and t2's
+/// worktree lease is decided (a directory held, or its fallback note logged); returns
+/// the directory t2's worktree holds. Bounded by `wait_for(2)`: t1's task path and its
+/// two releases (the file's header).
+fn open_gate_after_t1(h: &RunHarness, id: &str, gate: &Path) -> Option<String> {
+    let held = until("t1's releases and t2's lease", wait_for(2), || {
+        let run = h.run(id)?;
+        if t(&run, "t1").state != TaskState::Merged {
+            return None;
+        }
+        let leases = leases_now(h)?;
+        let t1_held = ["t1", "t1.proof"]
+            .iter()
+            .any(|c| held_by(&leases, c).is_some());
+        let held = held_by(&leases, "t2");
+        let noted = pool_notes(h, id).iter().any(|n| n == T2_FELL_BACK);
+        (!t1_held && (held.is_some() || noted)).then_some(held)
+    });
+    std::fs::write(gate, b"").unwrap();
+    held
+}
+
 /// C14: one writer and two task directories (a task worktree and its `.proof` are
 /// different owners, decision 4, and the `check` runs in `.proof`). t1's worktree and
 /// its `.proof` take both; t2's `.proof` builds in one of them after their release.
@@ -175,43 +218,22 @@ fn held_by(leases: &LeasesFile, checkout: &str) -> Option<String> {
 fn e2e_a_second_task_reuses_the_released_dir() {
     let h = harness("max_writers = 1\n", "task_dirs = 2\n");
     scripts(&h, "t1", "a.txt");
-    // Timing: t1 runs, merges and releases its two directories within `wait_for(2)`
-    // (`RUN_WAIT` for the task, one `POOL_CLEAN_TIMEOUT` per release, see the file's
-    // header); the worker's own wait has the same bound, in 0.1 s polls.
     let gate = h.dir.path().join("t2-gate");
-    let polls = wait_for(2).as_millis() / 100;
-    let wait_gate = format!(
-        "i=0; until [ -e '{}' ]; do i=$((i+1)); [ $i -gt {polls} ] && exit 1; sleep 0.1; done",
-        gate.display()
-    );
     h.script(
         "worker-t2-1",
-        &[commit("b.txt", "x\n"), sh(&wait_gate), done("added b.txt")],
+        &[
+            commit("b.txt", "x\n"),
+            wait_gate(&gate),
+            done("added b.txt"),
+        ],
     );
     h.script("reviewer-t2-1", &[approve()]);
     let plan = plan_of(&[
         task("t1", &["a.txt"], ""),
         task("t2", &["b.txt"], "deps = [\"t1\"]"),
     ]);
-    let fell_back =
-        "target pool: no free task directory for t2; it builds in its own target directory";
     let id = h.start(&plan, true);
-    // Open the gate once t1 is merged, neither of its checkouts holds a directory, and
-    // t2's worktree lease is decided: a directory held, or its fallback note logged.
-    let t2_worktree_dir = until("t1's releases and t2's lease", wait_for(2), || {
-        let run = h.run(&id)?;
-        if t(&run, "t1").state != TaskState::Merged {
-            return None;
-        }
-        let leases = leases_now(&h)?;
-        let t1_held = ["t1", "t1.proof"]
-            .iter()
-            .any(|c| held_by(&leases, c).is_some());
-        let held = held_by(&leases, "t2");
-        let noted = pool_notes(&h, &id).iter().any(|n| n == fell_back);
-        (!t1_held && (held.is_some() || noted)).then_some(held)
-    });
-    std::fs::write(&gate, b"").unwrap();
+    let t2_worktree_dir = open_gate_after_t1(&h, &id, &gate);
 
     let run = h.wait_run(&id, complete, wait_for(2));
     assert_eq!(t(&run, "t2").state, TaskState::Merged);
@@ -237,6 +259,119 @@ fn e2e_a_second_task_reuses_the_released_dir() {
         // its `.proof`. Which of t1's two free directories the `.proof` gets is decision
         // 5's least-recently-used choice between two releases that may end in the same
         // second, so it is not pinned (recorded as a 9.14 follow-up).
-        None => assert_eq!(notes, [fell_back]),
+        None => assert_eq!(notes, [T2_FELL_BACK]),
     }
+}
+
+/// The C14 scenario's one-crate workspace: `pool-bin` prints `v::VALUE`, which each
+/// task changes. No dependency, so `cargo run --offline` builds it.
+const BIN_WORKSPACE: &[(&str, &str)] = &[
+    (
+        "Cargo.toml",
+        "[package]\nname = \"pool-bin\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    ),
+    (
+        "Cargo.lock",
+        "# This file is automatically @generated by Cargo.\n# It is not intended for manual editing.\nversion = 4\n\n[[package]]\nname = \"pool-bin\"\nversion = \"0.1.0\"\n",
+    ),
+    (
+        "src/main.rs",
+        "mod v;\n\nfn main() {\n    println!(\"{}\", v::VALUE);\n}\n",
+    ),
+    ("src/v.rs", "pub const VALUE: &str = \"base\";\n"),
+    ("check.sh", BIN_CHECK_SH),
+];
+
+/// The check: never without an explicit `$CARGO_TARGET_DIR`. It sets the sources'
+/// mtimes back to 2000 (F8: the incident needs sources older than the previous owner's
+/// build), runs the binary, and appends `<checkout> <value> <target dir>` to
+/// `$CHECK_LOG`, in the harness's cache directory (writable to a confined check).
+const BIN_CHECK_SH: &str = "set -e\n[ -n \"$CARGO_TARGET_DIR\" ]\n\
+touch -t 200001010000 src/main.rs src/v.rs\n\
+v=$(cargo run --offline -q)\n\
+echo \"$(basename \"$PWD\") $v $CARGO_TARGET_DIR\" >> \"$CHECK_LOG\"\n";
+
+fn value(task: &str) -> String {
+    format!("pub const VALUE: &str = \"{task}\";\n")
+}
+
+/// The check lines of `checkout`: `(value, target dir)`.
+fn checks_of(log: &Path, checkout: &str) -> Vec<(String, PathBuf)> {
+    let text = std::fs::read_to_string(log).unwrap_or_default();
+    (text.lines())
+        .filter_map(|line| {
+            let mut words = line.splitn(3, ' ');
+            (words.next()? == checkout).then_some(())?;
+            let value = words.next()?.to_string();
+            Some((value, PathBuf::from(words.next()?)))
+        })
+        .collect()
+}
+
+/// C14, under the controller's ruling (M9.14.10 implementation notes): t1 then t2 with
+/// one writer and two task directories, each changing `v::VALUE` and checking it with
+/// real `cargo run --offline`. t1's worker also builds its worktree, so both of t1's
+/// directories hold t1's build when they are released; t2's `.proof` is ordered after
+/// those releases (the gate above), so wherever it leases, it builds over t1's
+/// artifacts with sources older than them: the F8 incident, which only the release
+/// clean prevents. Asserted: t2's check ran in a pool `task-<k>` directory (not a
+/// fallback), no pool note names `t2.proof`, and it printed t2's value. Not asserted:
+/// that it is the directory t1's check used (task 6 deviation 1, task 7 concern 2).
+#[test]
+fn e2e_two_tasks_on_one_pool_dir_the_second_runs_its_own_code() {
+    let h = RunHarness::with_config(
+        "max_writers = 1\n",
+        "[target_pool]\ntask_dirs = 2\n",
+        BIN_WORKSPACE,
+    );
+    let log = h.cache_dir().join("checks.log");
+    h.stored_profile(&format!(
+        "check = \"sh check.sh\"\ncheck_timeout_secs = 10\n\n[env]\nCARGO_TARGET_DIR = \"{{worktree}}/target\"\nCHECK_LOG = {:?}\n",
+        log.display().to_string()
+    ));
+    let build = sh("[ -n \"$CARGO_TARGET_DIR\" ] && cargo build --offline -q");
+    h.script(
+        "worker-t1-1",
+        &[commit("src/v.rs", &value("t1")), build, done("t1")],
+    );
+    h.script("reviewer-t1-1", &[approve()]);
+    let gate = h.dir.path().join("t2-gate");
+    h.script(
+        "worker-t2-1",
+        &[
+            commit("src/v.rs", &value("t2")),
+            wait_gate(&gate),
+            done("t2"),
+        ],
+    );
+    h.script("reviewer-t2-1", &[approve()]);
+    let plan = plan_of(&[
+        task("t1", &["src/v.rs"], ""),
+        task("t2", &["src/v.rs"], "deps = [\"t1\"]"),
+    ]);
+    let id = h.start(&plan, true);
+    open_gate_after_t1(&h, &id, &gate);
+    let run = h.wait_run(&id, complete, wait_for(2));
+    assert_eq!(t(&run, "t2").state, TaskState::Merged, "{}", report(&run));
+
+    let first = checks_of(&log, "t1.proof");
+    assert!(first.iter().all(|(v, _)| v == "t1"), "{first:?}");
+    let second = checks_of(&log, "t2.proof");
+    assert!(!second.is_empty(), "t2's check ran: {second:?}");
+    let pool = pool_root(&h).canonicalize().unwrap();
+    for (printed, target) in &second {
+        let name = target.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let parent = target.parent().and_then(|p| p.canonicalize().ok());
+        assert!(
+            parent.as_deref() == Some(pool.as_path()) && name.starts_with("task-"),
+            "t2's check built in {}, not a pool task directory",
+            target.display()
+        );
+        assert_eq!(printed, "t2", "t2's check ran t1's code (F8)");
+    }
+    let notes = pool_notes(&h, &id);
+    assert!(
+        notes.iter().all(|n| n == T2_FELL_BACK),
+        "a pool note other than t2's worktree fallback: {notes:?}"
+    );
 }

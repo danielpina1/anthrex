@@ -226,17 +226,23 @@ pub(crate) fn fill_notify_payload(payload: &mut Value) -> Result<()> {
 }
 
 pub(crate) fn run_hook(command: &str, payload: &Value) -> Result<()> {
-    hook_process(command, payload, false).map(drop)
+    hook_process(command, payload, false, STEP_TIMEOUT).map(drop)
 }
 
 /// [`run_hook`], returning what the command printed on stdout instead of passing it
-/// through (the `bash` step reads `hookSpecificOutput` from it, M8b decision 37).
-pub(crate) fn run_hook_output(command: &str, payload: &Value) -> Result<String> {
-    hook_process(command, payload, true)
+/// through (the `bash` step reads `hookSpecificOutput` from it, M8b decision 37). A
+/// hook entry's own `timeout`, when its settings give one, replaces `STEP_TIMEOUT`
+/// (milestone 9.14: the admission hook waits up to `W + ADMIT_HOOK_SLACK_SECS`).
+pub(crate) fn run_hook_output(
+    command: &str,
+    payload: &Value,
+    timeout: Option<Duration>,
+) -> Result<String> {
+    hook_process(command, payload, true, timeout.unwrap_or(STEP_TIMEOUT))
 }
 
-fn hook_process(command: &str, payload: &Value, capture: bool) -> Result<String> {
-    let deadline = Instant::now() + STEP_TIMEOUT;
+fn hook_process(command: &str, payload: &Value, capture: bool, limit: Duration) -> Result<String> {
+    let deadline = Instant::now() + limit;
     let bytes = serde_json::to_vec(payload).context("encode hook payload")?;
     let mut child_command = Command::new("/bin/sh");
     child_command.args(["-c", command]).stdin(Stdio::piped());

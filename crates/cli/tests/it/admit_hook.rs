@@ -18,6 +18,13 @@ use support::{RunningCommand, TestDaemon, assert_silent_success, isolated_comman
 /// `anthrex` spawn (≤ 85 ms loaded, `docs/timing-budgets.md`) and an immediate
 /// `ECONNREFUSED` or an exit before connecting; 3 s is clear of both by a wide margin.
 const LIMIT: Duration = Duration::from_secs(3);
+/// An ask that reaches the daemon and is answered at once (a free slot, a held key, an
+/// unknown window), and a wait for the daemon's log line about such an ask: an
+/// `anthrex` spawn, the `Hello`/`Welcome` handshake (whose legal worst case is the
+/// client's `HANDSHAKE_TIMEOUT`, 5 s) and then one log write through the non-blocking
+/// appender (milliseconds). `LIMIT` on top of the handshake covers the spawn and the
+/// flush (M9.14.10's timing rows; task 8 review M5, task 9 review Minor 7).
+const ASK_LIMIT: Duration = Duration::from_secs(HANDSHAKE_TIMEOUT.as_secs() + LIMIT.as_secs());
 /// Room for a loaded machine on top of a bound's legal worst case.
 const WALL_CLOCK_SLACK: Duration = Duration::from_secs(10);
 
@@ -92,7 +99,7 @@ impl Rig {
 
     /// Waits (deadline loop) until the log has `message` for `tool_use_id`.
     fn wait_for(&self, message: &str, tool_use_id: &str) {
-        self.wait_for_within(message, tool_use_id, LIMIT);
+        self.wait_for_within(message, tool_use_id, ASK_LIMIT);
     }
 
     fn wait_for_within(&self, message: &str, tool_use_id: &str, limit: Duration) {
@@ -157,7 +164,10 @@ fn a_light_command_or_no_tool_use_id_never_connects() {
 fn admit_returns_after_the_wait_budget_and_exits_zero() {
     let rig = Rig::start();
     let window = rig.window();
-    finish(rig.admit(window, 60, &bash(Some("a"), "cargo test")), LIMIT);
+    finish(
+        rig.admit(window, 60, &bash(Some("a"), "cargo test")),
+        ASK_LIMIT,
+    );
     rig.wait_for("admit granted", "a");
 
     let wait = Duration::from_secs(1);
@@ -179,7 +189,7 @@ fn a_held_tool_use_asked_again_is_admitted_at_once() {
     let rig = Rig::start();
     let window = rig.window();
     let payload = bash(Some("a"), "cargo test");
-    finish(rig.admit(window, 60, &payload), LIMIT);
+    finish(rig.admit(window, 60, &payload), ASK_LIMIT);
     rig.wait_for("admit granted", "a");
     let wait = Duration::from_secs(60);
     let start = Instant::now();
@@ -197,8 +207,8 @@ fn an_ask_for_an_unknown_window_exits_zero_at_once() {
     let rig = Rig::start();
     rig.window();
     let start = Instant::now();
-    finish(rig.admit(99, 60, &bash(Some("z"), "cargo test")), LIMIT);
-    assert!(start.elapsed() < LIMIT, "{:?}", start.elapsed());
+    finish(rig.admit(99, 60, &bash(Some("z"), "cargo test")), ASK_LIMIT);
+    assert!(start.elapsed() < ASK_LIMIT, "{:?}", start.elapsed());
     rig.wait_for("admit asked", "z");
     assert_eq!(rig.lines("admit granted", "z"), 0, "{}", rig.log());
 }
@@ -219,7 +229,7 @@ const W: Duration = Duration::from_secs(60);
 /// A (window `a`, tool use `a`) holds the only slot and B (window `b`, tool use `b`)
 /// waits behind it with W; returns B and when it started.
 fn held_and_waiting(rig: &Rig, a: u32, b: u32) -> (RunningCommand, Instant) {
-    finish(rig.admit(a, 60, &bash(Some("a"), "cargo test")), LIMIT);
+    finish(rig.admit(a, 60, &bash(Some("a"), "cargo test")), ASK_LIMIT);
     rig.wait_for("admit granted", "a");
     let start = Instant::now();
     let waiting = rig.admit(b, W.as_secs(), &bash(Some("b"), "cargo build"));
@@ -267,8 +277,8 @@ fn a_post_tool_use_failure_releases_the_hold() {
 fn stop_releases_every_hold_of_the_window() {
     let rig = Rig::with_slots(2);
     let (a, b) = (rig.named("a"), rig.named("b"));
-    finish(rig.admit(a, 60, &bash(Some("a1"), "cargo test")), LIMIT);
-    finish(rig.admit(a, 60, &bash(Some("a2"), "cargo test")), LIMIT);
+    finish(rig.admit(a, 60, &bash(Some("a1"), "cargo test")), ASK_LIMIT);
+    finish(rig.admit(a, 60, &bash(Some("a2"), "cargo test")), ASK_LIMIT);
     rig.wait_for("admit granted", "a1");
     rig.wait_for("admit granted", "a2");
     let start = Instant::now();
@@ -290,7 +300,7 @@ fn stop_releases_every_hold_of_the_window() {
 fn a_client_that_goes_away_gives_up_its_place() {
     let rig = Rig::start();
     let (a, b) = (rig.named("a"), rig.named("b"));
-    finish(rig.admit(a, 60, &bash(Some("a"), "cargo test")), LIMIT);
+    finish(rig.admit(a, 60, &bash(Some("a"), "cargo test")), ASK_LIMIT);
     rig.wait_for("admit granted", "a");
 
     let rt = support::runtime();

@@ -314,6 +314,7 @@ impl Agent {
             .env_remove("FAKE_AGENT_STDIN_FILE")
             .env_remove("FAKE_AGENT_DECIDER_DIR")
             .env_remove("FAKE_AGENT_BASH_LOG")
+            .env_remove("FAKE_AGENT_TOOL_IDS")
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("ANTHREX_SOCKET", cwd.join("never.sock"))

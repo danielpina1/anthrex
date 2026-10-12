@@ -160,12 +160,19 @@ impl Runner {
     /// the original command, as the real CLI's stream does (M8b.1 item 3); only the
     /// `tool_result` carries the rewritten run's output.
     fn bash(&mut self, cmd: &str) -> Result<Outcome> {
-        let ran = crate::bash::rewrite(&self.hooks, cmd, &self.session)?;
+        // Milestone 9.14: with `FAKE_AGENT_TOOL_IDS=1`, an id for the call's hooks and a
+        // `PostToolUse` after its command.
+        let id = crate::bash::next_tool_id();
+        let ran = crate::bash::rewrite(&self.hooks, cmd, &self.session, id.as_deref())?;
         self.events.command_started(cmd)?;
         let (out, code) = match self.run_sh(&ran)? {
             Err(id) => return Ok(Outcome::Interrupted(id)),
             Ok(done) => done,
         };
+        if let Some(id) = &id {
+            let call = (cmd, id.as_str(), self.session.as_str());
+            crate::bash::post_tool_use(&self.hooks, call, &out.stdout, code)?;
+        }
         self.events.command_finished(cmd, &out.combined, code)?;
         self.vars.result = out.combined.clone();
         self.script.save_vars(&self.vars)?;

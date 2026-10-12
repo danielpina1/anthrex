@@ -189,3 +189,110 @@ fn role_and_resumed_sessions_do_not_read_stdin_before_starting() {
     );
     drop(resumed);
 }
+
+/// A hook command that appends its payload, one line, to `file`.
+fn record(file: &Path) -> String {
+    format!("{{ cat; echo; }} >> '{}'", file.display())
+}
+
+fn payloads(file: &Path) -> Vec<serde_json::Value> {
+    (lines(file).iter())
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect()
+}
+
+/// Milestone 9.14 (Interfaces, `fake-agent`): with `FAKE_AGENT_TOOL_IDS=1` each `bash`
+/// call's `PreToolUse` payload carries `fake-tu-<n>`, and each call's command is followed
+/// by one `PostToolUse` with the same id, its command, stdout and exit code. Without
+/// the variable, neither.
+#[test]
+fn tool_ids_and_post_tool_use_only_with_the_variable() {
+    let steps = [
+        json!({"bash": {"cmd": "echo one"}}),
+        json!({"bash": {"cmd": "echo two; exit 3"}}),
+    ];
+    for with_ids in [true, false] {
+        let dir = tempdir();
+        let (pre, post) = (dir.path().join("pre"), dir.path().join("post"));
+        let order = dir.path().join("order");
+        let settings = json!({"hooks": {
+            "PreToolUse": [group("Bash", &[record(&pre)])],
+            "PostToolUse": [
+                group("Bash", &[record(&post)]),
+                group("Edit", &[format!("cat > /dev/null; echo edit >> '{}'", order.display())]),
+            ],
+        }});
+        let one = Path::new("1");
+        let extra: &[(&str, &Path)] = if with_ids {
+            &[("FAKE_AGENT_TOOL_IDS", one)]
+        } else {
+            &[]
+        };
+        let (_, log) = run_bash_with(dir.path(), Some(&settings), &steps, extra);
+        assert_eq!(log.len(), 2, "{log:?}");
+        let pre = payloads(&pre);
+        assert_eq!(pre.len(), 2, "{pre:?}");
+        assert!(!order.exists(), "a PostToolUse group for another tool ran");
+        if !with_ids {
+            assert!(
+                pre.iter().all(|p| p.get("tool_use_id").is_none()),
+                "{pre:?}"
+            );
+            assert!(!post.exists(), "PostToolUse without the variable");
+            continue;
+        }
+        assert_eq!(pre[0]["tool_use_id"], "fake-tu-1");
+        assert_eq!(pre[1]["tool_use_id"], "fake-tu-2");
+        let post = payloads(&post);
+        assert_eq!(post.len(), 2, "{post:?}");
+        for (p, (id, command, stdout, code)) in post.iter().zip([
+            ("fake-tu-1", "echo one", "one\n", 0),
+            ("fake-tu-2", "echo two; exit 3", "two\n", 3),
+        ]) {
+            assert_eq!(p["hook_event_name"], "PostToolUse");
+            assert_eq!(p["tool_name"], "Bash");
+            assert_eq!(p["tool_use_id"], id);
+            assert_eq!(p["tool_input"], json!({"command": command}));
+            assert_eq!(
+                p["tool_response"],
+                json!({"stdout": stdout, "exit_code": code})
+            );
+            assert!(p["session_id"].is_string() && p["cwd"].is_string(), "{p}");
+        }
+    }
+}
+
+/// Milestone 9.14 (Interfaces, `fake-agent`): a hook entry's `timeout` (seconds)
+/// replaces `STEP_TIMEOUT` (5 s, `fake-agent/src/main.rs`) for that hook. A hook that
+/// sleeps 6 s and then rewrites the command: with `"timeout": 8` its rewrite wins; with
+/// none, `STEP_TIMEOUT` cuts it and the original command runs. Timing: 6 s is past 5 s
+/// by a whole second, so the cut cannot be missed; the 8 s case needs the hook's
+/// `/bin/sh` spawn and `sleep 6` to end within 8 s (2 s for a spawn of `sh` and
+/// `sleep`, milliseconds, `docs/timing-budgets.md`); `RUN` (20 s) bounds the session.
+#[test]
+fn a_hook_timeout_replaces_the_step_timeout() {
+    for timeout in [Some(8), None] {
+        let dir = tempdir();
+        let output = json!({"hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "updatedInput": {"command": "echo late"},
+        }});
+        let command = format!("cat > /dev/null; sleep 6; printf '%s\\n' '{output}'");
+        let mut entry = json!({"type": "command", "command": command});
+        if let Some(secs) = timeout {
+            entry["timeout"] = json!(secs);
+        }
+        let settings = json!({"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [entry]}]}});
+        let (_, log) = run_bash(
+            dir.path(),
+            Some(&settings),
+            &[json!({"bash": {"cmd": "echo original"}})],
+        );
+        let ran = if timeout.is_some() {
+            "echo late"
+        } else {
+            "echo original"
+        };
+        assert_eq!(log[0]["ran"], ran, "timeout {timeout:?}: {log:?}");
+    }
+}
