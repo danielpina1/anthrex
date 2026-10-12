@@ -2262,6 +2262,9 @@ Five minors from the merge review of milestone 9.11, none blocking:
 - **For 9.13: `server_runs`' leak fix (`2d1655f6`) is containment, not the root cause** (PR #58 review). Each rig's worktrees root now sits beside its socket, but `Stop::stop` still does not await a goal's run build still in flight after the `Triaged` reply; the build can outlive the test inside the rig's own directory. Have `stop()` wait for that build.
 - **For 9.14: `ManagerConfig::for_tests` still defaults to the shared `<temp>/anthrex-worktrees`** (M9.12.13's CI-only leak follow-up). Twice now (`delivery_tests_start.rs`, `server_runs.rs`) a test that starts a run reached it and left a checkout there; each rig was given its own root, but any new rig built on `for_tests` inherits the hazard. Default it to a root no test shares (or one that panics if used), so a forgotten override fails at once rather than on a slow CI machine.
 - (9.14) Other rigs whose tests start ops — the role-route rig and `server_runs.rs`'s `Stop` — may share the read-path rig's unawaited-op race (`9d7e605e`: `stop()` returned while a refresh's hand-back git work still staged `.anthrex/<task>/engine`). Give each rig the same op-order-lock wait, or one shared helper.
+- **A private `hh_mm` duplicates `common::text::hh_mm`** (task 9 review M-5). `crates/daemon/src/run/orch/contract_messages.rs:131` has its own copy; call the shared one.
+- **A daemon restart drops a pending "do it" that waits for its commit count** (task 9 review M-7). An override proposal the user approved, waiting for `CountCommits`, is lost on restart and the orchestrator is not told.
+- **A fresh session's handoff seed passes on a summary a tainted session may have written** (decision 18). By design, since the taint ends with the session unless adopted; recorded for review.
 
 ### Recorded by milestone 9.13's pre-flight scan (2026-10-12), for later
 

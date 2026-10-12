@@ -235,6 +235,15 @@ pub(super) fn blocked_notes(before: Option<&Run>, run: &mut Run) {
             .ok()
             .and_then(|v| v.as_str().map(str::to_string))
             .unwrap_or_default();
+        // A review or CI fix worker has read text from outside the run: its block's
+        // text reaches the orchestrator only through `run_status`, which taints.
+        if crate::run::orch::untrusted::fix_kind(task).is_some() {
+            lines.push(format!(
+                "{} blocked ({label}); read it with run_status",
+                task.id()
+            ));
+            continue;
+        }
         let text: String = info.text.chars().take(BLOCK_TEXT_CHARS).collect();
         lines.push(format!("{} blocked ({label}): {text}", task.id()));
     }

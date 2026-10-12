@@ -225,6 +225,7 @@ mod untrusted_ops;
 mod usage;
 mod user_only;
 mod view_fields;
+mod wake_fix_blocks;
 mod wake_fixes;
 mod wake_held;
 mod wake_note_ids;
