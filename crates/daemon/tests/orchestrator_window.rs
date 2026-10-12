@@ -1,3 +1,6 @@
+//! Alone in its own test binary (milestone 9.12, decision 14): it calls `std::env::set_var`
+//! or `remove_var`.
+//!
 //! Milestone 9 decisions 5, 10, 11, 11a and 12 (task M9.10): the orchestrator's PTY
 //! window against a real manager, real PTYs and a real socket. The runtime binary is a
 //! `/bin/sh` stand-in that records its argv and environment (never a real agent).

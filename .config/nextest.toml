@@ -1,0 +1,245 @@
+# cargo-nextest runs the workspace's tests (milestone 9.12, decision 1). Doctests stay on
+# libtest: `cargo test --workspace --doc`, which nextest cannot run.
+
+# Decision 8: the newest release at least two weeks old on the day of M9.12.1
+# (0.9.146, 2026-09-21). CI's install step and AGENTS.md pin the same version.
+nextest-version = { required = "0.9.146" }
+
+[profile.default]
+# Decision 2: SLOW each minute, terminated at ten (a hung test once cost nucleos 5.6
+# hours). The slowest test measured in M9.12.1, run alone under nextest, was
+# `run_e2e_merge::e2e_red_candidate_goes_back_to_the_worker`, 338.1 s (its sibling
+# `e2e_second_conflict_blocks_the_task` 337.4 s), above decision 2's 300 s stop line
+# ("Spec and brief defects" 10). M9.12.4 found why (each waited out a 300 s scripted
+# gate that could never see the merge it waited for) and fixed the scripts: both take
+# 6-7 s in the full suite now, and the slowest test is `run_e2e_crash`'s
+# `e2e_crash_after_each_intent_kind_reconciles`, 50-52 s (M9.12.4), far inside 600 s.
+slow-timeout = { period = "60s", terminate-after = 10 }
+# Decision 3: a retry hides the flake docs/timing-budgets.md wants found at its root,
+# and every failed test is diagnosed before a push, so the run never stops early.
+retries = 0
+fail-fast = false
+# Decision 4: `test-threads` stays nextest's default, the number of CPUs.
+
+[test-groups]
+# Decision 6: a timing test runs alone, one at a time.
+timing = { max-threads = 1 }
+# Decision 5: the budgets in docs/timing-budgets.md were measured under libtest, which
+# ran one binary at a time with 5 to 8 such tests per binary on average; nextest must
+# not run more of them at once than that. Light tests fill the remaining threads.
+real-io = { max-threads = 8 }
+
+# Decision 6: the tests that assert an upper bound on elapsed wall-clock time as the
+# property under test. Each starts only when no other test runs, and nothing starts
+# beside it. First, so that no later override puts one in `real-io` (decision 7).
+# Each entry is `test(/(^|::)<name>$/)`, so it names the same test before and after the
+# binary merge (M9.12.6, M9.12.7). Found by behaviour (M9.12.3 Step 1; the milestone
+# brief's "Implementation notes" has the sweep). Per entry: its file and line, its
+# bound, and its docs/timing-budgets.md row (or, with no row, why the bound is the
+# property), in the filter's order.
+#
+# cli (the `anthrex` binary's unit tests and `crates/cli/tests`):
+#  1 create_repo_gives_up_on_a_git_that_does_not_answer: cli/src/run_cmd/delivery_tests.rs:210, < 5 s; row "create_repo_gives_up_on_a_git_that_does_not_answer".
+#  2 connect_times_out_on_a_silent_server: cli/src/client.rs:291 and cli/tests/it/tui_connection.rs:161 (both tests of this name), < 7 s; the handshake's 5 s timeout is the property.
+#  3 a_hanging_decider_is_cut_at_the_bound: cli/tests/it/decider_call_run_name.rs:138, < BOUND + SPAWN_SLACK; the helper's bound is the property.
+#  4 a_hanging_decider_falls_back_at_its_timeout_and_leaves_no_process: cli/tests/it/decider_call.rs:222, <= timeout + KILL_GRACE + SPAWN_SLACK; row ">= 5s and <= 12s".
+#  5 restart_request_does_not_block_the_connection: cli/tests/it/persistence.rs:135, < 500 ms; the request loop not blocked is the property.
+#  6 hook_finishes_within_its_deadline: cli/tests/it/filter_hook.rs:338, <= FILTER_HOOK_DEADLINE + 2 s; row "hook_finishes_within_its_deadline".
+#  7 without_a_daemon_it_exits_zero_silently_and_fast: cli/tests/it/hook_command.rs:37, < LIMIT (3 s); row "without_a_daemon_it_exits_zero_silently_and_fast".
+#  8 held_open_stdin_is_included_in_the_deadline: cli/tests/it/hook_command.rs:65, < LIMIT; HOOK_DEADLINE is the property.
+#  9 a_silent_daemon_costs_at_most_a_second: cli/tests/it/hook_command.rs:116, < LIMIT; HOOK_DEADLINE is the property.
+# 10 a_payload_over_the_size_limit_is_still_dropped_whole: cli/tests/it/hook_command.rs:829, < LIMIT; HOOK_DEADLINE is the property.
+# 11 one_deadline_covers_stdin_handshake_and_ack: cli/tests/it/hook_command.rs:874, < LIMIT; HOOK_DEADLINE is the property.
+# 12 running_command_finishes_when_a_descendant_keeps_output_handles_open: cli/tests/it/codex_version.rs:101, < 750 ms; not waiting on inherited handles is the property.
+# 13 a_client_handshake_is_answered_while_the_codex_probe_is_still_running: cli/tests/it/codex_version.rs:345, < PROBE_STALL; row "a_window_launch_waits_for_the_codex_probe_to_finish" (PROBE_STALL).
+# 14 codex_probe_timeout_kills_and_reaps_its_owned_process: cli/tests/it/codex_version.rs:434, < LS_BOUND; the probe's 5 s timeout is the property.
+# 15 codex_probe_does_not_wait_forever_for_inherited_stdout: cli/tests/it/codex_version.rs:452, < LS_BOUND; as 14.
+# 16 daemon_start_does_not_wait_on_a_slow_codex_probe: cli/tests/it/codex_version.rs:545,556, < SLOW_PROBE_STALL; row "daemon_start_does_not_wait_on_a_slow_codex_probe: the property".
+# 17 wake_is_delivered_only_when_idle_and_quiet: cli/tests/it/run_e2e_orch_wake.rs:60, < 5 s; row "wake_is_delivered_only_when_idle_and_quiet".
+# common (unit tests; moved from the daemon by M9.12.2):
+# 18 acquire_waits_for_release: common/src/lockfile.rs:300, < 1.5 s; the lock's release is the property.
+# 19 acquire_or_yield_still_acquires_the_lock_when_never_already_running: common/src/lockfile.rs:374, < 1.5 s; as 18.
+# daemon (unit tests):
+# 20 a_probe_past_its_deadline_is_killed_reaped_and_reported: daemon/src/models/tests.rs:142, < 500 ms + REAP_RESERVE + WALL_CLOCK_SLACK; row of that name.
+# 21 a_head_or_a_trailer_arriving_a_byte_at_a_time_is_scanned_in_linear_time: daemon/src/metering/http_tests.rs:205, < DRIP_BOUND (500 ms); row of that name.
+# 22 tag_removal_is_linear_on_a_32_kib_heading: daemon/src/run/design/template_tests_linear.rs:40, < LINEAR_BOUND (40 ms); row of that name.
+# 23 run_status_returns_at_once_without_since: daemon/src/run/driver/orch_read_tests.rs:30,40, < 5 s; row of that name.
+# 24 run_status_waits_until_the_digest_changes: orch_read_tests.rs:83, < 5 s after the change; row of that name.
+# 25 run_status_times_out_with_the_same_revision: orch_read_tests.rs:104, < 4 s; row of that name.
+# 26 terminal_run_ends_the_wait: orch_read_tests.rs:170, < 2 s; row "terminal_run_ends_the_wait and a_lagged_wait…".
+# 27 the_deadline_spans_lagged_resubscriptions: orch_read_tests.rs:234, < 5 s; row of that name.
+# 28 long_poll_holds_no_engine_lock: orch_read_tests.rs:257, < 2 s; row of that name.
+# 29 the_handoff_history_read_is_bounded: daemon/src/run/driver/chain_goal_tests.rs:566, < bound + 5 s; row of that name.
+# 30 wake_writes_happen_outside_every_lock: daemon/src/run/driver/wake_tests.rs:113, < 100 ms; row of that name.
+# 31 a_stuck_continue_past_the_tool_deadline_starts_nothing: daemon/src/run/driver/chain_goal_deadline_tests.rs:90, < CAP + 5 s; row of that name.
+# 32 resolution_holds_no_lock_across_the_read: daemon/src/run/driver/chain_tests.rs:240, < 2 s; row of that name.
+# 33 a_long_poll_resolved_before_an_adopt_answers_for_the_new_run: chain_tests.rs:311, < 2 s; row of that name.
+# 34 the_installed_probe_gives_up_after_its_timeout: daemon/src/run/driver/build_installed_tests.rs:33, < TIMEOUT * 10; row "The probe gives up".
+# 35 a_read_back_that_times_out_changes_nothing: daemon/src/run/driver/design_restore_tests.rs:339, < 5 s; row of that name.
+# 36 adopt_runs_off_the_manager_lock: daemon/src/run/driver/chain_ops_tests.rs:102, < 500 ms; row of that name.
+# 37 a_host_op_that_times_out_answers_timed_out: daemon/src/run/driver/host_ops_tests.rs:403, answered before Sleepy's 2 s (cap 300 ms); row "The executor's and preflight's caps against Sleepy".
+# 38 preflight_messages_are_exact: daemon/src/run/driver/delivery_tests.rs:232, answered before Sleepy's 2 s (cap 200 ms); the same row.
+# 39 the_tick_publishes_outside_the_engine_lock: daemon/src/run/driver/orch_tests.rs:169, the engine lock free within 3 s; row of that name.
+# daemon (crates/daemon/tests):
+# 40 restart_resumes_claude_and_codex_sessions: daemon/tests/lifecycle_resume.rs:230, < CODEX_PROBE_TIMEOUT / 2; row of that name.
+# 41 untokened_connections_are_closed_first_when_full: daemon/tests/it/otlp_server/tokens.rs:66, < OTLP_READ_TIMEOUT; row of that name.
+# 42 past_the_connection_cap_a_connection_is_closed_after_the_slot_wait: daemon/tests/it/otlp_server.rs:563, < OTLP_READ_TIMEOUT; row of that name.
+# 43 a_slow_client_does_not_block_another: daemon/tests/it/otlp_server.rs:344, answered within SLOW_BOUND (2 s); row of that name.
+# 44 stderr_is_bounded_and_does_not_block_the_child: daemon/tests/it/subprocess.rs:104, < 10 s; row of that name (decision 6 names it).
+# 45 a_slow_worktree_create_does_not_block_the_manager: daemon/tests/it/manager_worktree/admission.rs:190,211, < 100 ms and < 1 s; the four `< 100ms` lock-latency asserts (decision 6).
+# 46 an_exited_window_is_removed_without_waiting: daemon/tests/it/manager_worktree/removal/ordering.rs:295, < 10 s; "Measured primitive costs" (decision 6 names it).
+# 47 list_is_answered_while_a_create_is_running: daemon/tests/it/server/worktree.rs:212, < 500 ms; the manager lock not held across git is the property.
+# 48 a_client_that_never_says_hello_is_dropped: daemon/tests/it/server.rs:75, <= 7 s; HANDSHAKE_TIMEOUT (5 s) is the property.
+# 49 a_client_with_a_partial_frame_is_dropped_after_the_timeout: daemon/tests/it/server.rs:105, <= 7 s; as 48.
+# 50 a_client_that_disconnects_mid_handshake_ends_the_connection_promptly: daemon/tests/it/server.rs:132, < 1 s; not waiting out HANDSHAKE_TIMEOUT is the property.
+# 51 create_subscribe_input_and_kill_flow: daemon/tests/it/server.rs:291, < 1.5 s; kill's SIGHUP ending a shell at once is the property.
+# 52 kill_terminates_and_remove_forgets: daemon/tests/it/manager.rs:208, < 1.5 s; as 51.
+# 53 a_program_that_ignores_stdin_never_blocks_write_input_or_list: daemon/tests/it/manager.rs:237,324,332,336, < 100 ms; the four `< 100ms` lock-latency asserts (decision 6).
+# 54 shutdown_ends_every_window: daemon/tests/it/manager/lifecycle.rs:75, < 1.5 s; as 51.
+# 55 kill_ends_an_interactive_shell_within_a_second: daemon/tests/it/manager/lifecycle.rs:90, < 1 s; as 51.
+# 56 hanging_git_times_out: daemon/tests/it/project.rs:235, < 2 s; the injected 300 ms timeout is the property.
+# 57 inherited_stdout_does_not_outlive_the_detection_deadline: daemon/tests/it/project.rs:316, < DETECT_TIMEOUT + 2 s; the detection deadline is the property.
+# 58 create_run_window_does_not_hold_the_manager_lock_across_spawn: daemon/tests/orchestrator_window.rs:392,404, < 100 ms; row of that name.
+# 59 a_timeout_marks_the_state_stale: daemon/tests/it/git_probe.rs:361, < timeout + REAP_SLACK; row "a_timeout_marks_the_state_stale, a_timeout_before_the_fork_marks_the_state_stale".
+# 60 a_timeout_before_the_fork_marks_the_state_stale: the same helper and row.
+# 61 a_racing_second_start_is_refused_and_does_not_become_a_phantom_daemon: daemon/tests/it/lifecycle.rs:154, < 500 ms; not waiting out lock_wait is the property.
+# 62 a_timeout_during_create_cleans_up: daemon/tests/it/worktree.rs:441, < 6 s; not waiting out the hook's 10 s is the property.
+# 63 create_and_its_cleanup_each_run_to_their_own_injected_deadline: daemon/tests/it/worktree.rs:523, < 4 s; the injected deadlines are the property.
+# 64 a_confined_command_that_times_out_is_killed_with_its_group: daemon/tests/it/run_confine.rs:223, < timeout + OUTPUT_GRACE + SLACK; row of that name.
+# 65 check_timeout_kills_the_process_group: daemon/tests/it/run_exec.rs:101, < 3 s; the check's timeout is the property.
+# 66 a_check_that_exits_leaves_no_background_process_behind: daemon/tests/it/run_exec.rs:134, < LONG / 2; not waiting on the background pipe is the property.
+# 67 check_timeout_holds_under_an_output_flood: daemon/tests/it/run_exec.rs:213, < timeout + OUTPUT_GRACE + SLACK; as 65.
+# 68 output_grace_is_a_hard_cap_for_a_writer_that_left_the_group: daemon/tests/it/run_exec.rs:253, < 2 * OUTPUT_GRACE + SLACK; OUTPUT_GRACE is the property.
+# 69 a_busy_tuning_file_starts_untuned_at_the_bound: daemon/tests/it/tuning_io.rs:264, within 5 s of a 50 ms bound; row of that name.
+# fake-agent and tui (crates/*/tests):
+# 70 subprocess_deadline_stops_a_hung_owned_child: fake-agent/tests/script.rs:198, < 1 s; the injected 200 ms deadline is the property.
+# 71 hook_timeout_includes_blocked_stdin_delivery: fake-agent/tests/script.rs:671, < 8 s; the hook's 5 s timeout is the property.
+# 72 send_never_suspends_and_reports_a_dead_connection: cli/tests/it/tui_connection.rs:121, < 500 ms for 5000 sends; never suspending is the property.
+# 73 e2e_plan_path_scouts_plans_and_reads_the_approval: cli/tests/it/run_e2e_orch/gate.rs:98, each logged `run_status` call's `ms` <= (wait_secs + 5) * 1000 (decision 16); row "Every scripted run_status answered within wait_secs + 5 s" (M9.12.3 review, Important 1: a logged duration, a shape the first sweep did not parse).
+[[profile.default.overrides]]
+filter = '''
+    test(/(^|::)create_repo_gives_up_on_a_git_that_does_not_answer$/)
+  | test(/(^|::)connect_times_out_on_a_silent_server$/)
+  | test(/(^|::)a_hanging_decider_is_cut_at_the_bound$/)
+  | test(/(^|::)a_hanging_decider_falls_back_at_its_timeout_and_leaves_no_process$/)
+  | test(/(^|::)restart_request_does_not_block_the_connection$/)
+  | test(/(^|::)hook_finishes_within_its_deadline$/)
+  | test(/(^|::)without_a_daemon_it_exits_zero_silently_and_fast$/)
+  | test(/(^|::)held_open_stdin_is_included_in_the_deadline$/)
+  | test(/(^|::)a_silent_daemon_costs_at_most_a_second$/)
+  | test(/(^|::)a_payload_over_the_size_limit_is_still_dropped_whole$/)
+  | test(/(^|::)one_deadline_covers_stdin_handshake_and_ack$/)
+  | test(/(^|::)running_command_finishes_when_a_descendant_keeps_output_handles_open$/)
+  | test(/(^|::)a_client_handshake_is_answered_while_the_codex_probe_is_still_running$/)
+  | test(/(^|::)codex_probe_timeout_kills_and_reaps_its_owned_process$/)
+  | test(/(^|::)codex_probe_does_not_wait_forever_for_inherited_stdout$/)
+  | test(/(^|::)daemon_start_does_not_wait_on_a_slow_codex_probe$/)
+  | test(/(^|::)wake_is_delivered_only_when_idle_and_quiet$/)
+  | test(/(^|::)acquire_waits_for_release$/)
+  | test(/(^|::)acquire_or_yield_still_acquires_the_lock_when_never_already_running$/)
+  | test(/(^|::)a_probe_past_its_deadline_is_killed_reaped_and_reported$/)
+  | test(/(^|::)a_head_or_a_trailer_arriving_a_byte_at_a_time_is_scanned_in_linear_time$/)
+  | test(/(^|::)tag_removal_is_linear_on_a_32_kib_heading$/)
+  | test(/(^|::)run_status_returns_at_once_without_since$/)
+  | test(/(^|::)run_status_waits_until_the_digest_changes$/)
+  | test(/(^|::)run_status_times_out_with_the_same_revision$/)
+  | test(/(^|::)terminal_run_ends_the_wait$/)
+  | test(/(^|::)the_deadline_spans_lagged_resubscriptions$/)
+  | test(/(^|::)long_poll_holds_no_engine_lock$/)
+  | test(/(^|::)the_handoff_history_read_is_bounded$/)
+  | test(/(^|::)wake_writes_happen_outside_every_lock$/)
+  | test(/(^|::)a_stuck_continue_past_the_tool_deadline_starts_nothing$/)
+  | test(/(^|::)resolution_holds_no_lock_across_the_read$/)
+  | test(/(^|::)a_long_poll_resolved_before_an_adopt_answers_for_the_new_run$/)
+  | test(/(^|::)the_installed_probe_gives_up_after_its_timeout$/)
+  | test(/(^|::)a_read_back_that_times_out_changes_nothing$/)
+  | test(/(^|::)adopt_runs_off_the_manager_lock$/)
+  | test(/(^|::)a_host_op_that_times_out_answers_timed_out$/)
+  | test(/(^|::)preflight_messages_are_exact$/)
+  | test(/(^|::)the_tick_publishes_outside_the_engine_lock$/)
+  | test(/(^|::)restart_resumes_claude_and_codex_sessions$/)
+  | test(/(^|::)untokened_connections_are_closed_first_when_full$/)
+  | test(/(^|::)past_the_connection_cap_a_connection_is_closed_after_the_slot_wait$/)
+  | test(/(^|::)a_slow_client_does_not_block_another$/)
+  | test(/(^|::)stderr_is_bounded_and_does_not_block_the_child$/)
+  | test(/(^|::)a_slow_worktree_create_does_not_block_the_manager$/)
+  | test(/(^|::)an_exited_window_is_removed_without_waiting$/)
+  | test(/(^|::)list_is_answered_while_a_create_is_running$/)
+  | test(/(^|::)a_client_that_never_says_hello_is_dropped$/)
+  | test(/(^|::)a_client_with_a_partial_frame_is_dropped_after_the_timeout$/)
+  | test(/(^|::)a_client_that_disconnects_mid_handshake_ends_the_connection_promptly$/)
+  | test(/(^|::)create_subscribe_input_and_kill_flow$/)
+  | test(/(^|::)kill_terminates_and_remove_forgets$/)
+  | test(/(^|::)a_program_that_ignores_stdin_never_blocks_write_input_or_list$/)
+  | test(/(^|::)shutdown_ends_every_window$/)
+  | test(/(^|::)kill_ends_an_interactive_shell_within_a_second$/)
+  | test(/(^|::)hanging_git_times_out$/)
+  | test(/(^|::)inherited_stdout_does_not_outlive_the_detection_deadline$/)
+  | test(/(^|::)create_run_window_does_not_hold_the_manager_lock_across_spawn$/)
+  | test(/(^|::)a_timeout_marks_the_state_stale$/)
+  | test(/(^|::)a_timeout_before_the_fork_marks_the_state_stale$/)
+  | test(/(^|::)a_racing_second_start_is_refused_and_does_not_become_a_phantom_daemon$/)
+  | test(/(^|::)a_timeout_during_create_cleans_up$/)
+  | test(/(^|::)create_and_its_cleanup_each_run_to_their_own_injected_deadline$/)
+  | test(/(^|::)a_confined_command_that_times_out_is_killed_with_its_group$/)
+  | test(/(^|::)check_timeout_kills_the_process_group$/)
+  | test(/(^|::)a_check_that_exits_leaves_no_background_process_behind$/)
+  | test(/(^|::)check_timeout_holds_under_an_output_flood$/)
+  | test(/(^|::)output_grace_is_a_hard_cap_for_a_writer_that_left_the_group$/)
+  | test(/(^|::)a_busy_tuning_file_starts_untuned_at_the_bound$/)
+  | test(/(^|::)subprocess_deadline_stops_a_hung_owned_child$/)
+  | test(/(^|::)hook_timeout_includes_blocked_stdin_delivery$/)
+  | test(/(^|::)send_never_suspends_and_reports_a_dead_connection$/)
+  | test(/(^|::)e2e_plan_path_scouts_plans_and_reads_the_approval$/)
+'''
+threads-required = "num-test-threads"
+test-group = "timing"
+
+# Decision 5: tests that spawn a PTY, run real git, start a daemon (in-process `serve`,
+# the `anthrex` binary, or a scripted socket peer standing in for one) or exec a
+# stand-in. Every integration-test binary (`kind(test)`), plus the library-test modules
+# that do the same (M9.12.3 Step 2), by module path:
+#
+# anthrex-daemon (unit tests):
+#   decider::tests_context, decider::tests_route: a WindowManager over /bin/sh; tests_route writes stand-in `codex` scripts.
+#   headless::codex_guard::tests: real git.
+#   host::fake::tests, host::tests_git, host::tests_seal: real git through worktree::run_git.
+#   host::tests_git_contains, host::tests_open_logs: stand-in scripts (write_executable).
+#   lifecycle::tests: binds the daemon's socket.
+#   manager::create::tests, manager::restart::tests, manager::restore::tests, manager::role_window::tests: a WindowManager spawning PTYs; role_window a stand-in.
+#   models::tests: stand-in probe scripts.
+#   profile::delivery::tests (tests_detect.rs), profile::tests_writes: real git, a stalling git stand-in.
+#   profile::tests_installed, profile::tests_ready: a WindowManager, stand-ins, real git.
+#   run::driver::adapt::evidence_tests, run::driver::adapt::goal::tests (and ::delivery, ::installed), run::driver::adapt::goal::queue::tests: a WindowManager and real git.
+#   run::driver::adapt::history::tests: real git (found by behaviour: `Command::new(git)`, not matched by the grep).
+#   run::driver::build::installed::tests, run::driver::build::tests (and ::tuning), run::driver::build_name::tests: stand-ins, a WindowManager.
+#   run::driver::cleanup::tests: real git, a WindowManager.
+#   run::driver::delivery::tests (and ::start): real git, stand-in scripts, a WindowManager.
+#   run::driver::design_commit::queue_tests, ::round_tests, ::tests; run::driver::design_io::tests; run::driver::design_restore::tests (and ::service): real git, stand-ins, a WindowManager.
+#   run::driver::effects::launch_journal_tests, run::driver::event_loop::lag_tests, run::driver::event_loop::tests: a WindowManager spawning stand-ins.
+#   run::driver::finish_tests, run::driver::graph::tests, run::driver::host_ops::tests (and ::fields): a WindowManager, a stand-in, real git.
+#   run::driver::merge::tier_tests, run::driver::ops::lane_ops::tests, run::driver::ops::racer_launch_tests, run::driver::ops::scheduled::tests, run::driver::ops::signals_tests (and ::pair): real git, a WindowManager, an in-process daemon socket.
+#   run::driver::orch::chain_goal::deadline_tests, run::driver::orch::chain_goal::tests, run::driver::orch::chain_ops::tests: a stuck git stand-in, an in-process `serve`, a WindowManager.
+#   run::driver::orch::chain_tests, run::driver::orch::read_tests, run::driver::orch::read_tests_design: the read rig (orch_read_rig.rs: an in-process `serve` and a WindowManager; found by behaviour, the rig is not a test module).
+#   run::driver::orch::read_tests_launch, run::driver::orch::read_tests_tools, run::driver::orch::refresh_tests, run::driver::orch::tests: the read rig, the gated git stand-in (gated_git.rs), real git, a WindowManager.
+#   run::driver::orch_ops::live_flag_tests, run::driver::orch_ops::role_route_tests, run::driver::orch_ops::tests: stand-ins, a WindowManager, the gated git stand-in.
+#   run::driver::requests::tests, run::driver::restore::lanes_tests, run::driver::restore::sweep_tests, run::driver::settings::tests, run::driver::stage_ops::tests, run::driver::tests, run::driver::tier::tests, run::driver::usage::tests: a WindowManager, real git, a git wrapper stand-in.
+#   run::driver::wake::exit_tests, run::driver::wake::first_turn::tests, run::driver::wake::submit_tests, run::driver::wake::tests: a WindowManager spawning stand-ins.
+#   run::engine::tests::delivery_open_host: real git through worktree::run_git.
+#   run::git::refs_tx::tests, run::reconcile::stage_tests, run::reconcile::tests: real git.
+#   scout::service::tests, state::tests::persister_tests, status_codex::tests: a WindowManager; status_codex a stand-in `codex` (status_codex_rig.rs).
+#   server::tests: PTY windows (`Window::spawn_with_output_capacity`; found by behaviour, not matched by the grep).
+#   worktree::input::tests, worktree::tests: real git, git stand-ins.
+# anthrex-tui (unit tests):
+#   draw_tests, reconnect_tests: a scripted daemon socket; reconnect_tests a daemon stand-in script (its in-process `serve` test moved to cli's tui_reconnect, M9.12.9).
+# anthrex (the CLI binary's unit tests):
+#   client::tests, ls_cmd::tests, run_cmd::design::daemon_tests: a scripted daemon socket.
+#   run_cmd::delivery::tests: a git stand-in.
+[[profile.default.overrides]]
+filter = '''
+    kind(test)
+  | (package(anthrex-daemon) & kind(lib) & test(/^(decider::tests_context|decider::tests_route|headless::codex_guard::tests|host::fake::tests|host::tests_git|host::tests_git_contains|host::tests_open_logs|host::tests_seal|lifecycle::tests|manager::create::tests|manager::restart::tests|manager::restore::tests|manager::role_window::tests|models::tests|profile::delivery::tests|profile::tests_installed|profile::tests_ready|profile::tests_writes|run::driver::adapt::evidence_tests|run::driver::adapt::goal::queue::tests|run::driver::adapt::goal::tests|run::driver::adapt::history::tests|run::driver::build::installed::tests|run::driver::build::tests|run::driver::build_name::tests|run::driver::cleanup::tests|run::driver::delivery::tests|run::driver::design_commit::queue_tests|run::driver::design_commit::round_tests|run::driver::design_commit::tests|run::driver::design_io::tests|run::driver::design_restore::tests|run::driver::effects::launch_journal_tests|run::driver::event_loop::lag_tests|run::driver::event_loop::tests|run::driver::finish_tests|run::driver::graph::tests|run::driver::host_ops::tests|run::driver::merge::tier_tests|run::driver::ops::lane_ops::tests|run::driver::ops::racer_launch_tests|run::driver::ops::scheduled::tests|run::driver::ops::signals_tests|run::driver::orch::chain_goal::deadline_tests|run::driver::orch::chain_goal::tests|run::driver::orch::chain_ops::tests|run::driver::orch::chain_tests|run::driver::orch::read_tests|run::driver::orch::read_tests_design|run::driver::orch::read_tests_launch|run::driver::orch::read_tests_tools|run::driver::orch::refresh_tests|run::driver::orch::tests|run::driver::orch_ops::live_flag_tests|run::driver::orch_ops::role_route_tests|run::driver::orch_ops::tests|run::driver::requests::tests|run::driver::restore::lanes_tests|run::driver::restore::sweep_tests|run::driver::settings::tests|run::driver::stage_ops::tests|run::driver::tests|run::driver::tier::tests|run::driver::usage::tests|run::driver::wake::exit_tests|run::driver::wake::first_turn::tests|run::driver::wake::submit_tests|run::driver::wake::tests|run::engine::tests::delivery_open_host|run::git::refs_tx::tests|run::reconcile::stage_tests|run::reconcile::tests|scout::service::tests|server::tests|state::tests::persister_tests|status_codex::tests|worktree::input::tests|worktree::tests)::/))
+  | (package(anthrex-tui) & kind(lib) & test(/^(draw_tests|reconnect_tests)::/))
+  | (package(anthrex) & kind(bin) & test(/^(client::tests|ls_cmd::tests|run_cmd::delivery::tests|run_cmd::design::daemon_tests)::/))
+'''
+test-group = "real-io"

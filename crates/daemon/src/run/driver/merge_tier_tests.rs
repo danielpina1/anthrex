@@ -62,7 +62,7 @@ fn write(path: &Path, text: &str) {
 /// `main` with modules `mods/a` and `mods/b` and the scripts, `integration` there with
 /// its worktree, a task commit (`t1`) changing `mods/a`, and a service.
 struct Rig {
-    _tmp: tempfile::TempDir,
+    _tmp: crate::run::git::TestDir,
     top: PathBuf,
     root: PathBuf,
     integration: PathBuf,
@@ -78,7 +78,7 @@ impl Rig {
 
     /// [`Rig::new`], with `base` run in the repository before the base commit.
     fn with_base(base: impl FnOnce(&Path), task_files: &[(&str, &str)]) -> Rig {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::run::git::TestDir::new();
         let top = tmp.path().canonicalize().unwrap();
         let root = top.join("repo");
         for (path, text) in [
@@ -133,6 +133,12 @@ impl Rig {
             check_timeout: Duration::from_secs(30),
             confine: None,
         };
+        // M9.12.13: its checks' temporary directory is named from a repository
+        // directory the integration worktree never has.
+        tmp.also(crate::run::git::checkout_repo_dir(
+            &ctx.data_dir,
+            &integration,
+        ));
         Rig {
             _tmp: tmp,
             top,

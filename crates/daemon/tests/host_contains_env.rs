@@ -1,3 +1,6 @@
+//! Alone in its own test binary (milestone 9.12, decision 14): it calls `std::env::set_var`
+//! or `remove_var`.
+//!
 //! Task M9.7.6 (DH §1.2, decision 6): the base fetch's `contains` steps run with
 //! `GIT_DIR` (and the other repository variables) set in the daemon's own environment,
 //! and those have no effect: every git call is scrubbed (AGENTS.md rule 11).

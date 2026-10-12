@@ -51,7 +51,7 @@ impl App {
     fn headless_control_refusal(&self) -> Option<String> {
         let w = self.focused_window()?;
         (w.kind == WindowKind::Headless)
-            .then(|| daemon::manager::control_refusal(w.id, w.run.as_ref()))
+            .then(|| common::refusal::control_refusal(w.id, w.run.as_ref()))
     }
 
     /// `true`, with the refusal toasted, when a control command must stop here.
@@ -80,7 +80,7 @@ impl App {
                 .filter(|r| r.role == AgentRole::Orchestrator)?;
             let shown = self.runs.runs.iter().find(|r| r.run_id == run.run_id)?;
             (!shown.state.is_terminal())
-                .then(|| daemon::manager::orchestrator_refusal(w.id, &run.run_id))
+                .then(|| common::refusal::orchestrator_refusal(w.id, &run.run_id))
         });
         let Some(refusal) = refusal else {
             return false;

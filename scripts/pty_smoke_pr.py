@@ -31,6 +31,7 @@ import tempfile
 import time
 
 from pty_smoke_run import POLL, RUN_CMD_TIMEOUT, _git, _write_script, git_env
+from smoke_task_tmp import teardown
 
 # The bounds of `crates/cli/tests/support/run_pr.rs`, restated across the language
 # boundary from the daemon's host constants (`crates/daemon/src/host/mod.rs`:
@@ -145,7 +146,7 @@ def _wait_for_file(path, within):
     """Worker steps that wait, with the turn open, for `path` for at least `within`
     seconds: `sh` steps of at most 300 s each (inside `fake-agent`'s 330 s
     `SH_TIMEOUT`), a `.missed` marker when the wait ran out, and an `expect` that
-    fails the worker (`crates/cli/tests/run_e2e_pr_ci.rs`'s `wait_for`)."""
+    fails the worker (`crates/cli/tests/it/run_e2e_pr_ci.rs`'s `wait_for`)."""
     missed = path + ".missed"
     steps = []
     for _ in range(int(-(-within // 300))):
@@ -459,6 +460,8 @@ def pr_stage(pty_proc, bin_path, run_cmd, fail, base_env):
             _reap(proc)
         _stop_daemon(run_cmd, env, socket, daemon)
         if not os.environ.get("ANTHREX_SMOKE_KEEP"):
+            # M9.12.13: its runs' task temporary directories go with it.
+            teardown(root)
             shutil.rmtree(root, ignore_errors=True)
 
 

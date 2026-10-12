@@ -14,8 +14,13 @@ anthrex is a terminal multiplexer for coding agents, written in Rust. A backgrou
 | `crates/daemon` | PTY windows, status state machine, window manager, Unix-socket server, daemon lifecycle. |
 | `crates/tui` | The client: key encoding, prefix keymap, daemon connection, pure application state, rendering, event loop. |
 | `crates/cli` | The `anthrex` binary and its subcommands. |
+| `crates/common` | What the client and the daemon share without the client depending on the daemon: lock and log files, refusal texts, labels, branch syntax, worktree names, a few bounds. Depends on `proto`, `libc` and `anyhow` only. |
 | `crates/fake-agent` | Scripted Claude/Codex stand-in for deterministic status integration and smoke tests. |
+| `crates/testexec` | Test support: stand-in executables a concurrent fork can never leave busy (ETXTBSY), the checkout guard `checkout_dir` around every compile-time `CARGO_MANIFEST_DIR`, and the self re-exec helpers. |
+| `.config/nextest.toml` | cargo-nextest's configuration: the pinned version, the slow-timeout, no retries, and the `timing` and `real-io` test groups. |
+| `rust-toolchain.toml` | The pinned Rust toolchain (1.99) with clippy and rustfmt. A bump is one reviewed commit. |
 | `scripts/pty-smoke.py` | End-to-end smoke test that drives the real binary through a real PTY with an isolated daemon. |
+| `scripts/leak_gate.py` | CI's leak gate: `snapshot` before the suite, `check` after the smoke for daemons, `fake-agent`s and `ax-`/`anthrex-` temporary entries a run left behind. It only inspects; it never ends a process. |
 | `docs/ROADMAP.md` | Every milestone, its status, and its dependencies. Start here. |
 | `docs/milestones/` | One implementation brief per milestone. The brief is your requirements. |
 | `docs/superpowers/specs/` | Design specs. They are the binding authority when a brief is unclear. |
@@ -36,7 +41,8 @@ The "Design decisions" in a brief are final. If one turns out to be wrong or imp
 
 ```bash
 cargo build --workspace --all-targets
-cargo test --workspace
+cargo nextest run --workspace
+cargo test --workspace --doc
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all --check
 python3 scripts/pty-smoke.py
@@ -44,7 +50,7 @@ python3 scripts/pty-smoke.py
 
 Status tests run `crates/fake-agent` through `ANTHREX_CLAUDE_BIN` and `ANTHREX_CODEX_BIN`; never point them at real agent binaries.
 
-All five must pass before a milestone is done. `cargo test` spawns real shells in real PTYs. Kill signals the process group with SIGHUP first, so an interactive shell exits at once.
+All six must pass before a milestone is done. Install nextest with `cargo install cargo-nextest --locked --version 0.9.146` (the version `.config/nextest.toml` requires). The daemon's and the CLI's integration tests are one binary per crate (`tests/it/main.rs`; only the files that change the process environment, and `lockfile.rs`, are binaries of their own), so a test's name starts with its old file name: where an older brief says `cargo test -p anthrex --test <file>`, run `cargo nextest run -p anthrex -E 'test(/^<file>::/)'`. A new daemon or CLI integration test goes in `tests/it/<f>.rs` with a `mod <f>;` line in `tests/it/main.rs`; it gets a file and `[[test]]` entry of its own only if it mutates the process environment. Both crates set `autotests = false`, so a file no target mounts is never compiled; `source_rules::every_integration_test_file_is_compiled` fails on one. The suite spawns real shells in real PTYs. Kill signals the process group with SIGHUP first, so an interactive shell exits at once.
 
 ## Hard rules
 

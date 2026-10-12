@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Scripted PTY smoke test for anthrex.
 
-`cargo test` covers the pieces; this covers the thing itself. It drives the real
+`cargo nextest run` covers the pieces; this covers the thing itself. It drives the real
 target/debug/anthrex binary through a pseudo-terminal the way a person would -
 attaching, creating windows, typing, pasting, detaching - and asserts on the
 rendered screen text. Run it from the repo root:
@@ -52,6 +52,7 @@ from pty_smoke_design import design_stage
 from pty_smoke_profile import profile_stage
 from pty_smoke_run_view import run_view_stage
 from pty_smoke_tui import tui_stage
+from smoke_task_tmp import check_pinned, teardown
 
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -891,7 +892,7 @@ def run_worktree_form_stage(repo):
 # structurally incapable of reaching `manager/restore.rs`/`restart.rs`'s real
 # `session_id` logic. `run_resume_stage` below closes that gap using a fake runtime
 # script (never a real agent - this suite's own rule, and the pattern task M6.7
-# established for `crates/daemon/tests/lifecycle.rs`'s
+# established for `crates/daemon/tests/it/lifecycle.rs`'s
 # `restart_resumes_claude_and_codex_sessions`, replayed here against the real `anthrex`
 # binary and a real daemon process instead of `daemon::run` called in-process).
 ANTHREX_CONFIG_PATH = ENV["ANTHREX_CONFIG"]
@@ -932,7 +933,7 @@ def _write_resume_runtime_script(resume_dir):
 def run_hook(window_id, source, payload, timeout=10):
     """Fires a real hook the way a real agent's own hook command would: a real
     `anthrex hook` child process, over the real socket - the same mechanism
-    `crates/cli/tests/persistence.rs`'s `session_id_learned_from_a_hook_is_saved`
+    `crates/cli/tests/it/persistence.rs`'s `session_id_learned_from_a_hook_is_saved`
     checks at the Rust integration level, driven here from outside the window's own
     process (the fake runtime script above never fires a hook itself) rather than
     from within a scripted fake agent. `anthrex hook` always exits 0 regardless of
@@ -1011,7 +1012,7 @@ def run_resume_stage():
     own daemon starts below run with those two variables removed from the environment,
     so the config file it writes here is what actually resolves `claude_bin`/
     `codex_bin` - the same production config path
-    `crates/daemon/tests/lifecycle.rs`'s own `restart_resumes_claude_and_codex_sessions`
+    `crates/daemon/tests/it/lifecycle.rs`'s own `restart_resumes_claude_and_codex_sessions`
     exercises in-process, replayed here against the real binary.
 
     Reads the resumed argv from a file the fake runtime script writes, rather than
@@ -1104,7 +1105,7 @@ def run_resume_stage():
             fail(f"resumed claude argv still carried the original prompt:\n{claude_argv}")
         # Design decision 16: `resume <id>` must be the trailing pair of Codex's argv,
         # not merely present anywhere in it - pinned here the same way
-        # `crates/daemon/tests/lifecycle.rs`'s own resume test pins it.
+        # `crates/daemon/tests/it/lifecycle.rs`'s own resume test pins it.
         if not codex_argv.strip().endswith(f"[resume] [{codex_session}]"):
             fail(f"resumed codex argv did not end with resume {codex_session}:\n{codex_argv}")
         if f"[--] [{seed_prompt}]" in codex_argv:
@@ -1882,6 +1883,9 @@ def only(stage):
 
 
 if __name__ == "__main__":
+    # M9.12.13: the teardown's hash gives the pinned name, which the daemon's own test
+    # (`the_smokes_pinned_name_is_this_hash`) checks against its hash; or the smoke stops.
+    check_pinned()
     try:
         if os.environ.get("ANTHREX_SMOKE_ONLY"):
             only(os.environ["ANTHREX_SMOKE_ONLY"])
@@ -1896,6 +1900,8 @@ if __name__ == "__main__":
         # Leave nothing behind under /tmp. ANTHREX_SMOKE_KEEP=1 keeps the data
         # directory (and so daemon.log) for debugging a failure.
         if not os.environ.get("ANTHREX_SMOKE_KEEP"):
+            # M9.12.13: its runs' task temporary directories go with it.
+            teardown(DATA_DIR)
             shutil.rmtree(DATA_DIR, ignore_errors=True)
         # W1 and W2's fixture repository is not the daemon's data, so it is removed
         # unconditionally, keep-flag or not.

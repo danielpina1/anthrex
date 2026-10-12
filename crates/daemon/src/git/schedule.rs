@@ -8,7 +8,7 @@
 //!
 //! That split is what design decision 30 asks for. A test that had to sleep for thirty
 //! seconds to watch the safety poll fire, or sixty to watch the circuit breaker
-//! reopen, is a test nobody runs; `crates/daemon/tests/git_registry.rs` asserts both by
+//! reopen, is a test nobody runs; `crates/daemon/tests/it/git_registry.rs` asserts both by
 //! doing arithmetic on one base `Instant`.
 //!
 //! The instants are [`tokio::time::Instant`] rather than [`std::time::Instant`]
@@ -86,7 +86,7 @@ impl Scheduler {
     ///
     /// `poll_interval` and `debounce_interval` come from `config.toml`'s `[git]` table;
     /// [`POLL_INTERVAL`] and [`DEBOUNCE`] are their defaults, and `config::Git`'s own
-    /// defaults are asserted equal to them in `crates/daemon/tests/git_schedule.rs`.
+    /// defaults are asserted equal to them in `crates/daemon/tests/it/git_schedule.rs`.
     pub fn new(now: Instant, poll_interval: Duration, debounce_interval: Duration) -> Self {
         Self {
             next_poll: now,

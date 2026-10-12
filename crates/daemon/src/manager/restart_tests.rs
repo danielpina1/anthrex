@@ -109,7 +109,7 @@ async fn a_directory_gone_before_phase_c_does_not_leave_a_stale_cleanups_record(
 ///
 /// Events are deliberately never pumped (same technique as
 /// `restart_refuses_when_the_kill_wait_times_out` in
-/// `daemon/tests/manager/restart/shutdown_race.rs`), so `Entry.child_alive` can never
+/// `daemon/tests/it/manager/restart/shutdown_race.rs`), so `Entry.child_alive` can never
 /// observe the real process's actual fate — this pins the manager-visible race
 /// deterministically rather than depending on how fast a real shell dies to `SIGHUP`.
 #[tokio::test]

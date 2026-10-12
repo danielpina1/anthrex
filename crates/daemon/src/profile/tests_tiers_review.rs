@@ -255,7 +255,7 @@ fn verification_skips_option_like_and_glob_named_module_directories() {
         None,
         Duration::from_secs(30),
         1,
-        &steps(dir.path()),
+        &steps(&dir),
     );
     assert!(check_of(&v, "module_test").ok);
     let tests: Vec<String> = log(dir.path())
@@ -285,7 +285,7 @@ fn an_untiered_check_is_verified_as_written() {
         None,
         Duration::from_secs(30),
         1,
-        &steps(dir.path()),
+        &steps(&dir),
     );
     assert!(v.check.unwrap().ok);
     assert_eq!(log(dir.path()), ["check.sh {shard} {filter:x}"]);
@@ -314,7 +314,7 @@ fn the_graph_output_file_is_in_tmpdir_not_the_checkout() {
         None,
         Duration::from_secs(30),
         1,
-        &steps(dir.path()),
+        &steps(&dir),
     );
     assert!(check_of(&v, "module_graph").ok, "{v:?}");
     let seen = std::fs::read_to_string(&seen).unwrap();
@@ -355,7 +355,7 @@ fn the_graph_timeout_is_the_shorter_bound() {
         None,
         Duration::from_secs(1),
         1,
-        &steps(dir.path()),
+        &steps(&dir),
     );
     assert!(check_of(&v, "module_graph").timed_out, "{v:?}");
 }

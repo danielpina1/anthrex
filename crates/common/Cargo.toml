@@ -1,0 +1,18 @@
+[package]
+name = "anthrex-common"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "common"
+path = "src/lib.rs"
+
+[dependencies]
+proto.workspace = true
+libc.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

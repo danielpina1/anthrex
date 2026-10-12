@@ -107,6 +107,7 @@ async fn refresh_with_uncommitted_changes_is_refused() {
         matches!(refresh, Some(RefreshState::Due | RefreshState::InFlight(_))),
         "{refresh:?}"
     );
+    rig.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -116,4 +117,5 @@ async fn an_untracked_file_is_not_an_uncommitted_change() {
     std::fs::write(worktree.join("scratch.txt"), "notes\n").unwrap();
     let reply = rig.request(refresh_t0(&rig)).await;
     assert!(matches!(reply, RunReply::Done { .. }), "{reply:?}");
+    rig.stop().await;
 }

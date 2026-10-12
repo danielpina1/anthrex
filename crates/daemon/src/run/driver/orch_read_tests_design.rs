@@ -118,6 +118,7 @@ async fn get_doc_is_answered_off_engine_and_capped() {
     }
     // The engine saw none of it: the run is still paused and unchanged.
     assert!(rig.run(|run| run.state == proto::RunState::Paused));
+    rig.stop().await;
 }
 
 /// A design agent's read is checked against the run's live design agents: a window
@@ -190,6 +191,8 @@ async fn design_agents_are_checked_by_window_and_role() {
         error(&text),
         format!("run {} does not use the design flow", plain.run_id)
     );
+    plain.stop().await;
+    rig.stop().await;
 }
 
 /// Ruling T5-1 (task M9.6.10): the reviewer reads its review draft by `draft`; a draft
@@ -225,6 +228,7 @@ async fn the_reviewer_reads_its_review_draft() {
         error(&text),
         format!("run {} has no spec draft for review 3", rig.run_id)
     );
+    rig.stop().await;
 }
 
 /// Task 6's carry (e) for task M9.6.11: the plan review's draft is stored before its
@@ -255,6 +259,7 @@ async fn the_plan_reviewer_reads_the_plan_sent_to_it() {
     let read = |args| raw(&rig, AgentRole::DocReviewer, REVIEWER, args);
     let (ok, text) = read(json!({"kind": "plan"})).await;
     assert_eq!((ok, text.as_str()), (true, "# Plan: x\n"));
+    rig.stop().await;
 }
 
 /// Ruling WB-A-I2 (the final fix wave's FW-29), round 2: the plan already has round 1's
@@ -321,6 +326,7 @@ async fn the_plan_reviewer_reads_its_own_draft_in_round_2() {
         json!({"kind": "plan"}),
     );
     assert_eq!(orch.await, (true, "# Plan: round 1\n".to_string()));
+    rig.stop().await;
 }
 
 /// Ruling T20-2 (the final fix wave's FW-30): a live brainstormer's `get_doc` never
@@ -374,4 +380,5 @@ async fn a_brainstormer_can_never_read_a_draft() {
         assert!(!text.contains(secret), "{args}: {text}");
         assert_eq!(error(&text), refused, "{args}");
     }
+    rig.stop().await;
 }

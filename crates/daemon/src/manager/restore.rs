@@ -182,7 +182,7 @@ impl WindowManager {
             // This comment used to end "so it comes back unwatched until it is
             // restarted". Both halves were false — nothing registered a restored root at
             // startup, and `requests::restart` never took the registry either, so a
-            // restart did not repair it. See `crates/daemon/tests/server_restore_git.rs`.
+            // restart did not repair it. See `crates/daemon/tests/it/server_restore_git.rs`.
             let watched_worktree = worktree.or_else(|| managed.as_ref().map(|m| m.path.clone()));
             let spec = WindowSpec {
                 name: Some(name.clone()),

@@ -29,6 +29,7 @@ use crate::headless::session::HeadlessHandle;
 use crate::headless::status::{self, HeadlessStatus};
 use crate::headless::{HeadlessSpec, SessionArg, SessionEvent, TurnOutcome};
 use crate::hooks::{HookKind, ParsedHook};
+pub use common::refusal::control_refusal;
 use proto::{ExitInfo, RunRef, Runtime, Status, WindowInfo, WindowSpec};
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -214,20 +215,6 @@ pub(super) fn exit_reason(code: Option<i32>, signal: Option<i32>) -> String {
 /// Decision 49's answer to a client's `Subscribe` for a headless window.
 pub fn subscribe_refusal(id: u32) -> String {
     format!("window {id} is a headless session; open its conversation with C-b m")
-}
-
-/// Decision 49's answer to a client's `Input`, `Kill`, `Remove` or `Restart` for a
-/// headless window of `run`, or of no run: a repository-level scout (M8b decision 12).
-pub fn control_refusal(id: u32, run: Option<&RunRef>) -> String {
-    let Some(run) = run else {
-        return format!(
-            "window {id} is a headless scout session; only the daemon drives it. Use anthrex profile reject to stop it"
-        );
-    };
-    format!(
-        "window {id} is a headless session of run {}; only the engine drives it. Use anthrex run cancel to stop it",
-        run.run_id
-    )
 }
 
 impl WindowManager {

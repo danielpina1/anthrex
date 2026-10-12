@@ -1,7 +1,7 @@
 //! Fix wave 10, item 1's other half: `tui::spawn::ensure_daemon` must not let two
 //! callers racing against an empty data directory each spawn their own competing
-//! detached daemon-start child. `daemon::lockfile`'s own `acquire_or_yield` (see
-//! `crates/daemon/src/lockfile.rs`'s tests and `crates/daemon/tests/lifecycle.rs`)
+//! detached daemon-start child. `common::lockfile`'s own `acquire_or_yield` (see
+//! `crates/common/src/lockfile.rs`'s tests and `crates/daemon/tests/it/lifecycle.rs`)
 //! covers what happens if a redundant child *is* spawned anyway; this file proves the
 //! redundant spawn is prevented at the source in the first place, which is what
 //! actually closes the race in practice for the reported two-caller case (see

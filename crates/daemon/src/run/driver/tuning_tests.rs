@@ -18,7 +18,8 @@ fn repo_dir() -> (tempfile::TempDir, PathBuf) {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("repos").join("p-1");
     std::fs::create_dir_all(&dir).unwrap();
-    let history = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/history/refit.jsonl");
+    let history = testexec::checkout_dir(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/history/refit.jsonl");
     std::fs::copy(history, dir.join(HISTORY_FILE)).unwrap();
     (tmp, dir)
 }

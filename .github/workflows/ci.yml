@@ -22,11 +22,43 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+      # Milestone 9.12 decisions 19 to 21: the leak gate. Its selftest proves both of its
+      # checks bite; the snapshot, taken before anything is built or run, is what the
+      # `leak gate` step compares against. The gate only inspects: it never ends a process.
+      - name: leak gate selftest
+        run: python3 scripts/leak_gate.py selftest
+
+      - name: leak gate snapshot
+        run: python3 scripts/leak_gate.py snapshot "$RUNNER_TEMP/leak-baseline.json"
+
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+
+      - name: toolchain matches the pin
+        run: |
+          rustc --version
+          rustc --version | grep -q '^rustc 1\.99\.'
 
       - uses: Swatinem/rust-cache@v2
+
+      # Milestone 9.12 decision 8: the pinned nextest, the same as .config/nextest.toml's
+      # `nextest-version`.
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest@0.9.146
+
+      # Milestone 9.12 decision 22: the client's tree, dev-dependencies included, has no
+      # daemon (decision 11), so an engine edit never rebuilds the TUI or its tests. The
+      # tree is captured first, so a failing `cargo tree` fails the step, and no pipe
+      # can be closed early, whatever the shell's `pipefail` setting.
+      - name: the client does not depend on the daemon
+        run: |
+          tree=$(cargo tree -p anthrex-tui -e all)
+          if printf '%s\n' "$tree" | grep -F anthrex-daemon; then
+            echo "the client's dependency tree contains anthrex-daemon (decision 11)"
+            exit 1
+          fi
 
       - name: cargo fmt --all --check
         run: cargo fmt --all --check
@@ -37,8 +69,16 @@ jobs:
       - name: cargo build --workspace --all-targets
         run: cargo build --workspace --all-targets
 
-      - name: cargo test --workspace
-        run: cargo test --workspace --no-fail-fast
+      # .config/nextest.toml sets `fail-fast = false`, `retries = 0`, the slow-timeout and
+      # the test groups. The step runs in the foreground: the suite's SIGINT tests need
+      # SIGINT not to be ignored, as it would be under `nohup` or a background `&`.
+      - name: cargo nextest run --workspace
+        run: cargo nextest run --workspace
+
+      # nextest cannot run doctests (decision 1); the workspace has none today, and this
+      # keeps a future one from being skipped silently.
+      - name: cargo test --workspace --doc
+        run: cargo test --workspace --doc
 
       - name: python3 scripts/pty-smoke.py
         run: python3 scripts/pty-smoke.py
@@ -49,3 +89,61 @@ jobs:
           # scripts/pty_tree_smoke.py too: it has no __main__ of its own and is only
           # ever run as the stage module pty-smoke.py imports and drives.
           ANTHREX_GIT: "off"
+
+      # Decision 21: after the smoke, and also when an earlier step failed, so a red suite
+      # still reports the daemons, stand-ins and temporary entries it left behind. It
+      # waits up to 30 s for stopping daemons to exit and prints each leak's command line
+      # or path.
+      - name: leak gate
+        if: always()
+        run: python3 scripts/leak_gate.py check "$RUNNER_TEMP/leak-baseline.json"
+
+  # Decision 18: dependency advisories and a secret scan of the whole history. Both tools
+  # need the network, so the job never blocks a merge; its findings are read and recorded.
+  security:
+    name: security
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # gitleaks reads the history, not only the checkout.
+          fetch-depth: 0
+
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+
+      - name: toolchain matches the pin
+        run: |
+          rustc --version
+          rustc --version | grep -q '^rustc 1\.99\.'
+
+      # Decision 8: pinned, the newest release at least two weeks old on the day of M9.12.1.
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit@0.22.2
+
+      - name: cargo audit
+        run: cargo audit
+
+      # Decision 8: pinned; the archive's SHA-256 is checked against the release's own
+      # checksums file before it is unpacked.
+      - name: Install gitleaks
+        env:
+          GITLEAKS_VERSION: 8.30.1
+        run: |
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          cd "$RUNNER_TEMP"
+          curl -fsSLO "$base/$archive"
+          curl -fsSLO "$base/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          grep " ${archive}\$" "gitleaks_${GITLEAKS_VERSION}_checksums.txt" | sha256sum --check --strict
+          tar -xzf "$archive" gitleaks
+          ./gitleaks version
+
+      # `--redact` keeps a found secret out of the log. A false positive goes in
+      # .gitleaksignore with its reason in the milestone brief; a real one is reported.
+      - name: gitleaks
+        run: '"$RUNNER_TEMP/gitleaks" git --redact --no-banner --verbose .'

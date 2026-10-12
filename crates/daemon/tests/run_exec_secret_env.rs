@@ -1,3 +1,6 @@
+//! Alone in its own test binary (milestone 9.12, decision 14): it calls `std::env::set_var`
+//! or `remove_var`.
+//!
 //! Milestone 9.11 decision 32 (D3): an engine command (a check, a proof, `setup`, a tier
 //! step) loses the user's cloud and registry tokens it would inherit from the daemon,
 //! except the names `ANTHREX_CHECK_ENV_PASS` lists. Alone in its own test binary,

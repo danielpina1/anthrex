@@ -57,6 +57,7 @@ async fn run_status_returns_at_once_without_since() {
     let (ok, digest) = rig.orch("run_status", json!({})).await;
     assert!(ok, "{digest}");
     assert_eq!(digest["run"]["state"], "failed");
+    rig.stop().await;
 }
 
 /// Decision 16: a wait ends within 5 s of a state change, with a higher revision.
@@ -87,6 +88,7 @@ async fn run_status_waits_until_the_digest_changes() {
     );
     assert!(digest["revision"].as_u64().unwrap() > rev, "{digest}");
     assert_eq!(digest["counts"]["cancelled"], json!(1), "{digest}");
+    rig.stop().await;
 }
 
 /// Decision 16: with nothing changing, the wait takes `wait_secs` and answers the same
@@ -106,6 +108,7 @@ async fn run_status_times_out_with_the_same_revision() {
         "{took:?}"
     );
     assert_eq!(digest["revision"], json!(rev), "{digest}");
+    rig.stop().await;
 }
 
 /// Decision 16: a worker's tool call moves a counter, not the digest, so a wait is not
@@ -140,6 +143,7 @@ async fn a_counter_change_does_not_end_the_wait() {
     assert!(took >= Duration::from_secs(3), "{took:?}");
     assert_eq!(digest["revision"], json!(rev), "{digest}");
     assert_eq!(digest["spend"]["tool_calls"], json!(1), "{digest}");
+    rig.stop().await;
 }
 
 /// Decision 16: a run that becomes terminal while a wait is open ends the wait at once,
@@ -170,6 +174,7 @@ async fn terminal_run_ends_the_wait() {
     assert!(answered.duration_since(ended) < Duration::from_secs(2));
     assert_eq!(digest["run"]["state"], "discarded", "{digest}");
     assert_eq!(digest["revision"], json!(rev));
+    rig.stop().await;
 }
 
 /// A waiting `run_status` whose receiver lags behind the snapshot pushes subscribes
@@ -198,6 +203,7 @@ async fn a_lagged_wait_subscribes_again_and_keeps_waiting() {
     rig.cancel_t1().await;
     let (ok, digest) = tokio::time::timeout(ANSWER, wait).await.unwrap().unwrap();
     assert!(ok && digest["revision"].as_u64().unwrap() > rev, "{digest}");
+    rig.stop().await;
 }
 
 /// Review finding 4: the wait's deadline is set once and spans every resubscription.
@@ -236,6 +242,7 @@ async fn the_deadline_spans_lagged_resubscriptions() {
         "{took:?}"
     );
     assert_eq!(digest["revision"], json!(rev));
+    rig.stop().await;
 }
 
 /// No engine lock is held while `run_status` waits: `run status` (a `List`) answers.
@@ -259,4 +266,5 @@ async fn long_poll_holds_no_engine_lock() {
     rig.cancel_t1().await;
     let (ok, digest) = tokio::time::timeout(ANSWER, wait).await.unwrap().unwrap();
     assert!(ok && digest["revision"].as_u64().unwrap() > rev, "{digest}");
+    rig.stop().await;
 }

@@ -1,0 +1,46 @@
+//! Text helpers the daemon's reports and the client both print (decision 10). Pure.
+
+use proto::Budget;
+
+/// Tokens as `<n>`, `<n>.<d>k` under 10k, `<n>k`, or `<n>.<d>M`, rounded down.
+pub fn tokens(n: u64) -> String {
+    match n {
+        0..1_000 => n.to_string(),
+        1_000..10_000 => format!("{}.{}k", n / 1_000, n % 1_000 / 100),
+        10_000..1_000_000 => format!("{}k", n / 1_000),
+        _ => format!("{}.{}M", n / 1_000_000, n % 1_000_000 / 100_000),
+    }
+}
+
+/// `<calls> calls <minutes>m`, then ` <tokens> tok` (M8b's `k`/`M` notation) when set.
+pub fn budget_text(b: &Budget) -> String {
+    let mut text = format!("{} calls {}m", b.tool_calls, b.minutes);
+    if let Some(tokens) = b.tokens {
+        text.push_str(&format!(" {} tok", self::tokens(tokens)));
+    }
+    text
+}
+
+/// `YYYY-MM-DD HH:MM:SSZ` in UTC, days-from-civil arithmetic (Howard Hinnant's
+/// algorithm), no new dependency.
+pub fn format_utc(unix: u64) -> String {
+    let days = (unix / 86_400) as i64;
+    let secs = unix % 86_400;
+    let (y, m, d) = civil_from_days(days);
+    let (h, mi, s) = (secs / 3600, (secs % 3600) / 60, secs % 60);
+    format!("{y:04}-{m:02}-{d:02} {h:02}:{mi:02}:{s:02}Z")
+}
+
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
+}

@@ -1,3 +1,6 @@
+//! Alone in its own test binary (milestone 9.12, decision 14): it calls `std::env::set_var`
+//! or `remove_var`.
+//!
 //! M9.11.12 (B4): the daemon's `shutdown` waits for a worktree removal already under
 //! way, so the daemon never exits with `git worktree remove` cut off half done.
 //!

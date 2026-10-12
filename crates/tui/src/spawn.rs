@@ -36,7 +36,7 @@ pub const PRE_BIND_ALLOWANCE: Duration = Duration::from_secs(5);
 /// below, because tests derive their own bounds from it (whole-branch-review m19), and
 /// a named, importable constant is what lets the compiler keep them in step.
 pub const ENSURE_DAEMON_SOCKET_WAIT: Duration =
-    daemon::LOCK_WAIT.saturating_add(PRE_BIND_ALLOWANCE);
+    common::lifecycle::LOCK_WAIT.saturating_add(PRE_BIND_ALLOWANCE);
 
 /// Opens `proto::paths::stderr_path()` for append, creating `data_dir` first if needed.
 /// A detached daemon has no terminal, and `logfile::RotatingFile` can only report a
@@ -63,11 +63,11 @@ fn open_stderr_sink() -> Option<std::fs::File> {
     // its own over-the-cap check once, with nothing new to write. A file a previous run
     // pushed past the cap gets rotated out of the way before this run's fd is handed to
     // the child; a file already within the cap is left untouched.
-    if let Ok(mut rotating) = daemon::logfile::RotatingFile::open(
+    if let Ok(mut rotating) = common::logfile::RotatingFile::open(
         dir,
         "daemon.stderr.log",
-        daemon::logfile::LOG_MAX_BYTES,
-        daemon::logfile::LOG_KEEP,
+        common::logfile::LOG_MAX_BYTES,
+        common::logfile::LOG_KEEP,
     ) {
         rotating.rotate_if_over_cap();
     }
@@ -111,7 +111,7 @@ fn spawn_detached(exe: &Path) -> anyhow::Result<()> {
 enum Claim {
     /// Nobody held `daemon.lock`: this caller claimed it and must keep holding it
     /// until the detached child has actually been launched.
-    Won(daemon::lockfile::DaemonLock),
+    Won(common::lockfile::DaemonLock),
     /// Somebody else holds it right now.
     Contended,
     /// The probe itself failed for a reason other than contention (most likely: the
@@ -119,7 +119,7 @@ enum Claim {
     Unknown,
 }
 
-/// How long a spawn marker (`daemon::lifecycle::SPAWN_MARKER`) stands for a daemon still
+/// How long a spawn marker (`common::lifecycle::SPAWN_MARKER`) stands for a daemon still
 /// on its way to its lock: `PRE_BIND_ALLOWANCE`, the same allowance a daemon's start is
 /// given. A daemon that took longer, or died before its lock, no longer holds back a
 /// client that wins the claim after it; a second daemon spawned then yields to the first
@@ -133,7 +133,7 @@ const SPAWN_MARKER_FRESH: Duration = PRE_BIND_ALLOWANCE;
 /// S re-review N2). Reading such a marker as stale costs at most a second daemon, which
 /// yields to the first.
 fn spawn_in_flight(data_dir: &Path) -> bool {
-    std::fs::metadata(data_dir.join(daemon::lifecycle::SPAWN_MARKER))
+    std::fs::metadata(data_dir.join(common::lifecycle::SPAWN_MARKER))
         .and_then(|meta| meta.modified())
         .map(|written| {
             std::time::SystemTime::now()
@@ -150,7 +150,7 @@ fn claim(data_dir: &Path) -> Claim {
     if std::fs::create_dir_all(data_dir).is_err() {
         return Claim::Unknown;
     }
-    match daemon::lockfile::try_claim(data_dir) {
+    match common::lockfile::try_claim(data_dir) {
         Ok(Some(_)) if spawn_in_flight(data_dir) => Claim::Contended,
         Ok(Some(lock)) => Claim::Won(lock),
         Ok(None) => Claim::Contended,
@@ -182,7 +182,7 @@ async fn start_once(exe: &Path, data_dir: &Path) -> anyhow::Result<bool> {
         }
         Claim::Won(lock) => {
             let exe = exe.to_path_buf();
-            let marker = data_dir.join(daemon::lifecycle::SPAWN_MARKER);
+            let marker = data_dir.join(common::lifecycle::SPAWN_MARKER);
             tokio::task::spawn_blocking(move || {
                 // Written under the claim, before the spawn: a client that wins the claim
                 // after this one drops it, but before the child takes it, sees the marker.
@@ -218,14 +218,14 @@ async fn start_once(exe: &Path, data_dir: &Path) -> anyhow::Result<bool> {
 /// (decision 32) can be driven with a fixed, test-supplied path instead of whatever
 /// binary happens to be running the test harness.
 ///
-/// Fix wave 10, item 1's other half (`daemon::lockfile::DaemonLock::acquire_or_yield`
+/// Fix wave 10, item 1's other half (`common::lockfile::DaemonLock::acquire_or_yield`
 /// is the first): two `ensure_daemon` calls that each see "not up" at nearly the same
 /// instant used to each `spawn_detached` their own competing daemon-start child — the
 /// exact shape of race the review reproduced (a loser left racing the winner's own
 /// lock long after this function's caller has stopped caring). Rather than only
 /// detecting that after the fact once both children are already running, the `Claim`
 /// below removes the redundant child at the source: only the caller that can promptly
-/// claim the daemon's own startup lock (`daemon::lockfile::try_claim`) spawns
+/// claim the daemon's own startup lock (`common::lockfile::try_claim`) spawns
 /// anything. Critically, a winning claim is *held* across the `spawn_detached` call
 /// itself, not released the instant it is taken — an earlier version of this fix
 /// released it immediately, which meant a sibling caller checking even a few
@@ -238,7 +238,7 @@ async fn start_once(exe: &Path, data_dir: &Path) -> anyhow::Result<bool> {
 /// below, claiming again on each pass (M9.11.28's fix round): the holder may be a daemon
 /// still stopping, with nothing on its way, and once its lock is free the first caller
 /// to claim it spawns. A caller that wins a claim while a fresh spawn marker
-/// ([`daemon::lifecycle::SPAWN_MARKER`]) says another caller's daemon has not taken the
+/// ([`common::lifecycle::SPAWN_MARKER`]) says another caller's daemon has not taken the
 /// lock yet treats it as lost, so two waiting callers spawn one daemon. A probe that fails for a reason *other* than contention falls
 /// back to the old, unconditional behaviour — an unrelated I/O hiccup must never be
 /// read as "someone else has this covered," or nobody would ever spawn anything.
@@ -248,7 +248,7 @@ async fn start_once(exe: &Path, data_dir: &Path) -> anyhow::Result<bool> {
 /// `SPAWN_HANDOFF_GRACE` (below): `spawn_detached` returning only means fork/exec has
 /// been *initiated* — the detached child still has its own real startup ahead of it
 /// (dynamic linking, the tokio runtime, argument parsing) before it reaches its own
-/// [`daemon::lockfile::DaemonLock::acquire`] call and re-claims this lock for real.
+/// [`common::lockfile::DaemonLock::acquire`] call and re-claims this lock for real.
 /// Dropping this caller's transient claim the instant `spawn_detached` returns reopens
 /// almost exactly the same gap this whole mechanism exists to close: a sibling
 /// `ensure_daemon` call's own `try_claim`, checked in that narrow window, would see
@@ -309,7 +309,7 @@ mod tests {
         // concurrently.
         unsafe { std::env::set_var("ANTHREX_DATA_DIR", &data_dir) };
 
-        let oversized = vec![b'x'; (daemon::logfile::LOG_MAX_BYTES + 4096) as usize];
+        let oversized = vec![b'x'; (common::logfile::LOG_MAX_BYTES + 4096) as usize];
         std::fs::write(data_dir.join("daemon.stderr.log"), &oversized).unwrap();
 
         let file = open_stderr_sink();
@@ -339,7 +339,7 @@ mod tests {
     fn only_a_provably_fresh_spawn_marker_is_in_flight() {
         let dir = tempfile::tempdir().unwrap();
         assert!(!spawn_in_flight(dir.path()), "no marker");
-        let path = dir.path().join(daemon::lifecycle::SPAWN_MARKER);
+        let path = dir.path().join(common::lifecycle::SPAWN_MARKER);
         let file = std::fs::File::create(&path).unwrap();
         assert!(spawn_in_flight(dir.path()), "a marker written just now");
         let now = std::time::SystemTime::now();

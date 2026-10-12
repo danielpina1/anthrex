@@ -1,3 +1,6 @@
+//! Alone in its own test binary (milestone 9.12, decision 14): it calls `std::env::set_var`
+//! or `remove_var`.
+//!
 //! M8a.17, decision 26 for headless sessions: every session process loses the inherited
 //! `CLAUDE_CODE_*` variables and `CLAUDECODE`, has `ANTHREX_WINDOW_ID` and
 //! `ANTHREX_SOCKET` set to its own window and socket, and gets the profile's `env`.

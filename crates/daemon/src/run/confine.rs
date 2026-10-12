@@ -260,9 +260,15 @@ mod tests {
 
     #[test]
     fn a_checkout_gets_itself_its_tmp_and_the_caches() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::run::git::TestDir::new();
         let root = dir.path().canonicalize().unwrap();
         let checkout = root.join("wt/runs/r1/t1");
+        // M9.12.13: the checkout's temporary directory, named from a repository
+        // directory under `data` that the test never makes.
+        dir.also(crate::run::git::checkout_repo_dir(
+            &root.join("data/runs/r1"),
+            &checkout,
+        ));
         std::fs::create_dir_all(&checkout).unwrap();
         let c = spec(&root, &["/opt/cache/x"])
             .for_checkout(&checkout)
@@ -303,9 +309,15 @@ mod tests {
 
     #[test]
     fn a_cache_over_the_repository_or_the_data_directory_is_refused() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::run::git::TestDir::new();
         let root = dir.path().canonicalize().unwrap();
         let checkout = root.join("wt/runs/r1/t1");
+        // M9.12.13: the checkout's temporary directory, named from a repository
+        // directory under `data` that the test never makes.
+        dir.also(crate::run::git::checkout_repo_dir(
+            &root.join("data/runs/r1"),
+            &checkout,
+        ));
         std::fs::create_dir_all(&checkout).unwrap();
         let repo = root.join("repo");
         for bad in [
@@ -326,9 +338,15 @@ mod tests {
 
     #[test]
     fn a_checkout_swapped_for_a_link_is_refused() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::run::git::TestDir::new();
         let root = dir.path().canonicalize().unwrap();
         let checkout = root.join("wt/runs/r1/t1");
+        // M9.12.13: the checkout's temporary directory, named from a repository
+        // directory under `data` that the test never makes.
+        dir.also(crate::run::git::checkout_repo_dir(
+            &root.join("data/runs/r1"),
+            &checkout,
+        ));
         std::fs::create_dir_all(checkout.parent().unwrap()).unwrap();
         std::os::unix::fs::symlink(&root, &checkout).unwrap();
         let err = spec(&root, &[]).for_checkout(&checkout).unwrap_err();

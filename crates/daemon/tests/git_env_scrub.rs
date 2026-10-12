@@ -1,3 +1,6 @@
+//! Alone in its own test binary (milestone 9.12, decision 14): it calls `std::env::set_var`
+//! or `remove_var`.
+//!
 //! W2 re-review N1 (AGENTS.md rule 11): every git the daemon runs itself drops the
 //! eleven inherited git variables: the five location variables, the two object-store
 //! ones and the four pathspec modes. One site is driven here, the project root

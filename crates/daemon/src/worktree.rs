@@ -1,16 +1,17 @@
 //! Layout helpers and the hardened git invocation for milestone 5's linked worktrees.
 //!
 //! This module owns two things, and only these two: where a worktree lives on disk
-//! (`hash8`, `branch_dir_name`, `repo_worktrees_dir`), and the one helper every git
-//! command this milestone runs goes through, hardened per design decisions 1 to 3 —
-//! `--no-optional-locks` and a scrubbed environment on every invocation (AGENTS.md hard
-//! rules 10 and 11), `LC_ALL=C` and `GIT_TERMINAL_PROMPT=0` so messages are stable and
-//! git never blocks on a credential prompt, and a caller-supplied deadline rather than a
-//! bare timeout, converted to whatever [`subprocess::run_captured`] needs at each call.
+//! (`hash8`, `branch_dir_name`, `repo_worktrees_dir` and `worktree_dir`, defined in
+//! `common::worktree_names` since milestone 9.12 and re-exported here), and the one helper
+//! every git command this milestone runs goes through, hardened per design decisions 1 to 3
+//! — `--no-optional-locks` and a scrubbed environment on every invocation (AGENTS.md hard
+//! rules 10 and 11), `LC_ALL=C` and `GIT_TERMINAL_PROMPT=0` so messages are stable and git
+//! never blocks on a credential prompt, and a caller-supplied deadline rather than a bare
+//! timeout, converted to whatever [`subprocess::run_captured`] needs at each call.
 //! [`run_git`] is `#[doc(hidden)] pub` rather than private only so that
-//! `crates/daemon/tests/worktree_env.rs` can exercise it in a test binary of its own —
-//! see that file for why. It is not part of this module's real API; every other caller
-//! lives inside this module and its submodules — `create`, `dirty_reason`, `remove` and
+//! `crates/daemon/tests/worktree_env.rs` can exercise it in a test binary of its own — see
+//! that file for why. It is not part of this module's real API; every other caller lives
+//! inside this module and its submodules — `create`, `dirty_reason`, `remove` and
 //! `discard_new`, plus this file's own tests.
 //!
 //! `create`, `remove`, `discard_new` and `dirty_reason` — the orchestration that actually
@@ -36,10 +37,12 @@ pub use ops::{
 
 use std::ffi::OsStr;
 use std::io;
-use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
+
+pub use common::branch::RESERVED_BRANCH_PREFIX;
+pub use common::worktree_names::{branch_dir_name, hash8, repo_worktrees_dir, worktree_dir};
 
 use crate::subprocess::{self, HeadTail, Outcome};
 
@@ -50,8 +53,6 @@ pub const OPERATION_TIMEOUT: Duration = Duration::from_secs(30);
 pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
 /// Directory name under `<wt>` that milestone 8 owns (design decision 7).
 pub const RESERVED_DIR: &str = "runs";
-/// Branch prefix that milestone 8 owns (design decision 8).
-pub const RESERVED_BRANCH_PREFIX: &str = "anthrex/";
 
 const MAX_OUTPUT_BYTES: usize = 256 * 1024;
 const MAX_STDERR_BYTES: usize = 8 * 1024;
@@ -116,91 +117,10 @@ pub enum WorktreeError {
     TimedOut { args: String, secs: u64 },
 }
 
-/// FNV-1a, 32-bit, over `path`'s raw bytes ([`OsStrExt::as_bytes`]). Design decision 6:
-/// deliberately not a truncated SHA-256 — the name has to be short, stable across Rust
-/// releases (unlike `DefaultHasher`) and readable in a path, which FNV-1a already gives
-/// for free without a dependency the daemon does not otherwise need.
-pub fn hash8(path: &Path) -> String {
-    const OFFSET_BASIS: u32 = 0x811c_9dc5;
-    const PRIME: u32 = 0x0100_0193;
-    let mut hash = OFFSET_BASIS;
-    for &byte in path.as_os_str().as_bytes() {
-        hash ^= u32::from(byte);
-        hash = hash.wrapping_mul(PRIME);
-    }
-    format!("{hash:08x}")
-}
-
-/// Design decision 7: every `/` in a branch name becomes `-` in its worktree directory
-/// name, so `feat/api` cannot land inside a directory literally named `feat`.
-pub fn branch_dir_name(branch: &str) -> String {
-    branch.replace('/', "-")
-}
-
-/// `<wt>` from design decision 6: `<worktrees_root>/<project_basename>-<hash8>`, where
-/// `project_basename` is `project_root`'s last path component with every character
-/// outside `[A-Za-z0-9._-]` replaced by `-`, and `hash8` is [`hash8`] of the full
-/// `project_root` path (not just its basename).
-pub fn repo_worktrees_dir(worktrees_root: &Path, project_root: &Path) -> PathBuf {
-    let basename = project_root
-        .file_name()
-        .map(|name| name.to_string_lossy())
-        .unwrap_or_default();
-    let sanitized: String = basename
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
-                c
-            } else {
-                '-'
-            }
-        })
-        .collect();
-    worktrees_root.join(format!("{sanitized}-{}", hash8(project_root)))
-}
-
-/// The directory a worktree for `branch` of `project_root` occupies: `<wt>` joined with
-/// the branch's directory name.
-///
-/// **One derivation, two readers**, and that is the whole reason it is a function rather
-/// than two `join`s. `WindowManager::create`'s phase A calls this to claim the directory
-/// against other creates, under the manager lock, before any git runs; [`ops::create`]
-/// calls it to decide where `git worktree add` writes. If those two ever computed
-/// different paths for one create, the claim would guard a directory nobody makes while
-/// the real one stayed unclaimed — and the loser of a race would then run
-/// `git worktree remove --force` over the winner's live checkout. They were two copies of
-/// the arithmetic over two separately resolved roots until the whole-branch review's
-/// finding 4; now there is one of each.
-///
-/// Pure, so phase A can call it under the lock.
-pub fn worktree_dir(worktrees_root: &Path, project_root: &Path, branch: &str) -> PathBuf {
-    repo_worktrees_dir(worktrees_root, project_root).join(branch_dir_name(branch))
-}
-
-/// Design decision 8, rules 1 to 4. Pure. `crates/tui/src/dialog.rs` has its own copy
-/// with the same messages (task M5.8).
+/// Design decision 8, rules 1 to 4, as [`common::branch::check_branch_syntax`] answers
+/// them (milestone 9.12 decision 12). Pure.
 pub fn check_branch_syntax(branch: &str) -> Result<(), WorktreeError> {
-    if branch.trim().is_empty() {
-        return Err(WorktreeError::InvalidBranch(
-            "branch name is required".to_string(),
-        ));
-    }
-    if branch.chars().any(char::is_whitespace) {
-        return Err(WorktreeError::InvalidBranch(
-            "branch name cannot contain spaces".to_string(),
-        ));
-    }
-    if branch.starts_with('-') {
-        return Err(WorktreeError::InvalidBranch(
-            "branch name cannot start with '-'".to_string(),
-        ));
-    }
-    if branch.starts_with(RESERVED_BRANCH_PREFIX) {
-        return Err(WorktreeError::InvalidBranch(
-            "branches under anthrex/ are reserved for orchestration runs".to_string(),
-        ));
-    }
-    Ok(())
+    common::branch::check_branch_syntax(branch).map_err(WorktreeError::InvalidBranch)
 }
 
 /// The one path every git command this milestone runs takes: `-C <dir>

@@ -80,6 +80,64 @@ pub(super) fn names(dir: &Path) -> Vec<String> {
     names
 }
 
+/// M9.12.13's follow-up (macOS CI leaked an `ax-design-io-*` directory): how long
+/// [`Engine::stop`] may take. `RunService::stop` waits `STOP_WAIT` for the loop's
+/// acknowledgement; 30 s more for the last save and the join on a loaded machine. No
+/// window is started, so there is no kill grace or clean-up to add.
+const STOP_BOUND: std::time::Duration =
+    std::time::Duration::from_secs(30).saturating_add(super::super::STOP_WAIT);
+
+/// The run service's loop, started for a test by [`Engine::start`]. It is stopped with
+/// [`Engine::stop`], which awaits the loop and the last `run.json` save, so nothing
+/// writes into the test's directory after it drops; one merely dropped fails the test
+/// (a test already failing only cancels).
+pub(super) struct Engine {
+    service: Arc<RunService>,
+    shutdown: tokio_util::sync::CancellationToken,
+    task: Option<tokio::task::JoinHandle<()>>,
+    stopped: bool,
+}
+
+impl Engine {
+    pub(super) fn start(service: &Arc<RunService>) -> Engine {
+        let shutdown = tokio_util::sync::CancellationToken::new();
+        let task = Some(service.spawn(shutdown.clone()));
+        Engine {
+            service: service.clone(),
+            shutdown,
+            task,
+            stopped: false,
+        }
+    }
+
+    /// Cancels, stops the run service (its last `run.json` written and awaited) and
+    /// awaits its loop, as `lifecycle.rs` does at shutdown.
+    pub(super) async fn stop(mut self) {
+        self.shutdown.cancel();
+        let task = self.task.take();
+        let stopping = async {
+            self.service.stop().await;
+            if let Some(task) = task {
+                let _ = task.await;
+            }
+        };
+        if tokio::time::timeout(STOP_BOUND, stopping).await.is_err() {
+            panic!("the run service did not stop within {STOP_BOUND:?}");
+        }
+        self.stopped = true;
+    }
+}
+
+impl Drop for Engine {
+    fn drop(&mut self) {
+        self.shutdown.cancel();
+        assert!(
+            self.stopped || std::thread::panicking(),
+            "an engine must be stopped with `Engine::stop().await` before it drops"
+        );
+    }
+}
+
 pub(super) fn tmp() -> tempfile::TempDir {
     tempfile::Builder::new()
         .prefix("ax-design-io-")

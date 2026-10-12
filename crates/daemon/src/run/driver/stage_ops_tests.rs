@@ -43,7 +43,7 @@ const INTEGRATION: &str = "anthrex/r1/integration";
 /// `main` at a base commit, both stage branches and `integration` there, the
 /// integration worktree on `integration`, and a task commit on its own branch.
 struct Rig {
-    _tmp: tempfile::TempDir,
+    _tmp: crate::run::git::TestDir,
     root: PathBuf,
     integration: PathBuf,
     base: String,
@@ -60,7 +60,7 @@ impl Rig {
     /// A rig whose service runs git through the script `wrapper(top)` returns, written
     /// to `<top>/git-wrapper.sh` before the service exists.
     fn with_wrapper(wrapper: impl FnOnce(&Path) -> Option<String>) -> Rig {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::run::git::TestDir::new();
         let top = tmp.path().canonicalize().unwrap();
         if let Some(script) = wrapper(&top) {
             testexec::write_executable(top.join("git-wrapper.sh"), script);
@@ -109,6 +109,16 @@ impl Rig {
             check_timeout: Duration::from_secs(30),
             confine: None,
         };
+        // M9.12.13: the repository directories the daemon names these checkouts' task
+        // temporary directories from: the integration worktree's, never made, and the
+        // sync task's, spelled through `..` as the sync tests spell its checkout.
+        tmp.also(crate::run::git::checkout_repo_dir(
+            &ctx.data_dir,
+            &integration,
+        ));
+        tmp.also(crate::run::git::default_repo_dir(
+            &root.join("../wt/runs/r1/fix1"),
+        ));
         Rig {
             _tmp: tmp,
             root,

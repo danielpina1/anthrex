@@ -134,7 +134,7 @@ fn assert_nothing_written(data: &Path, root: &Path) {
 /// runtime and the way out; with the planning rows on Codex the start goes through.
 #[tokio::test]
 async fn a_codex_only_user_starts_planned_runs_on_codex_rows() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::run::git::TestDir::new();
     let root = tmp.path().join("repo");
     plain_repo(&root);
     let data = tmp.path().join("data");
@@ -173,7 +173,7 @@ async fn a_codex_only_user_starts_planned_runs_on_codex_rows() {
 /// change, before the run is written.
 #[tokio::test]
 async fn a_missing_planner_runtime_is_still_refused() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::run::git::TestDir::new();
     let root = tmp.path().join("repo");
     plain_repo(&root);
     let data = tmp.path().join("data");
@@ -195,7 +195,7 @@ async fn a_missing_planner_runtime_is_still_refused() {
 /// planner row's Claude Opus, and an unpinned goal gets the Claude orchestrator row.
 #[tokio::test]
 async fn a_user_with_both_runtimes_is_routed_as_before() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::run::git::TestDir::new();
     let root = tmp.path().join("repo");
     plain_repo(&root);
     let data = tmp.path().join("data");
@@ -216,7 +216,7 @@ async fn a_user_with_both_runtimes_is_routed_as_before() {
 /// runtime is not, is refused before the engine is asked, and the run is unchanged.
 #[tokio::test]
 async fn promoting_to_a_missing_runtime_is_refused_without_side_effects() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::run::git::TestDir::new();
     let root = tmp.path().join("repo");
     plain_repo(&root);
     let data = tmp.path().join("data");
@@ -300,7 +300,7 @@ async fn promoting_to_a_missing_runtime_is_refused_without_side_effects() {
 /// the promoted orchestrator's window is never started.
 #[tokio::test(flavor = "multi_thread")]
 async fn run_promote_records_what_its_check_found() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::run::git::TestDir::new();
     let root = tmp.path().join("repo");
     plain_repo(&root);
     let data = tmp.path().join("data");
@@ -371,7 +371,7 @@ async fn a_codex_run_scout_is_covered_by_the_project_settings_check() {
     let codex_default = parsed("[orchestrator]\ndefault_runtime = \"codex\"\n");
     let codex_scouts = parsed("[orchestrator.scouts]\nruntime = \"codex\"\n");
     for (name, config) in [("default_runtime", codex_default), ("scouts", codex_scouts)] {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::run::git::TestDir::new();
         let root = tmp.path().join("repo");
         super::repo_with_codex_config(&root);
         let data = tmp.path().join("data");
@@ -413,7 +413,7 @@ async fn a_codex_run_scout_is_covered_by_the_project_settings_check() {
         );
     }
     // The control: Claude scouts reach nothing new.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::run::git::TestDir::new();
     let root = tmp.path().join("repo");
     super::repo_with_codex_config(&root);
     let service = service(
@@ -433,7 +433,7 @@ async fn a_codex_run_scout_is_covered_by_the_project_settings_check() {
 /// started without it is still refused.
 #[tokio::test]
 async fn an_edit_of_a_run_started_with_trust_project_is_not_refused() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::run::git::TestDir::new();
     let root = tmp.path().join("repo");
     super::repo_with_codex_config(&root);
     let data = tmp.path().join("data");

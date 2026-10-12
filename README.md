@@ -357,6 +357,7 @@ flowchart LR
   end
   Proto["crates/proto<br/>wire types, MessagePack framing"]
   Config["crates/config<br/>config.toml"]
+  Common["crates/common<br/>shared by client and daemon"]
   MCP["crates/mcp<br/>anthrex mcp: tools for run agents"]
   TUI <-->|Unix socket| D
   CLI <-->|Unix socket| D
@@ -367,10 +368,12 @@ flowchart LR
   MCP -->|Unix socket| D
   Proto -.- TUI & CLI & D & MCP
   Config -.- TUI & D
+  Common -.- TUI & D
 ```
 
 - **`crates/daemon`** owns one pseudo-terminal per window and parses each agent's hooks into a status state machine. It also runs the orchestration engine: the task graph, headless sessions, gates, the merge queue and the journal. Blocking work (git, process spawns, file I/O) never runs under its locks.
 - **`crates/tui`** is the client. Its application state is pure: key handling returns effects, and rendering only reads the state.
+- **`crates/common`** holds what the client and the daemon share without the client depending on the daemon (lock and log files, refusal texts, labels, branch syntax, worktree names), so an engine edit never rebuilds the client.
 - **`crates/proto`** holds the wire types and the length-prefixed MessagePack framing that every client shares, with a protocol version checked at the handshake.
 - **`crates/mcp`** serves the MCP tools that the orchestrator, workers, reviewers and scouts call (`anthrex mcp`, started by the daemon).
 - **`crates/config`** parses `config.toml`. **`crates/fake-agent`** is a scripted stand-in for `claude` and `codex` that the tests use.
@@ -379,7 +382,8 @@ flowchart LR
 
 ```bash
 cargo build --workspace --all-targets
-cargo test --workspace
+cargo nextest run --workspace     # cargo install cargo-nextest --locked --version 0.9.146
+cargo test --workspace --doc
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all --check
 python3 scripts/pty-smoke.py      # drives the real binary through a PTY, end to end

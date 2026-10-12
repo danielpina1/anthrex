@@ -1,6 +1,6 @@
 //! `spawn_persister`'s own risk cases: decision 9's debounce loop is a classic place to
 //! lose the last write, and the failure mode that matters is a user's final change never
-//! reaching disk. `crates/daemon/tests/manager.rs`'s `persister_writes_changes_within_a_second`
+//! reaching disk. `crates/daemon/tests/it/manager.rs`'s `persister_writes_changes_within_a_second`
 //! already covers the acceptance case (a burst reaches disk as the final state, within a
 //! second); the tests below target the specific ways a *naive* debouncer breaks that a
 //! single burst-and-settle test cannot distinguish from a correct one: a debounce that

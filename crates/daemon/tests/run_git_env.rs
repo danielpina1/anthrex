@@ -1,3 +1,6 @@
+//! Alone in its own test binary (milestone 9.12, decision 14): it calls `std::env::set_var`
+//! or `remove_var`.
+//!
 //! Every M8a.8 run-git function passes `-C <dir> --no-optional-locks`, reaches git with
 //! none of AGENTS.md rule 11's five variables, and marks every write with
 //! `-c core.hooksPath=/dev/null -c commit.gpgSign=false` (decision 18) — alone in its

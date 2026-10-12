@@ -6,7 +6,7 @@
 //! the same split `dialog.rs` and `app/modal_keys.rs` already give that form.
 //!
 //! `crates/tui` does not depend on `crates/daemon` (no I/O crate does, by design), so
-//! this cannot call `daemon::manager::validate_name` directly. The rule is instead kept
+//! this cannot call the daemon manager module's `validate_name` directly. The rule is instead kept
 //! here in full, character for character: if it ever changes, both copies have to be
 //! changed together, the same trade the daemon crate itself makes between
 //! `validate_name` (reject) and `sanitize_name` (repair) sharing `is_disallowed_name_char`
@@ -77,7 +77,7 @@ fn is_bidi_override(c: char) -> bool {
 }
 
 /// The full set of characters decision 22 refuses in a name, mirroring
-/// `daemon::manager::is_disallowed_name_char`: the Unicode `Cc` control category plus
+/// the daemon manager module's `is_disallowed_name_char`: the Unicode `Cc` control category plus
 /// the bidi overrides above. `Cf` also holds U+200D ZERO WIDTH JOINER, which a
 /// multi-codepoint emoji sequence needs to fuse into the one grapheme cluster `validate`
 /// counts against the 64-character limit, so the whole `Cf` category is not rejected —

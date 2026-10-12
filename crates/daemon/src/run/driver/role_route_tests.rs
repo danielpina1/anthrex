@@ -30,16 +30,38 @@ const STALL: Duration = Duration::from_secs(3);
 /// Writes a decider program under the rig's directory for the run of the given id.
 type MakeBin = fn(&Path, &str) -> PathBuf;
 
+/// Milestone 9.12 task M9.12.13 (fix round 1): how long [`Rig::stop`] may take before
+/// it fails with a clear message instead of hanging to nextest's 600 s limit. Its legal
+/// worst case: `RunService::stop`'s acknowledgement wait (`STOP_WAIT`), then
+/// `WindowManager::shutdown`'s kill grace and its cleanup's deadline, plus 30 s for the
+/// last saves and the joins on a loaded machine (`docs/timing-budgets.md`).
+const STOP_BOUND: Duration = Duration::from_secs(30)
+    .saturating_add(crate::run::driver::STOP_WAIT)
+    .saturating_add(crate::process::KILL_GRACE)
+    .saturating_add(crate::worktree::CLEANUP_TIMEOUT);
+
 struct Rig {
     dir: tempfile::TempDir,
     runs: Arc<RunService>,
+    manager: Arc<WindowManager>,
     run_id: String,
     shutdown: CancellationToken,
+    /// The run service's loop, awaited by [`Rig::stop`].
+    run_loop: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+    stopped: std::sync::atomic::AtomicBool,
 }
 
+/// Milestone 9.12 task M9.12.13: a rig is stopped by [`Rig::stop`], which awaits every
+/// writer before its directory goes; one merely dropped would let the service write
+/// `run.json` into a directory already removed, recreating it. A failing test only
+/// cancels.
 impl Drop for Rig {
     fn drop(&mut self) {
         self.shutdown.cancel();
+        assert!(
+            self.stopped.load(std::sync::atomic::Ordering::SeqCst) || std::thread::panicking(),
+            "a rig must be stopped with `Rig::stop().await` before it drops"
+        );
     }
 }
 
@@ -93,13 +115,39 @@ impl Rig {
         let run_id = run.id.clone();
         crate::lock(&runs.state).runs.insert(run_id.clone(), run);
         let shutdown = CancellationToken::new();
-        runs.spawn(shutdown.clone());
+        let run_loop = runs.spawn(shutdown.clone());
         Rig {
             dir,
             runs,
+            manager,
             run_id,
             shutdown,
+            run_loop: std::sync::Mutex::new(Some(run_loop)),
+            stopped: Default::default(),
         }
+    }
+
+    /// Stops the rig as the daemon stops (`lifecycle.rs`): the run service (its last
+    /// `run.json` written), its loop, then the windows; then removes the task temporary
+    /// directories of the checkouts under the rig's directory.
+    async fn stop(&self) {
+        self.shutdown.cancel();
+        let stopping = async {
+            self.runs.stop().await;
+            let run_loop = crate::lock(&self.run_loop).take();
+            if let Some(run_loop) = run_loop {
+                let _ = run_loop.await;
+            }
+            self.manager.shutdown().await;
+        };
+        if tokio::time::timeout(STOP_BOUND, stopping).await.is_err() {
+            panic!(
+                "the rig did not stop within {STOP_BOUND:?}: does the test still hold the engine's lock (`runs.state`) across `stop()`?"
+            );
+        }
+        crate::run::git::remove_task_tmps_beneath(self.dir.path()).unwrap();
+        self.stopped
+            .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Run scout `id` in `state`, put in the engine by hand.
@@ -199,6 +247,7 @@ async fn a_scout_record_is_saved_before_its_session_starts() {
         (id.as_str(), None)
     );
     assert_eq!(records[0].source, "role_table");
+    rig.stop().await;
 }
 
 /// A scout spec whose id (`Bad`) the scout service refuses before any await.
@@ -237,6 +286,7 @@ async fn a_scout_stopped_before_its_record_is_kept_is_not_started() {
     assert!(message.contains("stopped when the run ended"), "{message}");
     rig.settled().await;
     assert!(rig.records(AgentRole::Scout).is_empty());
+    rig.stop().await;
 }
 
 /// Re-review 3: a record whose `run.json` save failed is refused, so the session does
@@ -274,6 +324,7 @@ async fn a_record_that_could_not_be_saved_starts_no_session() {
             .as_deref()
             .is_some_and(|r| r.contains("could not be saved"))
     );
+    rig.stop().await;
 }
 
 /// A decider stand-in that writes whether `run.json` held its record when it started,
@@ -338,6 +389,7 @@ async fn a_decider_record_is_saved_before_its_call() {
         .map(|c| c.route.model.as_str())
         .collect();
     assert_eq!(models, ["claude-haiku-4-5"], "{:#?}", records[0].candidates);
+    rig.stop().await;
 }
 
 /// The live settings of `rig` with `helpers` = `model` falling back to `fallback`.
@@ -371,6 +423,7 @@ async fn a_decider_record_lists_the_live_table() {
     assert_eq!(records.len(), 1, "{records:#?}");
     assert_eq!(records[0].chosen.model, "gpt-6-sol");
     assert_eq!(records[0].source, "role_table");
+    rig.stop().await;
 }
 
 /// Review M-3: with the daemon's deciders off no decider session starts, so no record
@@ -385,6 +438,7 @@ async fn no_decider_record_when_the_deciders_are_off() {
     assert!(matches!(result, OpResult::Decided(_)), "{result:?}");
     rig.settled().await;
     assert!(rig.records(AgentRole::Decider).is_empty());
+    rig.stop().await;
 }
 
 /// Whole-branch fix round 2, item 1, milestone 9.8: the scout the driver starts runs on
@@ -425,6 +479,7 @@ async fn a_run_scout_is_started_on_its_runs_research_row() {
         proto::Runtime::Codex,
         "{records:#?}"
     );
+    rig.stop().await;
 }
 
 /// Whole-branch fix round 3, item 2: a scout whose run is gone is refused, never routed
@@ -444,6 +499,7 @@ async fn a_scout_of_a_run_that_is_gone_is_refused() {
         panic!("{result:?}");
     };
     assert_eq!(message, "the run is gone");
+    rig.stop().await;
 }
 
 /// A stand-in that exits at once: never an agent.
@@ -480,4 +536,5 @@ async fn a_decider_whose_runtime_is_not_installed_moves_and_says_so() {
         .collect();
     let line = "decider: claude is not installed; using codex".to_string();
     assert!(log.contains(&line), "{log:#?}");
+    rig.stop().await;
 }

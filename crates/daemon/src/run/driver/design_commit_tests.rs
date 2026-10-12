@@ -5,7 +5,7 @@
 //! and message; the whole commit is one write through the project's git queue, every
 //! git call with `--no-optional-locks`, the protect flags and the scrubbed environment,
 //! the driver's own index set explicitly. The git plumbing alone is
-//! `daemon/tests/run_git_docs.rs`'s.
+//! `daemon/tests/it/run_git_docs.rs`'s.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

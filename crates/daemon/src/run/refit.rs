@@ -10,6 +10,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+pub use common::text::budget_text;
 use config::{ConfiguredBudgets, Tuning};
 use proto::{
     AgentRole, Budget, ClassBudget, HistoryLine, PhaseSecs, Size, TaskKind, TaskOrigin,
@@ -329,15 +330,6 @@ fn configured(c: ConfiguredBudgets, class: SizeClass) -> bool {
         SizeClass::Brainstorm => c.brainstormer,
         SizeClass::DocReview => c.doc_reviewer,
     }
-}
-
-/// `<calls> calls <minutes>m`, then ` <tokens> tok` (M8b's `k`/`M` notation) when set.
-pub fn budget_text(b: &Budget) -> String {
-    let mut text = format!("{} calls {}m", b.tool_calls, b.minutes);
-    if let Some(tokens) = b.tokens {
-        text.push_str(&format!(" {} tok", super::stats::tokens(tokens)));
-    }
-    text
 }
 
 /// Rung 4's ceiling (ruling RH-4), per axis: for S, the effective M budget; for M or

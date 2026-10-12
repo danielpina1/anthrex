@@ -22,7 +22,7 @@ use tokio_util::sync::CancellationToken;
 /// used to create.
 ///
 /// `pub` (not `pub(super)`) so a bound outside this crate that must legitimately exceed
-/// a daemon startup delayed by this probe — `crates/cli/tests/codex_version.rs`'s own
+/// a daemon startup delayed by this probe — `crates/cli/tests/it/codex_version.rs`'s own
 /// `probe()` helper being the motivating case — can derive its bound from this constant
 /// instead of retyping `5` and hoping it never drifts (`docs/timing-budgets.md` standing
 /// rule 1). Named `CODEX_PROBE_TIMEOUT` rather than `PROBE_TIMEOUT` because
@@ -118,7 +118,7 @@ fn report(result: anyhow::Result<(u64, u64, u64)>) {
 }
 
 /// The one line the probe always logs when it is over, whatever it found. `pub` for the
-/// same reason [`CODEX_PROBE_TIMEOUT`] is: `crates/cli/tests/codex_version.rs` waits for
+/// same reason [`CODEX_PROBE_TIMEOUT`] is: `crates/cli/tests/it/codex_version.rs` waits for
 /// it rather than retyping the string (`docs/timing-budgets.md` standing rule 1's
 /// principle, applied to a marker rather than a duration).
 pub const PROBE_FINISHED: &str = "codex version probe finished";

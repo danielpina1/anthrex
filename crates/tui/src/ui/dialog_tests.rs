@@ -173,7 +173,7 @@ fn force_prompt_names_the_window_it_targets() {
 /// too, with no word dropped between the message and what `wrap` produced for it.
 #[test]
 fn force_prompt_shows_every_dirty_reason_in_full_with_a_realistic_path() {
-    use daemon::worktree::{DirtyReason, worktree_dir};
+    use common::worktree_names::{DirtyReason, worktree_dir};
     use std::path::Path;
 
     let worktrees_root = Path::new("/home/dev/.local/share/anthrex/worktrees");

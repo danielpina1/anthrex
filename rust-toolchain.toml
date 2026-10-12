@@ -1,0 +1,8 @@
+# The toolchain is pinned. A floating stable once turned green trees red on
+# `cargo fmt --check` the day a new release landed; a toolchain bump is now one
+# deliberate, reviewed commit. CI and the release workflow install from this file.
+# The MSRV (`rust-version` in Cargo.toml) is separate and unchanged. No targets are
+# listed: the release job adds its own.
+[toolchain]
+channel = "1.99"
+components = ["clippy", "rustfmt"]

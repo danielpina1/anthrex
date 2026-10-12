@@ -91,6 +91,7 @@ async fn a_racing_start_waits_for_the_first_starts_pack() {
         .expect("the second start's pack");
     assert_eq!(first, first_text);
     assert_eq!(sha256_hex(second.as_bytes()), sha256_hex(first.as_bytes()));
+    rig.stop().await;
 }
 
 /// FW-34: `StartDesignAgent` of a brainstormer whose round's recorded pack file is
@@ -146,6 +147,7 @@ async fn a_missing_or_changed_pack_is_unreadable() {
         }
         other => panic!("{other:?}"),
     }
+    rig.stop().await;
 }
 
 /// FW-41: the round's first start cannot write its pack (its folder refuses writes):
@@ -164,6 +166,7 @@ async fn a_pack_write_failure_names_its_cause() {
         error.contains("writing it failed: pack-r1.md: Permission denied"),
         "{error}"
     );
+    rig.stop().await;
 }
 
 /// The W2 re-review's N1: a run's pack slots go once the run ends (or is discarded),
@@ -196,4 +199,5 @@ async fn a_runs_pack_slots_go_when_it_ends() {
         Vec::<std::path::PathBuf>::new(),
         "ended"
     );
+    rig.stop().await;
 }

@@ -52,7 +52,7 @@ use tokio::sync::mpsc;
 /// tearing worktree operations in half.
 ///
 /// Naming the drop gives that invariant somewhere to live and somewhere to be found.
-/// `crates/daemon/tests/server/worktree.rs` pins it from the outside: both
+/// `crates/daemon/tests/it/server/worktree.rs` pins it from the outside: both
 /// `..._after_its_client_disconnects` tests take the connection away at a moment they have
 /// proved is mid-operation, and assert the work finished anyway.
 fn detach(request: impl Future<Output = ()> + Send + 'static) {

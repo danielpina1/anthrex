@@ -2,7 +2,7 @@
 //! brief's rules and written to `daemon/tests/fixtures/history/` (compared byte for byte
 //! by `fixtures_match_their_rules`).
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use proto::{
     AgentRole, DiffStats, Effort, GateCounts, GateTally, HISTORY_VERSION, HistoryLine, PhaseSecs,
@@ -201,7 +201,8 @@ pub(crate) fn fixture_records(name: &str) -> Vec<HistoryLine> {
 pub(crate) const FIXTURES: [&str; 4] = ["refit", "too-few", "outlier-run", "quality"];
 
 pub(crate) fn fixture_path(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("tests/fixtures/history/{name}.jsonl"))
+    testexec::checkout_dir(env!("CARGO_MANIFEST_DIR"))
+        .join(format!("tests/fixtures/history/{name}.jsonl"))
 }
 
 pub(crate) fn jsonl(lines: &[HistoryLine]) -> String {

@@ -40,6 +40,7 @@ from pty_smoke_run import (
     _git,
     _write_script,
 )
+from smoke_task_tmp import teardown
 
 # The bounds, restated across the language boundary from `crates/cli/tests/support`
 # (`docs/timing-budgets.md`, "Recorded, from M9.3.12"): `REQUEST_WAIT` (75 s since
@@ -545,4 +546,6 @@ def keep_going_stage(pty_proc, bin_path, run_cmd, fail, base_env):
             _reap(proc)
         _stop_daemon(run_cmd, env, socket, daemon, "11j")
         if not os.environ.get("ANTHREX_SMOKE_KEEP"):
+            # M9.12.13: its runs' task temporary directories go with it.
+            teardown(root)
             shutil.rmtree(root, ignore_errors=True)

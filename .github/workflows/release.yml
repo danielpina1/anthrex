@@ -23,7 +23,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+
+      - name: toolchain matches the pin
+        run: |
+          rustc --version
+          rustc --version | grep -q '^rustc 1\.99\.'
 
       - name: Read the Cargo version and check it against the tag
         id: version
@@ -69,9 +75,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+
+      - name: toolchain matches the pin
+        run: |
+          rustc --version
+          rustc --version | grep -q '^rustc 1\.99\.'
+
+      - name: Add the build target
+        run: rustup target add ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
         with:

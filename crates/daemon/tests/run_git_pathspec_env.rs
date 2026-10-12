@@ -1,3 +1,6 @@
+//! Alone in its own test binary (milestone 9.12, decision 14): it calls `std::env::set_var`
+//! or `remove_var`.
+//!
 //! Milestone 9.5 re-review 3's NI-2: an inherited `GIT_LITERAL_PATHSPECS` (or another
 //! pathspec-mode variable) must not change what the daemon's git reads, whose
 //! `:(literal)` and `:(exclude,literal)` pathspecs would otherwise match nothing.

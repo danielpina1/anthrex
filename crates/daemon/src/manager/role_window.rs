@@ -8,6 +8,7 @@ use super::WindowManager;
 use super::create::{Admitted, spawn_window};
 use crate::launch::role::RoleLaunch;
 use crate::project::DetectedRoots;
+pub use common::refusal::orchestrator_refusal;
 use proto::{RunRef, WindowInfo, WindowKind, WindowSpec};
 use serde::Deserialize;
 use std::path::PathBuf;
@@ -15,13 +16,6 @@ use std::time::Instant;
 
 /// Decision 5: the orchestrator's PTY until the first client `Resize`.
 pub const RUN_WINDOW_SIZE: (u16, u16) = (200, 50);
-
-/// Decision 11's refusal of `kill` and `remove` for a live run's orchestrator.
-pub fn orchestrator_refusal(id: u32, run_id: &str) -> String {
-    format!(
-        "window {id} is the orchestrator of run {run_id}; stop the run with anthrex run cancel, or restart the orchestrator with anthrex restart {id}"
-    )
-}
 
 /// M9.10 review (the controller's ruling): the refusal of `Restart` and `Input` for a
 /// restored window whose role did not parse.

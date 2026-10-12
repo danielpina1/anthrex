@@ -12,7 +12,7 @@ use unicode_segmentation::UnicodeSegmentation;
 /// The longest a submitted window name may be, after trimming: design decision 32's
 /// limit. `pub` though nothing outside this file reads it today — the milestone brief's
 /// interface block names it `pub const NAME_MAX_CHARS: usize` explicitly, the same way
-/// `daemon::worktree::RESERVED_BRANCH_PREFIX` is public for a decision that owns it
+/// `common::branch::RESERVED_BRANCH_PREFIX` is public for a decision that owns it
 /// rather than for a caller that exists yet.
 pub const NAME_MAX_CHARS: usize = 64;
 
@@ -510,24 +510,10 @@ pub fn expand_dir(input: &str, default_dir: &Path, home: Option<&Path>) -> Resul
 }
 
 /// Decision 8's first four branch rules — the ones the client can check without
-/// talking to git. `crates/daemon/src/worktree.rs` has the authoritative copy that
-/// also runs `check-ref-format`; the messages here match it exactly so a client
-/// rejection and a daemon rejection never read differently for the same input.
-pub fn check_branch_syntax(branch: &str) -> Result<(), String> {
-    if branch.trim().is_empty() {
-        return Err("branch name is required".to_string());
-    }
-    if branch.chars().any(char::is_whitespace) {
-        return Err("branch name cannot contain spaces".to_string());
-    }
-    if branch.starts_with('-') {
-        return Err("branch name cannot start with '-'".to_string());
-    }
-    if branch.starts_with("anthrex/") {
-        return Err("branches under anthrex/ are reserved for orchestration runs".to_string());
-    }
-    Ok(())
-}
+/// talking to git — from `common::branch`, the daemon's own check (milestone 9.12
+/// decision 12), so a client rejection and a daemon rejection never read differently for
+/// the same input. The daemon also runs `check-ref-format`.
+pub use common::branch::check_branch_syntax;
 
 /// The remove-confirm dialog's data. Its key handling lives in
 /// `crates/tui/src/app/modal_keys.rs` (task M5.9), alongside the rest of `Modal`'s

@@ -15,7 +15,7 @@ python3 scripts/pty-smoke.py` runs it alone).
 
 The repository's history is the recorded `refit.jsonl` (task M9.5.8): `anthrex run
 stats` refits the S budget to `55 calls 18m` and lists its proposals. Then one M task
-races (`e2e_race_both_pass_crowns_one` of `crates/cli/tests/run_e2e_race.rs`): both
+races (`e2e_race_both_pass_crowns_one` of `crates/cli/tests/it/run_e2e_race.rs`): both
 racers commit and finish, their reviewers meet and approve together, exactly one lane is
 crowned, and `anthrex run accept` puts `a.txt` on `main`.
 """
@@ -37,6 +37,7 @@ from pty_smoke_run import (
     _git,
     _write_script,
 )
+from smoke_task_tmp import teardown
 
 # One task path for each lane, as the e2e test's `2 * RUN_WAIT`.
 RACE_WAIT = 2 * RUN_WAIT
@@ -246,4 +247,6 @@ def tuning_stage(pty_proc, bin_path, run_cmd, fail, base_env):
         _stop_daemon(run_cmd, env, socket, daemon, "11g")
         if not os.environ.get("ANTHREX_SMOKE_KEEP"):
             shutil.rmtree(repo, ignore_errors=True)
+            # M9.12.13: its runs' task temporary directories go with it.
+            teardown(root)
             shutil.rmtree(root, ignore_errors=True)

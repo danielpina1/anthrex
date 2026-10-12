@@ -26,17 +26,40 @@ pub(super) const WORKER: u32 = 902;
 /// How long any one answer may take when nothing makes it wait.
 pub(super) const ANSWER: Duration = Duration::from_secs(10);
 
+/// Milestone 9.12 task M9.12.13 (fix round 1): how long [`Rig::stop`] may take before
+/// it fails with a clear message instead of hanging to nextest's 600 s limit. Its legal
+/// worst case: `RunService::stop`'s acknowledgement wait (`STOP_WAIT`), then
+/// `WindowManager::shutdown`'s kill grace and its cleanup's deadline, plus 30 s for the
+/// last saves, the joins and the ops still running (a few git commands on the rig's
+/// local repository) on a loaded machine (`docs/timing-budgets.md`).
+const STOP_BOUND: Duration = Duration::from_secs(30)
+    .saturating_add(crate::run::driver::STOP_WAIT)
+    .saturating_add(crate::process::KILL_GRACE)
+    .saturating_add(crate::worktree::CLEANUP_TIMEOUT);
+
 pub(super) struct Rig {
-    _dir: tempfile::TempDir,
+    dir: tempfile::TempDir,
     pub(super) runs: Arc<RunService>,
+    manager: Arc<WindowManager>,
     socket: PathBuf,
     pub(super) run_id: String,
     shutdown: CancellationToken,
+    /// The run service's loop and the server, awaited by [`Rig::stop`].
+    tasks: std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>,
+    stopped: std::sync::atomic::AtomicBool,
 }
 
+/// Milestone 9.12 task M9.12.13: a rig is stopped by [`Rig::stop`], which awaits every
+/// writer before its directory goes; one merely dropped would let the service write
+/// `run.json` into a directory already removed, recreating it. A failing test only
+/// cancels.
 impl Drop for Rig {
     fn drop(&mut self) {
         self.shutdown.cancel();
+        assert!(
+            self.stopped.load(std::sync::atomic::Ordering::SeqCst) || std::thread::panicking(),
+            "a rig must be stopped with `Rig::stop().await` before it drops"
+        );
     }
 }
 
@@ -109,21 +132,63 @@ impl Rig {
         crate::lock(&runs.state).runs.insert(run_id.clone(), run);
 
         let shutdown = CancellationToken::new();
-        runs.spawn(shutdown.clone());
-        tokio::spawn(serve(
+        let run_loop = runs.spawn(shutdown.clone());
+        let serving = serve(
             listener,
-            manager,
+            manager.clone(),
             git,
             runs.clone(),
             shutdown.clone(),
-        ));
+        );
+        let server = tokio::spawn(async move {
+            let _ = serving.await;
+        });
         Rig {
-            _dir: dir,
+            dir,
             runs,
+            manager,
             socket,
             run_id,
             shutdown,
+            tasks: std::sync::Mutex::new(vec![run_loop, server]),
+            stopped: Default::default(),
         }
+    }
+
+    /// Stops the rig as the daemon stops (`lifecycle.rs`): the server, the run service
+    /// (its last `run.json` written), its loop, then the windows; then waits for every op
+    /// still running (the daemon's process exit ends those; a test's directory must
+    /// outlive them), and removes the task temporary directories of the checkouts under
+    /// the rig's directory.
+    pub(super) async fn stop(&self) {
+        self.shutdown.cancel();
+        let stopping = async {
+            self.runs.stop().await;
+            let tasks = std::mem::take(&mut *crate::lock(&self.tasks));
+            for task in tasks {
+                let _ = task.await;
+            }
+            self.manager.shutdown().await;
+            // The CI-only leak of PR #58: an op the loop started (a refresh's hand-back)
+            // runs on its own task, which the loop never awaits. Its git commands stage
+            // the engine's index under `<dir>/wt/…/.anthrex/<task>/engine`
+            // (`create_dir_all`), so one still running when the directory goes makes
+            // it again. Every op holds its run's order lock shared for its whole life,
+            // so taking it exclusively waits for each one; no op starts now that the
+            // loop is gone.
+            let orders: Vec<_> = crate::lock(&self.runs.op_order).values().cloned().collect();
+            for order in orders {
+                drop(order.write_owned().await);
+            }
+        };
+        if tokio::time::timeout(STOP_BOUND, stopping).await.is_err() {
+            panic!(
+                "the rig did not stop within {STOP_BOUND:?}: does the test still hold the engine's lock (`runs.state`) across `stop()`, or is an op of the run stuck?"
+            );
+        }
+        crate::run::git::remove_task_tmps_beneath(self.dir.path()).unwrap();
+        self.stopped
+            .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     pub(super) fn opts(

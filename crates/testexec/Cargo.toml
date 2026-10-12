@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish = false
-description = "Test support: write a stand-in executable that a concurrent fork can never leave busy (ETXTBSY)."
+description = "Test support shared by the workspace's tests: stand-in executables a concurrent fork can never leave busy (ETXTBSY), the checkout guard and self re-exec helpers."
 
 [dependencies]
 libc.workspace = true

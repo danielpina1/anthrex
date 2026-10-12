@@ -18,6 +18,7 @@ use super::globs;
 use super::model::{Run, Task};
 use super::plan::PlanError;
 use crate::decider::{DeciderAnswer, Decision, TriageAnswer};
+pub use common::labels::{kind_label, kinds_scale, scale_label, source_label};
 
 /// The fast-path task's id.
 pub const FAST_TASK_ID: &str = "t1";
@@ -62,37 +63,6 @@ pub enum TriageRoute {
     Fast(Box<PlanTask>),
     Plan { reason: String },
     Large { reason: String },
-}
-
-/// `code`, `docs`, `research` or `review`.
-pub fn kind_label(kind: TaskKind) -> &'static str {
-    match kind {
-        TaskKind::Code => "code",
-        TaskKind::Docs => "docs",
-        TaskKind::Research => "research",
-        TaskKind::Review => "review",
-    }
-}
-
-pub fn scale_label(scale: Scale) -> &'static str {
-    match scale {
-        Scale::Single => "single",
-        Scale::Plan => "plan",
-        Scale::Large => "large",
-    }
-}
-
-pub fn source_label(source: DeciderSource) -> &'static str {
-    match source {
-        DeciderSource::Decider => "decider",
-        DeciderSource::Fallback => "fallback",
-    }
-}
-
-/// `<kinds joined with ,>/<scale>`, as `code/single`.
-pub fn kinds_scale(kinds: &[TaskKind], scale: Scale) -> String {
-    let kinds: Vec<&str> = kinds.iter().map(|k| kind_label(*k)).collect();
-    format!("{}/{}", kinds.join(","), scale_label(scale))
 }
 
 /// The triage answer of `decision`, or the deterministic fallback's shape when the

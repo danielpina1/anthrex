@@ -57,7 +57,7 @@ pub mod proof;
 pub mod reach;
 pub mod reconcile;
 pub mod refit;
-pub mod refit_render;
+pub use common::refit_render;
 pub mod report;
 mod report_design;
 mod report_escape;

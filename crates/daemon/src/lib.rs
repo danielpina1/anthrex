@@ -24,8 +24,6 @@ pub mod host;
 pub mod launch;
 pub mod lifecycle;
 pub mod live_config;
-pub mod lockfile;
-pub mod logfile;
 pub mod manager;
 pub mod metering;
 pub mod models;
@@ -41,7 +39,7 @@ pub mod state;
 pub mod status;
 pub mod status_codex;
 pub mod subagents;
-/// `#[doc(hidden)] pub` rather than private only so that `crates/daemon/tests/subprocess.rs`
+/// `#[doc(hidden)] pub` rather than private only so that `crates/daemon/tests/it/subprocess.rs`
 /// can exercise `Captured`, `Outcome`, `run` and `run_captured` in a test binary of its own —
 /// the same reason and the same treatment `worktree::run_git` gives itself. Nothing outside
 /// the crate uses it otherwise: `project::detect_roots_with`, `git::probe` and
@@ -52,6 +50,7 @@ pub mod transcript;
 pub mod window;
 pub mod worktree;
 
+pub use common::{lockfile, logfile};
 pub use lifecycle::{DaemonOptions, LOCK_WAIT, run};
 
 #[cfg(test)]

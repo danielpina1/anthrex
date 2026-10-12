@@ -106,7 +106,7 @@ fn libtest(failed: &[&str]) -> String {
 /// A repository with three modules (`c` depends on `b`, `b` on `a`), the scripts, a
 /// base commit and a second commit that changes `mods/b`.
 struct Rig {
-    _tmp: tempfile::TempDir,
+    _tmp: crate::run::git::TestDir,
     root: PathBuf,
     data: PathBuf,
     dir: PathBuf,
@@ -118,7 +118,7 @@ struct Rig {
 
 impl Rig {
     fn new() -> Rig {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::run::git::TestDir::new();
         let top = tmp.path().canonicalize().unwrap();
         let root = top.join("repo");
         std::fs::create_dir_all(&root).unwrap();

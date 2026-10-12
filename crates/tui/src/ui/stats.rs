@@ -211,7 +211,7 @@ fn ready_lines(stats: &HistoryStats, width: usize, p: Palette) -> Vec<Line<'stat
 /// `tuning proposals:` heading bold, and the CLI's `apply with …` line replaced by the
 /// hint [`APPLY_HINT`]: proposals are applied from the CLI only.
 fn tuning_lines(report: &proto::TuningReport, p: Palette) -> Vec<(String, Style)> {
-    let text = daemon::run::refit_render::render(report);
+    let text = common::refit_render::render(report);
     let muted = role(Role::Muted, p);
     let bold = Style::default().add_modifier(Modifier::BOLD);
     text.lines()

@@ -129,7 +129,14 @@ async fn a_queued_goal_waits_and_a_confirm_starts_it() {
     .await;
     assert_eq!(crate::lock(&seen)[0].goal, "add a flag");
     assert!(rig.profiles.queued_goals().is_empty());
-    assert!(!rig.repo_dir(&project).join(QUEUE_FILE).exists());
+    // The starter is called with the goal in `starting`, on file too (final review I1);
+    // the file goes only once the start has returned (`start_returned`'s write), which
+    // the wait above does not order. M9.12.4's stress run 4 caught that race.
+    let file = rig.repo_dir(&project).join(QUEUE_FILE);
+    until("the queue file to go once the start returned", || {
+        !file.exists()
+    })
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

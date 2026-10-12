@@ -12,10 +12,12 @@ use super::merge::{
 };
 use crate::run::engine::{Effect, EventKind, OpResult};
 
-const FIXTURE: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/src/run/engine/tests/m9_gate_ops.json"
-);
+fn fixture_path() -> String {
+    testexec::checkout_dir(env!("CARGO_MANIFEST_DIR"))
+        .join("src/run/engine/tests/m9_gate_ops.json")
+        .display()
+        .to_string()
+}
 
 /// The gate ops whose fields are compared; every other op is compared by its kind.
 const GATE_OPS: [&str; 4] = ["Proof", "Check", "MergeCandidate", "VerifyRefs"];
@@ -126,7 +128,7 @@ fn untiered_profile_emits_m8a_ops() {
     let ops = scenario();
     if std::env::var_os("ANTHREX_RECORD_M9_GATE_OPS").is_some() {
         let text = serde_json::to_string_pretty(&ops).expect("ops serialize");
-        crate::run::test_support::record_fixture(FIXTURE, &(text + "\n"));
+        crate::run::test_support::record_fixture(&fixture_path(), &(text + "\n"));
         return;
     }
     let recorded: Vec<Value> =

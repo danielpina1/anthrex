@@ -25,7 +25,20 @@ fn script_file(temp: &TempDir, lines: &[Value]) -> PathBuf {
     path
 }
 
+/// A `fake-agent` command for `script`. It runs `fake-agent --version` once per test
+/// process first, so the bounds callers put on the run (`read_line_waits_for_input`'s
+/// 200 ms + 2 s, `noninteractive_runner_closes_stdin_for_script_eof`'s 500 ms) never hold
+/// the first exec of a freshly built binary (2.5-3 s on macOS): under cargo-nextest any
+/// test can be the first to exec it (M9.12.4 fix round 1).
 fn command(script: &Path) -> Command {
+    static WARM: std::sync::Once = std::sync::Once::new();
+    WARM.call_once(|| {
+        let warm = Command::new(fake_agent())
+            .arg("--version")
+            .output()
+            .unwrap();
+        assert!(warm.status.success(), "warming fake-agent: {warm:?}");
+    });
     let mut command = Command::new(fake_agent());
     command
         .env("FAKE_AGENT_SCRIPT", script)
@@ -658,6 +671,16 @@ fn hook_timeout_includes_blocked_stdin_delivery() {
     });
     let mut command = command(&script);
     command.arg("--settings").arg(settings.to_string());
+    // M9.12.4: the bound below is the hook's 5 s timeout plus the run's own cost. The
+    // first exec of a freshly built `fake-agent` (2.5-3 s for a fresh cargo build,
+    // unbounded per docs/timing-budgets.md "Measured primitive costs") is not part of
+    // that, and under cargo-nextest this timing test runs alone and may be the binary's
+    // first exec, so it is paid here, before the clock.
+    let warm = Command::new(fake_agent())
+        .arg("--version")
+        .output()
+        .unwrap();
+    assert!(warm.status.success(), "warming fake-agent: {warm:?}");
 
     let started = Instant::now();
     let output = run_with_deadline(command, Duration::from_secs(8)).unwrap();

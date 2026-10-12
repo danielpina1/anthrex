@@ -1,3 +1,6 @@
+//! Alone in its own test binary (milestone 9.12, decision 14): no sibling may `fork()`
+//! while its `flock` fd closes.
+//!
 //! Isolates one assertion out of `daemon::lockfile`'s own `--lib` unit tests: that a
 //! `DaemonLock`, once released, is reacquirable with `Duration::ZERO` — no wait at all.
 //!

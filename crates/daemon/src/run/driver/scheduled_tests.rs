@@ -39,7 +39,7 @@ fn service(top: &Path, slots: u32) -> Arc<RunService> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_m8a_check_waits_for_its_slots_then_runs_isolated() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::run::git::TestDir::new();
     let top = tmp.path().canonicalize().unwrap();
     let project = top.join("repo");
     std::fs::create_dir_all(&project).unwrap();
@@ -60,6 +60,9 @@ async fn an_m8a_check_waits_for_its_slots_then_runs_isolated() {
         check_timeout: Duration::from_secs(30),
         confine: None,
     };
+    // M9.12.13: the check's temporary directory is named from a repository directory
+    // the project never has.
+    tmp.also(crate::run::git::checkout_repo_dir(&ctx.data_dir, &project));
     let log = top.join("check.log");
     let command = format!(
         "echo \"slots=$ANTHREX_TEST_SLOTS jobs=$CARGO_BUILD_JOBS load=$ANTHREX_TEST_LOAD tmp=$TMPDIR sock=$ANTHREX_SOCKET data=$ANTHREX_DATA_DIR\" >> '{}'",

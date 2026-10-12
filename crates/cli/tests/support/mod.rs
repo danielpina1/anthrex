@@ -70,7 +70,12 @@ pub fn pin_agents(command: &mut Command) -> &mut Command {
         .env("ANTHREX_GH_BIN", daemon::manager::TEST_GH_BIN)
 }
 
+/// An `anthrex` command isolated to `dir`. It calls [`warm_anthrex`] first, so whatever
+/// bound a caller then puts on the spawn (`hook_command.rs`'s 1.3 s `accept`, a 3 s
+/// `finish`) never holds the first exec of a freshly built binary (M9.12.4 fix round 1:
+/// under cargo-nextest the binaries' tests interleave, so any test can be the first).
 pub fn isolated_command(dir: &Path, args: &[&str]) -> Command {
+    warm_anthrex();
     let mut command = Command::new(ANTHREX);
     command
         .args(args)
@@ -233,6 +238,16 @@ pub fn warm_anthrex() {
     });
 }
 
+/// Runs `fake-agent --version` once per test process: a [`TestDaemon`]'s windows run
+/// `fake-agent`, and its tests wait 2 s for a window's first frames (`Client::receive`),
+/// under the 2.5-3 s first exec of a freshly built binary (M9.12.4 fix round 1).
+pub fn warm_fake_agent() {
+    static WARM: std::sync::Once = std::sync::Once::new();
+    WARM.call_once(|| {
+        let _ = Command::new(fake_agent_bin()).arg("--version").output();
+    });
+}
+
 pub struct TestDaemon {
     dir: tempfile::TempDir,
     data: PathBuf,
@@ -267,6 +282,7 @@ impl TestDaemon {
             .stderr(log);
         configure(&mut command);
         warm_anthrex();
+        warm_fake_agent();
         let child = command.spawn().unwrap();
         let data = dir.path().join("data");
         let mut daemon = Self { dir, data, child };

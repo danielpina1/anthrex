@@ -9,11 +9,10 @@ use std::time::{Duration, Instant};
 
 use proto::run_wire::request;
 use proto::{DocGateAction, DocGateKind, DocKind, RunReply, RunRequest, RunState};
-use tokio_util::sync::CancellationToken;
 
 use super::super::RunService;
 use super::IO_WAIT;
-use super::tests::{SPEC_1, design_run, service, spec, store, tmp};
+use super::tests::{Engine, SPEC_1, design_run, service, spec, store, tmp};
 use crate::run::design::state::DocGate;
 use crate::run::engine::Effect;
 use crate::run::test_support::RUN_ID;
@@ -93,8 +92,7 @@ const REVISING: &str = "the orchestrator is revising spec v1; wait for it";
 async fn a_failed_write_reopens_its_gate_as_revising() {
     let dir = tmp();
     let (s, write) = at_spec_gate(dir.path());
-    let shutdown = CancellationToken::new();
-    s.spawn(shutdown.clone());
+    let engine = Engine::start(&s);
     let failing = |path: &Path, text: &str| {
         let eio = |_: &Path, _: &Path| Err(std::io::Error::from_raw_os_error(libc::EIO));
         super::write_new_at(path, text, 1, &eio)
@@ -103,7 +101,7 @@ async fn a_failed_write_reopens_its_gate_as_revising() {
     assert_eq!(revising(&s).await.as_deref(), Some(REOPENED));
     let refused = RunReply::refused(request::DOC_GATE, REVISING);
     assert_eq!(approve(&s).await, refused);
-    shutdown.cancel();
+    engine.stop().await;
 }
 
 /// The write passes its wait: the same, without waiting for it.
@@ -111,12 +109,14 @@ async fn a_failed_write_reopens_its_gate_as_revising() {
 async fn a_timed_out_write_reopens_its_gate_as_revising() {
     let dir = tmp();
     let (s, write) = at_spec_gate(dir.path());
-    let shutdown = CancellationToken::new();
-    s.spawn(shutdown.clone());
+    let engine = Engine::start(&s);
     let (release, held) = std::sync::mpsc::channel::<()>();
+    let (wrote, written) = std::sync::mpsc::channel::<()>();
     let stalled = move |path: &Path, text: &str| {
         let _ = held.recv_timeout(Duration::from_secs(30));
-        super::write_new(path, text)
+        let result = super::write_new(path, text);
+        let _ = wrote.send(());
+        result
     };
     let call = s.write_doc_with(write, Duration::from_millis(200), stalled);
     tokio::time::timeout(Duration::from_secs(10), call)
@@ -124,7 +124,12 @@ async fn a_timed_out_write_reopens_its_gate_as_revising() {
         .expect("the write returns at its wait");
     assert_eq!(revising(&s).await.as_deref(), Some(REOPENED));
     drop(release);
-    shutdown.cancel();
+    // M9.12.13's follow-up: the write the wait gave up on still runs on its blocking
+    // thread, and `write_new` makes missing folders, so it would recreate the test's
+    // directory after it dropped (macOS CI leaked one). It is waited for here.
+    let ended = tokio::task::spawn_blocking(move || written.recv_timeout(Duration::from_secs(10)));
+    assert!(ended.await.unwrap().is_ok(), "the stalled write ended");
+    engine.stop().await;
 }
 
 /// While v1's write is held, `run show` of it answers the retry text; once written, it
@@ -133,8 +138,7 @@ async fn a_timed_out_write_reopens_its_gate_as_revising() {
 async fn a_version_being_written_is_shown_with_the_retry_text() {
     let dir = tmp();
     let (s, write) = at_spec_gate(dir.path());
-    let shutdown = CancellationToken::new();
-    s.spawn(shutdown.clone());
+    let engine = Engine::start(&s);
     let (release, held) = std::sync::mpsc::channel::<()>();
     let (entered, began) = std::sync::mpsc::channel::<()>();
     let stalled = move |path: &Path, text: &str| {
@@ -167,7 +171,7 @@ async fn a_version_being_written_is_shown_with_the_retry_text() {
     }
     // A write that succeeded sends the engine nothing.
     assert_eq!(revising_now(&s), None);
-    shutdown.cancel();
+    engine.stop().await;
 }
 
 /// WB-B m5 (the final fix wave's FW-43): the driver's read refuses a draft together with
@@ -238,8 +242,7 @@ async fn a_version_is_in_flight_from_the_step_that_stored_it() {
     let dir = tmp();
     let (s, write) = at_spec_gate(dir.path());
     s.write_doc_with(write, IO_WAIT, super::write_new).await;
-    let shutdown = CancellationToken::new();
-    s.spawn(shutdown.clone());
+    let engine = Engine::start(&s);
     // The loop's first tick saves the run; it is waited for, so the stall below holds
     // only the edit's own step.
     let saved = dir.path().join("runs").join(RUN_ID).join("run.json");
@@ -309,7 +312,7 @@ async fn a_version_is_in_flight_from_the_step_that_stored_it() {
         RunReply::Doc { doc, .. } => assert!(doc.text.starts_with("# Password reset\n"), "{doc:?}"),
         other => panic!("{other:?}"),
     }
-    shutdown.cancel();
+    engine.stop().await;
 }
 
 /// The W3 carry: `run show --findings` of a review draft shows that review's findings

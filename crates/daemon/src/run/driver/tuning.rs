@@ -23,12 +23,7 @@ use crate::run::history_io::read_history;
 use crate::run::refit::{self, Tuned};
 use crate::run::refit_render::moved_bad_line;
 use crate::run::tuning_io::{self, Loaded, TUNING_FILE};
-
-/// Ruling T9-3: how long a start waits for its tuning, the repository's tuning lock and
-/// the file work together (one history read and one small write); past it the run
-/// starts untuned and says so ([`TUNING_BUSY`]). Every start bound that counts the
-/// build counts it (`docs/timing-budgets.md`).
-pub const TUNING_START_BOUND: Duration = Duration::from_secs(10);
+pub use common::bounds::TUNING_START_BOUND;
 
 /// The run log's line for a start that gave up at [`TUNING_START_BOUND`].
 pub const TUNING_BUSY: &str =
