@@ -88,19 +88,25 @@ fn gate_files_are_read_at_start() {
     assert_eq!(bare, Vec::new());
 }
 
-/// Milestone 9.13 fact check: a word ending in `/` lists that directory's direct
-/// entries, so its top-level tracked files are pinned (a safe over-match); a nested
-/// directory is a tree and is not.
+/// Milestone 9.13 controller ruling: a word that names a directory (`.`, `tests/`,
+/// `scripts/`) pins nothing, not even the directory's direct files; a file the same
+/// command names is still pinned.
 #[test]
-fn a_directory_word_with_a_slash_pins_its_direct_files() {
+fn a_directory_word_pins_nothing() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
+    write(&root.join("pyproject.toml"), "[project]\n");
+    write(&root.join("tests/test_a.py"), "def test_a(): pass\n");
     let base = repo(root);
+    for check in ["ruff check .", "pytest tests/", "sh scripts/", "eslint ."] {
+        let files = read(OsStr::new(GIT), root, &base, &words_of(check), TIMEOUT).unwrap();
+        assert_eq!(files, Vec::new(), "{check}");
+    }
     let files = read(
         OsStr::new(GIT),
         root,
         &base,
-        &words_of("sh scripts/"),
+        &words_of("pytest tests/ && sh scripts/check.sh ."),
         TIMEOUT,
     )
     .unwrap();

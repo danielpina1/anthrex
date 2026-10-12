@@ -112,11 +112,19 @@ fn at_most_64_words() {
     assert_eq!(words, command[..64].to_vec());
 }
 
-/// Milestone 9.13 fact check: a word ending in `/` stays as it is, so `ls-tree` lists
-/// that directory's direct entries (a safe over-match).
+/// Milestone 9.13 controller ruling: a word that names a directory pins nothing. A
+/// trailing `/` is stripped, so `ls-tree` reports the directory as a tree, which is
+/// not pinned (decision 9); a bare `.`, and a word that is only slashes, are dropped.
 #[test]
-fn a_trailing_slash_is_kept() {
-    assert_eq!(words_of("sh scripts/"), strings(&["sh", "scripts/"]));
+fn a_directory_word_loses_its_trailing_slash() {
+    assert_eq!(words_of("sh scripts/"), strings(&["sh", "scripts"]));
+    assert_eq!(words_of("pytest tests//"), strings(&["pytest", "tests"]));
+    assert_eq!(words_of("ruff check ."), strings(&["ruff", "check"]));
+    assert_eq!(words_of("eslint . / // ./"), strings(&["eslint"]));
+    assert_eq!(
+        words_of("sh scripts/check.sh"),
+        strings(&["sh", "scripts/check.sh"])
+    );
 }
 
 #[test]

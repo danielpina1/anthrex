@@ -81,15 +81,23 @@ fn command_words(command: &str) -> Vec<String> {
         .collect()
 }
 
-/// A raw word as decision 8 keeps it, or `None` when it is dropped.
+/// A raw word as decision 8 keeps it, or `None` when it is dropped. A trailing `/` is
+/// stripped and a bare `.` dropped (controller ruling, 9.13), so a directory word
+/// pins nothing.
 fn clean(raw: &str) -> Option<String> {
     let unquoted: String = raw.chars().filter(|c| !matches!(c, '\'' | '"')).collect();
     let mut word = strip_assignment(&unquoted);
     while let Some(rest) = word.strip_prefix("./") {
         word = rest;
     }
+    // Controller ruling (9.13): a word naming a directory pins nothing. Without its
+    // trailing `/`, `ls-tree` reports a directory as a tree, which `read` skips; a
+    // bare `.` would list the root's files, so it is dropped.
+    let absolute = word.starts_with('/');
+    word = word.trim_end_matches('/');
     let dropped = word.is_empty()
-        || word.starts_with('/')
+        || word == "."
+        || absolute
         || word.starts_with('~')
         || word.contains(['$', '*', '?', '[', ']', '{', '}', '`'])
         || word.split('/').any(|part| part == "..");
