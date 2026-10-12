@@ -101,17 +101,37 @@ pub const TEST_CODEX_BIN: &str = "/nonexistent/anthrex-test/codex";
 pub const TEST_DECIDER_BIN: &str = "/nonexistent/anthrex-test/decider";
 /// Decision 15: the `gh` [`ManagerConfig::for_tests`] names, which does not exist.
 pub const TEST_GH_BIN: &str = "/nonexistent/anthrex-test/gh";
+/// Milestone 9.14 task 11 (ruling C29): the worktrees root [`ManagerConfig::for_tests`]
+/// names, which does not exist. A rig that starts a run must give it a root under its
+/// own temporary directory; one left here fails at [`refuse_test_worktrees_root`]
+/// instead of leaving checkouts in the shared `<temp>/anthrex-worktrees`.
+pub const TEST_WORKTREES_ROOT: &str = "/nonexistent/anthrex-test/worktrees";
+
+/// Panics when `root` is [`TEST_WORKTREES_ROOT`]: called where a run, or the profile
+/// service's detection checkout, first derives its worktrees directory (C29). A
+/// `PathBuf` cannot fail by itself, so this check is what makes the sentinel loud.
+pub fn refuse_test_worktrees_root(root: &std::path::Path) {
+    if root == std::path::Path::new(TEST_WORKTREES_ROOT) {
+        panic!(
+            "a test rig left worktrees_root at ManagerConfig::for_tests's sentinel; \
+             give it a directory under the test's own temporary directory"
+        );
+    }
+}
 
 impl ManagerConfig {
     /// For tests only: [`ManagerConfig::new`] with `claude_bin`, `codex_bin` and
     /// `decider_bin` pinned to paths that do not exist. Every test rig starts from this
     /// (or sets all three itself), so none can reach a real agent through `new`'s
     /// defaults. A test that needs a stand-in sets the one it needs afterwards.
+    /// `worktrees_root` is [`TEST_WORKTREES_ROOT`], never `new`'s shared default: a rig
+    /// that starts a run sets its own (M9.14.11).
     pub fn for_tests(socket_path: PathBuf, shell: String) -> Self {
         let mut config = Self::new(socket_path, shell);
         config.claude_bin = TEST_CLAUDE_BIN.to_string();
         config.codex_bin = TEST_CODEX_BIN.to_string();
         config.decider_bin = Some(TEST_DECIDER_BIN.to_string());
+        config.worktrees_root = PathBuf::from(TEST_WORKTREES_ROOT);
         config.code_host = crate::host::select::CodeHostChoice::Gh {
             bin: TEST_GH_BIN.into(),
         };

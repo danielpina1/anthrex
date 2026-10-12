@@ -176,10 +176,7 @@ impl Rig {
             // it again. Every op holds its run's order lock shared for its whole life,
             // so taking it exclusively waits for each one; no op starts now that the
             // loop is gone.
-            let orders: Vec<_> = crate::lock(&self.runs.op_order).values().cloned().collect();
-            for order in orders {
-                drop(order.write_owned().await);
-            }
+            self.runs.wait_for_ops().await;
         };
         if tokio::time::timeout(STOP_BOUND, stopping).await.is_err() {
             panic!(

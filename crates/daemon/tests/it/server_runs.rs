@@ -401,7 +401,8 @@ async fn rig_on(
 /// it fails with a clear message instead of hanging to nextest's 600 s limit. Its legal
 /// worst case: `RunService::stop`'s acknowledgement wait (`STOP_WAIT`), then
 /// `WindowManager::shutdown`'s kill grace and its cleanup's deadline, plus 30 s for the
-/// last saves and the joins on a loaded machine (`docs/timing-budgets.md`).
+/// last saves, the joins and the ops still running (a few git commands on the rig's
+/// local repository) on a loaded machine (`docs/timing-budgets.md`).
 const STOP_BOUND: Duration = Duration::from_secs(30)
     .saturating_add(daemon::run::driver::STOP_WAIT)
     .saturating_add(daemon::manager::KILL_GRACE)
@@ -422,8 +423,8 @@ struct Stop {
 
 impl Stop {
     /// The server, the run service (its last `run.json` written), its loop and the
-    /// windows, in that order, within [`STOP_BOUND`]; then the task temporary
-    /// directories of the checkouts under the rig's directory.
+    /// windows, in that order, then every op still running, within [`STOP_BOUND`]; then
+    /// the task temporary directories of the checkouts under the rig's directory.
     async fn stop(mut self) {
         self.shutdown.cancel();
         let tasks = std::mem::take(&mut self.tasks);
@@ -433,12 +434,21 @@ impl Stop {
                 let _ = task.await;
             }
             self.manager.shutdown().await;
+            // M9.14.11 (9.12's follow-up): an op the loop started runs on its own task,
+            // which neither the loop nor this stop awaits; one still running when the
+            // directory goes can make it again. No op starts now that the loop is gone.
+            self.runs.wait_for_ops().await;
         };
         if tokio::time::timeout(STOP_BOUND, stopping).await.is_err() {
             panic!(
-                "the rig did not stop within {STOP_BOUND:?}: does the test still hold the engine's lock (`runs.state`) across `stop()`?"
+                "the rig did not stop within {STOP_BOUND:?}: does the test still hold the engine's lock (`runs.state`) across `stop()`, or is an op of the run stuck?"
             );
         }
+        assert_eq!(
+            self.runs.ops_in_flight(),
+            0,
+            "an op still runs after `stop()`"
+        );
         daemon::run::git::remove_task_tmps_beneath(&self.dir).unwrap();
         self.stopped = true;
     }

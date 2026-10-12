@@ -482,6 +482,7 @@ async fn discard_queued(
 /// ([`run_commands`]), and it is discarded again whatever happened. An `Err` is a git
 /// step that failed; the commands' own failures are in the verification.
 pub async fn verify(queue: &GitQueue, job: VerifyJob) -> Result<Verified, String> {
+    crate::manager::refuse_test_worktrees_root(&job.worktrees_root);
     let path = checkout_path(&job.worktrees_root, &job.pre.project);
     let repo = checkout_repo_dir(&job.repo_dir, &path);
     let mut salvaged = Vec::new();
