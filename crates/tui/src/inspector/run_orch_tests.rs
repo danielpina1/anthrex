@@ -388,3 +388,39 @@ fn handled_rows_list_newest_first() {
     let o = app.runs.runs[0].orchestrator.as_ref().unwrap();
     assert!(super::run_orch::handled_rows(o, &app).is_empty());
 }
+
+/// Milestone 9.13 decision 22: the `untrusted` row after the orchestrator's, its source
+/// drawn without a control character, its time UTC (`common::text::hh_mm`, C17); no row
+/// while the session read nothing from outside the run.
+#[test]
+fn run_orch_shows_the_untrusted_row() {
+    let (snapshot, windows) = orch_fixture(RunState::Running);
+    let app = app_of((snapshot.clone(), windows.clone()));
+    let inspection = inspect_node(&app, &run_key());
+    assert!(!inspection.fields.iter().any(|f| f.label == "untrusted"));
+
+    let mut snapshot = snapshot;
+    snapshot.runs[0].orchestrator.as_mut().unwrap().untrusted = Some(proto::UntrustedInfo {
+        // 2026-10-12 14:07:59Z.
+        at: 1_791_814_079,
+        source: format!(
+            "review comments on stage 1's pull request{}",
+            hostile_text()
+        ),
+    });
+    let app = app_of((snapshot, windows));
+    let inspection = inspect_node(&app, &run_key());
+    let labels: Vec<&str> = inspection.fields.iter().map(|f| f.label).collect();
+    let at = labels.iter().position(|l| *l == "orchestrator").unwrap();
+    assert_eq!(labels[at + 1], "untrusted");
+    let text = value(&inspection, "untrusted").unwrap().to_owned();
+    assert_eq!(first_hostile(&text), None, "{text:?}");
+    assert!(
+        text.starts_with("review comments on stage 1's pull request"),
+        "{text}"
+    );
+    assert!(
+        text.ends_with(" at 14:07; override, accept_red and approve_hold go to you"),
+        "{text}"
+    );
+}

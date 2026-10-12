@@ -19,6 +19,7 @@ path = "tests/it/main.rs"
 
 [dependencies]
 proto.workspace = true
+common.workspace = true
 config.workspace = true
 daemon.workspace = true
 tui.workspace = true

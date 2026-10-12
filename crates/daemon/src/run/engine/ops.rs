@@ -480,6 +480,10 @@ pub struct OverrideCount {
     /// handled when it lands.
     #[serde(default)]
     pub actor: super::actor::Actor,
+    /// Milestone 9.13 decision 21 (C7): the user's "do it" to the orchestrator's
+    /// proposal; the wake note is written when the count lands.
+    #[serde(default)]
+    pub proposal: bool,
 }
 
 /// Where a scratch-worktree check runs (ruling T13-I3): the repository, the claimed

@@ -100,6 +100,7 @@ fn fixed_run() -> Run {
         options: vec!["tabs".into(), "spaces".into()],
         context: "the style guide is silent".into(),
         asked_at: at(12, 40),
+        proposal: None,
     });
     run
 }

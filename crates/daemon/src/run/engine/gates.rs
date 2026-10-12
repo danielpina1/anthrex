@@ -368,19 +368,20 @@ pub(super) fn override_task(
         return fx.push(Effect::Reply { reply, result });
     };
     let call = (task_id, reason);
-    if let Some(result) = override_on(run, reply, call, Actor::User, now, fx) {
+    if let Some(result) = override_on(run, reply, call, (Actor::User, false), now, fx) {
         fx.push(Effect::Reply { reply, result });
     }
 }
 
 /// The override's core, shared by the user's request and the orchestrator's op (milestone
 /// 9.9 decision 9). `None`: the reply waits for the commit count (`reply` is kept in
-/// [`OverrideCount`], decision 13).
+/// [`OverrideCount`], decision 13). `proposal`: the user's "do it" to the orchestrator's
+/// proposal (milestone 9.13 decision 21, C7), whose wake note waits with the reply.
 pub(super) fn override_on(
     run: &mut Run,
     reply: ReplyId,
     (task_id, reason): (&str, &str),
-    actor: Actor,
+    (actor, proposal): (Actor, bool),
     now: u64,
     fx: &mut Vec<Effect>,
 ) -> Option<Result<String, String>> {
@@ -415,6 +416,7 @@ pub(super) fn override_on(
         reply,
         reason: reason.to_string(),
         actor,
+        proposal,
     });
     emit_op(run, op, Some(task_id), kind, fx);
     history(run, i, now, "counting its commits for an override");
@@ -473,6 +475,7 @@ pub(super) fn override_counted(
         reply,
         reason,
         actor,
+        proposal,
         ..
     }) = run.tasks[i].override_count.take()
     else {
@@ -529,6 +532,9 @@ pub(super) fn override_counted(
     };
     if actor == Actor::Orchestrator {
         super::orch_ops::override_landed(run, (&id, &reason), &result, now);
+    }
+    if proposal {
+        super::untrusted::approved_note(run, &format!("override {id}"), &result);
     }
     fx.push(Effect::Reply { reply, result });
 }

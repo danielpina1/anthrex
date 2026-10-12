@@ -35,6 +35,18 @@ pub(super) fn orchestrator_text(orchestrator: &OrchestratorInfo) -> String {
     text
 }
 
+/// Milestone 9.13 decision 22: the `untrusted` row's text, the time in UTC
+/// (`common::text::hh_mm`, ruling C17); `None` while the session read nothing from
+/// outside the run.
+pub(super) fn untrusted_text(orchestrator: &OrchestratorInfo) -> Option<String> {
+    let u = orchestrator.untrusted.as_ref()?;
+    Some(format!(
+        "{} at {}; override, accept_red and approve_hold go to you",
+        clean(&u.source),
+        common::text::hh_mm(u.at)
+    ))
+}
+
 /// Decision 42i's `messages` row: the count, and the latest message's kind and first
 /// line; `None` before the first message.
 pub(super) fn messages_text(task: &TaskInfo) -> Option<String> {

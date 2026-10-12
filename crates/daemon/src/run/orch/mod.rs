@@ -169,6 +169,9 @@ pub struct AskRecord {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub context: String,
     pub asked_at: u64,
+    /// Milestone 9.13 decision 21: the tainted orchestrator's op the user decides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposal: Option<proto::PlanEdit>,
 }
 
 fn is_zero_u32(n: &u32) -> bool {

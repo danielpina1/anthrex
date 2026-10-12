@@ -12,7 +12,7 @@ use super::batch::record_rejected;
 use super::orch::refuse;
 use super::{
     Effect, ReplyId, delivery, full, gate_holds, gates, protected_grants, requests, restore,
-    user_only,
+    untrusted, user_only,
 };
 use crate::run::edit_log::{self, EditOutcome};
 use crate::run::engine::actions::rules;
@@ -97,7 +97,12 @@ pub(super) fn intercept(
                 refuse(fx, reply, refusal);
                 return true;
             }
-            match gates::override_on(run, reply, call, Actor::Orchestrator, now, fx) {
+            // Milestone 9.13 decision 21: after the user's rules, a tainted session's
+            // override is the user's question.
+            if untrusted::divert(run, reply, (&edits[0], reason), now, fx) {
+                return true;
+            }
+            match gates::override_on(run, reply, call, (Actor::Orchestrator, false), now, fx) {
                 Some(result) => result,
                 // The reply, the handled record and the log entry wait for the count.
                 None => return true,
@@ -116,6 +121,9 @@ pub(super) fn intercept(
                 Err(format!(
                     "hold {hold} grants protected {paths}; only the user can approve it"
                 ))
+            } else if let Some(refusal) = untrusted::hold_refusal(run, hold) {
+                // Milestone 9.13 decision 21: after the promotion and grant refusals.
+                Err(refusal)
             } else {
                 gate_holds::decide_on(run, hold, true, Actor::Orchestrator, now, fx)
             };
@@ -126,7 +134,12 @@ pub(super) fn intercept(
             result
         }
         PlanEdit::ResumeRun { stage, .. } => resume_run(run, *stage, reason, now, fx),
-        PlanEdit::AcceptRed { stage, .. } => accept_red(run, *stage, reason, now),
+        PlanEdit::AcceptRed { stage, .. } => match rules::accept_red(run, *stage) {
+            Some(refusal) => Err(refusal),
+            // Decision 21: as `override`, the user's question once tainted.
+            None if untrusted::divert(run, reply, (&edits[0], reason), now, fx) => return true,
+            None => accept_red(run, *stage, reason, now),
+        },
         _ => return false,
     };
     match result {
@@ -217,7 +230,7 @@ fn accept_red(run: &mut Run, n: u16, reason: &str, now: u64) -> Result<String, S
     if let Some(refusal) = rules::accept_red(run, n) {
         return Err(refusal);
     }
-    let sha = full::accept_red(run, n, now).ok_or(rules::DRIFT)?;
+    let sha = full::accept_red(run, n, Actor::Orchestrator, now).ok_or(rules::DRIFT)?;
     let target = format!("stage {n}");
     let line = format!("accepted the red tier 3 of stage {n}");
     handled::record_line(run, now, ("accept_red", &target, &line), reason);

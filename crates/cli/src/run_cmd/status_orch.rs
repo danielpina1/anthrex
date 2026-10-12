@@ -19,6 +19,14 @@ pub(super) fn orchestrator_lines(run: &RunInfo) -> String {
             o.route.runtime.label(),
             if o.live { "live" } else { "exited" }
         ));
+        // Milestone 9.13 decision 22: the session read text from outside the run.
+        if let Some(u) = &o.untrusted {
+            out.push_str(&format!(
+                "  untrusted text read: {} at {}; override, accept_red and approve_hold go to the user\n",
+                super::status::one_line(&u.source),
+                common::text::hh_mm(u.at)
+            ));
+        }
         // Milestone 9.9 (OFA §4.6): what it resolved on its own, and what it asks.
         if o.handled_total > 0 {
             out.push_str(&format!("  orchestrator handled {}\n", o.handled_total));

@@ -221,6 +221,7 @@ mod turns_ops;
 mod turns_retries;
 mod turns_stale;
 mod untrusted;
+mod untrusted_ops;
 mod usage;
 mod user_only;
 mod view_fields;

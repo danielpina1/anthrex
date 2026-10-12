@@ -314,6 +314,7 @@ pub fn full_run(data_dir: &Path) -> Run {
         reply: 14,
         reason: "because".into(),
         actor: daemon::run::engine::Actor::Orchestrator,
+        proposal: true,
     });
     task.clock = TaskClock {
         stopped: Some(1_400),

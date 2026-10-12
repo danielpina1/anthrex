@@ -79,6 +79,40 @@ async fn run_status_with_a_quoted_comment_taints_before_a_later_edit() {
     rig.stop().await;
 }
 
+/// Decision 20 with decision 21 (task 8's C9 follow-up): `t1` has a start commit, so
+/// the user's override rule lets it through; the override that follows a quoting
+/// `run_status` is decided after the read's event, so it is asked of the user, never
+/// run or refused, and the ask carries it as its proposal.
+#[tokio::test(flavor = "multi_thread")]
+async fn after_a_tainting_read_an_override_is_asked_of_the_user() {
+    let rig = Rig::new(|run, _| {
+        quote_comment(run, 1, COMMENT);
+        task_mut(run, "t1").start_commit = Some("a".repeat(40));
+    })
+    .await;
+    let (ok, digest) = rig.orch("run_status", json!({})).await;
+    assert!(ok, "{digest}");
+    let edit = json!({"op": "override", "task_id": "t1", "reason": "the fix is in"});
+    let (ok, answer) = rig.orch("edit_plan", json!({"edits": [edit]})).await;
+    assert!(ok, "{answer}");
+    assert_eq!(
+        answer,
+        json!(
+            "asked the user to decide: this session read text from outside the run, so override and accept_red are theirs now; their answer arrives as a message"
+        )
+    );
+    let (ask, state) = rig.run(|run| (run.orch.ask.clone(), run.task("t1").unwrap().state));
+    let ask = ask.expect("the user's question");
+    assert_eq!(ask.question, "override t1? the fix is in");
+    assert!(
+        matches!(&ask.proposal, Some(proto::PlanEdit::Override { task_id, .. }) if task_id == "t1"),
+        "{ask:?}"
+    );
+    assert_eq!(state, proto::TaskState::Blocked);
+    assert!(rig.run(|run| run.orch.handled.is_empty()));
+    rig.stop().await;
+}
+
 /// A delivery block whose thread is listed without text (already tasked) quotes
 /// nothing: the read is not a source.
 #[tokio::test(flavor = "multi_thread")]
