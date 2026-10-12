@@ -511,7 +511,7 @@ fn summary_prints_the_built_ins_and_the_degradations() {
     assert_eq!(
         text,
         "languages: rust\n\
-         protected: built-in .claude/**, .mcp.json, .codex/**, **/CLAUDE.md, **/AGENTS.md, **/AGENTS.override.md, **/CLAUDE.local.md, .agents/**, .github/workflows/**, .github/actions/**, .gitlab-ci.yml, .circleci/**, .buildkite/**, Jenkinsfile, azure-pipelines.yml, .githooks/**, .husky/**, .pre-commit-config.yaml, **/.cargo/config, **/.cargo/config.toml, **/rust-toolchain, **/rust-toolchain.toml + .cursor/**\n\
+         protected: built-in .claude/**, .mcp.json, .codex/**, **/CLAUDE.md, **/AGENTS.md, **/AGENTS.override.md, **/CLAUDE.local.md, .agents/**, .github/workflows/**, .github/actions/**, .gitlab-ci.yml, .circleci/**, .buildkite/**, Jenkinsfile, azure-pipelines.yml, .githooks/**, .husky/**, .pre-commit-config.yaml, **/.cargo/**, **/rust-toolchain, **/rust-toolchain.toml + .cursor/**\n\
          setup: none\n\
          check: none (runs are unverified)\n\
          single test: none (tdd is impossible; code tasks use check)"

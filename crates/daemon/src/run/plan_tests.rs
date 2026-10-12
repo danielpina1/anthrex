@@ -238,14 +238,15 @@ fn plan_protected_adds_to_config_and_builtins() {
     expected.push("docs/agents/**".to_string());
     assert_eq!(profile.protected, expected);
 
-    // Neither side can remove a built-in: an empty list still leaves all 22 (milestone
-    // 9.13 decision 1: 8 agent-config entries, then 14 runs-later ones).
+    // Neither side can remove a built-in: an empty list still leaves all 21 (milestone
+    // 9.13 decision 1: 8 agent-config entries, then 13 runs-later ones; PR #60 review
+    // I2 merged the two cargo config entries into `**/.cargo/**`).
     let none = resolve_profile(
         &profile_spec(|p| p.protected = Some(Vec::new())),
         &ProfileSpec::default(),
     );
     assert_eq!(none.protected, builtin_protected());
-    assert_eq!(none.protected.len(), 22);
+    assert_eq!(none.protected.len(), 21);
 }
 
 fn protected_note(glob: &str, path: &str) -> String {

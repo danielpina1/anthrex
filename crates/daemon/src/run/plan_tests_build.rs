@@ -341,8 +341,7 @@ fn runs_later_paths_are_built_in_and_cannot_be_removed() {
         ".githooks/**",
         ".husky/**",
         ".pre-commit-config.yaml",
-        "**/.cargo/config",
-        "**/.cargo/config.toml",
+        "**/.cargo/**",
         "**/rust-toolchain",
         "**/rust-toolchain.toml",
     ]
@@ -350,7 +349,7 @@ fn runs_later_paths_are_built_in_and_cannot_be_removed() {
     .map(|s| s.to_string())
     .collect();
     assert_eq!(none.protected, expected);
-    assert_eq!(none.protected.len(), 22);
+    assert_eq!(none.protected.len(), 21);
 
     let ops = super::profile_spec(|p| p.protected = Some(vec!["ops/**".to_string()]));
     let added = resolve_profile(&super::profile_spec(empty), &ops);

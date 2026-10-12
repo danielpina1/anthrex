@@ -200,10 +200,10 @@ The run view, the runs tree and `anthrex run status` list every live run and the
 
 ### Protected files and the gate's scripts
 
-A run cannot change what judges it, or what runs after it, without you seeing it. A task's `task_done` is refused when its branch changes a protected file that its `owns` does not name exactly, with a line that says why. The 22 built-in protected paths come in two groups:
+A run cannot change what judges it, or what runs after it, without you seeing it. A task's `task_done` is refused when its branch changes a protected file that its `owns` does not name exactly, with a line that says why. The 21 built-in protected paths come in two groups:
 
 - **Files that configure or instruct future agents:** `.claude/**`, `.mcp.json`, `.codex/**`, `**/CLAUDE.md`, `**/AGENTS.md`, `**/AGENTS.override.md`, `**/CLAUDE.local.md`, `.agents/**`.
-- **Files that run outside the run's sandbox later** (CI, git hooks, cargo and toolchain configuration): `.github/workflows/**`, `.github/actions/**`, `.gitlab-ci.yml`, `.circleci/**`, `.buildkite/**`, `Jenkinsfile`, `azure-pipelines.yml`, `.githooks/**`, `.husky/**`, `.pre-commit-config.yaml`, `**/.cargo/config`, `**/.cargo/config.toml`, `**/rust-toolchain`, `**/rust-toolchain.toml`.
+- **Files that run outside the run's sandbox later** (CI, git hooks, cargo and toolchain configuration): `.github/workflows/**`, `.github/actions/**`, `.gitlab-ci.yml`, `.circleci/**`, `.buildkite/**`, `Jenkinsfile`, `azure-pipelines.yml`, `.githooks/**`, `.husky/**`, `.pre-commit-config.yaml`, `**/.cargo/**`, `**/rust-toolchain`, `**/rust-toolchain.toml`.
 
 Add your own with `protected` in the profile (`[orchestrator.profile]` or a plan's `[profile]`); nothing removes a built-in one. `Cargo.toml`, `build.rs`, `package.json`, `pyproject.toml` and `go.mod` are not built in.
 

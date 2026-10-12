@@ -29,8 +29,7 @@ pub const RUNS_LATER_PROTECTED: &[&str] = &[
     ".githooks/**",
     ".husky/**",
     ".pre-commit-config.yaml",
-    "**/.cargo/config",
-    "**/.cargo/config.toml",
+    "**/.cargo/**",
     "**/rust-toolchain",
     "**/rust-toolchain.toml",
 ];

@@ -46,6 +46,7 @@ mod run_git_checkout;
 mod run_git_crown;
 mod run_git_docs;
 mod run_git_done;
+mod run_git_done_symlinks;
 mod run_git_escape;
 mod run_git_finish;
 mod run_git_grant;

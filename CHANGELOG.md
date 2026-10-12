@@ -24,8 +24,9 @@ your runs before downgrading below 0.2.0.
   toolchain files join the protected paths: `.github/workflows/**`,
   `.github/actions/**`, `.gitlab-ci.yml`, `.circleci/**`, `.buildkite/**`,
   `Jenkinsfile`, `azure-pipelines.yml`, `.githooks/**`, `.husky/**`,
-  `.pre-commit-config.yaml`, `**/.cargo/config`, `**/.cargo/config.toml`,
-  `**/rust-toolchain` and `**/rust-toolchain.toml` (22 built-in paths in all). A task
+  `.pre-commit-config.yaml`, `**/.cargo/**` (the directory itself too, so a `.cargo`
+  committed as a symbolic link is caught), `**/rust-toolchain` and
+  `**/rust-toolchain.toml` (21 built-in paths in all). A task
   whose branch changes one without its `owns` naming it exactly is bounced at
   `task_done` with a line that says why (`… runs outside the run's sandbox (CI, git
   hooks, cargo or toolchain config); this task may change it only if its owns names it
