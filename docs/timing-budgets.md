@@ -902,6 +902,17 @@ after the stand-in has reported in.
 | The four engine-running tests of `run/driver/design_io_tests_writes.rs`: `Engine::stop()` | `run/driver/design_io_tests.rs` (`STOP_BOUND`) | `STOP_WAIT` + 30 s = 60 s | `RunService::stop` as above; no window is started, so no kill grace or clean-up. | **Recorded** (M9.12.13's follow-up, the CI-only leaks). A hang guard, as above. |
 | `a_timed_out_write_reopens_its_gate_as_revising`: the stalled write's end | `run/driver/design_io_tests_writes.rs` | 10 s | The write is released by the test (`drop(release)`), then makes one file and its index, fsynced: milliseconds. | **Recorded.** A hang guard; the write the 200 ms wait gave up on is waited for, so it cannot recreate the test's directory after it drops. |
 
+### Fixed, from the environment-block flake on macOS CI (2026-10-12)
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| `e2e_an_environment_block_is_the_orchestrators_and_it_retries`: the orchestrator's first `read_message` (the block's wake-up) | `crates/cli/tests/it/run_e2e_orch/alerts.rs` (`wait_messages`, `ORCH_WAIT`) | `ORCH_WAIT` (120 s) | Not a timing bound. The test let the worker block (`go`) right after the approval, while the scripted orchestrator was still polling `run_status` for `/gate/state == "approved"` every 200 ms plus a fresh `anthrex mcp` process per call. A poll answered after the block carried the block's note, and that read clears the wake-up (decision 39, "a read clears too"), so none was ever pasted and the script's `read_message` waited past any bound. | **Fixed.** Not a daemon or fake-agent defect: the test now waits for the orchestrator to end its turn (`wait_orchestrator_idle`, as its siblings in `messages.rs` and `promote.rs` do) before writing `go`, and its script pauses `SLOW_POLL_MS` (3 s) before the gate poll so the old order is exercised on every run. RED, with the pause and the old order: 3 of 3 failed at 121 s with CI's exact daemon log (first turn delivered, "waits: window working", the worker's window, then nothing), and the MCP log showed the gate poll's digest holding `t1 blocked (environment)`. GREEN: 5 of 5 alone, and 30 of 30 runs of all of `run_e2e_orch`. Failed on macOS CI in job 114518949316 (PR #58) and job 114612867000 (main at `71eaf198`), each with this daemon log; never on Ubuntu. |
+
+Watch for the same shape anywhere a scripted orchestrator polls `run_status` while an
+event the test then expects as a wake-up can land: a digest read answers the notes it
+returned, so the event must happen after the orchestrator's last poll, not just after
+the state the poll waits for.
+
 ### Fixed, from M9.5.8's flake fix (ruling F-1, 2026-10-03)
 
 | Test | File | Bound | Derivation | Status |
