@@ -3,8 +3,9 @@
 //! `CARGO_TARGET_DIR = "{worktree}/target"`, so every checkout's builds go to a
 //! directory leased from `<repo_dir>/target-pool/`; the `check` writes a marker into
 //! `$CARGO_TARGET_DIR` so the test can see where it ran. The repository is a tiny
-//! cargo workspace with no dependency (the shared test rules), which only the release's
-//! `cargo metadata --offline` reads; nothing builds it.
+//! cargo workspace with no dependency (the shared test rules). In the first two
+//! scenarios only the release's `cargo metadata --offline` reads it; the C14 scenario
+//! builds its own one-crate workspace with real `cargo --offline`.
 //!
 //! Timing: each wait is `RUN_WAIT` (`run_harness.rs`), plus the pool's own worst case
 //! on the critical path: one `POOL_CLEAN_TIMEOUT` (120 s, `daemon::run::target_pool`)
@@ -21,7 +22,7 @@ use daemon::run::target_pool::{
 };
 use proto::{FinishAction, RunReply, RunRequest, RunState, TaskState};
 use serde_json::Value;
-use support::run_harness::{RUN_WAIT, RunHarness};
+use support::run_harness::{CHECK_TIMEOUT_SECS, RUN_WAIT, RunHarness};
 use support::run_plans::*;
 use support::run_pr::log_lines;
 
@@ -184,8 +185,8 @@ fn wait_gate(gate: &Path) -> Value {
 /// worktree lease is decided (a directory held, or its fallback note logged); returns
 /// the directory t2's worktree holds. Bounded by `wait_for(2)`: t1's task path and its
 /// two releases (the file's header).
-fn open_gate_after_t1(h: &RunHarness, id: &str, gate: &Path) -> Option<String> {
-    let held = until("t1's releases and t2's lease", wait_for(2), || {
+fn open_gate_after_t1(h: &RunHarness, id: &str, gate: &Path, wait: Duration) -> Option<String> {
+    let held = until("t1's releases and t2's lease", wait, || {
         let run = h.run(id)?;
         if t(&run, "t1").state != TaskState::Merged {
             return None;
@@ -233,7 +234,7 @@ fn e2e_a_second_task_reuses_the_released_dir() {
         task("t2", &["b.txt"], "deps = [\"t1\"]"),
     ]);
     let id = h.start(&plan, true);
-    let t2_worktree_dir = open_gate_after_t1(&h, &id, &gate);
+    let t2_worktree_dir = open_gate_after_t1(&h, &id, &gate, wait_for(2));
 
     let run = h.wait_run(&id, complete, wait_for(2));
     assert_eq!(t(&run, "t2").state, TaskState::Merged);
@@ -295,6 +296,20 @@ fn value(task: &str) -> String {
     format!("pub const VALUE: &str = \"{task}\";\n")
 }
 
+/// The C14 scenario's `check_timeout_secs`. Its check compiles and runs the fixture
+/// cold: measured 0.5–1.0 s alone, 2.7 s with 8 such builds at once and 4.7 s with 14
+/// (`docs/timing-budgets.md`, "Recorded, from M9.14"); 30 s is six times the loaded
+/// cost and leaves room for a first exec of `rustc` and the linker.
+const BIN_CHECK_TIMEOUT_SECS: u64 = 30;
+
+/// `wait_for(k)` for the C14 scenario: `RUN_WAIT` counts four check or proof runs per
+/// task path at the harness's `CHECK_TIMEOUT_SECS` (10 s); each of this scenario's runs
+/// may take `BIN_CHECK_TIMEOUT_SECS`, so `k × 4 × (30 − 10)` s more.
+fn bin_wait_for(tasks: u32) -> Duration {
+    let excess = BIN_CHECK_TIMEOUT_SECS - CHECK_TIMEOUT_SECS;
+    wait_for(tasks) + Duration::from_secs(excess * 4) * tasks
+}
+
 /// The check lines of `checkout`: `(value, target dir)`.
 fn checks_of(log: &Path, checkout: &str) -> Vec<(String, PathBuf)> {
     let text = std::fs::read_to_string(log).unwrap_or_default();
@@ -316,7 +331,10 @@ fn checks_of(log: &Path, checkout: &str) -> Vec<(String, PathBuf)> {
 /// artifacts with sources older than them: the F8 incident, which only the release
 /// clean prevents. Asserted: t2's check ran in a pool `task-<k>` directory (not a
 /// fallback), no pool note names `t2.proof`, and it printed t2's value. Not asserted:
-/// that it is the directory t1's check used (task 6 deviation 1, task 7 concern 2).
+/// that it is the directory t1's check used (task 6 deviation 1, task 7 concern 2);
+/// asserted instead (task 10 review I2): t1's worker build landed in a pool directory
+/// (it logs `t1-build <value> <dir>` only once its binary is there), and t2's check
+/// directory is one of t1's build directories, its worktree's or its check's.
 #[test]
 fn e2e_two_tasks_on_one_pool_dir_the_second_runs_its_own_code() {
     let h = RunHarness::with_config(
@@ -326,10 +344,14 @@ fn e2e_two_tasks_on_one_pool_dir_the_second_runs_its_own_code() {
     );
     let log = h.cache_dir().join("checks.log");
     h.stored_profile(&format!(
-        "check = \"sh check.sh\"\ncheck_timeout_secs = 10\n\n[env]\nCARGO_TARGET_DIR = \"{{worktree}}/target\"\nCHECK_LOG = {:?}\n",
+        "check = \"sh check.sh\"\ncheck_timeout_secs = {BIN_CHECK_TIMEOUT_SECS}\n\n[env]\nCARGO_TARGET_DIR = \"{{worktree}}/target\"\nCHECK_LOG = {:?}\n",
         log.display().to_string()
     ));
-    let build = sh("[ -n \"$CARGO_TARGET_DIR\" ] && cargo build --offline -q");
+    let build = sh(concat!(
+        "set -e; [ -n \"$CARGO_TARGET_DIR\" ]; cargo build --offline -q; ",
+        "v=$(\"$CARGO_TARGET_DIR/debug/pool-bin\"); ",
+        "echo \"t1-build $v $CARGO_TARGET_DIR\" >> \"$CHECK_LOG\""
+    ));
     h.script(
         "worker-t1-1",
         &[commit("src/v.rs", &value("t1")), build, done("t1")],
@@ -350,21 +372,35 @@ fn e2e_two_tasks_on_one_pool_dir_the_second_runs_its_own_code() {
         task("t2", &["src/v.rs"], "deps = [\"t1\"]"),
     ]);
     let id = h.start(&plan, true);
-    open_gate_after_t1(&h, &id, &gate);
-    let run = h.wait_run(&id, complete, wait_for(2));
+    open_gate_after_t1(&h, &id, &gate, bin_wait_for(2));
+    let run = h.wait_run(&id, complete, bin_wait_for(2));
     assert_eq!(t(&run, "t2").state, TaskState::Merged, "{}", report(&run));
 
     let first = checks_of(&log, "t1.proof");
     assert!(first.iter().all(|(v, _)| v == "t1"), "{first:?}");
+    let built = checks_of(&log, "t1-build");
+    assert_eq!(built.len(), 1, "t1's worker build landed: {built:?}");
+    assert_eq!(built[0].0, "t1", "{built:?}");
+    let resolved = |dir: &Path| dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    let t1_dirs: Vec<PathBuf> = (built.iter().chain(&first))
+        .map(|(_, dir)| resolved(dir))
+        .collect();
     let second = checks_of(&log, "t2.proof");
     assert!(!second.is_empty(), "t2's check ran: {second:?}");
     let pool = pool_root(&h).canonicalize().unwrap();
+    let built_in = built[0].1.parent().map(resolved);
+    assert_eq!(built_in.as_deref(), Some(pool.as_path()), "{built:?}");
     for (printed, target) in &second {
         let name = target.file_name().and_then(|n| n.to_str()).unwrap_or("");
         let parent = target.parent().and_then(|p| p.canonicalize().ok());
         assert!(
             parent.as_deref() == Some(pool.as_path()) && name.starts_with("task-"),
             "t2's check built in {}, not a pool task directory",
+            target.display()
+        );
+        assert!(
+            t1_dirs.contains(&resolved(target)),
+            "t2's check built in {}, none of t1's build directories {t1_dirs:?}",
             target.display()
         );
         assert_eq!(printed, "t2", "t2's check ran t1's code (F8)");
