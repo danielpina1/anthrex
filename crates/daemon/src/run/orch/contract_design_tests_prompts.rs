@@ -340,6 +340,8 @@ fn a_paused_run_keeps_the_step_of_the_phase_it_paused_in() {
 /// touches only `first_prompt`'s body, never the constant), with milestone 9.8's rules
 /// 4, 21, 22 and 28 (task M9.8.9, decision 31; 9.5's was `e1cd7e40…54ed`), and milestone
 /// 9.9's rules 2, 24, 26, 37, 40, 41 and 42 (task M9.9.10; 9.8's was `b888a5a5…ffaf`),
-/// and rule 26's promotion-hold sentence (final review I-2; T10's was `c6e792fd…ef86`).
+/// and rule 26's promotion-hold sentence (final review I-2; T10's was `c6e792fd…ef86`),
+/// and milestone 9.13's rule 26 retry, override and hold sentences (task M9.13.10,
+/// decision 24; 9.9's was `f82c973c…9c2e`).
 const NINE_FIVE_CONTRACT_SHA256: &str =
-    "f82c973c0f0578d723ddf418f7b894d53151e52325299b946f68e8aa16329c2e";
+    "ca1ca24e06b7df82d0612876cc2b27505cb45480a1861f4a4ef6db30f5c5d3b5";

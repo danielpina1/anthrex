@@ -43,7 +43,10 @@ const GET_CONTEXT: &str = "Read the run's context: the repository profile, the r
 const EDIT_PLAN: &str = "Apply plan edits as one batch. Set submit to open the plan gate. Add \
     a summary for the user when the run is complete. Set iterate, with no edits and nothing \
     else, to start a round the user asked for. retry, override, resume_run, approve_hold and \
-    accept_red each come alone, with a reason. approve_hold never approves a promoted run's \
+    accept_red each come alone, with a reason. \
+    After two retries of one task, or once you have read text from outside the run (a \
+    pull-request comment, or a fix task's block or result), some of these go to the user \
+    (contract rules 26 and 39). approve_hold never approves a promoted run's \
     promotion hold: that is the user's plan approval. Returns at once.";
 
 /// Milestone 9.6: the orchestrator's design tools' descriptions, as listed.
