@@ -11,8 +11,8 @@
 mod support;
 
 use daemon::run::git::{
-    RefreshedIn, count_commits, count_commits_excluding, create_run_branch, diff_so_far,
-    hand_back_listing, lock_worktree, preflight, prepare_review, prepare_worktree,
+    RefreshedIn, count_commits, count_commits_checked, count_commits_excluding, create_run_branch,
+    diff_so_far, hand_back_listing, lock_worktree, preflight, prepare_review, prepare_worktree,
     project_settings, protected_files, resolve_target, task_summary, task_summary_excluding,
     verify_done,
 };
@@ -235,6 +235,19 @@ fn every_run_git_call_passes_no_optional_locks_and_no_git_env() {
                 &base,
                 &base,
                 &RefreshedIn::of(std::slice::from_ref(&base), std::slice::from_ref(&base)),
+                T,
+            )
+            .map(drop),
+        ),
+        // Milestone 9.13 decision 5: the count's protected diff.
+        (
+            "count_commits_checked",
+            count_commits_checked(
+                git,
+                &task,
+                (&base, &base),
+                &RefreshedIn::default(),
+                (&[], &builtin_protected()),
                 T,
             )
             .map(drop),

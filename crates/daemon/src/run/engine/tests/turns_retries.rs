@@ -28,6 +28,7 @@ fn commits(count: u32) -> OpResult {
     OpResult::Commits {
         count,
         head: HEAD.into(),
+        protected: Vec::new(),
     }
 }
 

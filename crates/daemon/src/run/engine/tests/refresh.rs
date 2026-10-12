@@ -41,6 +41,7 @@ fn at_boundary(fx: &mut Fixture, window: u32) -> (OpId, OpKind) {
     let commits = OpResult::Commits {
         count: 0,
         head: HEAD.into(),
+        protected: Vec::new(),
     };
     let effects = fx.done(op, commits);
     assert!(delivers(&effects).is_empty(), "the refresh holds the nudge");
@@ -200,6 +201,7 @@ fn a_refresh_merge_alone_is_not_work() {
     let none = OpResult::Commits {
         count: 0,
         head: MERGE.into(),
+        protected: Vec::new(),
     };
     assert_eq!(
         delivers(&fx.done(op, none)),
@@ -213,6 +215,7 @@ fn a_refresh_merge_alone_is_not_work() {
     let one = OpResult::Commits {
         count: 1,
         head: MERGE.into(),
+        protected: Vec::new(),
     };
     assert_eq!(delivers(&fx.done(op, one)), vec![DONE_NUDGE.to_string()]);
 

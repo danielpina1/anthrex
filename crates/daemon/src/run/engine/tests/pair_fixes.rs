@@ -295,6 +295,7 @@ fn a_refresh_waits_for_the_implementer() {
     let commits = OpResult::Commits {
         count: 0,
         head: HEAD.into(),
+        protected: Vec::new(),
     };
     let effects = fx.done(op, commits);
     let (_, kind) = only_op(&effects, "HandBack");

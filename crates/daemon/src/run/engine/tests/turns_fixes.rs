@@ -215,6 +215,7 @@ fn a_failed_resume_is_final_and_messages_accumulate_for_the_fresh_session() {
         OpResult::Commits {
             count: 2,
             head: HEAD.into(),
+            protected: Vec::new(),
         },
     );
     let (op, _) = fx.op("ResumeSession");
@@ -292,6 +293,7 @@ fn no_done_nudge_while_a_claim_is_in_flight() {
         OpResult::Commits {
             count: 2,
             head: HEAD.into(),
+            protected: Vec::new(),
         },
     );
     assert!(fx.run().outbox.iter().all(|m| m.text != DONE_NUDGE));

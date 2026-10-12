@@ -94,6 +94,7 @@ pub(crate) mod pause;
 mod planners;
 mod promote;
 mod propagate;
+mod protected_grants;
 mod race;
 mod race_end;
 mod race_salvage;

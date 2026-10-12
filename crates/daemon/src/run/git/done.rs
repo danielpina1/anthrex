@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use super::import::{HeadFile, head_file, rebase_in_progress, sync_in, task_pin};
 use super::{DIFF_FLAGS, Git, NO_NESTED, diff, nul_fields, os};
-use crate::run::globs::{OwnsMatcher, ProtectedMatcher, names_literally};
+use crate::run::globs::{OwnsMatcher, ProtectedMatcher, split_protected};
 
 /// What `verify_done` found (decision 32's done gate, split per decisions 55 and 56).
 /// The engine's `OpResult::DoneChecked` (M8a.11) carries exactly these fields.
@@ -222,14 +222,10 @@ pub fn verify_done_spilling(
         head_branch,
         ..DoneChecked::default()
     };
-    for path in nul_fields(&changed) {
-        if protected.guards_change(path) {
-            if !names_literally(owns, path) {
-                result.protected_changed.push(path.to_string());
-            }
-            continue;
-        }
-        if owns_matcher.matches(path) {
+    let changed: Vec<&str> = nul_fields(&changed).collect();
+    result.protected_changed = split_protected(&changed, owns, protected);
+    for &path in &changed {
+        if protected.guards_change(path) || owns_matcher.matches(path) {
             continue;
         }
         if generated.matches(path) {
@@ -309,10 +305,54 @@ pub fn count_commits_excluding(
     refreshed: &RefreshedIn,
     timeout: Duration,
 ) -> Result<(u32, String), String> {
+    let no_protected = (&[][..], &[][..]);
+    let checked = (start, run_head);
+    count_commits_checked(git, worktree, checked, refreshed, no_protected, timeout)
+        .map(|(count, _)| count)
+}
+
+/// [`count_commits_excluding`], and the task's protected changes (milestone 9.13
+/// decision 5): with `protected` non-empty, the paths of `<run_head>...<head>` decision
+/// 56 protects that `owns` does not name literally ([`protected_changes`]); with it
+/// empty no diff runs and the list is empty. Writes, as [`count_commits`] does.
+pub fn count_commits_checked(
+    git: &OsStr,
+    worktree: &Path,
+    (start, run_head): (&str, &str),
+    refreshed: &RefreshedIn,
+    (owns, protected): (&[String], &[String]),
+    timeout: Duration,
+) -> Result<((u32, String), Vec<String>), String> {
     let g = Git::new(git, timeout);
     let head = sync_in(g, worktree)?;
     let own = own_commits(g, worktree, (&head, start, run_head), refreshed)?;
-    Ok((own.len() as u32, head))
+    let changed = match protected {
+        [] => Vec::new(),
+        _ => {
+            let matcher = ProtectedMatcher::new(protected)?;
+            protected_changes(g, worktree, (run_head, &head), owns, &matcher)?
+        }
+    };
+    Ok(((own.len() as u32, head), changed))
+}
+
+/// Milestone 9.13 decision 5: the paths of `<run_head>...<head>` decision 56 protects
+/// that `owns` does not name literally, the done check's own split
+/// ([`split_protected`]) over one more bounded diff.
+pub(crate) fn protected_changes(
+    g: Git<'_>,
+    worktree: &Path,
+    (run_head, head): (&str, &str),
+    owns: &[String],
+    protected: &ProtectedMatcher,
+) -> Result<Vec<String>, String> {
+    let range = format!("{run_head}...{head}");
+    let mut args = vec![os("diff")];
+    args.extend(DIFF_FLAGS.map(os));
+    args.extend([os("--name-only"), os("-z"), os("--no-renames"), os(&range)]);
+    let changed = g.ok(worktree, &args)?;
+    let changed: Vec<&str> = nul_fields(&changed).collect();
+    Ok(split_protected(&changed, owns, protected))
 }
 
 /// Decision 30's hand-over material: the stat and the diff of the task's net change,

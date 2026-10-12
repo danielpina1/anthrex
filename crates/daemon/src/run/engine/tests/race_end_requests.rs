@@ -50,6 +50,7 @@ fn turns_end(fx: &mut Fixture, windows: &[u32]) {
             let commits = OpResult::Commits {
                 count: 0,
                 head: BASE.into(),
+                protected: Vec::new(),
             };
             fx.done(op, commits);
         }

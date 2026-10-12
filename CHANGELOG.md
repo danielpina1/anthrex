@@ -7,6 +7,10 @@ release is a pre-release and any release may change behaviour or the protocol.
 
 ## [Unreleased]
 
+**Downgrading.** `run.json` is now format 2. A 0.2.0 daemon skips a run this release
+wrote (`run format 2; this one reads up to 1`) and leaves it as it is. Releases before
+0.2.0 have no such guard and can drop this release's new run fields when they save.
+
 ## [0.2.0] — 2026-10-11
 
 The protocol version is now 21 (19 for model roles, 20 for orchestrator-first alerts, 21

@@ -13,6 +13,7 @@ use proto::{BlockReason, GateKind, TaskState, TestMode};
 use super::actions::rules;
 use super::actor::Actor;
 use super::dispatch::{block, history};
+use super::requests::log;
 use super::{
     Effect, EngineState, OpId, OpKind, OpResult, OverrideCount, ReplyId, ScratchAt, deciders,
     emit_op, ladder, next_op, review,
@@ -404,6 +405,9 @@ pub(super) fn override_on(
         run_head: run.head_for(task).to_string(),
         not_own: super::worker_messages::not_own(task),
         not_run: super::worker_messages::not_run(task),
+        // Milestone 9.13 decision 5: the count lists the task's protected changes.
+        owns: task.spec.owns.clone(),
+        protected: run.profile.protected.clone(),
     };
     let op = next_op(run);
     run.tasks[i].override_count = Some(OverrideCount {
@@ -492,9 +496,28 @@ pub(super) fn override_counted(
                 "task {id} has commits after its accepted claim; retry it to have them checked"
             ))
         }
-        OpResult::Commits { head, .. } => {
+        OpResult::Commits { protected, .. }
+            if actor == Actor::Orchestrator && !protected.is_empty() =>
+        {
+            protected_refusal(run, i, &protected)
+        }
+        OpResult::Commits {
+            head, protected, ..
+        } => {
             run.tasks[i].head = Some(head);
-            Ok(send_to_queue(run, i, &reason, actor, now, fx))
+            let text = send_to_queue(run, i, &reason, actor, now, fx);
+            Ok(match &protected[..] {
+                [] => text,
+                _ => {
+                    let paths = protected.join(", ");
+                    log(
+                        run,
+                        now,
+                        format!("the user overrode {id}, which changes protected {paths}"),
+                    );
+                    format!("{text}; it changes protected {paths}")
+                }
+            })
         }
         OpResult::Failed { message } => {
             Err(format!("could not count task {id}'s commits: {message}"))
@@ -505,4 +528,17 @@ pub(super) fn override_counted(
         super::orch_ops::override_landed(run, (&id, &reason), &result, now);
     }
     fx.push(Effect::Reply { reply, result });
+}
+
+/// Milestone 9.13 decision 5: the orchestrator may not merge a protected change
+/// unchecked; the task's block becomes the user's.
+fn protected_refusal(run: &mut Run, i: usize, protected: &[String]) -> Result<String, String> {
+    if let Some(block) = run.tasks[i].block.as_mut() {
+        block.user_only = true;
+    }
+    let id = run.tasks[i].id();
+    let paths = protected.join(", ");
+    Err(format!(
+        "task {id} changes protected {paths}; only the user can merge it unchecked"
+    ))
 }

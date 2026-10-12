@@ -261,6 +261,11 @@ fn edit_plan(
     // whatever other task of the call an epic or the promotion holds (fix round, I2).
     let review = super::delivery::review_holds(&mut edited, &added, now);
     let held = held.or(review);
+    // Milestone 9.13 decision 6: past the gate, a grant waits under an undecided hold.
+    if let Some(text) = super::protected_grants::unheld(&edited, run, &added) {
+        record_rejected(run, edits, &source, text.clone(), now);
+        return refuse(fx, reply, text);
+    }
     // Milestone 9.6 decisions 18 to 21: a design run's checks, plan review and gate.
     let author = submit.then_some(proto::DocAuthor::Orchestrator);
     let submitted = super::design::plan::submit(&mut edited, author, responses, now, &mut effects);

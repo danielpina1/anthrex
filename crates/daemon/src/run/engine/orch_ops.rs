@@ -10,7 +10,10 @@ use proto::{PlanEdit, RunState, ToolCall};
 use super::actor::Actor;
 use super::batch::record_rejected;
 use super::orch::refuse;
-use super::{Effect, ReplyId, delivery, full, gate_holds, gates, requests, restore, user_only};
+use super::{
+    Effect, ReplyId, delivery, full, gate_holds, gates, protected_grants, requests, restore,
+    user_only,
+};
 use crate::run::edit_log::{self, EditOutcome};
 use crate::run::engine::actions::rules;
 use crate::run::model::Run;
@@ -98,9 +101,16 @@ pub(super) fn intercept(
         }
         PlanEdit::ApproveHold { hold, .. } => {
             // Final review I-2: a promotion round is the user's plan approval (OFA §4.2).
+            let grants = protected_grants::of_hold(run, hold);
             let result = if gate_holds::promotion(run, hold) {
                 Err(format!(
                     "hold {hold} approves a promoted run's plan; only the user can"
+                ))
+            } else if !grants.is_empty() {
+                // Milestone 9.13 decision 6: a protected grant is the user's to approve.
+                let paths = grants.join(", ");
+                Err(format!(
+                    "hold {hold} grants protected {paths}; only the user can approve it"
                 ))
             } else {
                 gate_holds::decide_on(run, hold, true, Actor::Orchestrator, now, fx)

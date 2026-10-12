@@ -406,3 +406,35 @@ fn review_text_kept_in_run_json_is_bounded() {
         frame.len()
     );
 }
+
+/// Milestone 9.13 decision 6: a writer's comment on a workflow no approved task owns
+/// gives a fix task owning it exactly under `hold-fix1`, a grant only the user approves.
+#[test]
+fn a_review_fix_hold_on_a_workflow_is_the_users() {
+    let mut fx = by_alice();
+    let mut v = view(&commit(1));
+    v.threads = vec![on(
+        ".github/workflows/ci.yml",
+        vec![noted(30, "alice", "cache the cargo registry")],
+    )];
+    batch(&mut fx, v);
+    let t = task(&fx, "fix1");
+    assert_eq!(t.spec.owns, vec![".github/workflows/ci.yml"]);
+    assert_eq!(t.orch.gate_hold.as_deref(), Some("hold-fix1"));
+    super::bisect::with_orchestrator(&mut fx);
+    let edit =
+        serde_json::json!({"op": "approve_hold", "hold": "hold-fix1", "reason": "a fair ask"});
+    let effects = super::orch::edit_plan(&mut fx, serde_json::json!({"edits": [edit]}));
+    assert_eq!(
+        super::orch::error(&effects),
+        "hold hold-fix1 grants protected .github/workflows/ci.yml; only the user can approve it"
+    );
+    let state = |fx: &Fixture| {
+        (fx.run().orch.gate_holds.iter())
+            .find(|h| h.id == "hold-fix1")
+            .map(|h| h.state)
+    };
+    assert_eq!(state(&fx), Some(HoldState::Awaiting));
+    assert!(verdict(&mut fx, "hold-fix1", true).is_ok());
+    assert_eq!(state(&fx), Some(HoldState::Approved));
+}

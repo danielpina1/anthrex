@@ -268,6 +268,7 @@ fn turn_end_fallback_on_a_tdd_task_fails_the_proof_with_the_missing_names_messag
         OpResult::Commits {
             count: 2,
             head: HEAD.into(),
+            protected: Vec::new(),
         },
     );
     assert_eq!(delivers(&effects), vec![DONE_NUDGE.to_string()]);

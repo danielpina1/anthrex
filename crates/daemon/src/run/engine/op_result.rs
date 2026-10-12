@@ -54,6 +54,10 @@ pub enum OpResult {
     Commits {
         count: u32,
         head: String,
+        /// Milestone 9.13 decision 5: the changed paths decision 56 protects that the
+        /// task's `owns` does not name literally; empty when the op asked for none.
+        #[serde(default)]
+        protected: Vec<String>,
     },
     Diff {
         stat: String,

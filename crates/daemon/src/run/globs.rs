@@ -323,6 +323,35 @@ impl ProtectedMatcher {
     }
 }
 
+/// Decision 56's protected split of a changed-path list (milestone 9.13 decision 5,
+/// ruling C16): the paths [`ProtectedMatcher::guards_change`] guards that `owns` does
+/// not name literally ([`names_literally`]), in order. The done check applies it to its
+/// own diff and the override's count to its own.
+pub fn split_protected<S: AsRef<str>>(
+    paths: &[S],
+    owns: &[String],
+    protected: &ProtectedMatcher,
+) -> Vec<String> {
+    paths
+        .iter()
+        .map(AsRef::as_ref)
+        .filter(|path| protected.guards_change(path) && !names_literally(owns, path))
+        .map(str::to_string)
+        .collect()
+}
+
+/// Milestone 9.13 decision 6 (ruling C16): the protected files `owns` names literally,
+/// each a grant. An entry counts when it has no `*`, `?` or `[` and decision 56's
+/// matcher protects it, its trailing `/` trimmed.
+pub fn literal_protected(owns: &[String], protected: &ProtectedMatcher) -> Vec<String> {
+    owns.iter()
+        .filter(|entry| !entry.contains(['*', '?', '[']))
+        .map(|entry| entry.trim_end_matches('/'))
+        .filter(|entry| protected.matches(entry))
+        .map(str::to_string)
+        .collect()
+}
+
 /// The one or two glob patterns one `owns` entry expands to: a literal entry matches
 /// itself and everything below it, so it becomes both `<literal>` and `<literal>/**`; a
 /// wildcard entry is used as written. A trailing `/` is dropped either way.

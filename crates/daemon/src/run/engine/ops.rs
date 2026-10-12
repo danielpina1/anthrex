@@ -106,6 +106,12 @@ pub enum OpKind {
         not_own: Vec<String>,
         #[serde(default)]
         not_run: Vec<String>,
+        /// Milestone 9.13 decision 5: the task's `owns` and the run's protected list.
+        /// With `protected` empty the executor diffs nothing (the turn-end fallback).
+        #[serde(default)]
+        owns: Vec<String>,
+        #[serde(default)]
+        protected: Vec<String>,
     },
     DiffSoFar {
         worktree: PathBuf,

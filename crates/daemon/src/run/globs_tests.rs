@@ -362,3 +362,21 @@ fn runs_later_patterns_match_where_they_should() {
         assert!(!matcher.matches(path), "{path} is protected");
     }
 }
+
+/// Milestone 9.13 decisions 5 and 6 (ruling C16): one rule for the protected split of a
+/// changed-path list and one for the protected files `owns` names literally.
+#[test]
+fn split_and_literal_protected() {
+    let matcher = ProtectedMatcher::new(&crate::run::plan::builtin_protected()).unwrap();
+    let paths = s(&["AGENTS.md", "src/a.rs", ".github/workflows/ci.yml"]);
+    let owns = s(&["src/**", ".github/workflows/ci.yml"]);
+    assert_eq!(split_protected(&paths, &owns, &matcher), s(&["AGENTS.md"]));
+    let owns = s(&[".github/workflows/ci.yml", ".github/**", "src/**"]);
+    assert_eq!(
+        literal_protected(&owns, &matcher),
+        s(&[".github/workflows/ci.yml"])
+    );
+    // A trailing `/` is trimmed; a non-protected literal is not a grant.
+    let owns = s(&[".husky/", "docs/x.md"]);
+    assert_eq!(literal_protected(&owns, &matcher), s(&[".husky"]));
+}
