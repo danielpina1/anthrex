@@ -902,6 +902,27 @@ after the stand-in has reported in.
 | The four engine-running tests of `run/driver/design_io_tests_writes.rs`: `Engine::stop()` | `run/driver/design_io_tests.rs` (`STOP_BOUND`) | `STOP_WAIT` + 30 s = 60 s | `RunService::stop` as above; no window is started, so no kill grace or clean-up. | **Recorded** (M9.12.13's follow-up, the CI-only leaks). A hang guard, as above. |
 | `a_timed_out_write_reopens_its_gate_as_revising`: the stalled write's end | `run/driver/design_io_tests_writes.rs` | 10 s | The write is released by the test (`drop(release)`), then makes one file and its index, fsynced: milliseconds. | **Recorded.** A hang guard; the write the 200 ms wait gave up on is waited for, so it cannot recreate the test's directory after it drops. |
 
+### Recorded, from M9.14 (build economy, 2026-10-12)
+
+Milestone 9.14's new bounds, each against the constant it must exceed (brief task M9.14.10, and the controller's rulings on it). `W` is an ask's `--wait-secs`; the admission tests use 60 s unless they say otherwise.
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| `without_a_daemon_admit_exits_zero_silently_and_fast` | `cli/tests/it/admit_hook.rs` (`LIMIT`) | 3 s | An `anthrex` spawn (≤ 85 ms loaded, "Measured primitive costs") and an immediate `ECONNREFUSED`; no daemon constant is on the path. `a_light_command_or_no_tool_use_id_never_connects` uses the same bound: the client exits before connecting. | **Recorded.** |
+| Every ask that reaches a daemon and is answered at once (a free slot, a held key, an unknown window), and every wait for the daemon's log line about an ask (`Rig::wait_for`) | `cli/tests/it/admit_hook.rs` (`ASK_LIMIT`) | `HANDSHAKE_TIMEOUT` + `LIMIT` = 8 s | The spawn, the `Hello`/`Welcome` handshake (its legal worst case is the client's `HANDSHAKE_TIMEOUT`, 5 s, `proto`), the daemon's answer, and one write through the log's non-blocking appender (milliseconds). | **Fixed** (task 8 review M5, task 9 review Minor 7). These used `LIMIT` (3 s), below the handshake's 5 s; `an_ask_for_an_unknown_window_exits_zero_at_once`'s "at once" now means under 8 s, still far from W. |
+| `admit_returns_after_the_wait_budget_and_exits_zero`: `elapsed < W + ADMIT_CLIENT_GRACE`, and the loop around the exit | `cli/tests/it/admit_hook.rs` | 1 s + `ADMIT_CLIENT_GRACE` (10 s) = 11 s; loop cap 11 s + `WALL_CLOCK_SLACK` (10 s) | The daemon answers `AdmitTimedOut` W = 1 s after the `Admit` arrives; before it, a warmed spawn and the handshake (≤ `HANDSHAKE_TIMEOUT`, 5 s): 1 + 5 + spawn < 11, kept true by `const _: () = assert!(ADMIT_CLIENT_GRACE.as_secs() > HANDSHAKE_TIMEOUT.as_secs() + 2)` in `daemon/src/admit.rs`. The client's own give-up would end it at ≥ 11 s, so under 11 s proves the daemon's answer ended it. | **Recorded.** |
+| `a_held_tool_use_asked_again_is_admitted_at_once`: `elapsed < W` | `cli/tests/it/admit_hook.rs` | W = 60 s | The second ask is answered from the hold book at once (decision 23): a spawn and the handshake, ≤ 5 s + spawn. Had it waited, it would wait its full W behind its own hold. | **Recorded.** |
+| `a_post_tool_use_releases_the_hold`, `a_post_tool_use_failure_releases_the_hold`, `stop_releases_every_hold_of_the_window`: `elapsed < W` | `cli/tests/it/admit_hook.rs` | W = 60 s | The release path: `anthrex hook`'s `HOOK_DEADLINE` (1 s, `cli/src/hook.rs`) plus the grant made inside the release (`slots/mod.rs`), on top of B's own ask (≤ `ASK_LIMIT`). | **Recorded.** |
+| `a_client_that_goes_away_gives_up_its_place`: `elapsed < W` | `cli/tests/it/admit_hook.rs` | W = 60 s | As above, after its log waits (`ASK_LIMIT` each): C's ask, B's abandonment, then A's `PostToolUse` (`HOOK_DEADLINE`). Had B kept its place, C would wait its full W. | **Recorded.** |
+| `removing_the_window_releases_its_holds`: `elapsed < W`, and its `admit released` wait | `cli/tests/it/admit_hook.rs` | W = 60 s (`assert!(ADMIT_SWEEP * 2 < W)`); the log wait `ADMIT_SWEEP` + `WALL_CLOCK_SLACK` = 20 s | The removal (`anthrex rm`, one request) plus at most one `ADMIT_SWEEP` (10 s, `daemon/src/admit.rs`) until the sweep sees the window gone. | **Recorded.** |
+| `fake_agent_bash_heavy_commands_do_not_overlap`: the run's wait | `cli/tests/it/run_e2e_admit.rs` | `2 * RUN_WAIT + 2 * 60 s` = 720 s | Two task paths (`RUN_WAIT` each, even one after the other), plus decision 21's W (`admit_wait_secs = 60`) for each worker: the worst case is each worker waiting a full W in its hook and then running anyway (fail-open). Standing rule 5's scheduler term. The assertion itself is an ordering (the log's four lines), no wall-clock bound. | **Recorded.** |
+| Every `wait_for(k)` of `run_e2e_pool.rs` (`k` = 1 for `e2e_a_task_builds_in_a_leased_dir_and_releases_it`, 2 for the two two-task scenarios, the gate's opening included) | `cli/tests/it/run_e2e_pool.rs` | `RUN_WAIT + k × POOL_CLEAN_TIMEOUT` (420 s, 540 s) | Each task path is `RUN_WAIT`; each release on the critical path cleans under one `POOL_CLEAN_TIMEOUT` (120 s, `daemon::run::target_pool`, imported) before it frees, one per accepted task, then a wipe's rename and `mkdir` (milliseconds). | **Recorded.** |
+| t2's gate loop (`wait_gate`) in the two two-task pool scenarios | `cli/tests/it/run_e2e_pool.rs` | Binding: `fake-agent`'s `SH_TIMEOUT` (330 s, `crates/fake-agent/src/headless.rs`, a binary crate, so named in the comment); the loop's own poll count (`wait_for(2)`, 540 s) is never reached | t2 depends on t1, so its worker starts after t1's merge; it then waits for t1's two releases (one `POOL_CLEAN_TIMEOUT` each, 240 s) and t2's worktree lease (one engine step). 330 > 240. | **Fixed** (the comment said the worker's wait had `wait_for(2)`'s bound; the `sh` step is cut at 330 s first). |
+| `a_hook_timeout_replaces_the_step_timeout` | `fake-agent/tests/adapt_edges.rs` | The hook sleeps 6 s: past `STEP_TIMEOUT` (5 s, `fake-agent/src/main.rs`) by 1 s, and inside its `"timeout": 8` by 2 s; `RUN` (20 s) bounds the session | The cut is a lower bound (a 6 s sleep cannot end before 5 s), so it cannot fail falsely; the 8 s case needs one `/bin/sh` and one `sleep` spawn on top of 6 s (milliseconds). | **Recorded.** |
+| The release clean | `daemon/src/run/target_pool/release_clean.rs` (`POOL_CLEAN_TIMEOUT`, `POOL_MEASURE_TIMEOUT`) | Code budgets: 120 s for the whole sequence (measure, `cargo metadata`, every `cargo clean`), the measure itself capped at 60 s inside it | The measure starts under the sequence's deadline and is abandoned at 60 s (C33), so a release is at most 120 s plus a wipe's rename. Every wait that a release sits on adds 120 s per release (the rows above). | **Recorded.** |
+| `wait_reached` (a test seam reached), `eventually` (the background unlink of a trashed link) | `daemon/src/run/target_pool/io_tests_table.rs`, `io_tests.rs` | 10 s | Failure-only deadlines: one or two `spawn_blocking` file steps, milliseconds; no code constant on the path. | **Recorded.** |
+| `a_re_lease_waits_for_the_holders_pending_save`: the negative 300 ms wait | `daemon/src/run/target_pool/io_tests_table.rs` | 300 ms | Not a bound on the code: the re-lease must *not* finish while the seam holds the first save. A slow machine can only let a broken pool pass, never fail a correct one. | **Recorded.** |
+
 ### Fixed, from the environment-block flake on macOS CI (2026-10-12)
 
 | Test | Site | Bound | The code's own legal worst case | Status |
@@ -1085,6 +1106,13 @@ close to genuine danger today.
    step is never pre-empted, so a higher-priority or earlier request waits for every
    step already running to end (`crates/daemon/src/run/slots/book.rs`), and an exclusive
    step waits for all of them.
+
+   **An agent hold is a step too (milestone 9.14).** An admitted `Bash` call of a
+   Claude agent holds its slots (`Priority::Agent`) until its `PostToolUse`, its
+   window's events, or the sweep, for up to `admit_hold_max_secs` (630 s by default).
+   No existing test daemon takes one: only `FAKE_AGENT_TOOL_IDS=1` makes `fake-agent`
+   admit (without a `tool_use_id` the client exits at once). A test that sets it adds
+   the hold to every scheduled bound in it.
 
    The suite runs under cargo-nextest (`.config/nextest.toml`): up to one test per CPU,
    at most 8 of them in `real-io`, one process per test; timing tests run alone. Derive a
