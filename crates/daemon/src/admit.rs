@@ -16,14 +16,29 @@ use crate::hooks::{HookKind, ParsedHook};
 use crate::launch::shell_quote;
 
 /// Decision 18 (C13): the cargo subcommands, aliases included, that build or run code.
-pub const HEAVY_CARGO_SUBCOMMANDS: [&str; 13] = [
+/// `fix`, `rustc` and `rustdoc` compile as `check` and `build` do (task 7 review M5).
+pub const HEAVY_CARGO_SUBCOMMANDS: [&str; 16] = [
     "build", "b", "test", "t", "check", "c", "clippy", "nextest", "bench", "doc", "d", "run", "r",
+    "fix", "rustc", "rustdoc",
 ];
 /// Cargo's global flags that take the next word as their value (unless `--flag=value`).
 pub const CARGO_FLAGS_WITH_VALUE: [&str; 5] =
     ["-Z", "--config", "--color", "-C", "--manifest-path"];
 /// Words that run the rest of the segment as a command.
 pub const COMMAND_WRAPPERS: [&str; 6] = ["time", "nice", "env", "command", "nohup", "exec"];
+/// A wrapper's options that take the next word as their value (task 7 review M1).
+const WRAPPER_FLAGS_WITH_VALUE: [(&str, &str); 6] = [
+    ("nice", "-n"),
+    ("nice", "--adjustment"),
+    ("env", "-u"),
+    ("env", "--unset"),
+    ("env", "-C"),
+    ("env", "--chdir"),
+];
+/// Words that open a group or a clause and precede a command (task 7 review M2).
+const RESERVED_WORDS: [&str; 9] = [
+    "{", "!", "if", "then", "do", "else", "elif", "while", "until",
+];
 /// Programs other than `cargo` that are heavy whatever follows them.
 pub const HEAVY_PROGRAMS: [&str; 1] = ["cargo-nextest"];
 /// Decision 21: the hook's settings `timeout` is the wait plus this.
@@ -63,10 +78,11 @@ pub fn is_heavy(command: &str, prefixes: &[String]) -> bool {
         .any(|segment| segment_is_heavy(strip_wrappers(segment), &prefixes))
 }
 
-/// `command` as shell words split into segments on unquoted `&&`, `||`, `;`, `|`, `&`
-/// and newline. Quotes keep their contents in one word and are removed; a backslash
-/// outside single quotes keeps the next character. The `&` of a redirection (`2>&1`,
-/// `&>`) is part of its word.
+/// `command` as shell words split into segments on unquoted `&&`, `||`, `;`, `|`, `&`,
+/// newline, a `(` that starts a word and any `)`. Quotes keep their contents in one word
+/// and are removed; a backslash outside single quotes keeps the next character. The `&`
+/// of a redirection (`2>&1`, `&>`) is part of its word, and a redirection glued to a
+/// word (`test>log`) starts a word of its own unless that word is a file descriptor.
 fn segments(command: &str) -> Vec<Vec<String>> {
     let mut segments = Vec::new();
     let mut segment: Vec<String> = Vec::new();
@@ -101,15 +117,26 @@ fn segments(command: &str) -> Vec<Vec<String>> {
                 }
             }
             '\\' => {
-                in_word = true;
-                // A backslash-newline is a line continuation, not a separator.
+                // A backslash-newline is a line continuation: no word, no separator.
                 if let Some(next) = chars.next().filter(|n| *n != '\n') {
+                    in_word = true;
                     word.push(next);
                 }
             }
             '&' if word.ends_with(['>', '<']) || chars.peek() == Some(&'>') => {
+                split_redirection(&mut word, &mut in_word, &mut segment);
                 in_word = true;
                 word.push(c);
+            }
+            '>' | '<' => {
+                split_redirection(&mut word, &mut in_word, &mut segment);
+                in_word = true;
+                word.push(c);
+            }
+            '(' if !in_word => segments.push(std::mem::take(&mut segment)),
+            ')' => {
+                end_word(&mut word, &mut in_word, &mut segment);
+                segments.push(std::mem::take(&mut segment));
             }
             ';' | '|' | '&' | '\n' => {
                 end_word(&mut word, &mut in_word, &mut segment);
@@ -131,6 +158,18 @@ fn segments(command: &str) -> Vec<Vec<String>> {
     segments
 }
 
+/// Ends `word` before a redirection operator glued to it (`test>log`), unless the word
+/// is the operator's file descriptor (`2>`) or an operator already (`>>`, `>&`).
+fn split_redirection(word: &mut String, in_word: &mut bool, segment: &mut Vec<String>) {
+    let operand = !word.is_empty()
+        && !word.bytes().all(|b| b.is_ascii_digit())
+        && !word.ends_with(['>', '<', '&']);
+    if *in_word && operand {
+        segment.push(std::mem::take(word));
+        *in_word = false;
+    }
+}
+
 /// `text` as shell words, as one segment would hold them.
 fn words(text: &str) -> Vec<String> {
     segments(text).into_iter().flatten().collect()
@@ -148,16 +187,27 @@ fn is_assignment(word: &str) -> bool {
         && chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
 }
 
-/// The segment without its leading `NAME=value` words and [`COMMAND_WRAPPERS`] (and
-/// the assignments after `env`). A leading `cd <dir>` is a segment of its own, since
-/// its `&&` already split it off.
+/// The segment without its leading `NAME=value` words, reserved words
+/// (`RESERVED_WORDS`), [`COMMAND_WRAPPERS`] and a wrapper's options (with the value of
+/// each of `WRAPPER_FLAGS_WITH_VALUE`). A leading `cd <dir>` is a segment of its own,
+/// since its `&&` already split it off.
 fn strip_wrappers(segment: &[String]) -> &[String] {
     let mut rest = segment;
+    let mut wrapper: Option<&str> = None;
     while let Some((first, tail)) = rest.split_first() {
-        if is_assignment(first) || COMMAND_WRAPPERS.contains(&first.as_str()) {
-            rest = tail;
-        } else {
-            break;
+        let first = first.as_str();
+        rest = tail;
+        if let Some(name) = wrapper
+            && first.len() > 1
+            && first.starts_with('-')
+        {
+            if WRAPPER_FLAGS_WITH_VALUE.contains(&(name, first)) {
+                rest = rest.get(1..).unwrap_or_default();
+            }
+        } else if COMMAND_WRAPPERS.contains(&first) {
+            wrapper = Some(first);
+        } else if !is_assignment(first) && !RESERVED_WORDS.contains(&first) {
+            return &segment[segment.len() - tail.len() - 1..];
         }
     }
     rest
