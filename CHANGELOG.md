@@ -7,9 +7,60 @@ release is a pre-release and any release may change behaviour or the protocol.
 
 ## [Unreleased]
 
+The protocol version is now 22 (milestone 9.13, `OrchestratorInfo.untrusted`): a client
+needs a daemon of the same release. Stop the old daemon (`anthrex daemon stop`) after
+upgrading.
+
 **Downgrading.** `run.json` is now format 2. A 0.2.0 daemon skips a run this release
 wrote (`run format 2; this one reads up to 1`) and leaves it as it is. Releases before
-0.2.0 have no such guard and can drop this release's new run fields when they save.
+0.2.0 have no such guard and can drop this release's new run fields when they save
+(the untrusted-read record, the orchestrator's retry count, the pinned gate files, a
+pending override proposal and an override count's protected list): finish or discard
+your runs before downgrading below 0.2.0.
+
+### Added
+
+- **Files that run outside the sandbox are protected.** CI, git-hook, cargo and
+  toolchain files join the protected paths: `.github/workflows/**`,
+  `.github/actions/**`, `.gitlab-ci.yml`, `.circleci/**`, `.buildkite/**`,
+  `Jenkinsfile`, `azure-pipelines.yml`, `.githooks/**`, `.husky/**`,
+  `.pre-commit-config.yaml`, `**/.cargo/config`, `**/.cargo/config.toml`,
+  `**/rust-toolchain` and `**/rust-toolchain.toml` (22 built-in paths in all). A task
+  whose branch changes one without its `owns` naming it exactly is bounced at
+  `task_done` with a line that says why (`… runs outside the run's sandbox (CI, git
+  hooks, cargo or toolchain config); this task may change it only if its owns names it
+  exactly`). A task whose `owns` names a protected file is noted at the plan gate
+  (`owns names protected <path>; the user approves this grant with the plan`).
+- **The gate's own scripts are pinned.** At run start anthrex reads which tracked
+  files the profile's commands name (`check`, `setup`, `single_test`, the tier
+  commands; `make`, `just`, `tox` and `nox` add their own files) and protects them.
+  Before every gate command it compares them in the checkout with the base commit; if
+  the run changed one, the command never runs and the run halts for you (`the gate's
+  script <path> differs from the base commit's; the run changed what measures it`).
+  Only you can resume it. A task may change a gate script when its `owns` names it
+  exactly and you approve that with the plan.
+- **An orchestrator retry cap.** After the orchestrator has retried one task twice,
+  that task's next block is yours (`· the orchestrator retried it 2 times; the user
+  decides`); your own `run retry` gives it its two retries back.
+- **Untrusted text is tracked.** Once the orchestrator has read text from outside the
+  run (a pull-request comment, or a review or CI fix task's block, note or result),
+  its `override` and `accept_red` become an `orchestrator asks` question to you (`do
+  it` / `leave it`), and its `approve_hold` is refused, for the rest of the run and any
+  next goal it continues. `anthrex run status` prints `untrusted text read: <source> at
+  <HH:MM>; override, accept_red and approve_hold go to the user`, and the run view's
+  inspector shows an `untrusted` row. A fix task's wake-up no longer carries its
+  worker's text (`read it with run_status`).
+
+### Changed
+
+- **The orchestrator cannot merge or grant protected changes on its own.** Its
+  `override` of a task whose branch changes a protected file the task's `owns` does
+  not name is refused and the task's block becomes yours; it cannot approve a hold
+  whose tasks name a protected file, nor add such a task outside a hold after the plan
+  gate. Your own `run override` still goes through and lists the protected paths it
+  changes; for a pinned gate script the reply adds that it `stays pinned until a task's
+  owns names it (run edit)`, so the next gate command halts until you add a task whose
+  `owns` names it.
 
 ## [0.2.0] — 2026-10-11
 
