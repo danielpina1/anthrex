@@ -352,3 +352,145 @@ async fn a_changed_path_misses() {
     let same = rig.tier_with(3, &with_path(&path), &cache).await;
     assert!(same.steps.iter().all(|s| s.cached), "{same:?}");
 }
+
+/// Milestone 9.14 task M9.14.2: a repository with two modules under `crates/` and no
+/// dependency between them. `base` and `head` are tier 1's change (`crates/a` only);
+/// the returned pair is tier 2's: a stage head that changed `crates/c/README.md` since
+/// `base`, and a candidate on it with the task's change, so the candidate's tree
+/// differs from the task head's only in `crates/c/README.md`.
+fn crates_rig() -> (Rig, (String, String)) {
+    let mut rig = Rig::new();
+    let root = rig.root.clone();
+    git(&root, &["rm", "-q", "-r", "mods"]);
+    for (path, text) in [
+        ("graph.sh", "echo '{\"a\":[],\"c\":[]}'\n"),
+        ("crates/a/lib.txt", "a\n"),
+        ("crates/c/lib.txt", "c\n"),
+        ("crates/c/README.md", "c\n"),
+    ] {
+        write(&root.join(path), text);
+    }
+    git(&root, &["add", "-A"]);
+    git(&root, &["commit", "-q", "-m", "crates"]);
+    let base = git(&root, &["rev-parse", "HEAD"]);
+    git(&root, &["checkout", "-q", "-b", "task"]);
+    write(&root.join("crates/a/lib.txt"), "a changed\n");
+    git(&root, &["commit", "-q", "-am", "change a"]);
+    let head = git(&root, &["rev-parse", "HEAD"]);
+    git(&root, &["checkout", "-q", "main"]);
+    write(&root.join("crates/c/README.md"), "c read me\n");
+    git(&root, &["commit", "-q", "-am", "stage moves on in c"]);
+    let stage = git(&root, &["rev-parse", "HEAD"]);
+    git(&root, &["checkout", "-q", "-b", "candidate"]);
+    write(&root.join("crates/a/lib.txt"), "a changed\n");
+    git(&root, &["commit", "-q", "-am", "the task on the stage"]);
+    let candidate = git(&root, &["rev-parse", "HEAD"]);
+    git(&root, &["checkout", "-q", "main"]);
+    (rig.base, rig.head) = (base, head);
+    (rig, (stage, candidate))
+}
+
+/// Tier 1 of [`crates_rig`]: `module_test`, modules `crates/*`, the cache on.
+fn crates_spec(rig: &Rig) -> TierSpec {
+    TierSpec {
+        source: vec!["crates/**".to_string()],
+        modules: vec!["crates/*".to_string()],
+        ..cached(rig)
+    }
+}
+
+/// Tier 2 of [`crates_rig`]: `stage...candidate`, in a checkout at the candidate.
+fn candidate_spec(tier1: &TierSpec, (stage, candidate): &(String, String)) -> TierSpec {
+    let mut spec = TierSpec {
+        tier: 2,
+        diff_base: stage.clone(),
+        head: candidate.clone(),
+        priority: Priority::Candidate,
+        ..tier1.clone()
+    };
+    if let Some(scratch) = spec.scratch.as_mut() {
+        scratch.commit = candidate.clone();
+    }
+    spec
+}
+
+fn is_tree_id(tree: &str) -> bool {
+    tree.len() == 40 && tree.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+#[tokio::test]
+async fn a_module_step_hits_after_an_unrelated_module_changed() {
+    // Decisions 26 and 30 (2): the `a` test step keys on the inputs of `a`'s closure,
+    // which a change in `crates/c` leaves alone; the build step keeps the tree id,
+    // misses, and runs, without voiding the test step's hit.
+    let (rig, tier2) = crates_rig();
+    let cache = TestCache::new(14);
+    let tier1 = crates_spec(&rig);
+    let first = rig.tier_with(1, &tier1, &cache).await;
+    assert!(first.ok, "{first:#?}");
+    let a = Affected::Modules(["a".to_string()].into());
+    assert_eq!(first.affected, a, "{first:#?}");
+    assert_eq!(builds_and_tests(&rig), (1, 1), "{:#?}", rig.log());
+    let second = rig
+        .tier_with(2, &candidate_spec(&tier1, &tier2), &cache)
+        .await;
+    assert!(second.ok, "{second:#?}");
+    assert_eq!(second.affected, a, "{second:#?}");
+    assert_ne!(second.tree, first.tree);
+    assert_eq!(second.steps.len(), 2, "{second:#?}");
+    assert!(!second.steps[0].cached, "the build step runs: {second:#?}");
+    assert!(second.steps[1].cached, "the a test step hits: {second:#?}");
+    assert_eq!(builds_and_tests(&rig), (2, 1), "{:#?}", rig.log());
+}
+
+#[tokio::test]
+async fn a_module_step_result_is_stored_when_the_checkout_is_at_the_job_tree() {
+    // Decision 30 (1): the store guard compares the checkout with the job's tree, not
+    // with the key's, which is an inputs id.
+    let (rig, _) = crates_rig();
+    let spec = crates_spec(&rig);
+    let outcome = rig.tier_with(1, &spec, &TestCache::new(14)).await;
+    assert!(outcome.ok, "{outcome:#?}");
+    let lines = stored(&spec);
+    assert_eq!(
+        commands(&lines),
+        [BUILD_CMD, "sh test.sh 'a' "],
+        "{outcome:#?}"
+    );
+    assert_eq!(lines[0].key.tree, outcome.tree);
+    assert!(
+        lines[1]
+            .key
+            .tree
+            .starts_with(crate::run::tiers::inputs::INPUTS_PREFIX),
+        "{:?}",
+        lines[1].key
+    );
+    assert_eq!(lines[1].key.affected, "a");
+}
+
+#[tokio::test]
+async fn full_scope_and_build_keep_the_tree_id() {
+    // Pinning for the build step (decision 27): a build step's key, and every key of a
+    // tier-3 job, keep the 40-hex tree id.
+    let (rig, _) = crates_rig();
+    let cache = TestCache::new(14);
+    let tier1 = crates_spec(&rig);
+    assert!(rig.tier_with(1, &tier1, &cache).await.ok);
+    let tier3 = TierSpec {
+        tier: 3,
+        check: Some("sh check.sh".to_string()),
+        ..tier1.clone()
+    };
+    let full = rig.tier_with(3, &tier3, &cache).await;
+    assert!(full.ok, "{full:#?}");
+    let lines = stored(&tier1);
+    let pinned: Vec<_> = lines
+        .iter()
+        .filter(|l| l.key.affected == "-" || l.key.scope == Scope::Full)
+        .collect();
+    assert_eq!(pinned.len(), 2, "{lines:#?}");
+    for line in pinned {
+        assert!(is_tree_id(&line.key.tree), "{:?}", line.key);
+    }
+}

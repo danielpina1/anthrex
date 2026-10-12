@@ -18,6 +18,15 @@ fn step(kind: StepKind, command: &str, exclusive: bool, key: &str) -> Step {
         command: command.to_string(),
         exclusive,
         affected_key: key.to_string(),
+        per_module: false,
+    }
+}
+
+/// A step a module command made (milestone 9.14 decision 26).
+fn module(kind: StepKind, command: &str, exclusive: bool, key: &str) -> Step {
+    Step {
+        per_module: true,
+        ..step(kind, command, exclusive, key)
     }
 }
 
@@ -45,25 +54,25 @@ fn gate_plan_for_modules_is_build_tests_timing() {
             got.steps,
             vec![
                 build(),
-                step(
+                module(
                     StepKind::Tests,
                     &format!("cargo nextest run -p 'a' -E {GATE}"),
                     false,
                     "a,b"
                 ),
-                step(
+                module(
                     StepKind::Tests,
                     &format!("cargo nextest run -p 'b' -E {GATE}"),
                     false,
                     "a,b"
                 ),
-                step(
+                module(
                     StepKind::Timing,
                     &format!("cargo nextest run -p 'a' -E {GATE_TIMING}"),
                     true,
                     "a,b"
                 ),
-                step(
+                module(
                     StepKind::Timing,
                     &format!("cargo nextest run -p 'b' -E {GATE_TIMING}"),
                     true,
@@ -83,7 +92,7 @@ fn gate_plan_for_modules_is_build_tests_timing() {
         plan(1, &modules(&["a"]), &untimed, None).steps,
         vec![
             build(),
-            step(
+            module(
                 StepKind::Tests,
                 "cargo nextest run -p 'a' -E 'not (package(anthrex))'",
                 false,
@@ -133,13 +142,13 @@ fn gate_plan_prefers_module_tests_over_module_test() {
         plan(2, &modules(&["b", "a"]), &both, Some("cargo test")).steps,
         vec![
             build(),
-            step(
+            module(
                 StepKind::Tests,
                 &format!("cargo nextest run -p 'a' -p 'b' -E {GATE}"),
                 false,
                 "a,b"
             ),
-            step(
+            module(
                 StepKind::Timing,
                 &format!("cargo nextest run -p 'a' -p 'b' -E {GATE_TIMING}"),
                 true,
@@ -299,4 +308,46 @@ fn check_without_filter_is_exclusive_when_timing_is_set() {
         plan(1, &full, &untimed, Some("cargo test")).steps,
         vec![step(StepKind::Tests, "cargo test", false, key)]
     );
+}
+
+#[test]
+fn module_steps_are_per_module_and_check_steps_are_not() {
+    // Milestone 9.14 decision 26 (ruling R5): only a step a module command made, and
+    // its timing step, keys on the inputs id.
+    let both = TierProfile {
+        module_tests: Some("cargo nextest run {modules:-p %} {filter:-E %}".into()),
+        ..profile()
+    };
+    for (what, tiers) in [("module_test", profile()), ("module_tests", both)] {
+        let steps = plan(1, &modules(&["a", "b"]), &tiers, Some("cargo test")).steps;
+        assert_eq!(steps[0].kind, StepKind::Build, "{what}");
+        assert!(
+            !steps[0].per_module,
+            "{what}: the build step keeps the tree id"
+        );
+        assert!(steps.len() > 2, "{what}: {steps:?}");
+        for step in &steps[1..] {
+            assert!(matches!(step.kind, StepKind::Tests | StepKind::Timing));
+            assert!(step.per_module, "{what}: {step:?}");
+        }
+    }
+    // A `check` standing in for module tests (no module command), its timing step
+    // included, and every Scope::Full step keep the tree id.
+    let no_module = TierProfile {
+        module_test: None,
+        ..profile()
+    };
+    let check = Some("sh check.sh {filter:-E %} {shard}/{shards}");
+    let stand_in = plan(1, &modules(&["a"]), &no_module, check).steps;
+    assert_eq!(stand_in.len(), 3, "{stand_in:?}");
+    let sharded = TierProfile {
+        full_shards: 2,
+        ..profile()
+    };
+    let full = plan(3, &Affected::Full("tier 3".into()), &sharded, check).steps;
+    assert_eq!(full.len(), 3, "{full:?}");
+    let gate_full = plan(1, &Affected::Full("hub file: x".into()), &profile(), check).steps;
+    for step in stand_in.iter().chain(&full).chain(&gate_full) {
+        assert!(!step.per_module, "{step:?}");
+    }
 }

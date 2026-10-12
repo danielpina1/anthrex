@@ -42,8 +42,8 @@ use crate::run::tiers::affected::affected;
 use crate::run::tiers::cache_key::CacheKey;
 use crate::run::tiers::steps::plan;
 use crate::run::tiers::{
-    Affected, GRAPH_TIMEOUT, GraphSource, GraphState, Scope, Step, StepKind, StepOutcome,
-    TOOLCHAIN_TIMEOUT, TestAtSpec, TierOutcome, TierSpec,
+    Affected, GRAPH_TIMEOUT, GraphSource, GraphState, ModuleGraph, Scope, Step, StepKind,
+    StepOutcome, TOOLCHAIN_TIMEOUT, TestAtSpec, TierOutcome, TierSpec,
 };
 
 /// The affected set a tier-3 job records: one fixed value, so a tier-3 cache key never
@@ -116,9 +116,10 @@ async fn tier_job(
         toolchain: None,
         graph_note: None,
     };
+    let mut graph = None;
     let steps = if tiered {
-        let (affected, note) = affected_set(&job, spec, scope).await?;
-        outcome.graph_note = note;
+        let (affected, note, read) = affected_set(&job, spec, scope).await?;
+        (outcome.graph_note, graph) = (note, read);
         if spec.toolchain.is_none()
             && let Some(command) = spec.profile.toolchain_id.clone()
         {
@@ -136,11 +137,18 @@ async fn tier_job(
                 command: check.clone(),
                 exclusive: false,
                 affected_key: "-".to_string(),
+                per_module: false,
             })
             .collect()
     };
     let context = cache_ctx(spec, tiered, outcome.toolchain.as_deref());
-    let keys = step_keys(&outcome.tree, scope, &steps, context.as_ref());
+    let plan = KeyPlan {
+        tree: &outcome.tree,
+        scope,
+        affected: &outcome.affected,
+        graph: graph.as_ref(),
+    };
+    let keys = step_keys(&job, spec, plan, &steps, context.as_ref()).await;
     let hits = usable_hits(&steps, lookup_all(cache, &spec.repo_dir, &keys).await);
     let mut elsewhere_logged = false;
     for (k, step) in steps.iter().enumerate() {
@@ -157,9 +165,9 @@ async fn tier_job(
             break;
         }
         if let Some(key) = keys[k].clone() {
-            // Ruling C-13 (1): the key names the judged head's tree; store only what
-            // ran on exactly that tree.
-            if checkout_is_at(&job, &key.tree).await {
+            // Ruling C-13 (1), as milestone 9.14 decision 30 (1) amends it: store only
+            // what ran on exactly the job's tree (a key's may be an inputs id).
+            if checkout_is_at(&job, &outcome.tree).await {
                 let entry = CacheEntry {
                     ok: true,
                     secs: ran.secs,
@@ -174,7 +182,7 @@ async fn tier_job(
                 elsewhere_logged = true;
                 tracing::info!(
                     dir = %spec.dir.display(),
-                    tree = %key.tree,
+                    tree = %outcome.tree,
                     "tier steps ran on a checkout that is not the judged tree, or is dirty: not cached"
                 );
             }
@@ -242,13 +250,9 @@ fn hit(step: &Step) -> StepOutcome {
 }
 
 /// Decision 22 (with ruling C-5) on the job's change, and decision 9's graph note.
-async fn affected_set(
-    job: &Job<'_>,
-    spec: &TierSpec,
-    scope: Scope,
-) -> Result<(Affected, Option<String>), Stop> {
+async fn affected_set(job: &Job<'_>, spec: &TierSpec, scope: Scope) -> Result<AffectedRead, Stop> {
     if scope == Scope::Full {
-        return Ok((Affected::Full(FULL_SUITE.to_string()), None));
+        return Ok((Affected::Full(FULL_SUITE.to_string()), None, None));
     }
     let changed = changed_paths(job, spec).await?;
     affected_of(job, spec, &changed).await
@@ -268,6 +272,10 @@ async fn changed_paths(job: &Job<'_>, spec: &TierSpec) -> Result<Vec<String>, St
         .map_err(stop)
 }
 
+/// An affected set, its graph note and the known graph it came from (milestone 9.14
+/// decision 26 keys on that graph).
+type AffectedRead = (Affected, Option<String>, Option<ModuleGraph>);
+
 /// Decision 22 on `changed`, with the graph read in the job's checkout (ruling C-5:
 /// with no `check`, a known graph runs the module tests of every module). A graph
 /// command refused for a changed gate script stops the job (milestone 9.13).
@@ -275,7 +283,7 @@ async fn affected_of(
     job: &Job<'_>,
     spec: &TierSpec,
     changed: &[String],
-) -> Result<(Affected, Option<String>), Stop> {
+) -> Result<AffectedRead, Stop> {
     let graph = read_graph(job, spec).await?;
     let note = match &graph {
         GraphState::Unknown(reason) => Some(reason.clone()),
@@ -295,7 +303,11 @@ async fn affected_of(
     {
         set = Affected::Modules(graph.modules.keys().cloned().collect());
     }
-    Ok((set, note))
+    let known = match graph {
+        GraphState::Known(graph) => Some(graph),
+        GraphState::Unknown(_) => None,
+    };
+    Ok((set, note, known))
 }
 
 /// Milestone 9.13 decision 12 (ruling C5): `OpResult::GateRefused` when a blocking
@@ -465,7 +477,7 @@ pub(crate) async fn run_test_at(
 // (milestone 9.14, ruling C18).
 #[path = "tier_keys.rs"]
 mod keys;
-use keys::{cache_ctx, checkout_is_at, step_keys, usable_hits};
+use keys::{KeyPlan, cache_ctx, checkout_is_at, step_keys, usable_hits};
 
 // Decision 16's pre-check of a candidate's tier-2 job (task M9.1.13), split out for
 // the 600-line rule.

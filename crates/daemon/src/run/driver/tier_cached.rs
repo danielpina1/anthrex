@@ -18,15 +18,14 @@ use std::path::Path;
 
 use super::super::graph::inputs_suffice;
 use super::{
-    Job, JobSpec, OpCtx, TierSpec, affected_of, cache_ctx, changed_paths, hit, lookup_all,
-    usable_hits,
+    Job, JobSpec, KeyPlan, OpCtx, TierSpec, affected_of, cache_ctx, changed_paths, hit, lookup_all,
+    step_keys, usable_hits,
 };
 use crate::run::git::{self, GitQueue};
 use crate::run::globs::{OwnsMatcher, path_module};
 use crate::run::model::OpId;
 use crate::run::slots::TestScheduler;
 use crate::run::test_cache::TestCache;
-use crate::run::tiers::cache_key::key;
 use crate::run::tiers::steps::plan;
 use crate::run::tiers::{GraphSource, Scope, TierOutcome};
 
@@ -103,24 +102,19 @@ pub(crate) async fn cached_outcome(
         return None;
     }
     // Milestone 9.13: a refused graph command is no cached outcome; the job refuses.
-    let (affected, graph_note) = affected_of(&job, spec, &changed).await.ok()?;
+    let (affected, graph_note, graph) = affected_of(&job, spec, &changed).await.ok()?;
     // Ruling C-17 (2a): a graph the stage head's read could not know is not trusted.
     if graph_note.is_some() && spec.profile.module_graph != GraphSource::None {
         return None;
     }
     let steps = plan(spec.tier, &affected, &spec.profile, spec.check.as_deref()).steps;
-    let keys: Vec<_> = steps
-        .iter()
-        .map(|s| {
-            Some(key(
-                &tree,
-                Scope::Gate,
-                &s.command,
-                &s.affected_key,
-                &context,
-            ))
-        })
-        .collect();
+    let plan = KeyPlan {
+        tree: &tree,
+        scope: Scope::Gate,
+        affected: &affected,
+        graph: graph.as_ref(),
+    };
+    let keys = step_keys(&job, spec, plan, &steps, Some(&context)).await;
     let hits = usable_hits(&steps, lookup_all(cache, &spec.repo_dir, &keys).await);
     if steps.is_empty() || hits.iter().any(|h| !h) {
         return None;
