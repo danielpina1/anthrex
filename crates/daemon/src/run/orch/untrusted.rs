@@ -53,7 +53,7 @@ pub(crate) fn fix_kind(task: &Task) -> Option<&'static str> {
 
 /// Decision 19's first rule, on `run_status`'s digest exactly as answered (after
 /// trimming): the first stage whose threads quote a comment, else the first task entry
-/// of a review or CI fix task with a block. A delivery block of counts only
+/// of a review or CI fix task with a block, or whose `last` is its block line. A delivery block of counts only
 /// (`threads_omitted`) or a thread with `comment: null` quotes nothing.
 pub fn digest_source(digest: &Value, run: &Run) -> Option<String> {
     let stages = digest["delivery"]["stages"]
@@ -71,8 +71,15 @@ pub fn digest_source(digest: &Value, run: &Run) -> Option<String> {
     }
     let tasks = || digest["tasks"].as_array().into_iter().flatten();
     let fix = |id: &str| run.task(id).and_then(fix_kind);
+    // Controller ruling (task 11): a cleared block whose line is still the entry's
+    // `last` (`{HH:MM} blocked ({reason}): …`, `dispatch::block`) shows the same text.
+    let is_block_line = |last: &str| {
+        last.split_once(' ')
+            .is_some_and(|(_, t)| t.starts_with("blocked ("))
+    };
     let block = tasks().find_map(|entry| {
-        if entry["block"].is_null() {
+        let last_blocked = entry["last"].as_str().is_some_and(is_block_line);
+        if entry["block"].is_null() && !last_blocked {
             return None;
         }
         let id = entry["id"].as_str()?;

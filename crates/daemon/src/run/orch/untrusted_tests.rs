@@ -14,7 +14,7 @@ use crate::run::delivery::{
 use crate::run::model::Run;
 use crate::run::orch::WorkerNote;
 use crate::run::orch::digest::digest;
-use crate::run::orch::test_support::{block, run_with, task_mut, task_toml};
+use crate::run::orch::test_support::{block, event, run_with, task_mut, task_toml};
 
 const NOW: u64 = 1_790_000_000;
 
@@ -263,4 +263,53 @@ fn a_plan_tasks_note_is_not_a_source() {
     let d = digest(&run, NOW);
     assert!(d["task_notes"].to_string().contains(COMMENT), "{d}");
     assert_eq!(digest_source(&d, &run), None);
+}
+
+/// Controller ruling (task 11): a fix task whose block has cleared but whose newest
+/// history entry is still its block line (`blocked ({reason}): …`, `dispatch::block`)
+/// shows the worker's text as its entry's `last`; that is a source. An engine line
+/// there is not, nor a plan task's block line.
+#[test]
+fn a_fix_tasks_block_line_as_last_is_a_source() {
+    let cases: [(TaskOrigin, &[&str], &str); 3] = [
+        (TaskOrigin::Review, &[], "task t5's block (review fix)"),
+        (TaskOrigin::Plan, &["7:t30"], "task t5's block (review fix)"),
+        (TaskOrigin::Ci, &[], "task t5's block (ci fix)"),
+    ];
+    for (origin, addresses, want) in cases {
+        let mut run = with_t5(origin, addresses);
+        let t5 = task_mut(&mut run, "t5");
+        event(t5, NOW - 60, &format!("blocked (question): {COMMENT}"));
+        assert!(t5.block.is_none());
+        let d = digest(&run, NOW);
+        let entry = d["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["id"] == "t5")
+            .unwrap();
+        assert!(entry["block"].is_null(), "{d}");
+        assert!(entry["last"].as_str().unwrap().contains(COMMENT), "{d}");
+        assert_eq!(digest_source(&d, &run).as_deref(), Some(want), "{origin:?}");
+    }
+}
+
+#[test]
+fn a_fix_tasks_engine_line_as_last_is_not_a_source() {
+    for origin in [TaskOrigin::Review, TaskOrigin::Ci] {
+        let mut run = with_t5(origin, &[]);
+        event(task_mut(&mut run, "t5"), NOW - 60, "started");
+        assert_eq!(source(&run), None, "{origin:?}");
+    }
+}
+
+#[test]
+fn a_plan_tasks_block_line_as_last_is_not_a_source() {
+    let mut run = with_t5(TaskOrigin::Plan, &[]);
+    event(
+        task_mut(&mut run, "t5"),
+        NOW - 60,
+        &format!("blocked (question): {COMMENT}"),
+    );
+    assert_eq!(source(&run), None);
 }
