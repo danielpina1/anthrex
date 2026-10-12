@@ -80,6 +80,7 @@ mod snapshot_orch;
 mod snapshot_patterns;
 mod snapshot_stages;
 pub mod stats;
+pub mod target_pool;
 pub mod test_cache;
 pub mod tiers;
 pub mod triage;

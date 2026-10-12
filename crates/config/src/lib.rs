@@ -14,6 +14,7 @@ mod orchestrator;
 pub mod reserved_env;
 mod runtimes;
 pub mod settings;
+mod target_pool;
 mod testing;
 mod theme;
 
@@ -37,6 +38,11 @@ pub use orchestrator::{
 // Milestone 9.8 (task M9.8.13): the model lists are read for the migration only.
 pub(crate) use orchestrator::{RouteList, RouteLists};
 use runtimes::{read_runtimes, report_unknown_runtimes};
+use target_pool::{KNOWN_TARGET_POOL_KEYS, read_target_pool};
+pub use target_pool::{
+    TARGET_POOL_ENGINE_DIRS_RANGE, TARGET_POOL_IDLE_DAYS_RANGE, TARGET_POOL_MAX_GB_RANGE,
+    TARGET_POOL_TASK_DIRS_RANGE, TargetPool,
+};
 pub use testing::{
     BISECT_FIX_MAX_RANGE, FLAKY_QUARANTINE_AFTER_RANGE, FLAKY_WINDOW_DAYS_RANGE,
     FULL_IDLE_SECS_RANGE, TEST_CACHE_DAYS_RANGE, TEST_SLOTS_RANGE, Testing,
@@ -64,6 +70,7 @@ pub struct Config {
     pub testing: Testing,
     pub delivery: Delivery,
     pub theme: Theme,
+    pub target_pool: TargetPool,
 }
 
 /// `Ctrl` plus this lowercase letter. Never `h`, `i`, `j` or `m`: terminals
@@ -172,6 +179,7 @@ impl Default for Config {
             testing: Testing::default(),
             delivery: Delivery::default(),
             theme: Theme::default(),
+            target_pool: TargetPool::default(),
         }
     }
 }
@@ -238,6 +246,7 @@ pub fn parse(text: &str) -> (Config, Vec<Problem>) {
     read_testing(&table, &mut config, &mut problems);
     read_delivery(&table, &mut config, &mut problems);
     read_theme(&table, &mut config, &mut problems);
+    read_target_pool(&table, &mut config, &mut problems);
 
     report_unknown_keys(&table, &mut problems);
 
@@ -544,6 +553,9 @@ fn report_unknown_keys(table: &toml::Table, problems: &mut Vec<Problem>) {
             "testing" => report_unknown_nested(value, "testing", KNOWN_TESTING_KEYS, problems),
             "delivery" => report_unknown_delivery(value, problems),
             "theme" => report_unknown_nested(value, "theme", KNOWN_THEME_KEYS, problems),
+            "target_pool" => {
+                report_unknown_nested(value, "target_pool", KNOWN_TARGET_POOL_KEYS, problems)
+            }
             other => problems.push(unknown_key_problem(other)),
         }
     }
