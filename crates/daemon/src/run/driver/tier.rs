@@ -39,10 +39,10 @@ use crate::run::model::OpId;
 use crate::run::slots::{Priority, TestScheduler, Want};
 use crate::run::test_cache::{CacheEntry, TestCache};
 use crate::run::tiers::affected::affected;
-use crate::run::tiers::cache_key::{CacheKey, key, with_path};
+use crate::run::tiers::cache_key::CacheKey;
 use crate::run::tiers::steps::plan;
 use crate::run::tiers::{
-    Affected, CacheCtx, GRAPH_TIMEOUT, GraphSource, GraphState, Scope, Step, StepKind, StepOutcome,
+    Affected, GRAPH_TIMEOUT, GraphSource, GraphState, Scope, Step, StepKind, StepOutcome,
     TOOLCHAIN_TIMEOUT, TestAtSpec, TierOutcome, TierSpec,
 };
 
@@ -139,21 +139,8 @@ async fn tier_job(
             })
             .collect()
     };
-    let keys: Vec<Option<CacheKey>> = match cache_ctx(spec, tiered, outcome.toolchain.as_deref()) {
-        Some(c) => steps
-            .iter()
-            .map(|step| {
-                Some(key(
-                    &outcome.tree,
-                    scope,
-                    &step.command,
-                    &step.affected_key,
-                    &c,
-                ))
-            })
-            .collect(),
-        None => vec![None; steps.len()],
-    };
+    let context = cache_ctx(spec, tiered, outcome.toolchain.as_deref());
+    let keys = step_keys(&outcome.tree, scope, &steps, context.as_ref());
     let hits = usable_hits(&steps, lookup_all(cache, &spec.repo_dir, &keys).await);
     let mut elsewhere_logged = false;
     for (k, step) in steps.iter().enumerate() {
@@ -195,59 +182,6 @@ async fn tier_job(
         outcome.steps.push(ran);
     }
     Ok(outcome)
-}
-
-/// Ruling C-13 (2), amending decision 31: a job's steps are not independent (a test
-/// step may use what the build step made), so a build step's hit counts only when
-/// every later step also hits; otherwise everything from the build step on runs.
-fn usable_hits(steps: &[Step], mut hits: Vec<bool>) -> Vec<bool> {
-    if let Some(build) = steps.iter().position(|s| s.kind == StepKind::Build)
-        && hits[build..].iter().any(|hit| !hit)
-    {
-        for hit in &mut hits[build..] {
-            *hit = false;
-        }
-    }
-    hits
-}
-
-/// Whether the job's checkout is clean for tracked files and at `tree`, read on a
-/// bounded blocking thread. Anything that goes wrong is `false`.
-async fn checkout_is_at(job: &Job<'_>, tree: &str) -> bool {
-    let dir = job.dir.clone();
-    match job.read(move |g, t| git::checkout_tree(g, &dir, t)).await {
-        Ok(Some(at)) => at == tree,
-        Ok(None) => false,
-        Err(error) => {
-            tracing::debug!(%error, "could not read a tier checkout's tree");
-            false
-        }
-    }
-}
-
-/// Decision 30's context for this job's keys: none for an untiered profile, without a
-/// context, or with an `"unknown"` toolchain. A toolchain this job ran (decision 11)
-/// replaces the context's.
-///
-/// Ruling C-13 (5), beyond the brief: the toolchain part also carries a hash of the
-/// steps' effective `PATH` (the daemon's own, unless the profile's `env` sets one).
-fn cache_ctx(spec: &TierSpec, tiered: bool, ran_toolchain: Option<&str>) -> Option<CacheCtx> {
-    let mut ctx = spec.cache.clone().filter(|_| tiered)?;
-    if let Some(id) = ran_toolchain {
-        ctx.toolchain = id.to_string();
-    }
-    if ctx.toolchain == TOOLCHAIN_UNKNOWN {
-        return None;
-    }
-    let path = spec
-        .env
-        .iter()
-        .rev()
-        .find(|(name, _)| name == "PATH")
-        .map(|(_, value)| value.clone())
-        .unwrap_or_else(|| std::env::var("PATH").unwrap_or_default());
-    ctx.toolchain = with_path(&ctx.toolchain, &path);
-    Some(ctx)
 }
 
 /// Which keys are green hits, every one looked up before anything runs, on one bounded
@@ -526,6 +460,12 @@ pub(crate) async fn run_test_at(
         show,
     }
 }
+
+// The cache keys and what decides a hit or a store, split out for the 530-line budget
+// (milestone 9.14, ruling C18).
+#[path = "tier_keys.rs"]
+mod keys;
+use keys::{cache_ctx, checkout_is_at, step_keys, usable_hits};
 
 // Decision 16's pre-check of a candidate's tier-2 job (task M9.1.13), split out for
 // the 600-line rule.
