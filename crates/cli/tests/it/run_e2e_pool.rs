@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use daemon::run::target_pool::{
-    DirState, LeasesFile, POOL_CLEAN_TIMEOUT, POOL_DIR_NAME, POOL_LEASES_FILE,
+    DirState, LeasesFile, POOL_CLEAN_TIMEOUT, POOL_DIR_NAME, POOL_LEASES_FILE, PoolClass,
 };
 use proto::{FinishAction, RunReply, RunRequest, RunState, TaskState};
 use support::run_harness::{RUN_WAIT, RunHarness};
@@ -145,27 +145,74 @@ fn e2e_a_task_builds_in_a_leased_dir_and_releases_it() {
     assert_eq!(pool_notes(&h, &id), Vec::<String>::new());
 }
 
+/// The pool's `leases.json` once it exists.
+fn leases_now(h: &RunHarness) -> Option<LeasesFile> {
+    let text = std::fs::read_to_string(pool_root(h).join(POOL_LEASES_FILE)).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+/// The task directory leased by the checkout named `checkout` (`t2`, `t1.proof`).
+fn held_by(leases: &LeasesFile, checkout: &str) -> Option<String> {
+    (leases.dirs.iter())
+        .filter(|d| d.class == PoolClass::Task && d.state == DirState::Leased)
+        .find(|d| (d.owner.as_deref()).is_some_and(|o| o.file_name() == Some(checkout.as_ref())))
+        .map(|d| format!("task-{}", d.k))
+}
+
 /// C14: one writer and two task directories (a task worktree and its `.proof` are
 /// different owners, decision 4, and the `check` runs in `.proof`). t1's worktree and
-/// its `.proof` take both; t2's `.proof` builds in one of them after their release, so
-/// the pool reuses a released directory and never needs a third.
+/// its `.proof` take both; t2's `.proof` builds in one of them after their release.
 ///
 /// Deviation from the brief (recorded in its implementation notes): `remove_merged`'s
 /// releases and t2's `PrepareWorktree` are emitted by the same merge step and run
 /// concurrently, and a release cleans before it frees, so t2's worktree may lease while
-/// both directories are still t1's and fall back (decision 7: one note, for `t2`). The
-/// brief's "no pool note" and "the same `task-k`" depend on that race; the test asserts
-/// what holds either way.
+/// both directories are still t1's and fall back (decision 7: one note, for `t2`).
+/// Nothing in the test can order that lease. t2's `.proof` is ordered (task-6 review
+/// I1): t2's worker waits, before its `task_done`, for a gate the test opens only once
+/// t1 is merged and `leases.json` shows no lease of `t1` or `t1.proof`. Its `.proof`
+/// is prepared after `task_done`, so it always finds t1's directories free.
 #[test]
 fn e2e_a_second_task_reuses_the_released_dir() {
     let h = harness("max_writers = 1\n", "task_dirs = 2\n");
     scripts(&h, "t1", "a.txt");
-    scripts(&h, "t2", "b.txt");
+    // Timing: t1 runs, merges and releases its two directories within `wait_for(2)`
+    // (`RUN_WAIT` for the task, one `POOL_CLEAN_TIMEOUT` per release, see the file's
+    // header); the worker's own wait has the same bound, in 0.1 s polls.
+    let gate = h.dir.path().join("t2-gate");
+    let polls = wait_for(2).as_millis() / 100;
+    let wait_gate = format!(
+        "i=0; until [ -e '{}' ]; do i=$((i+1)); [ $i -gt {polls} ] && exit 1; sleep 0.1; done",
+        gate.display()
+    );
+    h.script(
+        "worker-t2-1",
+        &[commit("b.txt", "x\n"), sh(&wait_gate), done("added b.txt")],
+    );
+    h.script("reviewer-t2-1", &[approve()]);
     let plan = plan_of(&[
         task("t1", &["a.txt"], ""),
         task("t2", &["b.txt"], "deps = [\"t1\"]"),
     ]);
+    let fell_back =
+        "target pool: no free task directory for t2; it builds in its own target directory";
     let id = h.start(&plan, true);
+    // Open the gate once t1 is merged, neither of its checkouts holds a directory, and
+    // t2's worktree lease is decided: a directory held, or its fallback note logged.
+    let t2_worktree_dir = until("t1's releases and t2's lease", wait_for(2), || {
+        let run = h.run(&id)?;
+        if t(&run, "t1").state != TaskState::Merged {
+            return None;
+        }
+        let leases = leases_now(&h)?;
+        let t1_held = ["t1", "t1.proof"]
+            .iter()
+            .any(|c| held_by(&leases, c).is_some());
+        let held = held_by(&leases, "t2");
+        let noted = pool_notes(&h, &id).iter().any(|n| n == fell_back);
+        (!t1_held && (held.is_some() || noted)).then_some(held)
+    });
+    std::fs::write(&gate, b"").unwrap();
+
     let run = h.wait_run(&id, complete, wait_for(2));
     assert_eq!(t(&run, "t2").state, TaskState::Merged);
     let task_dirs = |dirs: Vec<String>| -> Vec<String> {
@@ -176,14 +223,20 @@ fn e2e_a_second_task_reuses_the_released_dir() {
     let (t1, t2) = (task_dirs(ran_in(&h, "t1")), task_dirs(ran_in(&h, "t2")));
     assert_eq!(t1.len(), 1, "t1's check built in the pool: {t1:?}");
     assert_eq!(t2.len(), 1, "t2's check built in the pool: {t2:?}");
-    let names: Vec<String> = (leases(&h).dirs.into_iter())
-        .filter(|d| d.class == daemon::run::target_pool::PoolClass::Task)
-        .map(|d| format!("task-{}", d.k))
-        .collect();
-    assert_eq!(names, ["task-1", "task-2"], "no third directory");
-    let fell_back =
-        "target pool: no free task directory for t2; it builds in its own target directory";
     let notes = pool_notes(&h, &id);
-    assert!(notes.iter().all(|n| n == fell_back), "{notes:?}");
-    assert!(notes.len() <= 1, "{notes:?}");
+    match t2_worktree_dir {
+        // t2's worktree leased one of t1's released directories, so its `.proof` got
+        // the other: decision 5's choice, observed. When the worktree took t1's
+        // worktree directory, t2's check builds where t1's check built (F8).
+        Some(held) => {
+            assert_eq!(notes, Vec::<String>::new());
+            let other = if held == "task-1" { "task-2" } else { "task-1" };
+            assert_eq!(t2, [other], "t2's worktree holds {held}");
+        }
+        // The race above (the usual case): one note, for t2's worktree alone, never for
+        // its `.proof`. Which of t1's two free directories the `.proof` gets is decision
+        // 5's least-recently-used choice between two releases that may end in the same
+        // second, so it is not pinned (recorded as a 9.14 follow-up).
+        None => assert_eq!(notes, [fell_back]),
+    }
 }

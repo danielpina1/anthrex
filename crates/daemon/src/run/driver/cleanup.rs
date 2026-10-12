@@ -93,7 +93,12 @@ pub(super) async fn remove_keeping(
     )
     .await?;
     // Milestone 9.14 decision 8 (C6): the pool lease ends while the checkout still
-    // exists, as its own await, never inside the project's git write turn.
+    // exists, as its own await, never inside the project's git write turn. The pool's
+    // single-owner rule rests on the engine here: it removes a checkout only once the
+    // checkout has no writer and no op in flight, so no op is still building in the
+    // directory this release cleans and frees (task-6 review M1). An engine change that
+    // removes a checkout with an op in flight would hand that directory to a new lease
+    // while the old op still writes to it.
     if let Some(pool) = ctx.pool.as_deref() {
         let outcome = (service.pool)
             .release(pool, ctx.confine.as_deref(), &path, clean)
