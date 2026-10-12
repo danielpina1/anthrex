@@ -92,7 +92,7 @@ pub(super) async fn remove_lane(
     let salvaged = if keep_path {
         cleanup::salvage_in(service, ctx, path, reference, keep_head).await
     } else {
-        cleanup::remove_keeping(service, ctx, root, path, reference, keep_head).await
+        cleanup::remove_keeping(service, ctx, root, path, reference, keep_head, true).await
     };
     // Review m3: the locks are gone whatever follows; a failure names them.
     let salvage_ref = salvaged.map_err(|error| match cleared_locks.is_empty() {

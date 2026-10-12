@@ -15,7 +15,9 @@ use super::*;
 /// The rig: a temporary root holding the data directory, the run's checkouts directory
 /// and the repository root, all spelled resolved (macOS `/var` → `/private/var`).
 pub(super) struct Rig {
-    _tmp: tempfile::TempDir,
+    /// Takes the task temporary directories a confined release makes (M9.12.13).
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub tmp: crate::run::git::TestDir,
     pub root: PathBuf,
     pub data: PathBuf,
     pub ctx: PoolCtx,
@@ -23,7 +25,7 @@ pub(super) struct Rig {
 
 impl Rig {
     pub fn new() -> Self {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::run::git::TestDir::new();
         let root = tmp.path().canonicalize().unwrap();
         let data = root.join("data");
         let runs_dir = root.join("wt/runs/r1");
@@ -38,7 +40,7 @@ impl Rig {
             runs_dir,
         };
         Rig {
-            _tmp: tmp,
+            tmp,
             root,
             data,
             ctx,
@@ -315,4 +317,38 @@ async fn the_clean_ignores_a_planted_rustc_wrapper() {
         ReleaseOutcome::Cleaned
     );
     assert!(!marker.exists(), "the planted rustc wrapper ran");
+}
+
+/// C5: a release under the run's `ConfineSpec` runs its `cargo metadata` and `cargo
+/// clean` confined, with the pool directory granted on the release's own copy
+/// (`target_dir`), so it cleans; without the grant `(deny default)` refuses the
+/// clean's writes and every confined release would wipe.
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn a_confined_release_cleans_and_does_not_wipe() {
+    let rig = Rig::new();
+    let pool = pool(1);
+    let (a, dir) = built_a(&rig, &pool).await;
+    let data_dir = rig.data.join("runs/r1");
+    rig.tmp
+        .also(crate::run::git::checkout_repo_dir(&data_dir, &a));
+    let common = rig.root.join("repo/.git");
+    std::fs::create_dir_all(&common).unwrap();
+    let spec = crate::run::confine::ConfineSpec {
+        data_dir,
+        common_dir: common,
+        cache_dirs: Vec::new(),
+        network: false,
+        unix_sockets: Vec::new(),
+        localhost_ports: Vec::new(),
+        daemon_socket: rig.root.join("sock/daemon.sock"),
+        target_dir: None,
+    };
+
+    assert_eq!(
+        pool.release(&rig.ctx, Some(&spec), &a, true).await,
+        ReleaseOutcome::Cleaned
+    );
+    assert_eq!(fingerprints(&dir, "app-"), Vec::<String>::new());
+    assert_eq!(rig.state(&pool, task(1)), Some(DirState::Clean));
 }

@@ -78,6 +78,7 @@ pub fn confine_spec(
             .cloned()
             .unwrap_or_default(),
         daemon_socket: daemon_socket.to_path_buf(),
+        target_dir: None,
     })
 }
 

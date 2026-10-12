@@ -95,6 +95,8 @@ async fn launch(s: &Arc<RunService>, dir: &Path) -> std::path::PathBuf {
         check_timeout: Duration::from_secs(5),
         confine: None,
         pinned: Default::default(),
+        pool: None,
+        pool_grant: None,
     };
     let kind = OpKind::CreateWindow {
         name: "launch-1".into(),

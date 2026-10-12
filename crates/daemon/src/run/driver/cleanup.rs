@@ -21,9 +21,10 @@ pub(super) async fn discard(
 ) -> OpResult {
     for (path, reference) in &worktrees {
         service.unwatch_root(path);
-        if let Err(error) =
-            remove_worktree(service, ctx, root.clone(), path.clone(), reference.clone()).await
-        {
+        // C11: a discarded run's checkouts are released not-cleaned (wiped before their
+        // next lease).
+        let at = (root.clone(), path.clone(), reference.clone());
+        if let Err(error) = remove_worktree(service, ctx, at, false).await {
             return failed(error);
         }
     }
@@ -43,14 +44,15 @@ pub(super) async fn discard(
 
 /// Decision 20's salvage, then the removal; `Some(ref)` when the worktree was dirty. A
 /// worktree already gone has nothing to salvage.
+/// `clean`: whether the checkout's pool directory is cleaned on its release (milestone
+/// 9.14 decision 8; `false` only for a discard, C11).
 pub(super) async fn remove_worktree(
     service: &Arc<RunService>,
     ctx: &OpCtx,
-    root: PathBuf,
-    path: PathBuf,
-    reference: String,
+    (root, path, reference): (PathBuf, PathBuf, String),
+    clean: bool,
 ) -> Result<Option<String>, String> {
-    remove_keeping(service, ctx, root, path, reference, false).await
+    remove_keeping(service, ctx, root, path, reference, false, clean).await
 }
 
 /// [`remove_worktree`], salvaging a clean checkout at its head too when `keep_head`
@@ -62,6 +64,7 @@ pub(super) async fn remove_keeping(
     path: PathBuf,
     reference: String,
     keep_head: bool,
+    clean: bool,
 ) -> Result<Option<String>, String> {
     // Milestone 9.11 decision 14 (A14): a nested repository's work cannot be salvaged
     // into the user's repository, so a checkout holding some is kept, and the op's
@@ -89,6 +92,14 @@ pub(super) async fn remove_keeping(
         keep_head,
     )
     .await?;
+    // Milestone 9.14 decision 8 (C6): the pool lease ends while the checkout still
+    // exists, as its own await, never inside the project's git write turn.
+    if let Some(pool) = ctx.pool.as_deref() {
+        let outcome = (service.pool)
+            .release(pool, ctx.confine.as_deref(), &path, clean)
+            .await;
+        tracing::debug!(checkout = %path.display(), ?outcome, "target pool: released");
+    }
     // Final fix batch F1c: a standalone checkout goes with its repository (the
     // worker's private objects, the engine's own files, its temporary directory).
     let repo = git::checkout_repo_dir(&ctx.data_dir, &path);
@@ -212,9 +223,8 @@ pub(super) async fn clean_up(
 ) -> (String, Vec<String>) {
     for (path, reference) in worktrees {
         service.unwatch_root(path);
-        if let Err(error) =
-            remove_worktree(service, ctx, root.clone(), path.clone(), reference.clone()).await
-        {
+        let at = (root.clone(), path.clone(), reference.clone());
+        if let Err(error) = remove_worktree(service, ctx, at, true).await {
             return (format!("accepted; clean-up failed: {error}"), Vec::new());
         }
     }
@@ -321,6 +331,8 @@ mod tests {
                 check_timeout: T,
                 confine: None,
                 pinned: Default::default(),
+                pool: None,
+                pool_grant: None,
             };
             let service = RunService::new(manager, run_ctx);
             Rig {
@@ -351,6 +363,7 @@ mod tests {
                 self.task.clone(),
                 "refs/anthrex/salvage/r1/t1/1".into(),
                 keep_head,
+                true,
             ))
         }
     }

@@ -48,6 +48,9 @@ pub struct RunContext {
     /// B-I1: `chain::CONTINUE_START_BOUND`, `chain::START_GOAL_TOOL_BOUND`). `None` in
     /// the daemon.
     pub continue_cap: Option<Duration>,
+    /// Milestone 9.14 decision 2 (C27): the daemon's `[target_pool]` table, read once at
+    /// start; the run service builds its pool from it.
+    pub target_pool: config::TargetPool,
 }
 
 /// One git read's budget: a deadline for all its calls, and a cap on each call's own
@@ -95,6 +98,7 @@ impl RunContext {
             host: crate::host::select::build(&manager.code_host),
             host_cap: None,
             continue_cap: None,
+            target_pool: config::TargetPool::default(),
         }
     }
 
@@ -116,6 +120,13 @@ impl RunContext {
         RunContext::new(data_dir, manager, config.orchestrator.clone(), git_roots)
             .with_testing(config.testing.clone())
             .with_delivery(config.delivery.clone())
+            .with_target_pool(config.target_pool.clone())
+    }
+
+    /// This context with the daemon's `[target_pool]` table (the defaults otherwise).
+    pub fn with_target_pool(mut self, target_pool: config::TargetPool) -> Self {
+        self.target_pool = target_pool;
+        self
     }
 
     /// This context with the daemon's `[delivery]` table (the defaults otherwise).
@@ -155,6 +166,14 @@ pub(crate) struct OpCtx {
     /// with the rest of this context, never stored in the op, so an op replayed from
     /// the journal is checked against the run's current pins.
     pub pinned: std::sync::Arc<[crate::run::gate_words::PinnedFile]>,
+    /// Milestone 9.14 decision 1: what the target pool needs about the run's checkouts,
+    /// when the run's stored profile names a `CARGO_TARGET_DIR` with `{worktree}`;
+    /// `None` keeps every op on the profile's value. The pool's own config conditions
+    /// (`enabled`, `disabled_repos`) are the service's.
+    pub pool: Option<Box<crate::run::target_pool::PoolCtx>>,
+    /// Decision 10 (C1): the pool directory `apply` granted a `CreateWindow`'s session;
+    /// `worker_git_dirs` appends it to the git grant it assigns.
+    pub pool_grant: Option<PathBuf>,
 }
 
 impl OpCtx {
@@ -169,6 +188,23 @@ impl OpCtx {
             confine: crate::run::confine::ConfineSpec::for_run(run).map(Box::new),
             // Pure: computed from the run under the engine lock, no I/O.
             pinned: crate::run::engine::gate_pins::pinned(run).into(),
+            pool: pool_ctx(run).map(Box::new),
+            pool_grant: None,
         }
     }
+}
+
+/// Decision 1's profile conditions for `run` (pure): its profile is stored and its
+/// `CARGO_TARGET_DIR` names `{worktree}`, and it has a repository data directory (a
+/// run from milestone 8a has none).
+fn pool_ctx(run: &crate::run::model::Run) -> Option<crate::run::target_pool::PoolCtx> {
+    let applies = crate::run::target_pool::applies(&run.profile, run.profile_source);
+    (applies && !run.repo_dir.as_os_str().is_empty()).then(|| crate::run::target_pool::PoolCtx {
+        run_id: run.id.clone(),
+        repo_root: run.root.clone(),
+        repo_dir: run.repo_dir.clone(),
+        runs_dir: run.wt_dir.join("runs").join(&run.id),
+        integration: run.integration_path(),
+        full: run.full_path(),
+    })
 }

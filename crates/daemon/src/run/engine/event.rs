@@ -134,6 +134,12 @@ pub enum EventKind {
         run_id: String,
         checked: Vec<DocChecked>,
     },
+    /// Milestone 9.14 decision 7: a target pool note for the run log (an op that fell
+    /// back to its own target directory).
+    PoolNote {
+        run_id: String,
+        text: String,
+    },
 }
 
 /// The driver's translation of a window's session events (decision 27).

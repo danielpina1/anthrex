@@ -217,6 +217,14 @@ async fn worker_git_dirs(
             Ok((grant, read_only))
         })
         .await?;
+    // Milestone 9.14 decision 10 (C1): the pool directory `apply` granted survives the
+    // assignment below.
+    let mut grant = grant;
+    if let Some(dir) = &ctx.pool_grant
+        && !grant.writable.contains(dir)
+    {
+        grant.writable.push(dir.clone());
+    }
     if let Some(sandbox) = spec.claude_sandbox.as_mut()
         && claude
     {
@@ -239,6 +247,10 @@ pub(super) async fn run(
     kind: OpKind,
 ) -> OpResult {
     let git = service.git();
+    // Milestone 9.14 decision 9: the pool first, on the op's own context copy.
+    let mut kind = kind;
+    let applied = service.apply_pool(ctx, &mut kind).await;
+    let ctx = applied.as_ref().unwrap_or(ctx);
     match kind {
         OpKind::CreateRunBranch {
             root,

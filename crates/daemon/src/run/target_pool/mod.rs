@@ -1,8 +1,8 @@
 //! The target pool (milestone 9.14 decisions 1–15). `book.rs` is the pure book,
 //! `clean.rs` the pure release plan; this file is the I/O layer over them (M9.14.5):
 //! the per-checkout `lease`, `release` with its clean or wipe, the idle `sweep` and
-//! `restore`. `apply`, the op-shaped wrapper over `lease`, and the wiring into the
-//! driver come in M9.14.6.
+//! `restore`. `apply.rs` holds `apply`, the op-shaped wrapper over `lease_why` that the
+//! driver calls before every op (M9.14.6).
 //!
 //! Locks (AGENTS.md rules 2 and 3, C9, C19). The books sit under one `std::sync::Mutex`
 //! taken with `daemon::lock`, held only to read or update a book, never across an
@@ -14,6 +14,7 @@
 //! drops it before returning. Order: a directory's lock may be held while the table
 //! lock is taken, never the reverse. Every file-system step runs on `spawn_blocking`.
 
+mod apply;
 mod book;
 pub mod clean;
 mod disk;
@@ -45,7 +46,7 @@ pub const POOL_TRASH_DIR: &str = "trash";
 pub const POOL_CLEAN_TIMEOUT: Duration = Duration::from_secs(120);
 /// The size measure's bound; its walking thread is abandoned past it (C33).
 pub const POOL_MEASURE_TIMEOUT: Duration = Duration::from_secs(60);
-/// How often the sweep runs (M9.14.6 starts its task).
+/// How often the sweep runs (`RunService::spawn` starts its task).
 pub const POOL_SWEEP_EVERY: Duration = Duration::from_secs(3600);
 /// The clean's environment overrides (decision 8, C12); `RUSTUP_TOOLCHAIN` is added when
 /// known.
@@ -85,6 +86,17 @@ pub enum ReleaseOutcome {
     NotLeased,
 }
 
+/// What [`TargetPool::lease_why`] found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Leased {
+    Dir(PathBuf),
+    /// No free directory of this class: the checkout falls back (decision 7).
+    Full(PoolClass),
+    /// No lease for any other reason (no class, the pool off, already fallen back, a
+    /// failed save or preparation).
+    Skip,
+}
+
 /// The daemon-wide pool: one book per repository, loaded lazily (C10).
 pub struct TargetPool {
     enabled: bool,
@@ -106,6 +118,9 @@ pub struct TargetPool {
     fell_back: Mutex<BTreeSet<PathBuf>>,
     /// Each repository's previous sweep (C9).
     last_sweep: Mutex<BTreeMap<PathBuf, u64>>,
+    /// The checkouts whose fallback the run log was told of: once per daemon lifetime
+    /// (decision 7).
+    noted: Mutex<BTreeSet<PathBuf>>,
     #[cfg(test)]
     seam: Mutex<Option<Seam>>,
 }
@@ -135,6 +150,7 @@ impl TargetPool {
             envs: Mutex::new(BTreeMap::new()),
             fell_back: Mutex::new(BTreeSet::new()),
             last_sweep: Mutex::new(BTreeMap::new()),
+            noted: Mutex::new(BTreeSet::new()),
             #[cfg(test)]
             seam: Mutex::new(None),
         }
@@ -154,36 +170,56 @@ impl TargetPool {
 
     /// The per-checkout primitive (C4): class, fallback memory, lease, durable save,
     /// the directory's mutex, `wipe_first`; records `env`. `None`: keep the profile's
-    /// value.
-    // M9.14.6's `apply` is its first caller outside the tests.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// value. The tests' form of [`TargetPool::lease_why`], which `apply` calls.
+    #[cfg(test)]
     pub(crate) async fn lease(
         &self,
         pool: &PoolCtx,
         checkout: &Path,
         env: &[(String, String)],
     ) -> Option<PathBuf> {
-        let class = class_of(checkout, &pool.runs_dir, &pool.integration, &pool.full)?;
+        match self.lease_why(pool, checkout, env).await {
+            Leased::Dir(dir) => Some(dir),
+            Leased::Full(_) | Leased::Skip => None,
+        }
+    }
+
+    /// [`TargetPool::lease`], saying why there is no directory: `Full` when this call
+    /// found no free directory of the checkout's class (the checkout now falls back,
+    /// decision 7), `Skip` for every other reason.
+    pub(crate) async fn lease_why(
+        &self,
+        pool: &PoolCtx,
+        checkout: &Path,
+        env: &[(String, String)],
+    ) -> Leased {
+        let Some(class) = class_of(checkout, &pool.runs_dir, &pool.integration, &pool.full) else {
+            return Leased::Skip;
+        };
         if !self.enabled || self.disabled_repos.contains(&pool.repo_root) {
-            return None;
+            return Leased::Skip;
         }
         let repo = &pool.repo_dir;
         let table = self.table(repo).await;
         // Under the table lock, so a holder's re-lease sees a failed first save (M2).
         if lock(&self.fell_back).contains(checkout) {
-            return None;
+            return Leased::Skip;
         }
         self.load(repo).await;
-        let (lease, new) = {
+        let decided = {
             let mut books = lock(&self.books);
-            let book = books.get_mut(repo)?;
-            let before = book.clone();
-            let lease = book.lease(class, checkout, &pool.run_id, unix_now());
-            (lease, *book != before)
+            books.get_mut(repo).map(|book| {
+                let before = book.clone();
+                let lease = book.lease(class, checkout, &pool.run_id, unix_now());
+                (lease, *book != before)
+            })
+        };
+        let Some((lease, new)) = decided else {
+            return Leased::Skip;
         };
         let Lease::Dir { id, wipe_first } = lease else {
             lock(&self.fell_back).insert(checkout.to_path_buf());
-            return None;
+            return Leased::Full(class);
         };
         if new && let Err(error) = self.save(repo).await {
             tracing::warn!(
@@ -194,7 +230,7 @@ impl TargetPool {
                 book.unlease(checkout);
             }
             lock(&self.fell_back).insert(checkout.to_path_buf());
-            return None;
+            return Leased::Skip;
         }
         drop(table);
 
@@ -209,13 +245,13 @@ impl TargetPool {
         match prepared {
             Ok(dir) => {
                 lock(&self.envs).insert(checkout.to_path_buf(), env.to_vec());
-                Some(dir)
+                Leased::Dir(dir)
             }
             Err(error) => {
                 tracing::warn!(%error, "target pool: could not prepare a directory");
                 self.free(repo, checkout, Released::NotCleaned).await;
                 lock(&self.fell_back).insert(checkout.to_path_buf());
-                None
+                Leased::Skip
             }
         }
     }

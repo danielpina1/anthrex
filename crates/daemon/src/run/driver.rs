@@ -163,6 +163,9 @@ pub struct RunService {
     /// probes when the service stops.
     models: Arc<crate::models::ModelService>,
     models_cancel: tokio_util::sync::CancellationToken,
+    /// Milestone 9.14: the daemon's one target pool, and its sweep task (C27).
+    pool: Arc<crate::run::target_pool::TargetPool>,
+    pool_sweep: Mutex<Option<(CancellationToken, tokio::task::JoinHandle<()>)>>,
     /// Tests only (M9.11.8): run on each effect `execute` takes, before it is carried out.
     #[cfg(test)]
     execute_hook: Mutex<Option<effects::ExecuteHook>>,
@@ -222,6 +225,12 @@ impl RunService {
             cancel: models_cancel.clone(),
         };
         let models = crate::models::ModelService::new(ctx.data_dir.clone(), Arc::new(probes));
+        // Decision 2: `[target_pool]` and `max_writers` read once, at start.
+        let max_writers = ctx.settings.current().orchestrator.max_writers;
+        let pool = Arc::new(crate::run::target_pool::TargetPool::new(
+            &ctx.target_pool,
+            max_writers,
+        ));
         Arc::new(RunService {
             manager,
             ctx,
@@ -266,6 +275,8 @@ impl RunService {
             tuning: Default::default(),
             models,
             models_cancel,
+            pool,
+            pool_sweep: Mutex::new(None),
             #[cfg(test)]
             execute_hook: Mutex::new(None),
             #[cfg(test)]
@@ -305,6 +316,7 @@ impl RunService {
                 }
             }
         });
+        self.spawn_pool_sweep(&shutdown);
         let rx = crate::lock(&self.rx).take();
         let service = self.clone();
         let gate = self.loop_gate.clone().try_lock_owned().ok();
@@ -312,6 +324,42 @@ impl RunService {
         *crate::lock(&self.loop_abort) = Some(handle.abort_handle());
         self.finish_held_accepts();
         handle
+    }
+
+    /// Milestone 9.14 decision 13: the pool's sweep, at once (`restore` does not wipe
+    /// idle directories) and every `POOL_SWEEP_EVERY`, until `shutdown` or `stop`
+    /// (C27), which awaits it.
+    fn spawn_pool_sweep(&self, shutdown: &CancellationToken) {
+        let (pool, token) = (self.pool.clone(), shutdown.child_token());
+        let ends = token.clone();
+        let task = tokio::spawn(async move {
+            let every = crate::run::target_pool::POOL_SWEEP_EVERY;
+            let mut interval = tokio::time::interval(every);
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                tokio::select! {
+                    _ = ends.cancelled() => break,
+                    _ = interval.tick() => pool.sweep(unix_now()).await,
+                }
+            }
+        });
+        *crate::lock(&self.pool_sweep) = Some((token, task));
+    }
+
+    /// Milestone 9.14 decision 9: the pool leases and substitutes for `kind`, on a copy
+    /// of `ctx` that carries its grants, and each note goes to the run log; `None` (the
+    /// run is off the pool) keeps `ctx` as it is.
+    async fn apply_pool(
+        &self,
+        ctx: &OpCtx,
+        kind: &mut crate::run::engine::OpKind,
+    ) -> Option<OpCtx> {
+        ctx.pool.as_ref()?;
+        let mut own = ctx.clone();
+        for (run_id, text) in self.pool.apply(&mut own, kind).await {
+            self.send(EventKind::PoolNote { run_id, text });
+        }
+        Some(own)
     }
 
     /// Every snapshot the service publishes from now on, one per structural change

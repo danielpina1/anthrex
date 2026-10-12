@@ -101,8 +101,21 @@ fn release_dir(
         return ReleaseOutcome::NotCleaned("the run was discarded".to_string());
     }
     let name = id.name();
+    // Decision 3 (task-5 review M2): the pool directory spelled with its parent
+    // resolved, as `confine::plain_dir` spells the grant.
+    let dir = match root.canonicalize() {
+        Ok(resolved) => resolved.join(&name),
+        Err(_) => root.join(&name),
+    };
+    // C5: the release's own copy of the run's `ConfineSpec` grants the pool directory
+    // (and so the metadata directory made inside it); without it `(deny default)`
+    // refuses the clean's writes and every confined release would wipe.
+    let confine = confine.map(|spec| ConfineSpec {
+        target_dir: Some(dir.clone()),
+        ..spec
+    });
     let job = CleanJob {
-        dir: root.join(&name),
+        dir,
         checkout,
         env,
         confine,

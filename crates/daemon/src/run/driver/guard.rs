@@ -150,6 +150,7 @@ pub(super) fn kind_name(kind: &EventKind) -> &'static str {
         EventKind::Iterate { .. } => "Iterate",
         EventKind::DocGate { .. } => "DocGate",
         EventKind::DesignChecked { .. } => "DesignChecked",
+        EventKind::PoolNote { .. } => "PoolNote",
     }
 }
 
@@ -179,6 +180,7 @@ pub(super) fn reply_of(kind: &EventKind) -> Option<ReplyId> {
         | EventKind::Delivered { .. }
         | EventKind::Restore { .. }
         | EventKind::DesignChecked { .. }
+        | EventKind::PoolNote { .. }
         | EventKind::Stop
         | EventKind::Tick => None,
     }

@@ -15,6 +15,12 @@ impl RunService {
     pub async fn stop(&self) {
         // A model probe in flight ends now; `ProbeChild` kills and reaps its CLI.
         self.models_cancel.cancel();
+        // Milestone 9.14 (C27): the pool's sweep task ends, and is awaited.
+        let sweep = crate::lock(&self.pool_sweep).take();
+        if let Some((token, task)) = sweep {
+            token.cancel();
+            let _ = task.await;
+        }
         if self.saved.load(Ordering::SeqCst) {
             return;
         }
