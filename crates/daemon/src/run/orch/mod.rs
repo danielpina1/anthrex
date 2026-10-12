@@ -166,6 +166,10 @@ pub struct AskRecord {
     pub asked_at: u64,
 }
 
+fn is_zero_u32(n: &u32) -> bool {
+    *n == 0
+}
+
 /// `Task.orch`: a task's milestone 9 state. Absent from an older run: empty.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -189,6 +193,10 @@ pub struct TaskOrch {
     pub refresh_targets: Vec<String>,
     /// Decision 25's restarts of the task by a rewrite (M9.9 review fixes, M2).
     pub rewrite_restarts: u32,
+    /// Milestone 9.13 decision 14: the orchestrator's retries of the task since the user
+    /// last retried it; at `MAX_ORCH_RETRIES` the task's next block is the user's.
+    #[serde(skip_serializing_if = "is_zero_u32")]
+    pub orch_retries: u32,
     /// Text the next research session's first turn ends with (a worker's
     /// `FreshSession::append`, M9.9 second review, M-d).
     pub research_append: Option<String>,

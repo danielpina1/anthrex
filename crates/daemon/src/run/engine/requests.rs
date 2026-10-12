@@ -369,6 +369,10 @@ pub(super) fn retry(
     reply(fx, id, result);
 }
 
+/// Milestone 9.13 decision 14: how many times the orchestrator may retry one task before
+/// its next block is the user's.
+pub(crate) const MAX_ORCH_RETRIES: u32 = 2;
+
 /// The retry's core, shared by the user's request and the orchestrator's op (milestone
 /// 9.9 decision 9): the user path's rule first, then the retry; `actor` is named in the
 /// task's history. The user's own run log line is written here; the orchestrator's is
@@ -395,6 +399,14 @@ pub(super) fn retry_on(
             .unwrap_or_default();
         format!(" (it was blocked({label}): {})", b.text)
     });
+    // Milestone 9.13 decisions 14-15: a successful retry by the user gives the orchestrator
+    // its retries again; one by the orchestrator uses one up. Before the crown branch,
+    // which returns early (pre-flight ruling C19).
+    let retried = &mut run.tasks[i].orch.orch_retries;
+    match actor {
+        Actor::User => *retried = 0,
+        Actor::Orchestrator => *retried = retried.saturating_add(1),
+    }
     // Milestone 9.5 decision 21: a winner whose crown failed is crowned again.
     if super::race_end::retry_crown(run, i, now) {
         history(

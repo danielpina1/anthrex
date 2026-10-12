@@ -76,7 +76,11 @@ pub(super) fn intercept(
     }
     let result = match &edits[0] {
         PlanEdit::Retry { task_id, .. } => {
-            let result = match user_only_task(run, task_id, rules::retry(run, task_id)) {
+            let rule = rules::retry(run, task_id);
+            // Milestone 9.13 decision 17: after the user's rule, before the user-only
+            // block check (pre-flight ruling C20).
+            let rule = rule.or_else(|| at_retry_cap(run, task_id));
+            let result = match user_only_task(run, task_id, rule) {
                 Some(refusal) => Err(refusal),
                 None => requests::retry_on(run, task_id, Actor::Orchestrator, now, fx),
             };
@@ -144,6 +148,15 @@ pub(super) fn intercept(
 }
 
 /// Decision 10: the user path's own refusal first, then a block only the user can fix.
+/// Decision 17: the refusal for a task the orchestrator has retried as often as it may.
+fn at_retry_cap(run: &Run, task_id: &str) -> Option<String> {
+    let task = run.tasks.iter().find(|t| t.id() == task_id)?;
+    let n = super::requests::MAX_ORCH_RETRIES;
+    (task.orch.orch_retries >= n).then(|| {
+        format!("task {task_id} was retried by the orchestrator {n} times; only the user can retry it now")
+    })
+}
+
 fn user_only_task(run: &Run, task_id: &str, rule: Option<String>) -> Option<String> {
     if rule.is_some() {
         return rule;
