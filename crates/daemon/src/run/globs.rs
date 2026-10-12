@@ -341,14 +341,15 @@ pub fn split_protected<S: AsRef<str>>(
 }
 
 /// Milestone 9.13 decision 6 (ruling C16): the protected files `owns` names literally,
-/// each a grant. An entry counts when it has no `*`, `?` or `[` and decision 56's
-/// matcher protects it, its trailing `/` trimmed.
+/// each a grant. An entry is read as the done gate reads it ([`names_literally`]): one
+/// whose only glob syntax is [`escape_path`]'s classes names its unescaped path, with a
+/// leading `./` and a trailing `/` dropped. It counts when the done gate guards that
+/// path ([`ProtectedMatcher::guards_change`], so a non-ASCII literal counts too).
 pub fn literal_protected(owns: &[String], protected: &ProtectedMatcher) -> Vec<String> {
     owns.iter()
-        .filter(|entry| !entry.contains(['*', '?', '[']))
-        .map(|entry| entry.trim_end_matches('/'))
-        .filter(|entry| protected.matches(entry))
-        .map(str::to_string)
+        .filter_map(|entry| unescaped(entry))
+        .map(|literal| normalize_literal(&literal).to_string())
+        .filter(|literal| protected.guards_change(literal))
         .collect()
 }
 

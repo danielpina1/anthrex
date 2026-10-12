@@ -428,6 +428,30 @@ fn adding_a_task_that_names_a_protected_file_outside_a_hold_is_refused() {
     assert!(!record.accepted);
 }
 
+/// Task 4 review I1: an escaped literal (`[*]`) and a non-ASCII literal name protected
+/// files to the done gate, so past the plan gate each is a grant and is refused.
+#[test]
+fn escaped_and_non_ascii_grants_outside_a_hold_are_refused() {
+    let cases = [
+        (
+            ".github/workflows/deploy[*].yml",
+            ".github/workflows/deploy*.yml",
+        ),
+        ("AGENT\u{17f}.md", "AGENT\u{17f}.md"),
+    ];
+    for (entry, path) in cases {
+        let mut fx = super::wake_notes::approved();
+        let before = fx.run().clone();
+        let effects = edit_plan(&mut fx, json!({"edits": [add_owning("t3", &[entry])]}));
+        assert_eq!(
+            error(&effects),
+            format!("owns names protected {path}; ask the user (ask_user)"),
+            "{entry}"
+        );
+        assert_eq!(fx.run().tasks, before.tasks, "the run is unchanged");
+    }
+}
+
 /// Decision 6: a batch that makes a task's grants grow is refused the same way.
 /// `amend_task` carries no `owns` (`proto::PlanEdit::AmendTask`), so no orchestrator
 /// edit can do this today; the rule is checked on the batch's result, so the edited

@@ -201,3 +201,32 @@ fn an_override_from_review_is_not_counted() {
     assert!(replies(&effects)[0].is_ok(), "{effects:#?}");
     assert_eq!(fx.task("t1").state, TaskState::MergeQueue);
 }
+
+/// Task 4 review M6 (pinning): a `CountCommits` op journalled before milestone 9.13 has
+/// no `owns` or `protected`, and a `Commits` result no `protected`; both load empty.
+#[test]
+fn an_old_count_and_its_result_load_with_empty_lists() {
+    let kind = OpKind::CountCommits {
+        worktree: "/w".into(),
+        start: "a".repeat(40),
+        run_head: "b".repeat(40),
+        not_own: vec!["c".repeat(40)],
+        not_run: Vec::new(),
+        owns: Vec::new(),
+        protected: Vec::new(),
+    };
+    let mut old = serde_json::to_value(&kind).unwrap();
+    let fields = old["CountCommits"].as_object_mut().unwrap();
+    assert!(fields.remove("owns").is_some() && fields.remove("protected").is_some());
+    assert_eq!(serde_json::from_value::<OpKind>(old).unwrap(), kind);
+
+    let result = OpResult::Commits {
+        count: 2,
+        head: "d".repeat(40),
+        protected: Vec::new(),
+    };
+    let mut old = serde_json::to_value(&result).unwrap();
+    let fields = old["Commits"].as_object_mut().unwrap();
+    assert!(fields.remove("protected").is_some());
+    assert_eq!(serde_json::from_value::<OpResult>(old).unwrap(), result);
+}

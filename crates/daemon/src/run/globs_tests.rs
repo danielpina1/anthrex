@@ -380,3 +380,23 @@ fn split_and_literal_protected() {
     let owns = s(&[".husky/", "docs/x.md"]);
     assert_eq!(literal_protected(&owns, &matcher), s(&[".husky"]));
 }
+
+/// Task 4 review I1: `literal_protected` reads `owns` as the done gate's
+/// `names_literally` does. An entry whose only glob syntax is `escape_path`'s classes
+/// names its unescaped path, and a non-ASCII literal is guarded as `guards_change`
+/// guards it, so both are grants.
+#[test]
+fn escaped_and_non_ascii_literals_are_grants() {
+    let matcher = ProtectedMatcher::new(&crate::run::plan::builtin_protected()).unwrap();
+    let owns = s(&[".github/workflows/deploy[*].yml"]);
+    assert!(names_literally(&owns, ".github/workflows/deploy*.yml"));
+    assert_eq!(
+        literal_protected(&owns, &matcher),
+        s(&[".github/workflows/deploy*.yml"])
+    );
+    let owns = s(&["AGENT\u{17f}.md"]);
+    assert_eq!(literal_protected(&owns, &matcher), s(&["AGENT\u{17f}.md"]));
+    // A real class or wildcard is still not a literal; `./` is dropped as the gate does.
+    let owns = s(&[".github/workflows/[ab].yml", ".github/*", "./.husky/x"]);
+    assert_eq!(literal_protected(&owns, &matcher), s(&[".husky/x"]));
+}
