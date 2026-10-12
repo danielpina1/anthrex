@@ -151,7 +151,11 @@
 /// left out while empty, bar the two `Edit` flags) so an older `run.json`, proposal and
 /// snapshot still load. Derivation: 20 at `lib.rs:145` before this change (milestone
 /// 9.9); 20 + 1 = 21.
-pub const PROTO_VERSION: u32 = 21;
+///
+/// Milestone 9.13 bumps this to 22: `OrchestratorInfo.untrusted` and the `UntrustedInfo`
+/// type, defaulted and left out while `None` so a protocol-21 snapshot still loads.
+/// Derivation: 21 at `lib.rs:154` before this change; 21 + 1 = 22.
+pub const PROTO_VERSION: u32 = 22;
 
 /// `skip_serializing_if` for a `u32` count that is left out while zero.
 pub(crate) fn is_zero_u32(n: &u32) -> bool {
@@ -227,7 +231,7 @@ pub use models::{
 pub use orch::{
     AskInfo, HandledInfo, HoldInfo, HoldKind, HoldState, IntegrationInfo, IntegrationState,
     MessageKind, MessageTarget, OrchestratorChoice, OrchestratorInfo, OrchestratorStuck,
-    TaskNoteInfo, TaskNoteKind,
+    TaskNoteInfo, TaskNoteKind, UntrustedInfo,
 };
 // Re-exported by name, never by glob (C20): a glob re-export of `run` or `run_wire`
 // could silently shadow an existing root name (for instance `run_wire::request` beside
@@ -300,14 +304,18 @@ mod run_title_tests;
 mod models_tests;
 
 #[cfg(test)]
+#[path = "hardening_tests.rs"]
+mod hardening_tests;
+
+#[cfg(test)]
 #[path = "orch_first_tests.rs"]
 mod orch_first_tests;
 
 #[cfg(test)]
 mod tests {
     #[test]
-    fn proto_version_is_twenty_one() {
-        assert_eq!(super::PROTO_VERSION, 21);
+    fn proto_version_is_twenty_two() {
+        assert_eq!(super::PROTO_VERSION, 22);
     }
 
     #[test]

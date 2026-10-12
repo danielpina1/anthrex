@@ -124,6 +124,7 @@ fn orch_types_round_trip() {
         ask: None,
         handled: Vec::new(),
         handled_total: 0,
+        untrusted: None,
     };
     both_ways(&orchestrator);
 

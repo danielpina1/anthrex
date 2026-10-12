@@ -505,6 +505,7 @@ fn status_shows_orchestrator_planners_holds_summary_and_paused_lines() {
         ask: None,
         handled: vec![],
         handled_total: 0,
+        untrusted: None,
     });
     let planner = |epic: &str, state| PlannerInfo {
         epic: epic.into(),

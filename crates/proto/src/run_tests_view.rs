@@ -245,6 +245,7 @@ fn orchestrator_snapshot_fields_round_trip() {
         ask: None,
         handled: Vec::new(),
         handled_total: 0,
+        untrusted: None,
     });
     run.holds = vec![HoldInfo {
         id: "h1".into(),
@@ -333,6 +334,7 @@ fn new_fields_round_trip() {
         ask: None,
         handled: Vec::new(),
         handled_total: 0,
+        untrusted: None,
     });
     run.tasks[0].activity = Some("Bash cargo test -p calc".into());
     let msg = DaemonMsg::Run(RunReply::Snapshot(snapshot.clone()));
