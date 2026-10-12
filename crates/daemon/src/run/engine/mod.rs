@@ -84,6 +84,7 @@ mod merge;
 mod op_result;
 mod ops;
 mod orch;
+mod orch_events;
 mod orch_ops;
 pub(crate) mod orch_stall;
 mod orch_window;
