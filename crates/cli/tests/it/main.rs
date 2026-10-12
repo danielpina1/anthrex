@@ -5,6 +5,7 @@
 #[path = "../support/mod.rs"]
 mod support;
 
+mod admit_hook;
 mod claude_status;
 mod claude_subagents;
 mod codex_status;

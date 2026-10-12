@@ -49,6 +49,7 @@ fn spec(cwd: &Path) -> HeadlessSpec {
         run_ref: None,
         codex_config_guard: None,
         output_filter: None,
+        admit: None,
     }
 }
 

@@ -205,6 +205,7 @@ fn spec(runtime: Runtime, mcp: Option<&Mcp>) -> HeadlessSpec {
         run_ref: None,
         codex_config_guard: None,
         output_filter: None,
+        admit: None,
     }
 }
 

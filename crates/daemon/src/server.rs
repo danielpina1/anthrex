@@ -1,5 +1,6 @@
 //! Accepts client connections and speaks the protocol from spec section 4.
 
+mod admit;
 mod conversation;
 mod git_wiring;
 mod headless_guard;
@@ -57,6 +58,7 @@ pub async fn serve(
         shutdown.clone(),
     ));
     git_wiring::register_restored_roots(&manager, &git_registry);
+    let admission = admit::AdmitService::new(runs.scheduler().clone(), runs.testing());
 
     loop {
         tokio::select! {
@@ -78,8 +80,9 @@ pub async fn serve(
                 let git_registry = git_registry.clone();
                 let git_tx = git_tx.clone();
                 let (runs, shutdown) = (runs.clone(), shutdown.clone());
+                let admission = admission.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = handle_client(stream, manager, git_registry, git_tx, runs, shutdown).await {
+                    if let Err(e) = handle_client(stream, manager, git_registry, git_tx, runs, admission, shutdown).await {
                         tracing::warn!(error = %e, "client connection ended with error");
                     }
                 });
@@ -135,6 +138,7 @@ async fn handle_client(
     git_registry: Arc<GitRegistry>,
     git_tx: broadcast::Sender<DaemonMsg>,
     runs: Arc<RunService>,
+    admission: Arc<admit::AdmitService>,
     shutdown: CancellationToken,
 ) -> anyhow::Result<()> {
     let (mut rd, mut wr) = stream.into_split();
@@ -248,6 +252,9 @@ async fn handle_client(
     let models = runs.models();
     let mut run_api = run_api::RunApi::new(runs, out_tx.clone());
 
+    // Decision 23 (C2): cancelled as the read loop exits, so a detached admit ask whose
+    // client went away gives up its place (its `out_tx` clone keeps the writer alive).
+    let closed = shutdown.child_token();
     let mut subscription: Option<Subscription> = None;
     let mut connection_error = None;
     loop {
@@ -462,6 +469,10 @@ async fn handle_client(
                 run_api.handle(request, Some(id));
                 None
             }
+            msg @ ClientMsg::Admit { .. } => {
+                admission.admit(&manager, out_tx.clone(), closed.clone(), msg);
+                None
+            }
         };
         if let Some(reply) = reply
             && out_tx.send(reply).await.is_err()
@@ -470,6 +481,7 @@ async fn handle_client(
         }
     }
 
+    closed.cancel();
     if let Some(previous) = subscription.take() {
         previous.stop().await;
     }

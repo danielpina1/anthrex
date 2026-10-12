@@ -241,3 +241,99 @@ fn a_repeated_ask_is_the_same_hold() {
     assert_eq!(book.get(1, "a"), Some(&3));
     assert_eq!(book.get(2, "a"), None);
 }
+
+/// A Claude worker's spec, with an optional output filter and admission hook.
+fn worker_spec(
+    filter: Option<crate::output_filter::FilterHook>,
+    admit: Option<AdmitHook>,
+) -> crate::headless::HeadlessSpec {
+    crate::headless::HeadlessSpec {
+        runtime: proto::Runtime::Claude,
+        model: "claude-sonnet-5".into(),
+        effort: proto::Effort::HIGH,
+        cwd: "/tmp/p/.anthrex/wt/t1".into(),
+        instructions: "Do it.".into(),
+        mcp: None,
+        allowed_tools: vec!["Bash".into()],
+        claude_permission_mode: Some("acceptEdits".into()),
+        claude_disallowed_tools: Vec::new(),
+        claude_sandbox: None,
+        codex_sandbox: "workspace-write".into(),
+        codex_writable_roots: Vec::new(),
+        codex_read_only: Vec::new(),
+        codex_grant_dialect: None,
+        env: Vec::new(),
+        claude_auth: config::ClaudeAuth::Login,
+        api_key_helper: None,
+        run_ref: None,
+        codex_config_guard: None,
+        output_filter: filter,
+        admit,
+    }
+}
+
+/// The `PreToolUse` groups of the `--settings` that `claude_args` passes for `spec`.
+fn pre_tool_use_groups(spec: &crate::headless::HeadlessSpec) -> Vec<serde_json::Value> {
+    let args = crate::headless::argv::claude_args(
+        spec,
+        &crate::headless::SessionArg::New { uuid: None },
+        Path::new("/opt/anthrex/bin/anthrex"),
+        7,
+        Path::new("/tmp/a.sock"),
+        &crate::headless::argv::CLI_CAPS,
+    );
+    let at = args.iter().position(|a| a == "--settings").unwrap();
+    let settings: serde_json::Value = serde_json::from_str(&args[at + 1]).unwrap();
+    settings["hooks"]["PreToolUse"].as_array().unwrap().clone()
+}
+
+/// M9.14.8: a worker's settings carry the status group, the filter group and the
+/// admission group, in that order; without a filter, the admission group is second.
+#[test]
+fn the_worker_settings_carry_three_pre_tool_use_groups() {
+    let filter = crate::output_filter::FilterHook {
+        mode: proto::OutputFilter::FailuresOnly,
+        prefixes: vec!["cargo test".into()],
+        log_dir: "/tmp/ax/t1/anthrex-logs".into(),
+    };
+    let admit = AdmitHook {
+        wait_secs: 300,
+        slots: Some(2),
+        prefixes: vec!["cargo test".into()],
+    };
+    let groups = pre_tool_use_groups(&worker_spec(Some(filter), Some(admit.clone())));
+    assert_eq!(groups.len(), 3, "{groups:?}");
+    assert_eq!(groups[0]["matcher"], "");
+    assert!(
+        groups[0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap()
+            .contains(" hook --window 7 --source claude"),
+        "{groups:?}"
+    );
+    assert_eq!(groups[1]["matcher"], "Bash");
+    assert!(
+        groups[1]["hooks"][0]["command"]
+            .as_str()
+            .unwrap()
+            .contains(" filter-hook "),
+        "{groups:?}"
+    );
+    let admission = json!({
+        "matcher": "Bash",
+        "hooks": [{
+            "type": "command",
+            "command": "'/opt/anthrex/bin/anthrex' admit --window 7 --wait-secs 300 --slots 2 --prefix 'cargo test'",
+            "timeout": 330,
+        }],
+    });
+    assert_eq!(groups[2], admission);
+
+    let groups = pre_tool_use_groups(&worker_spec(None, Some(admit)));
+    assert_eq!(groups.len(), 2, "{groups:?}");
+    assert_eq!(groups[0]["matcher"], "");
+    assert_eq!(groups[1], admission);
+
+    // Without admission, the settings are what they were.
+    assert_eq!(pre_tool_use_groups(&worker_spec(None, None)).len(), 1);
+}

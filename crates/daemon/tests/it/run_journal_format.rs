@@ -11,6 +11,7 @@ mod fixture;
 
 use daemon::manager::{ManagerConfig, WindowManager};
 use daemon::run::driver::{RunContext, RunService};
+use daemon::run::engine::OpKind;
 use daemon::run::journal::{RUN_FILE, RUN_FORMAT, RUN_TMP, load_all, save_run};
 use daemon::server::GitWiring;
 use fixture::{RUN_ID, plain_run};
@@ -66,6 +67,48 @@ fn a_format_2_run_loads() {
     assert!(problems.is_empty(), "{problems:?}");
     assert_eq!(runs.len(), 1);
     assert_eq!(runs[0].0.id, RUN_ID);
+}
+
+/// Milestone 9.14 (M9.14.8): a 9.13 `run.json`, stamped format 2, whose pending
+/// `CreateWindow` spec has no `admit` loads with `admit: None`.
+#[test]
+fn a_format_2_pending_create_window_loads_without_admit() {
+    let data = tempfile::tempdir().unwrap();
+    let mut run = plain_run(data.path());
+    let mut kind = fixture::create_window(
+        data.path(),
+        fixture::run_ref("t1", proto::AgentRole::Worker, 1),
+        None,
+    );
+    if let OpKind::CreateWindow { spec, .. } = &mut kind {
+        spec.admit = Some(daemon::admit::AdmitHook {
+            wait_secs: 300,
+            slots: Some(2),
+            prefixes: Vec::new(),
+        });
+    }
+    fixture::pend(&mut run, 4, Some("t1"), kind);
+    save_run(&run).unwrap();
+    let file = run_file(data.path());
+    let mut json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+    json["format"] = serde_json::json!(2);
+    let spec = json["pending_ops"]
+        .as_object_mut()
+        .unwrap()
+        .values_mut()
+        .find_map(|op| op["kind"]["CreateWindow"]["spec"].as_object_mut())
+        .expect("the pending CreateWindow");
+    assert!(spec.remove("admit").is_some(), "the spec saves `admit`");
+    std::fs::write(&file, serde_json::to_vec(&json).unwrap()).unwrap();
+    let (runs, problems) = load_all(data.path());
+    assert!(problems.is_empty(), "{problems:?}");
+    let pending: Vec<_> = runs[0].0.pending_ops.values().collect();
+    assert_eq!(pending.len(), 1);
+    let OpKind::CreateWindow { spec, .. } = &pending[0].kind else {
+        panic!("{pending:?}");
+    };
+    assert_eq!(spec.admit, None);
 }
 
 /// Pinning: a protocol-21 `run.json` has no `format` and loads as format 0.

@@ -65,6 +65,7 @@ fn headless_spec(cwd: &Path, role: &str) -> crate::headless::HeadlessSpec {
         run_ref: None,
         codex_config_guard: None,
         output_filter: None,
+        admit: None,
     }
 }
 

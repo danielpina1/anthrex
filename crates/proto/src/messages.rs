@@ -91,6 +91,19 @@ pub enum ClientMsg {
         runtime: Option<crate::types::Runtime>,
         refresh: bool,
     },
+    /// Milestone 9.14 decision 16: an agent's heavy `Bash` call asks for test slots
+    /// (`anthrex admit`, a `ClientKind::Hook` client).
+    Admit {
+        window_id: u32,
+        tool_use_id: String,
+        /// Decision 20: `Some(n)` asks `Want::Count(n)`; `None` asks `Want::Half`.
+        #[serde(default)]
+        slots: Option<u32>,
+        /// Decision 21's W; the daemon waits at most min(W, ADMIT_WAIT_MAX_SECS).
+        wait_secs: u64,
+        /// For logs: `agent w<window> <command>`, at most ADMIT_LABEL_MAX_CHARS characters.
+        label: String,
+    },
 }
 
 /// Daemon → client.
@@ -180,6 +193,13 @@ pub enum DaemonMsg {
     Models {
         catalogs: Vec<crate::models::ModelCatalog>,
     },
+    /// Milestone 9.14 decision 23: the ask is granted (or was already held).
+    Admitted {
+        slots: u32,
+        load: String,
+    },
+    /// Decision 21: no grant within the wait; the command runs anyway (fail-open).
+    AdmitTimedOut,
 }
 
 impl DaemonMsg {

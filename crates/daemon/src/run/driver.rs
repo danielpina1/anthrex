@@ -293,6 +293,11 @@ impl RunService {
         &self.scheduler
     }
 
+    /// The daemon's `[testing]` table, read once at start (milestone 9.14's admission).
+    pub fn testing(&self) -> &config::Testing {
+        &self.ctx.testing
+    }
+
     pub fn test_cache(&self) -> &TestCache {
         &self.test_cache
     }

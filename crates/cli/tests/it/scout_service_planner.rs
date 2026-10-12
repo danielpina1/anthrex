@@ -86,6 +86,7 @@ fn planner_spec(repo: &std::path::Path) -> PlannerSpec {
         }),
         codex_config_guard: None,
         output_filter: None,
+        admit: None,
     };
     PlannerSpec {
         run_id: RUN_ID.into(),

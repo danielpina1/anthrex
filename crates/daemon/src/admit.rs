@@ -28,6 +28,17 @@ pub const COMMAND_WRAPPERS: [&str; 6] = ["time", "nice", "env", "command", "nohu
 pub const HEAVY_PROGRAMS: [&str; 1] = ["cargo-nextest"];
 /// Decision 21: the hook's settings `timeout` is the wait plus this.
 pub const ADMIT_HOOK_SLACK_SECS: u64 = 30;
+/// Decision 21: `anthrex admit` gives up at `W + ADMIT_CLIENT_GRACE` from its start,
+/// whatever it is doing; the daemon answers at W, so the client ends after it.
+pub const ADMIT_CLIENT_GRACE: Duration = Duration::from_secs(10);
+// The handshake (`proto::HANDSHAKE_TIMEOUT`) and a process spawn fit inside the grace, so
+// a client that finishes before `W + ADMIT_CLIENT_GRACE` was ended by the daemon's answer
+// (M9.14.8's `admit_returns_after_the_wait_budget_and_exits_zero`).
+const _: () = assert!(ADMIT_CLIENT_GRACE.as_secs() > proto::HANDSHAKE_TIMEOUT.as_secs() + 2);
+/// The most `anthrex admit` reads of its hook payload from stdin.
+pub const ADMIT_PAYLOAD_MAX: usize = 1024 * 1024;
+/// An ask's log label, `agent w<window> <command>`, is cut to this many characters.
+pub const ADMIT_LABEL_MAX_CHARS: usize = 80;
 
 /// A Claude session's admission hook (decision 17): the wait `W` (decision 21), the
 /// slots it asks (`Some(n)`: `Want::Count(n)`; `None`: `Want::Half`, decision 20) and

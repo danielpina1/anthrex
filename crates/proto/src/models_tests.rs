@@ -113,14 +113,11 @@ fn list_models_and_models_round_trip() {
 
 #[test]
 fn the_new_variants_are_appended_last() {
-    assert_eq!(
-        variant_names::<ClientMsg>().last().map(String::as_str),
-        Some("ListModels")
-    );
-    assert_eq!(
-        variant_names::<DaemonMsg>().last().map(String::as_str),
-        Some("Models")
-    );
+    // Milestone 9.14 appends `Admit`, `Admitted` and `AdmitTimedOut` after these.
+    let messages = variant_names::<ClientMsg>();
+    assert_eq!(messages[messages.len() - 2], "ListModels");
+    let replies = variant_names::<DaemonMsg>();
+    assert_eq!(replies[replies.len() - 3], "Models");
     let requests = variant_names::<SettingsRequest>();
     assert_eq!(
         requests[requests.len() - 2..],

@@ -74,6 +74,10 @@ pub struct HeadlessSpec {
     /// contract (milestone 9.5 decision 28; `None`: no filter).
     #[serde(default)]
     pub output_filter: Option<crate::output_filter::FilterHook>,
+    /// Milestone 9.14 decision 17: a Claude worker's admission hook, the third
+    /// `PreToolUse` group (`None`: no group).
+    #[serde(default)]
+    pub admit: Option<crate::admit::AdmitHook>,
 }
 
 /// Decision 54's sandbox block. The worktree (the session's cwd) is writable by default;

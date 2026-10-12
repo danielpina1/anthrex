@@ -168,7 +168,13 @@ pub fn slot_vars(n: u32) -> Vec<(String, String)> {
 /// Decision 27: a worker's caps, each of [`SLOT_VARS`] at `max(1, test_slots /
 /// max_writers)`. Workers run their own tests unscheduled, inside their sandbox.
 pub fn worker_caps(test_slots: u32, max_writers: u8) -> Vec<(String, String)> {
-    slot_vars((test_slots / u32::from(max_writers.max(1))).max(1))
+    slot_vars(worker_cap(test_slots, max_writers))
+}
+
+/// Decision 27's cap, `max(1, test_slots / max_writers)`: what [`worker_caps`] sets
+/// and what a worker's admission asks (milestone 9.14 decision 20).
+pub fn worker_cap(test_slots: u32, max_writers: u8) -> u32 {
+    (test_slots / u32::from(max_writers.max(1))).max(1)
 }
 
 #[cfg(test)]

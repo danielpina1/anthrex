@@ -10,6 +10,7 @@ use proto::{AgentRole, Route, RunRef, Runtime};
 use super::contract::{REVIEWER_CONTRACT, WORKER_CONTRACT};
 use super::env::profile_env;
 use super::model::{OpId, Run, Task};
+use crate::admit::AdmitHook;
 use crate::headless::argv::CodexProjectConfig;
 use crate::headless::codex_guard::{CodexConfigGuard, ObjectFormat};
 use crate::headless::{ClaudeSandbox, HeadlessSpec, McpTarget};
@@ -250,7 +251,24 @@ pub fn worker_spec(run: &Run, task: &Task) -> HeadlessSpec {
         }),
         codex_config_guard: codex_config_guard(run, route.runtime),
         output_filter: output_filter(run, task),
+        admit: admit_hook(run, claude),
     }
+}
+
+/// Milestone 9.14 decisions 17, 20 and 21: a Claude worker's admission hook, when the
+/// run's frozen `admit_wait_secs` is above 0. It asks the worker's cap and waits
+/// `W = min(admit_wait_secs, stall_after_secs / 2)`; the run's filter prefixes count
+/// as heavy. Never a Codex session (decision 25).
+fn admit_hook(run: &Run, claude: bool) -> Option<AdmitHook> {
+    let wait = run.limits.testing.admit_wait_secs;
+    (claude && wait > 0).then(|| AdmitHook {
+        wait_secs: wait.min(run.limits.stall_after_secs / 2),
+        slots: Some(crate::run::slots::worker_cap(
+            run.test_slots,
+            run.limits.max_writers,
+        )),
+        prefixes: run.filter_prefixes.clone(),
+    })
 }
 
 /// Milestone 8b decision 28: a worker's filter hook, when the run's profile is stored,
@@ -330,6 +348,7 @@ pub fn reviewer_spec(run: &Run, task: &Task, route: &Route) -> HeadlessSpec {
         }),
         codex_config_guard: codex_config_guard(run, route.runtime),
         output_filter: None,
+        admit: None,
     }
 }
 
