@@ -24,6 +24,7 @@ use super::OpCtx;
 use crate::run::confine::ConfineSpec;
 use crate::run::engine::{OpResult, ScratchAt};
 use crate::run::exec::{OUTPUT_GRACE, ShellOutcome, run_lines};
+use crate::run::gate_words::PinnedFile;
 use crate::run::git::{self, Git, GitQueue};
 use crate::run::model::OpId;
 use crate::run::proof::{SETUP_MARKER, proof_command};
@@ -74,6 +75,9 @@ pub struct StepCommand {
     /// Read the failing-test names from the whole output (a tiered test step). An
     /// untiered check keeps only M8a's 200-line tail.
     pub collect: bool,
+    /// Milestone 9.13 decision 12: the gate scripts checked in `dir` before the command
+    /// (`OpCtx.pinned`); empty for profile verification.
+    pub pinned: Vec<PinnedFile>,
 }
 
 /// What one command did.
@@ -108,8 +112,12 @@ pub fn run_isolated(step: &StepCommand) -> StepRun {
 
 /// [`run_isolated`]'s run, handing every output line to `on_line`: decision 28's fresh
 /// directory and variables after the slot variables, the checkout confined when the
-/// step says so. Also profile verification's runner (ruling C-27, I-2).
+/// step says so. Also profile verification's runner (ruling C-27, I-2). Milestone 9.13
+/// decision 12: a pinned gate script that changed refuses the command unrun.
 pub fn run_isolated_with(step: &StepCommand, on_line: &mut dyn FnMut(&str)) -> ShellOutcome {
+    if let Err(path) = super::gate_files::verify(&step.dir, &step.pinned) {
+        return ShellOutcome::gate_refused(path);
+    }
     let tmp = match fresh_dir(&step.common, &step.base, &step.name) {
         Ok(tmp) => tmp,
         Err(error) => return ShellOutcome::refused(error),
@@ -306,14 +314,16 @@ impl<'a> Job<'a> {
     }
 
     /// `command` in a fresh `<base>/s<op>-<step>`, holding `grant`; with `collect`, its
-    /// failing-test names read on the blocking thread.
+    /// failing-test names read on the blocking thread. A command refused for a changed
+    /// gate script stops the job with `OpResult::GateRefused` (milestone 9.13 decision
+    /// 12: the job stops at the first).
     pub(super) async fn run(
         &self,
         step: &str,
         command: &str,
         grant: &SlotGrant,
         collect: bool,
-    ) -> Result<StepRun, String> {
+    ) -> Result<StepRun, Stop> {
         let command = StepCommand {
             dir: self.dir.clone(),
             command: command.to_string(),
@@ -325,9 +335,16 @@ impl<'a> Job<'a> {
             base: self.base.clone(),
             name: format!("s{}-{step}", self.op),
             collect,
+            pinned: self.ctx.pinned.to_vec(),
         };
         let bound = self.timeout + OUTPUT_GRACE * 2 + SLACK;
-        bounded(bound, move || Ok(run_isolated(&command))).await
+        let ran = bounded(bound, move || Ok(run_isolated(&command)))
+            .await
+            .map_err(stop)?;
+        match ran.outcome.gate_refused {
+            Some(path) => Err(Box::new(OpResult::GateRefused { path })),
+            None => Ok(ran),
+        }
     }
 
     /// A git read on a blocking thread, with the run's git timeout.
@@ -377,10 +394,7 @@ impl<'a> Job<'a> {
                     .await
                     .map_err(stop)?;
                 let grant = self.acquire(Want::One, false, "setup".to_string()).await;
-                let ran = self
-                    .run("setup", &setup, &grant, false)
-                    .await
-                    .map_err(stop)?;
+                let ran = self.run("setup", &setup, &grant, false).await?;
                 drop(grant);
                 if !ran.outcome.ok {
                     return Err(Box::new(OpResult::SetupFailed {
@@ -421,11 +435,7 @@ pub(super) async fn run_step(
     let label = || format!("tier {} step {k}", spec.tier);
     let want = want(spec.priority);
     let grant = job.acquire(want, step.exclusive, label()).await;
-    let (first, first_names) = names_of(
-        job.run(&at, &step.command, &grant, tiered)
-            .await
-            .map_err(stop)?,
-    );
+    let (first, first_names) = names_of(job.run(&at, &step.command, &grant, tiered).await?);
     let mut ran = StepOutcome {
         kind: step.kind,
         command: step.command.clone(),
@@ -457,8 +467,7 @@ pub(super) async fn run_step(
             for name in &first_names {
                 let one = job
                     .run(&at, &proof_command(single, name), &grant, false)
-                    .await
-                    .map_err(stop)?;
+                    .await?;
                 ran.secs += one.outcome.secs;
                 if !one.outcome.ok {
                     ran.failing = first_names;
@@ -466,16 +475,12 @@ pub(super) async fn run_step(
                 }
             }
             // Ruling C-7: the names are a speed-up, never the verdict.
-            job.run(&at, &step.command, &grant, true)
-                .await
-                .map_err(stop)?
+            job.run(&at, &step.command, &grant, true).await?
         }
         None => {
             drop(grant);
             let grant = job.acquire(want, step.exclusive, label()).await;
-            job.run(&at, &step.command, &grant, true)
-                .await
-                .map_err(stop)?
+            job.run(&at, &step.command, &grant, true).await?
         }
     };
     let (whole, whole_names) = names_of(whole);

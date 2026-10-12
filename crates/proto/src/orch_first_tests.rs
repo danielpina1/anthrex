@@ -121,6 +121,7 @@ fn info() -> OrchestratorInfo {
         ask: None,
         handled: vec![],
         handled_total: 0,
+        untrusted: None,
     }
 }
 

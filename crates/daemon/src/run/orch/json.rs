@@ -69,7 +69,7 @@ pub(crate) fn shrink_strings(value: &mut Value, max: usize) {
 
 /// `hh:mm` of a Unix time, in UTC, as the prompts write times.
 pub(crate) fn hh_mm(at: u64) -> String {
-    format!("{:02}:{:02}", at % 86_400 / 3600, at % 3600 / 60)
+    common::text::hh_mm(at)
 }
 
 /// FNV-1a, 64 bits (decision 16's fingerprint).

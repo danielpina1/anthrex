@@ -12,7 +12,7 @@ use daemon::run::git::{
     AcceptOutcome, accept, count_commits, diff_so_far, prepare_worktree, salvage, verify_done,
 };
 use daemon::run::globs::{OwnsMatcher, ProtectedMatcher};
-use daemon::run::plan::BUILTIN_PROTECTED;
+use daemon::run::plan::builtin_protected;
 use std::path::{Path, PathBuf};
 use support::run_git::{T, commit_file, head, out, real_git, repo, write, wt_dir};
 
@@ -55,13 +55,7 @@ fn engine_and_probe_reads_never_run_a_planted_fsmonitor() {
 
     let owns = vec!["a.txt".to_string()];
     let generated = OwnsMatcher::new(&[]).unwrap();
-    let protected = ProtectedMatcher::new(
-        &BUILTIN_PROTECTED
-            .iter()
-            .map(|s| s.to_string())
-            .collect::<Vec<_>>(),
-    )
-    .unwrap();
+    let protected = ProtectedMatcher::new(&builtin_protected()).unwrap();
     verify_done(
         real_git(),
         &task,

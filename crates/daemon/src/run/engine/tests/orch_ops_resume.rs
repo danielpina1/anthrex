@@ -23,7 +23,7 @@ fn op(fx: &mut Fixture, edit: serde_json::Value) -> Vec<crate::run::engine::Effe
 
 /// A tiered run whose one task merged at `commit(1)`, its tier 3 red on that head with
 /// no bisect (`full.rs`'s `red_at_completion`: no `single_test`, so no single culprit).
-fn red() -> Fixture {
+pub(super) fn red() -> Fixture {
     let mut fx = super::full::red_at_completion();
     assert_eq!(
         fx.run().stage(1).unwrap().full.red_at.as_deref(),

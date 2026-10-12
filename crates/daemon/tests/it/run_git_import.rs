@@ -15,7 +15,7 @@ use daemon::run::git::{
     DoneChecked, hand_back, prepare_task_worktree, private_dir, salvage, sync, verify_done,
 };
 use daemon::run::globs::{OwnsMatcher, ProtectedMatcher};
-use daemon::run::plan::BUILTIN_PROTECTED;
+use daemon::run::plan::builtin_protected;
 use daemon::run::role_launch::{task_objects_dir, task_repo_dir};
 use std::path::PathBuf;
 use std::process::Command;
@@ -143,13 +143,7 @@ impl World {
 
 fn done(w: &World) -> DoneChecked {
     let generated = OwnsMatcher::new(&[]).unwrap();
-    let protected = ProtectedMatcher::new(
-        &BUILTIN_PROTECTED
-            .iter()
-            .map(|s| s.to_string())
-            .collect::<Vec<_>>(),
-    )
-    .unwrap();
+    let protected = ProtectedMatcher::new(&builtin_protected()).unwrap();
     verify_done(
         real_git(),
         &w.task,

@@ -1,0 +1,195 @@
+//! Milestone 9.13 decisions 8 and 10: the words of a profile's gate commands, which
+//! name the tracked files a run's own gate runs, and how those files join the run's
+//! protected list. Pure — no `std::fs`, `std::process`, `std::thread`, `tokio` or
+//! `std::time::SystemTime` (design decision 2). The files are read at run start by
+//! `driver::gate_files::read`.
+
+use serde::{Deserialize, Serialize};
+
+use super::globs::escape_path;
+use super::model::Profile;
+use super::tiers::GraphSource;
+
+/// The most words [`gate_words`] returns (decision 8).
+pub const GATE_WORDS_MAX: usize = 64;
+
+/// A tracked file the run's gate runs, with its blob id at the run's base commit
+/// (decision 9). Unrelated to `crate::worktree::pinned`.
+///
+/// PR #60 review I3: an empty `blob` pins `path` as **absent**: an implicit file a gate
+/// program would prefer over the one it uses at the base ([`absent`]). It is protected
+/// as any gate file is, and `driver::gate_files::verify` refuses a checkout where it
+/// exists. The serialised shape is unchanged (no `RUN_FORMAT` change); a run from before
+/// has no empty blob.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
+pub struct PinnedFile {
+    pub path: String,
+    pub blob: String,
+}
+
+impl PinnedFile {
+    /// `path` pinned absent (PR #60 review I3).
+    pub fn absent(path: &str) -> Self {
+        PinnedFile {
+            path: path.to_string(),
+            blob: String::new(),
+        }
+    }
+
+    /// Whether this pins `path` as absent.
+    pub fn is_absent(&self) -> bool {
+        self.blob.is_empty()
+    }
+}
+
+/// The files a program reads without naming them, appended when a word equals the
+/// program (decision 8). Nothing for `npm`, `yarn` or `pnpm` (U3). PR #60 review I3:
+/// each program's names in the order it looks for them, one inner list per step (GNU
+/// make: `GNUmakefile`, `makefile`, `Makefile`; just: `justfile` in any case, then
+/// `.justfile`; tox: `tox.ini` before `setup.cfg` and `pyproject.toml`, which are never
+/// listed, decision 2 and U3).
+const IMPLICIT: [(&str, &[&[&str]]); 4] = [
+    ("make", &[&["GNUmakefile"], &["makefile"], &["Makefile"]]),
+    ("just", &[&["justfile", "Justfile"], &[".justfile"]]),
+    ("tox", &[&["tox.ini"]]),
+    ("nox", &[&["noxfile.py"]]),
+];
+
+/// Decision 8: the words of `check`, `setup`, `single_test`, `tiers.build_check`,
+/// `tiers.module_test`, `tiers.module_tests`, a command `tiers.module_graph` and
+/// `tiers.toolchain_id`, in that order; each once, first seen first, then the implicit
+/// files of the programs among them; at most [`GATE_WORDS_MAX`].
+pub fn gate_words(profile: &Profile) -> Vec<String> {
+    let tiers = &profile.tiers;
+    let graph = match &tiers.module_graph {
+        GraphSource::Command(command) => Some(command),
+        GraphSource::None | GraphSource::Cargo => None,
+    };
+    let commands = [
+        profile.check.as_ref(),
+        profile.setup.as_ref(),
+        profile.single_test.as_ref(),
+        tiers.build_check.as_ref(),
+        tiers.module_test.as_ref(),
+        tiers.module_tests.as_ref(),
+        graph,
+        tiers.toolchain_id.as_ref(),
+    ];
+    let mut words: Vec<String> = Vec::new();
+    let mut implicit: Vec<&str> = Vec::new();
+    for word in commands
+        .into_iter()
+        .flatten()
+        .flat_map(|c| command_words(c))
+    {
+        if let Some((_, steps)) = IMPLICIT.iter().find(|(program, _)| *program == word) {
+            implicit.extend(steps.iter().flat_map(|step| step.iter()));
+        }
+        if !words.contains(&word) {
+            words.push(word);
+        }
+    }
+    for file in implicit {
+        if !words.iter().any(|w| w == file) {
+            words.push(file.to_string());
+        }
+    }
+    words.truncate(GATE_WORDS_MAX);
+    words
+}
+
+/// One command's kept words, in order (decision 8's split, cleaning and drops).
+fn command_words(command: &str) -> Vec<String> {
+    command
+        .split(|c: char| c.is_whitespace() || matches!(c, ';' | '&' | '|' | '(' | ')' | '<' | '>'))
+        .filter_map(clean)
+        .collect()
+}
+
+/// A raw word as decision 8 keeps it, or `None` when it is dropped. A trailing `/` is
+/// stripped and a bare `.` dropped (controller ruling, 9.13), so a directory word
+/// pins nothing.
+fn clean(raw: &str) -> Option<String> {
+    let unquoted: String = raw.chars().filter(|c| !matches!(c, '\'' | '"')).collect();
+    let mut word = strip_assignment(&unquoted);
+    while let Some(rest) = word.strip_prefix("./") {
+        word = rest;
+    }
+    // Controller ruling (9.13): a word naming a directory pins nothing. Without its
+    // trailing `/`, `ls-tree` reports a directory as a tree, which `read` skips; a
+    // bare `.` would list the root's files, so it is dropped.
+    let absolute = word.starts_with('/');
+    word = word.trim_end_matches('/');
+    let dropped = word.is_empty()
+        || word == "."
+        || word.ends_with("/.")
+        || absolute
+        || word.starts_with('~')
+        || word.contains(['$', '*', '?', '[', ']', '{', '}', '`'])
+        || word.split('/').any(|part| part == "..");
+    (!dropped).then(|| word.to_string())
+}
+
+/// `word` without a leading `NAME=` (`[A-Za-z_][A-Za-z0-9_]*=`); the value stays.
+fn strip_assignment(word: &str) -> &str {
+    let Some((name, value)) = word.split_once('=') else {
+        return word;
+    };
+    let mut chars = name.chars();
+    let starts = chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_');
+    if starts && chars.all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        value
+    } else {
+        word
+    }
+}
+
+/// PR #60 review I3 (Master's ruling, with the controller's refinement): for each
+/// implicit-file program among `words` whose names [`gate_words`] all listed, the names
+/// it would prefer over the one it uses at the base (`present`: the paths `ls-tree`
+/// listed there), each once, in its order. The one it uses is the first present name in
+/// its order; the names before it and the other spellings beside it are returned. With
+/// none present, all its names are. A name created later would change what the gate
+/// runs, so `driver::gate_files::read` pins them absent.
+pub fn absent(words: &[String], present: &[String]) -> Vec<String> {
+    let listed = |name: &str| words.iter().any(|w| w == name);
+    let mut out: Vec<String> = Vec::new();
+    for (program, steps) in IMPLICIT {
+        let names = || steps.iter().flat_map(|step| step.iter());
+        if !listed(program) || !names().all(|n| listed(n)) {
+            continue;
+        }
+        let used = steps
+            .iter()
+            .position(|step| step.iter().any(|n| present.iter().any(|p| p == n)))
+            .unwrap_or(steps.len());
+        let before = steps
+            .iter()
+            .take((used + 1).min(steps.len()))
+            .flat_map(|s| s.iter());
+        for name in before.filter(|n| !present.iter().any(|p| p == *n)) {
+            if !out.iter().any(|o| o == name) {
+                out.push(name.to_string());
+            }
+        }
+    }
+    out
+}
+
+/// Decision 10: appends `escape_path(path)` for each gate file `protected` does not
+/// already list, a name pinned absent too (PR #60 review I3), so creating one is a
+/// protected change.
+pub fn protect(protected: &mut Vec<String>, files: &[PinnedFile]) {
+    for file in files {
+        let entry = escape_path(&file.path);
+        if !protected.contains(&entry) {
+            protected.push(entry);
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "gate_words_tests.rs"]
+mod tests;

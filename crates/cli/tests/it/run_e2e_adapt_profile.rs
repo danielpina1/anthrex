@@ -218,7 +218,7 @@ fn e2e_protected_file_from_the_stored_profile_bounces_at_rung_1() {
     let t1 = t(&run, "t1");
     assert_eq!(t1.state, TaskState::Merged);
     assert_eq!((t1.bounces.done, t1.rung), (1, 1));
-    let message = protected_file_message(&["docs/agents.txt".to_string()]);
+    let message = protected_file_message(&["docs/agents.txt".to_string()], &[]);
     assert!(
         failure_logged(&run, "t1", &message),
         "{}",

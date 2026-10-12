@@ -320,6 +320,7 @@ mod tests {
                 git_timeout: T,
                 check_timeout: T,
                 confine: None,
+                pinned: Default::default(),
             };
             let service = RunService::new(manager, run_ctx);
             Rig {

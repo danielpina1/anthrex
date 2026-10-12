@@ -112,6 +112,7 @@ fn settle_ops(fx: &mut Fixture) {
             OpKind::CountCommits { .. } => OpResult::Commits {
                 count: 0,
                 head: BASE.into(),
+                protected: Vec::new(),
             },
             _ => continue,
         };

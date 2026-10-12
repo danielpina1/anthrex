@@ -36,6 +36,7 @@ mod run_confine_network;
 #[cfg(target_os = "macos")]
 mod run_confine_protected;
 mod run_exec;
+mod run_gate_pins;
 mod run_git;
 mod run_git_accept;
 mod run_git_accept_safety;
@@ -45,6 +46,7 @@ mod run_git_checkout;
 mod run_git_crown;
 mod run_git_docs;
 mod run_git_done;
+mod run_git_done_symlinks;
 mod run_git_escape;
 mod run_git_finish;
 mod run_git_grant;

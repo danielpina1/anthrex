@@ -27,6 +27,7 @@
 use std::ffi::OsStr;
 
 use super::OpCtx;
+use super::gate_files;
 use super::graph::{TOOLCHAIN_UNKNOWN, module_graph, toolchain};
 use super::tier_step::{
     Job, JobSpec, SLACK, Stop, bounded, failed, fresh_dir, isolation_env, remove_dir, run_step,
@@ -41,7 +42,7 @@ use crate::run::tiers::affected::affected;
 use crate::run::tiers::cache_key::{CacheKey, key, with_path};
 use crate::run::tiers::steps::plan;
 use crate::run::tiers::{
-    Affected, CacheCtx, GRAPH_TIMEOUT, GraphState, Scope, Step, StepKind, StepOutcome,
+    Affected, CacheCtx, GRAPH_TIMEOUT, GraphSource, GraphState, Scope, Step, StepKind, StepOutcome,
     TOOLCHAIN_TIMEOUT, TestAtSpec, TierOutcome, TierSpec,
 };
 
@@ -121,7 +122,7 @@ async fn tier_job(
         if spec.toolchain.is_none()
             && let Some(command) = spec.profile.toolchain_id.clone()
         {
-            outcome.toolchain = Some(run_toolchain(&job, command).await);
+            outcome.toolchain = Some(run_toolchain(&job, command).await?);
         }
         let planned = plan(spec.tier, &affected, &spec.profile, spec.check.as_deref());
         outcome.affected = affected;
@@ -316,7 +317,7 @@ async fn affected_set(
         return Ok((Affected::Full(FULL_SUITE.to_string()), None));
     }
     let changed = changed_paths(job, spec).await?;
-    Ok(affected_of(job, spec, &changed).await)
+    affected_of(job, spec, &changed).await
 }
 
 /// The paths the job's change touches: decision 15's `<diff_base>...<head>` for tier 1,
@@ -334,13 +335,14 @@ async fn changed_paths(job: &Job<'_>, spec: &TierSpec) -> Result<Vec<String>, St
 }
 
 /// Decision 22 on `changed`, with the graph read in the job's checkout (ruling C-5:
-/// with no `check`, a known graph runs the module tests of every module).
+/// with no `check`, a known graph runs the module tests of every module). A graph
+/// command refused for a changed gate script stops the job (milestone 9.13).
 async fn affected_of(
     job: &Job<'_>,
     spec: &TierSpec,
     changed: &[String],
-) -> (Affected, Option<String>) {
-    let graph = read_graph(job, spec).await;
+) -> Result<(Affected, Option<String>), Stop> {
+    let graph = read_graph(job, spec).await?;
     let note = match &graph {
         GraphState::Unknown(reason) => Some(reason.clone()),
         GraphState::Known(_) => None,
@@ -359,12 +361,20 @@ async fn affected_of(
     {
         set = Affected::Modules(graph.modules.keys().cloned().collect());
     }
-    (set, note)
+    Ok((set, note))
+}
+
+/// Milestone 9.13 decision 12 (ruling C5): `OpResult::GateRefused` when a blocking
+/// closure's own check refused its command (`Err(path)`), else what the command gave.
+fn gated<T>(checked: Result<T, String>) -> Result<T, Stop> {
+    checked.map_err(|path| Box::new(OpResult::GateRefused { path }))
 }
 
 /// Decision 9's graph in the job's checkout, confined as its commands are, with its own
-/// isolated `TMPDIR` (M9.1.7's notes: `manifests` and `env` passed through).
-async fn read_graph(job: &Job<'_>, spec: &TierSpec) -> GraphState {
+/// isolated `TMPDIR` (M9.1.7's notes: `manifests` and `env` passed through). Milestone
+/// 9.13 decision 12 (ruling C5): a command graph first checks the pinned gate scripts
+/// on the closure's blocking thread, and a changed one stops the job unrun.
+async fn read_graph(job: &Job<'_>, spec: &TierSpec) -> Result<GraphState, Stop> {
     let git = job.git.clone();
     let (dir, repo_dir) = (job.dir.clone(), spec.repo_dir.clone());
     let (profile, modules, manifests) = (
@@ -378,8 +388,13 @@ async fn read_graph(job: &Job<'_>, spec: &TierSpec) -> GraphState {
         job.base.clone(),
         format!("s{}-graph", job.op),
     );
+    let command = matches!(spec.profile.module_graph, GraphSource::Command(_));
+    let pinned = job.ctx.pinned.clone();
     let bound = GRAPH_TIMEOUT + job.ctx.git_timeout * 4 + SLACK;
     let read = bounded(bound, move || {
+        if command && let Err(path) = gate_files::verify(&dir, &pinned) {
+            return Ok(Err(path));
+        }
         let tmp = fresh_dir(&common, &base, &name)?;
         let mut env = env;
         env.extend(isolation_env(&tmp));
@@ -394,14 +409,19 @@ async fn read_graph(job: &Job<'_>, spec: &TierSpec) -> GraphState {
             confine.as_ref(),
         );
         remove_dir(&tmp);
-        Ok(graph)
+        Ok(Ok(graph))
     })
     .await;
-    read.unwrap_or_else(GraphState::Unknown)
+    match read {
+        Ok(checked) => gated(checked),
+        Err(error) => Ok(GraphState::Unknown(error)),
+    }
 }
 
-/// Decision 11's toolchain id, run in the job's checkout.
-async fn run_toolchain(job: &Job<'_>, command: String) -> String {
+/// Decision 11's toolchain id, run in the job's checkout. Milestone 9.13 decision 12
+/// (ruling C5): the pinned gate scripts are checked first, on the closure's blocking
+/// thread, and a changed one stops the job unrun.
+async fn run_toolchain(job: &Job<'_>, command: String) -> Result<String, Stop> {
     let (dir, env, confine) = (
         job.dir.clone(),
         job.env.clone(),
@@ -412,16 +432,23 @@ async fn run_toolchain(job: &Job<'_>, command: String) -> String {
         job.base.clone(),
         format!("s{}-toolchain", job.op),
     );
-    bounded(TOOLCHAIN_TIMEOUT + SLACK, move || {
+    let pinned = job.ctx.pinned.clone();
+    let ran = bounded(TOOLCHAIN_TIMEOUT + SLACK, move || {
+        if let Err(path) = gate_files::verify(&dir, &pinned) {
+            return Ok(Err(path));
+        }
         let tmp = fresh_dir(&common, &base, &name)?;
         let mut env = env;
         env.extend(isolation_env(&tmp));
         let id = toolchain(&dir, &command, &env, confine.as_ref());
         remove_dir(&tmp);
-        Ok(id)
+        Ok(Ok(id))
     })
-    .await
-    .unwrap_or_else(|_| "unknown".to_string())
+    .await;
+    match ran {
+        Ok(checked) => gated(checked),
+        Err(_) => Ok(TOOLCHAIN_UNKNOWN.to_string()),
+    }
 }
 
 /// Executes `OpKind::TestAt` (decision 36): the probe's checkout at its commit, then
@@ -470,12 +497,12 @@ pub(crate) async fn run_test_at(
         let at = (n + 1).to_string();
         let mut last = match job.run(&at, command, &grant, false).await {
             Ok(run) => run.outcome,
-            Err(error) => return failed(error),
+            Err(result) => return *result,
         };
         if !last.ok && !last.timed_out {
             last = match job.run(&at, command, &grant, false).await {
                 Ok(run) => run.outcome,
-                Err(error) => return failed(error),
+                Err(result) => return *result,
             };
         }
         if !last.ok {

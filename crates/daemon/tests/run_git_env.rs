@@ -11,13 +11,13 @@
 mod support;
 
 use daemon::run::git::{
-    RefreshedIn, count_commits, count_commits_excluding, create_run_branch, diff_so_far,
-    hand_back_listing, lock_worktree, preflight, prepare_review, prepare_worktree,
+    RefreshedIn, count_commits, count_commits_checked, count_commits_excluding, create_run_branch,
+    diff_so_far, hand_back_listing, lock_worktree, preflight, prepare_review, prepare_worktree,
     project_settings, protected_files, resolve_target, task_summary, task_summary_excluding,
     verify_done,
 };
 use daemon::run::globs::{OwnsMatcher, ProtectedMatcher};
-use daemon::run::plan::BUILTIN_PROTECTED;
+use daemon::run::plan::builtin_protected;
 use std::ffi::OsString;
 use support::recording_git;
 use support::run_git::{T, commit_file, head, out, real_git, repo, wt_dir};
@@ -80,13 +80,7 @@ fn every_run_git_call_passes_no_optional_locks_and_no_git_env() {
     let scripts = tempfile::tempdir().unwrap();
     let git = recording_git(scripts.path());
     let git = git.as_os_str();
-    let protected = ProtectedMatcher::new(
-        &BUILTIN_PROTECTED
-            .iter()
-            .map(|s| s.to_string())
-            .collect::<Vec<_>>(),
-    )
-    .unwrap();
+    let protected = ProtectedMatcher::new(&builtin_protected()).unwrap();
     let generated = OwnsMatcher::new(&["Cargo.lock".to_string()]).unwrap();
 
     let previous: Vec<(&str, Option<OsString>)> = ["GIT_DIR", "GIT_INDEX_FILE", "GIT_COMMON_DIR"]
@@ -241,6 +235,19 @@ fn every_run_git_call_passes_no_optional_locks_and_no_git_env() {
                 &base,
                 &base,
                 &RefreshedIn::of(std::slice::from_ref(&base), std::slice::from_ref(&base)),
+                T,
+            )
+            .map(drop),
+        ),
+        // Milestone 9.13 decision 5: the count's protected diff.
+        (
+            "count_commits_checked",
+            count_commits_checked(
+                git,
+                &task,
+                (&base, &base),
+                &RefreshedIn::default(),
+                (&[], &builtin_protected()),
                 T,
             )
             .map(drop),

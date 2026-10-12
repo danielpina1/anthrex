@@ -112,6 +112,19 @@ pub struct OrchestratorInfo {
     /// How many it has resolved in all, including those `handled` dropped.
     #[serde(default, skip_serializing_if = "crate::is_zero_u32")]
     pub handled_total: u32,
+    /// Milestone 9.13 (decision 22): the first untrusted text this orchestrator's
+    /// session was shown (the record is sticky and keeps its first read), so a client
+    /// can say its decisions rest on it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub untrusted: Option<UntrustedInfo>,
+}
+
+/// Milestone 9.13: when and from where untrusted text first reached the orchestrator's
+/// session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UntrustedInfo {
+    pub at: u64,
+    pub source: String,
 }
 
 /// Milestone 9.9 (OFA §4.1): why an orchestrator no longer counts as living.

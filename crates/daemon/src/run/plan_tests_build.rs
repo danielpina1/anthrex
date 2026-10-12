@@ -315,3 +315,117 @@ fn limits_are_frozen_at_run_start() {
     assert_eq!(old.delivery.mode, proto::DeliveryMode::Local);
     assert_eq!(old.delivery.limits, defaults);
 }
+
+/// Milestone 9.13 decision 1: the 8 agent-config entries, then the 14 runs-later ones,
+/// are built in; configuration adds after them and nothing removes one.
+#[test]
+fn runs_later_paths_are_built_in_and_cannot_be_removed() {
+    let empty = |p: &mut ProfileSpec| p.protected = Some(Vec::new());
+    let none = resolve_profile(&super::profile_spec(empty), &super::profile_spec(empty));
+    let expected: Vec<String> = [
+        ".claude/**",
+        ".mcp.json",
+        ".codex/**",
+        "**/CLAUDE.md",
+        "**/AGENTS.md",
+        "**/AGENTS.override.md",
+        "**/CLAUDE.local.md",
+        ".agents/**",
+        ".github/workflows/**",
+        ".github/actions/**",
+        ".gitlab-ci.yml",
+        ".circleci/**",
+        ".buildkite/**",
+        "Jenkinsfile",
+        "azure-pipelines.yml",
+        ".githooks/**",
+        ".husky/**",
+        ".pre-commit-config.yaml",
+        "**/.cargo/**",
+        "**/rust-toolchain",
+        "**/rust-toolchain.toml",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    assert_eq!(none.protected, expected);
+    assert_eq!(none.protected.len(), 21);
+
+    let ops = super::profile_spec(|p| p.protected = Some(vec!["ops/**".to_string()]));
+    let added = resolve_profile(&super::profile_spec(empty), &ops);
+    let mut with_ops = expected.clone();
+    with_ops.push("ops/**".to_string());
+    assert_eq!(added.protected, with_ops);
+    assert!(
+        added
+            .protected
+            .contains(&".github/workflows/**".to_string())
+    );
+}
+
+fn gate_file(path: &str) -> crate::run::gate_words::PinnedFile {
+    crate::run::gate_words::PinnedFile {
+        path: path.to_string(),
+        blob: "a".repeat(40),
+    }
+}
+
+/// Milestone 9.13 decision 10: a gate file is protected like any other: a glob covering
+/// it gets decision 56's note, naming it gets decision 4's grant note, and the run
+/// records it and adds it to its frozen protected list.
+#[test]
+fn owns_covering_a_gate_file_is_noted_and_naming_it_grants() {
+    let mut pre = preflight();
+    pre.gate_files = vec![gate_file("scripts/check.sh")];
+    pre.protected_files = vec!["scripts/check.sh".to_string()];
+    let text = plan_with(
+        PROFILE,
+        &[
+            task_toml("t1", "S", r#"["scripts/**"]"#, ""),
+            task_toml("t2", "S", r#"["scripts/check.sh"]"#, ""),
+        ],
+    );
+    let config = config::Orchestrator::default();
+    let run = build_full(&text, &config, pre).unwrap_or_else(|e| panic!("{}", show(&e)));
+    assert_eq!(
+        run.tasks[0].notes,
+        vec![
+            "owns scripts/** covers protected scripts/check.sh; name it exactly in owns if this task must change it (rule 6.protected)"
+                .to_string()
+        ]
+    );
+    assert_eq!(
+        run.tasks[1].notes,
+        vec![
+            "owns names protected scripts/check.sh; the user approves this grant with the plan"
+                .to_string()
+        ]
+    );
+    assert_eq!(run.gate_files, vec![gate_file("scripts/check.sh")]);
+    assert_eq!(
+        run.profile.protected.last().map(String::as_str),
+        Some("scripts/check.sh")
+    );
+}
+
+/// Milestone 9.13 (run format stays 2): `gate_files` is written only when there are
+/// some, and a format-1 `run.json`, which has no such key, loads with none.
+#[test]
+fn a_run_without_gate_files_loads_with_none() {
+    let mut pre = preflight();
+    pre.gate_files = vec![gate_file("scripts/check.sh")];
+    let config = config::Orchestrator::default();
+    let run = build_full(EXAMPLE_PLAN, &config, pre).unwrap_or_else(|e| panic!("{}", show(&e)));
+    let mut json = serde_json::to_value(&run).unwrap();
+    let object = json.as_object_mut().unwrap();
+    assert_eq!(
+        object["gate_files"],
+        serde_json::json!([{"path": "scripts/check.sh", "blob": "a".repeat(40)}])
+    );
+    object.remove("gate_files");
+    object.insert("format".into(), serde_json::json!(1));
+    let old: crate::run::model::Run = serde_json::from_value(json).unwrap();
+    assert!(old.gate_files.is_empty());
+    let none = serde_json::to_value(run_ok(EXAMPLE_PLAN)).unwrap();
+    assert!(none.get("gate_files").is_none());
+}

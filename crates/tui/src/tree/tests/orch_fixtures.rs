@@ -32,6 +32,7 @@ pub(crate) fn orchestrator_info(window: Option<u32>) -> OrchestratorInfo {
         ask: None,
         handled: vec![],
         handled_total: 0,
+        untrusted: None,
     }
 }
 

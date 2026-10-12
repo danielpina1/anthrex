@@ -40,8 +40,10 @@ pub const RUNS_DIR: &str = "runs";
 pub const RUN_FILE: &str = "run.json";
 pub const RUN_TMP: &str = "run.json.tmp";
 /// Milestone 9.11 decision 36 (A13): the newest `run.json` format this build reads and
-/// writes; a run without the field (written before it) reads as format 0.
-pub const RUN_FORMAT: u32 = 1;
+/// writes; a run without the field (written before it) reads as format 0. Format 2
+/// (milestone 9.13, pre-flight ruling C3): `OpKind::CountCommits.{owns, protected}` in
+/// `pending_ops`, and the milestone's other new `Run` fields.
+pub const RUN_FORMAT: u32 = 2;
 pub const JOURNAL_FILE: &str = "journal.jsonl";
 const JOURNAL_TMP: &str = "journal.jsonl.tmp";
 

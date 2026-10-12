@@ -93,6 +93,8 @@ impl Scheduled<'_> {
             base: step_base(&self.ctx.data_dir, dir),
             name: format!("s{}-{}", self.op, step_name(&self.class.2)),
             collect: false,
+            // Milestone 9.13 decision 12: an outcome with `gate_refused` set was not run.
+            pinned: self.ctx.pinned.to_vec(),
         };
         let ran = bounded(timeout + OUTPUT_GRACE * 2 + SLACK, move || {
             Ok(run_isolated(&step).outcome)

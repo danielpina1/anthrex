@@ -286,6 +286,9 @@ impl OwnsMatcher {
 /// caller cannot hand the done check a case-sensitive `owns` matcher by mistake.
 pub struct ProtectedMatcher {
     inner: OwnsMatcher,
+    /// PR #60 review I2 (b): the ancestor directories of each entry's literal leading
+    /// path ([`ancestor_patterns`]), matched exactly and ignoring ASCII case.
+    ancestors: GlobSet,
 }
 
 impl ProtectedMatcher {
@@ -301,8 +304,16 @@ impl ProtectedMatcher {
                 entries.push(dir.to_string());
             }
         }
+        let mut ancestors = GlobSetBuilder::new();
+        for pattern in protected.iter().flat_map(|e| ancestor_patterns(e)) {
+            ancestors.add(build_glob(&pattern, true)?);
+        }
+        let ancestors = ancestors
+            .build()
+            .map_err(|err| format!("invalid protected patterns: {err}"))?;
         Ok(ProtectedMatcher {
             inner: OwnsMatcher::build(&entries, true)?,
+            ancestors,
         })
     }
 
@@ -321,6 +332,77 @@ impl ProtectedMatcher {
     pub fn guards_change(&self, path: &str) -> bool {
         !path.is_ascii() || self.matches(path)
     }
+
+    /// The done gate's question about a changed path that is (`link`) or is not a
+    /// symbolic link in the head commit: [`guards_change`], or, PR #60 review I2 (b), a
+    /// link that is an ancestor directory of a protected entry's literal leading path
+    /// (`.github` or `.github/workflows` for `.github/workflows/**`; any path ending in
+    /// `.cargo` for `**/.cargo/**`). Its target would otherwise hold the protected files
+    /// under a path no entry matches.
+    ///
+    /// [`guards_change`]: ProtectedMatcher::guards_change
+    pub fn guards(&self, path: &str, link: bool) -> bool {
+        self.guards_change(path) || (link && self.ancestors.is_match(path))
+    }
+}
+
+/// PR #60 review I2 (b): the glob patterns of `entry`'s ancestor directories. Its literal
+/// leading path is its components up to the first with glob syntax (one-character
+/// classes from [`escape_path`] read as their character), after a leading `**/`; each
+/// prefix of it is an ancestor, rooted, or anywhere (`**/…`) for a `**/` entry. The
+/// whole literal path of a file entry is included; [`ProtectedMatcher::matches`]
+/// already guards it.
+fn ancestor_patterns(entry: &str) -> Vec<String> {
+    let (anywhere, rest) = match entry.strip_prefix("**/") {
+        Some(rest) => (true, rest),
+        None => (false, normalize_literal(entry)),
+    };
+    let mut literal: Vec<String> = Vec::new();
+    for part in rest.split('/') {
+        match unescaped(part) {
+            Some(part) if !part.is_empty() && !part.contains(['{', '}']) => literal.push(part),
+            _ => break,
+        }
+    }
+    (1..=literal.len())
+        .map(|n| {
+            let path = escape_path(&literal[..n].join("/"));
+            match anywhere {
+                true => format!("**/{path}"),
+                false => path,
+            }
+        })
+        .collect()
+}
+
+/// Decision 56's protected split of a changed-path list (milestone 9.13 decision 5,
+/// ruling C16): the paths [`ProtectedMatcher::guards`] guards that `owns` does not name
+/// literally ([`names_literally`]), in order. Each path comes with whether it is a
+/// symbolic link in the head commit (PR #60 review I2 (b)). The done check applies it to
+/// its own diff and the override's count to its own.
+pub fn split_protected(
+    paths: &[(&str, bool)],
+    owns: &[String],
+    protected: &ProtectedMatcher,
+) -> Vec<String> {
+    paths
+        .iter()
+        .filter(|(path, link)| protected.guards(path, *link) && !names_literally(owns, path))
+        .map(|(path, _)| path.to_string())
+        .collect()
+}
+
+/// Milestone 9.13 decision 6 (ruling C16): the protected files `owns` names literally,
+/// each a grant. An entry is read as the done gate reads it ([`names_literally`]): one
+/// whose only glob syntax is [`escape_path`]'s classes names its unescaped path, with a
+/// leading `./` and a trailing `/` dropped. It counts when the done gate guards that
+/// path ([`ProtectedMatcher::guards_change`], so a non-ASCII literal counts too).
+pub fn literal_protected(owns: &[String], protected: &ProtectedMatcher) -> Vec<String> {
+    owns.iter()
+        .filter_map(|entry| unescaped(entry))
+        .map(|literal| normalize_literal(&literal).to_string())
+        .filter(|literal| protected.guards_change(literal))
+        .collect()
 }
 
 /// The one or two glob patterns one `owns` entry expands to: a literal entry matches

@@ -16,7 +16,7 @@ use daemon::run::git::{
 use daemon::run::globs::{OwnsMatcher, ProtectedMatcher};
 use daemon::run::history_io::measure_diff;
 use daemon::run::orch::contract::refresh_clean;
-use daemon::run::plan::BUILTIN_PROTECTED;
+use daemon::run::plan::builtin_protected;
 use std::path::{Path, PathBuf};
 use support::TempRepo;
 use support::run_git::{T, commit_file, head, out, real_git, repo, try_git, write, wt_dir};
@@ -177,7 +177,7 @@ fn net_diff_excludes_refreshed_commits() {
 
     let owns = vec!["src/own.rs".to_string()];
     let none = OwnsMatcher::new(&[]).unwrap();
-    let builtin: Vec<String> = BUILTIN_PROTECTED.iter().map(|s| s.to_string()).collect();
+    let builtin: Vec<String> = builtin_protected();
     let protected = ProtectedMatcher::new(&builtin).unwrap();
     let done = verify_done(
         real_git(),
@@ -239,7 +239,7 @@ fn refreshed(repo: &TempRepo) -> (crate::support::TestDir, PathBuf, String, Stri
 fn done_excluding(wt: &Path, start: &str, run_head: &str, refreshed: &RefreshedIn) -> u32 {
     let owns = vec!["src/**".to_string()];
     let none = OwnsMatcher::new(&[]).unwrap();
-    let builtin: Vec<String> = BUILTIN_PROTECTED.iter().map(|s| s.to_string()).collect();
+    let builtin: Vec<String> = builtin_protected();
     let protected = ProtectedMatcher::new(&builtin).unwrap();
     let matchers = (&none, &protected);
     let git = real_git();

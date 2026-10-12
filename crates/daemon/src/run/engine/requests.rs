@@ -369,6 +369,10 @@ pub(super) fn retry(
     reply(fx, id, result);
 }
 
+/// Milestone 9.13 decision 14: how many times the orchestrator may retry one task before
+/// its next block is the user's.
+pub(crate) const MAX_ORCH_RETRIES: u32 = 2;
+
 /// The retry's core, shared by the user's request and the orchestrator's op (milestone
 /// 9.9 decision 9): the user path's rule first, then the retry; `actor` is named in the
 /// task's history. The user's own run log line is written here; the orchestrator's is
@@ -388,13 +392,27 @@ pub(super) fn retry_on(
     };
     let who = actor.who();
     let task = &run.tasks[i];
+    // PR #60 review I1: a review or CI fix task's line names the block's reason only;
+    // its worker's text would show as the digest's `last` without tainting.
+    let fix = crate::run::orch::untrusted::fix_kind(task).is_some();
     let was = task.block.clone().map_or_else(String::new, |b| {
         let label = serde_json::to_value(b.reason)
             .ok()
             .and_then(|v| v.as_str().map(str::to_string))
             .unwrap_or_default();
-        format!(" (it was blocked({label}): {})", b.text)
+        match fix {
+            true => format!(" (it was blocked ({label}))"),
+            false => format!(" (it was blocked({label}): {})", b.text),
+        }
     });
+    // Milestone 9.13 decisions 14-15: a successful retry by the user gives the orchestrator
+    // its retries again; one by the orchestrator uses one up. Before the crown branch,
+    // which returns early (pre-flight ruling C19).
+    let retried = &mut run.tasks[i].orch.orch_retries;
+    match actor {
+        Actor::User => *retried = 0,
+        Actor::Orchestrator => *retried = retried.saturating_add(1),
+    }
     // Milestone 9.5 decision 21: a winner whose crown failed is crowned again.
     if super::race_end::retry_crown(run, i, now) {
         history(

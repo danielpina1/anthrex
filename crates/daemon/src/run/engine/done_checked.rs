@@ -114,7 +114,7 @@ pub(super) fn checked(
             .filter(|p| !names_literally(owns, p))
             .collect();
         if !caught.is_empty() {
-            let text = protected_file_message(&caught);
+            let text = protected_file_message(&caught, &run.gate_files);
             return bounce(run, i, &pending, text, told, now, fx);
         }
         // Milestone 9.1 decision 41: a deleted test file `owns` does not name exactly.

@@ -33,6 +33,7 @@ mod design_restore;
 mod effects;
 mod effects_ops;
 mod event_loop;
+pub(crate) mod gate_files;
 // Milestone 9.1.7: read by the tier executor (M9.1.9); until then only its tests call it.
 #[cfg_attr(not(test), allow(dead_code))]
 mod graph;

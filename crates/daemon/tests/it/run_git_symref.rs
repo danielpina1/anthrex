@@ -12,7 +12,7 @@ use daemon::run::git::{
     create_run_branch, hand_back, prepare_review, prepare_worktree, salvage, verify_done,
 };
 use daemon::run::globs::{OwnsMatcher, ProtectedMatcher};
-use daemon::run::plan::BUILTIN_PROTECTED;
+use daemon::run::plan::builtin_protected;
 use std::path::{Path, PathBuf};
 use support::TempRepo;
 use support::run_git::{T, commit_file, out, real_git, repo, wrapper_git, wt_dir};
@@ -84,7 +84,7 @@ impl World {
 }
 
 fn matchers() -> (OwnsMatcher, ProtectedMatcher) {
-    let protected: Vec<String> = BUILTIN_PROTECTED.iter().map(|s| s.to_string()).collect();
+    let protected: Vec<String> = builtin_protected();
     (
         OwnsMatcher::new(&[]).unwrap(),
         ProtectedMatcher::new(&protected).unwrap(),

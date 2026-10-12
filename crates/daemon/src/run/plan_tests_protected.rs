@@ -7,7 +7,7 @@ use crate::run::globs::ProtectedMatcher;
 
 #[test]
 fn the_agents_override_files_are_protected() {
-    let builtins: Vec<String> = BUILTIN_PROTECTED.iter().map(|s| s.to_string()).collect();
+    let builtins: Vec<String> = builtin_protected();
     let matcher = ProtectedMatcher::new(&builtins).unwrap();
     for path in [
         "docs/AGENTS.override.md",

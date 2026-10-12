@@ -12,7 +12,7 @@ use proto::{CommandCheck, DroppedCommand, ProfileVerification, RepoProfile};
 
 use super::confined_hint;
 use crate::run::globs::validate_glob;
-use crate::run::plan::BUILTIN_PROTECTED;
+use crate::run::plan::builtin_protected;
 use crate::run::report::format_utc;
 pub use common::profile_keys::REVERIFY_KEYS;
 
@@ -157,8 +157,9 @@ pub fn from_findings(proposed: &RepoProfile) -> RepoProfile {
     out.conventions = valid(&proposed.conventions);
     out.manifests = valid(&proposed.manifests);
     out.protected = Vec::new();
+    let builtin = builtin_protected();
     for entry in valid(&proposed.protected) {
-        if !BUILTIN_PROTECTED.contains(&entry.as_str()) && !out.protected.contains(&entry) {
+        if !builtin.contains(&entry) && !out.protected.contains(&entry) {
             out.protected.push(entry);
         }
     }
@@ -262,10 +263,13 @@ pub fn apply_edit(
         }
         (Err(error), _) => return Err(error),
     };
+    // Milestone 9.13 (task 3 review I1): only a built-in the edit adds is refused; a
+    // profile stored before the built-ins grew may already list one as an extra.
+    let builtins = builtin_protected();
     if let Some(builtin) = edited
         .protected
         .iter()
-        .find(|entry| BUILTIN_PROTECTED.contains(&entry.as_str()))
+        .find(|entry| builtins.contains(entry) && !stored.protected.contains(entry))
     {
         return Err(format!(
             "protected: {builtin} is built in and always applies; list only extra entries"
@@ -296,7 +300,8 @@ const DROPPED_WITH_IT: &str = "; test_passed and sample_test are dropped with it
 /// is not proposed.
 pub(super) const NOT_VERIFIED: &str = "it was not verified";
 
-/// Decision 5's `protected: built-in <5 globs> + <extras or "no extras">`.
+/// Decision 5's `protected: built-in <the built-in globs> + <extras or "no extras">`
+/// (milestone 9.13 decision 1: the agent-config globs, then the runs-later ones).
 pub fn protected_line(profile: &RepoProfile) -> String {
     let extras = if profile.protected.is_empty() {
         "no extras".to_string()
@@ -305,7 +310,7 @@ pub fn protected_line(profile: &RepoProfile) -> String {
     };
     format!(
         "protected: built-in {} + {extras}",
-        BUILTIN_PROTECTED.join(", ")
+        builtin_protected().join(", ")
     )
 }
 

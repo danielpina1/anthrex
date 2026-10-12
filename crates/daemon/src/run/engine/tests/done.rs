@@ -393,7 +393,10 @@ fn a_task_that_owns_the_generated_file_passes() {
 
 fn assert_protected_bounce(fx: &Fixture, effects: &[Effect], files: &[&str], window: u32) {
     let files: Vec<String> = files.iter().map(|f| f.to_string()).collect();
-    assert_eq!(one_reply(effects), Err(protected_file_message(&files)));
+    assert_eq!(
+        one_reply(effects),
+        Err(protected_file_message(&files, &fx.run().gate_files))
+    );
     let t1 = fx.task("t1");
     assert_eq!(t1.state, TaskState::Working);
     assert_eq!((t1.bounces.done, t1.failures), (1, 1));
@@ -468,4 +471,54 @@ fn an_overridden_task_is_exempt_from_protected() {
     });
     assert_accepted(&fx, &effects, TaskState::Proof);
     assert_eq!(fx.task("t1").failures, 0);
+}
+
+/// Milestone 9.13 decision 3: a changed workflow bounces with the runs-later line.
+#[test]
+fn a_changed_workflow_bounces_with_the_runs_later_text() {
+    let (mut fx, window) = working();
+    let op = claim(&mut fx, window);
+    let effects = verify(&mut fx, op, protected(&[".github/workflows/ci.yml"]));
+    assert_protected_bounce(&fx, &effects, &[".github/workflows/ci.yml"], window);
+    let Err(text) = one_reply(&effects) else {
+        unreachable!()
+    };
+    assert!(
+        text.contains(
+            "\n.github/workflows/ci.yml runs outside the run's sandbox (CI, git hooks, cargo or toolchain config); this task may change it only if its owns names it exactly\n"
+        ),
+        "{text}"
+    );
+}
+
+/// Milestone 9.13 (pinning): `owns` names the workflow exactly, so the git layer reports
+/// no protected change and the task passes `done`, as it does today.
+#[test]
+fn a_workflow_named_in_owns_passes() {
+    let owns = "[\"crates/a/**\", \".github/workflows/ci.yml\"]";
+    let (mut fx, window) = working_owning(PROFILE, owns, "");
+    let op = claim(&mut fx, window);
+    let effects = verify(&mut fx, op, |_| {});
+    assert_accepted(&fx, &effects, TaskState::Proof);
+    assert_eq!(fx.task("t1").bounces.done, 0);
+}
+
+/// Milestone 9.13 decision 3 (C2): a changed gate script bounces with the gate line.
+#[test]
+fn a_changed_gate_script_bounces_with_the_gate_text() {
+    let (mut fx, window) = working();
+    fx.run_mut().gate_files = vec![crate::run::gate_words::PinnedFile {
+        path: "scripts/check.sh".into(),
+        blob: "a".repeat(40),
+    }];
+    let op = claim(&mut fx, window);
+    let effects = verify(&mut fx, op, protected(&["scripts/check.sh"]));
+    assert_protected_bounce(&fx, &effects, &["scripts/check.sh"], window);
+    assert_eq!(
+        one_reply(&effects),
+        Err("[anthrex] task_done rejected:\n\
+             scripts/check.sh is run by this run's own gate (check, setup or a tier command); this task may change it only if its owns names it exactly\n\
+             Revert it and call task_done again, or ask for the plan to be amended."
+            .to_string())
+    );
 }

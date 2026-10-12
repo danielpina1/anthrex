@@ -47,8 +47,8 @@ pub use checkout::{Repo, checkout_repo_dir, default_repo_dir, restore_owner_acce
 pub use crown::{clear_stale_locks, cleared_of, crown};
 pub use docs::{DocsCommit, DocsOutcome, commit_docs, docs_symlink};
 pub use done::{
-    DoneChecked, RefreshedIn, count_commits, count_commits_excluding, diff_so_far, verify_done,
-    verify_done_excluding, verify_done_spilling,
+    DoneChecked, RefreshedIn, count_commits, count_commits_checked, count_commits_excluding,
+    diff_so_far, verify_done, verify_done_excluding, verify_done_spilling,
 };
 pub(crate) use handback::merged_log;
 pub use handback::{
@@ -497,6 +497,7 @@ pub fn preflight(git: &OsStr, dir: &Path, timeout: Duration) -> Result<Preflight
         base_branch,
         base_sha,
         protected_files: Vec::new(),
+        gate_files: Vec::new(),
     })
 }
 

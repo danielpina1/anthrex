@@ -19,19 +19,8 @@ use super::validate::{
     EditScope, combined_cycles, implicit_deps, resolve_task_lenient, validate_tasks,
 };
 
-/// Decision 56's built-in protected paths. Configuration and the plan add to them;
-/// neither can remove one.
-pub const BUILTIN_PROTECTED: &[&str] = &[
-    ".claude/**",
-    ".mcp.json",
-    ".codex/**",
-    "**/CLAUDE.md",
-    "**/AGENTS.md",
-    // Milestone 9.11 decision 33 (D6): the agents' override, local and shared files.
-    "**/AGENTS.override.md",
-    "**/CLAUDE.local.md",
-    ".agents/**",
-];
+// Decision 56's built-in protected paths (milestone 9.13 decision 1 moved and split them).
+pub use super::protected_lists::{AGENT_CONFIG_PROTECTED, RUNS_LATER_PROTECTED, builtin_protected};
 
 /// `check_timeout_secs` when neither the plan nor the config sets it: the spec's 30
 /// minutes.
@@ -89,6 +78,8 @@ pub struct Preflight {
     pub base_branch: String,
     pub base_sha: String,
     pub protected_files: Vec<String>,
+    /// Milestone 9.13 decision 10: the gate's own files (`driver::gate_files::read`).
+    pub gate_files: Vec<super::gate_words::PinnedFile>,
 }
 
 pub struct BuildContext<'a> {
@@ -145,7 +136,7 @@ pub fn resolve_profile(plan: &ProfileSpec, config: &ProfileSpec) -> Profile {
     fn pick<T: Clone>(plan: &Option<T>, config: &Option<T>) -> Option<T> {
         plan.clone().or_else(|| config.clone())
     }
-    let mut protected: Vec<String> = BUILTIN_PROTECTED.iter().map(|s| s.to_string()).collect();
+    let mut protected = builtin_protected();
     for extra in config
         .protected
         .iter()
@@ -340,6 +331,8 @@ fn check_plan(plan: &Plan, profile: &Profile, errors: &mut Vec<PlanError>) {
 pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Run, Vec<PlanError>> {
     let config = ctx.config;
     let mut profile = resolve_profile(&plan.profile, &config.profile);
+    // Milestone 9.13 decision 10: the gate's own files join the frozen protected list.
+    super::gate_words::protect(&mut profile.protected, &pre.gate_files);
     profile.cache_dirs = for_repo(&config.cache_dirs, &pre.root)
         .cloned()
         .unwrap_or_default();
@@ -447,6 +440,7 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         trusted_project: Vec::new(),
         trust_project: false,
         protected_files: pre.protected_files,
+        gate_files: pre.gate_files,
         rate_limits: Default::default(),
         outcome: None,
         // Decision 12's tuning lines open the run's log. In a design run, milestone

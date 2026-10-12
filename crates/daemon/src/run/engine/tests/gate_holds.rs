@@ -436,3 +436,34 @@ fn an_empty_drafting_round_of_an_ended_planner_is_dropped() {
     assert!(fx.run().orch.gate_holds.is_empty(), "dropped");
     assert_eq!(spawn(&mut fx, "web")["hold"], "epic:web", "held again");
 }
+
+/// Milestone 9.13 decision 6: an epic hold whose task owns `AGENTS.md` exactly grants a
+/// protected file, so only the user may approve it.
+#[test]
+fn approve_hold_of_a_protected_grant_is_user_only() {
+    let mut fx = launched(false);
+    edit_plan(
+        &mut fx,
+        json!({"edits": [add("t1", "auth")], "submit": true}),
+    );
+    fx.approve();
+    assert_eq!(spawn(&mut fx, "mail")["hold"], "epic:mail");
+    fx.run_mut().orch.epics[0].phase = PlannerPhase::Finished;
+    let mut t2 = in_epic("t2", "mail", "mail");
+    t2["task"]["owns"] = json!(["AGENTS.md"]);
+    let (ok, value) = answer(&edit_plan(&mut fx, json!({"edits": [t2]})));
+    assert!(ok, "{value}");
+    assert_eq!(value["held"], "epic:mail");
+    awaiting(&mut fx);
+    let edit = json!({"op": "approve_hold", "hold": "epic:mail", "reason": "it is in the goal"});
+    let effects = edit_plan(&mut fx, json!({"edits": [edit]}));
+    assert_eq!(
+        super::orch::error(&effects),
+        "hold epic:mail grants protected AGENTS.md; only the user can approve it"
+    );
+    assert_eq!(hold_state(&fx, "epic:mail"), HoldState::Awaiting);
+    assert!(fx.run().orch.handled.is_empty());
+    let effects = verdict(&mut fx, "epic:mail", true);
+    assert!(replies(&effects)[0].is_ok(), "{effects:#?}");
+    assert_eq!(hold_state(&fx, "epic:mail"), HoldState::Approved);
+}

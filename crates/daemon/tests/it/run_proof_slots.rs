@@ -49,6 +49,7 @@ fn the_proof_holds_a_slot_for_each_command_only() {
         env: vec![("PROOF_LOG".into(), log.display().to_string())],
         confine: None,
         red_only: false,
+        pinned: Vec::new(),
     };
     let events = Arc::new(Mutex::new(Vec::new()));
     let seen = events.clone();
@@ -104,6 +105,7 @@ fn the_red_only_proof_runs_only_the_red_run() {
             env: vec![("PROOF_LOG".into(), log.display().to_string())],
             confine: None,
             red_only: true,
+            pinned: Vec::new(),
         };
         let events = Arc::new(Mutex::new(Vec::new()));
         let seen = events.clone();

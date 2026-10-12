@@ -518,6 +518,10 @@ fn submit_epic(
         }
     };
     gate_holds::assign(&mut edited, edits, &added, now);
+    if let Some(text) = super::protected_grants::unheld(&edited, run, &added) {
+        record_rejected(run, edits, &source, text.clone(), now);
+        return refuse(fx, reply, text);
+    }
     let record = &mut edited.orch.epics[k];
     record.phase = PlannerPhase::Finished;
     record.ended_at = Some(now);

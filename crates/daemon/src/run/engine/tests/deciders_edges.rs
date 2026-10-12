@@ -104,6 +104,7 @@ fn an_override_ends_the_classification() {
         OpResult::Commits {
             count: 1,
             head: HEAD.into(),
+            protected: Vec::new(),
         },
     );
     let t1 = fx.task("t1");

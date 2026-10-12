@@ -198,6 +198,19 @@ The run view, the runs tree and `anthrex run status` list every live run and the
 </tr>
 </table>
 
+### Protected files and the gate's scripts
+
+A run cannot change what judges it, or what runs after it, without you seeing it. A task's `task_done` is refused when its branch changes a protected file that its `owns` does not name exactly, with a line that says why. The 21 built-in protected paths come in two groups:
+
+- **Files that configure or instruct future agents:** `.claude/**`, `.mcp.json`, `.codex/**`, `**/CLAUDE.md`, `**/AGENTS.md`, `**/AGENTS.override.md`, `**/CLAUDE.local.md`, `.agents/**`.
+- **Files that run outside the run's sandbox later** (CI, git hooks, cargo and toolchain configuration): `.github/workflows/**`, `.github/actions/**`, `.gitlab-ci.yml`, `.circleci/**`, `.buildkite/**`, `Jenkinsfile`, `azure-pipelines.yml`, `.githooks/**`, `.husky/**`, `.pre-commit-config.yaml`, `**/.cargo/**`, `**/rust-toolchain`, `**/rust-toolchain.toml`.
+
+Add your own with `protected` in the profile (`[orchestrator.profile]` or a plan's `[profile]`); nothing removes a built-in one. `Cargo.toml`, `build.rs`, `package.json`, `pyproject.toml` and `go.mod` are not built in.
+
+**The gate's own scripts are pinned.** At the start of a run, anthrex reads which tracked files the profile's commands name (`check`, `setup`, `single_test` and the tier commands; `make` adds its `GNUmakefile`, `makefile` and `Makefile`, `just` its `justfile`, `Justfile` and `.justfile`, `tox` its `tox.ini`, `nox` its `noxfile.py`). Those files are protected too, and so is each of those names that the program would prefer over the one the base commit has, or every one of them when it has none: such a name is pinned as absent, so a task that creates it (a `GNUmakefile` beside the tracked `Makefile`, say) is bounced unless its `owns` names it exactly, and a gate command refuses a checkout where it appeared. `pyproject.toml`, `setup.cfg` and `package.json` are never added. Before every gate command anthrex compares the pinned files in the checkout with the base commit. If a run changed one, the command never runs: the run halts with `the gate's script <path> differs from the base commit's; the run changed what measures it`, and only you can resume it. To let a task change a gate script, name the script exactly in that task's `owns`; you approve that grant with the plan (the plan review notes it), and the file is then not pinned for that run. Your own `anthrex run override` of a task that changes a pinned script lets the change through `task_done`, but its reply says the script `stays pinned until a task's owns names it (run edit)`: the next gate command halts the run until a task whose `owns` names the script is added with `anthrex run edit`, after which `run resume` (and a second override of the task) carries on.
+
+**What the orchestrator may not do.** It cannot override a task whose branch changes a protected file its `owns` does not name, approve a hold whose tasks name a protected file, or add such a task outside a hold after the plan gate: those go to you. After it has retried one task twice, that task's next block is yours. Once it has read text from outside the run (a pull-request comment, or a review or CI fix task's block, note or result), its `override` and `accept_red` become an `orchestrator asks` question to you (`do it` / `leave it`), and its `approve_hold` is refused, for the rest of the run and any next goal it continues. `anthrex run status` and the run view's inspector show `untrusted text read: <source> at <HH:MM>`.
+
 ### Keep going and tuning
 
 - **Rounds.** `anthrex run iterate <run> "<request>"` (or the action menu) asks the orchestrator to plan a new round of a complete run; a design run amends its spec first.

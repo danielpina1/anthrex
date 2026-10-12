@@ -24,6 +24,7 @@ fn orchestrator() -> OrchestratorInfo {
         ask: None,
         handled: vec![],
         handled_total: 0,
+        untrusted: None,
     }
 }
 
@@ -127,4 +128,29 @@ fn status_ask_lines_are_sanitised() {
         assert_eq!(plain(lines[at + 2]), "    2. spaces  [31m", "{out:?}");
         assert!(lines[at + 3].starts_with("  ID "), "{out:?}");
     }
+}
+
+/// Milestone 9.13 decision 22: the taint under the orchestrator, its source on one line
+/// with control characters gone, the time in UTC (`common::text::hh_mm`, C17).
+#[test]
+fn untrusted_line_is_printed() {
+    let mut run = example();
+    run.orchestrator = Some(orchestrator());
+    assert!(!run_block(&run, 0).contains("untrusted"));
+    run.orchestrator.as_mut().unwrap().untrusted = Some(proto::UntrustedInfo {
+        // 2026-10-12 14:07:59Z.
+        at: 1_791_814_079,
+        source: "review comments\n\x1b[2Jon stage 1's pull request".into(),
+    });
+    let out = run_block(&run, 0);
+    let lines: Vec<&str> = out.lines().collect();
+    let at = lines
+        .iter()
+        .position(|l| l.starts_with("  orchestrator: "))
+        .unwrap_or_else(|| panic!("{out}"));
+    assert_eq!(
+        lines[at + 1],
+        "  untrusted text read: review comments  [2Jon stage 1's pull request at 14:07; override, accept_red and approve_hold go to the user",
+        "{out:?}"
+    );
 }

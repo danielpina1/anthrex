@@ -80,6 +80,7 @@ dependencies = [
 name = "anthrex"
 version = "0.2.0"
 dependencies = [
+ "anthrex-common",
  "anthrex-config",
  "anthrex-daemon",
  "anthrex-mcp",

@@ -188,3 +188,28 @@ fn worker_first_turn_carries_the_scout_extract() {
             .contains("Scout report 3f9a-api:\n  The API lives in crates/api.\nFiles: none"),
     );
 }
+
+/// Milestone 9.13 decision 6: a sub-planner's task that would run unheld (its epic's
+/// round already approved) may not name a protected file.
+#[test]
+fn a_subplanner_task_naming_a_protected_file_outside_a_hold_is_refused() {
+    let mut fx = planning_mail(false);
+    let round = (fx.run_mut().orch.gate_holds.iter_mut())
+        .find(|h| h.id == "epic:mail")
+        .unwrap();
+    round.state = HoldState::Approved;
+    let mut t2 = task_in("t2", "mail");
+    t2["task"]["owns"] = json!(["crates/mail/AGENTS.md"]);
+    let effects = submit_epic(&mut fx, json!([t2]));
+    let (ok, text) = reply(&effects);
+    assert!(!ok);
+    let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        value["error"],
+        "owns names protected crates/mail/AGENTS.md; ask the user (ask_user)"
+    );
+    assert!(
+        fx.run().task("t2").is_none(),
+        "nothing of the batch is kept"
+    );
+}

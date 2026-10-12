@@ -151,6 +151,7 @@ fn an_override_that_counts_commits_records_when_it_lands() {
         crate::run::engine::OpResult::Commits {
             count: 2,
             head: HEAD.into(),
+            protected: Vec::new(),
         },
     );
     assert!(replies(&effects)[0].is_ok(), "{effects:#?}");

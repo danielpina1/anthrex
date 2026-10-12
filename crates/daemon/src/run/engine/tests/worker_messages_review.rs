@@ -125,6 +125,7 @@ fn override_counts_without_the_refresh_merges() {
     let zero = OpResult::Commits {
         count: 0,
         head: MERGE.into(),
+        protected: Vec::new(),
     };
     let effects = fx.done(op, zero);
     assert!(ops_in(&effects, "MergeCandidate").is_empty());
@@ -143,6 +144,7 @@ fn a_replayed_refresh_merge_is_not_recorded_twice() {
         OpResult::Commits {
             count: 0,
             head: HEAD.into(),
+            protected: Vec::new(),
         },
     );
     let (op, _) = only_op(&effects, "HandBack");
@@ -190,6 +192,7 @@ fn a_refresh_names_the_count_of_every_merged_commit() {
     let commits = OpResult::Commits {
         count: 0,
         head: HEAD.into(),
+        protected: Vec::new(),
     };
     let (op, _) = only_op(&fx.done(count, commits), "HandBack");
     let merged: Vec<String> = (0..20).map(|n| format!("c{n:06} commit {n}")).collect();
@@ -258,6 +261,7 @@ fn refresh_at_boundary(fx: &mut Fixture, window: u32) -> crate::run::model::OpId
     let commits = OpResult::Commits {
         count: 0,
         head: HEAD.into(),
+        protected: Vec::new(),
     };
     only_op(&fx.done(count, commits), "HandBack").0
 }

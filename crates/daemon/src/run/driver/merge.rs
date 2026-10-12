@@ -221,6 +221,11 @@ pub(super) async fn merge_into(
                         tier: Some(outcome),
                     });
                 }
+                // Milestone 9.13 decision 12: nothing landed.
+                refused @ OpResult::GateRefused { .. } => {
+                    reattach().await?;
+                    return Ok(refused);
+                }
                 OpResult::Failed { message } => return Err(message),
                 other => return Err(format!("tier 2 did not run: {other:?}")),
             }
@@ -233,6 +238,10 @@ pub(super) async fn merge_into(
             let outcome = scheduled(service, ctx, op, (Priority::Candidate, Want::All, label))
                 .run(&at, &check, &env, timeout)
                 .await?;
+            if let Some(path) = outcome.gate_refused {
+                reattach().await?;
+                return Ok(OpResult::GateRefused { path });
+            }
             if !outcome.ok {
                 reattach().await?;
                 return Ok(OpResult::CandidateRed {

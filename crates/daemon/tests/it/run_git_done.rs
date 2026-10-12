@@ -4,9 +4,12 @@
 
 use crate::support;
 
-use daemon::run::git::{DoneChecked, count_commits, diff_so_far, prepare_worktree, verify_done};
+use daemon::run::git::{
+    DoneChecked, RefreshedIn, count_commits, count_commits_checked, diff_so_far, prepare_worktree,
+    verify_done,
+};
 use daemon::run::globs::{OwnsMatcher, ProtectedMatcher};
-use daemon::run::plan::BUILTIN_PROTECTED;
+use daemon::run::plan::builtin_protected;
 use std::path::PathBuf;
 use support::TempRepo;
 use support::run_git::{T, commit_file, head, out, real_git, repo, try_git, write, wt_dir};
@@ -43,7 +46,7 @@ fn check(
     red: Option<&str>,
 ) -> DoneChecked {
     let generated = OwnsMatcher::new(&strings(generated)).unwrap();
-    let protected = ProtectedMatcher::new(&strings(BUILTIN_PROTECTED)).unwrap();
+    let protected = ProtectedMatcher::new(&builtin_protected()).unwrap();
     verify_done(
         real_git(),
         &t.path,
@@ -426,7 +429,7 @@ esac"#,
         ),
     );
     let generated = OwnsMatcher::new(&[]).unwrap();
-    let protected = ProtectedMatcher::new(&strings(BUILTIN_PROTECTED)).unwrap();
+    let protected = ProtectedMatcher::new(&builtin_protected()).unwrap();
     let r = verify_done(
         git.as_os_str(),
         &t.path,
@@ -465,4 +468,70 @@ fn verify_done_catches_a_protected_directory_replaced_by_a_symlink() {
         let r = check(&t, &t.start, &[dir, "docs/**"], &[], None);
         assert!(r.protected_changed.is_empty(), "{dir}: {r:?}");
     }
+}
+
+/// Milestone 9.13 decision 1: a committed workflow and a nested cargo config are
+/// protected changes; naming the workflow exactly in `owns` grants it alone.
+#[test]
+fn a_changed_workflow_is_a_protected_change() {
+    let repo = repo();
+    commit_file(&repo.root, "src/lib.rs", "pub fn a() {}\n", "src");
+    let (_keep, wt) = wt_dir();
+    let t = task(&repo, &wt, "runs-later");
+    commit_file(&t.path, "src/w.rs", "w\n", "w");
+    commit_file(&t.path, ".github/workflows/ci.yml", "on: push\n", "ci");
+    commit_file(&t.path, "crates/x/.cargo/config.toml", "[build]\n", "cargo");
+
+    let r = check(&t, &t.start, &["src/**"], &[], None);
+    assert_eq!(
+        r.protected_changed,
+        strings(&[".github/workflows/ci.yml", "crates/x/.cargo/config.toml"]),
+        "{r:?}"
+    );
+
+    let r = check(
+        &t,
+        &t.start,
+        &["src/**", ".github/workflows/ci.yml"],
+        &[],
+        None,
+    );
+    assert_eq!(
+        r.protected_changed,
+        strings(&["crates/x/.cargo/config.toml"]),
+        "{r:?}"
+    );
+}
+
+/// Milestone 9.13 decision 5: the override's count lists the protected paths the task
+/// changed that its `owns` does not name; with no protected list it runs no diff, so even
+/// a non-ASCII path (which the done gate always guards) is not listed.
+#[test]
+fn count_commits_lists_protected_changes() {
+    let repo = repo();
+    commit_file(&repo.root, "src/lib.rs", "pub fn a() {}\n", "src");
+    let (_keep, wt) = wt_dir();
+    let t = task(&repo, &wt, "protected-count");
+    write(&t.path, "AGENTS.md", "be bold\n");
+    write(&t.path, "src/a.rs", "a\n");
+    write(&t.path, "src/\u{17f}.rs", "long s\n");
+    out(&t.path, &["add", "-A"]);
+    let h = commit_file(&t.path, "src/b.rs", "b\n", "agents and code");
+    let owns = strings(&["src/**"]);
+    let count = |protected: &[String]| {
+        count_commits_checked(
+            real_git(),
+            &t.path,
+            (&t.start, &t.start),
+            &RefreshedIn::default(),
+            (&owns, protected),
+            T,
+        )
+        .unwrap()
+    };
+    assert_eq!(
+        count(&builtin_protected()),
+        ((1, h.clone()), strings(&["AGENTS.md", "src/\u{17f}.rs"]))
+    );
+    assert_eq!(count(&[]), ((1, h), Vec::new()));
 }

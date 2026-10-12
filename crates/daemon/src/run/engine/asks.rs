@@ -4,7 +4,7 @@
 //! for the user: it returns at once. The question and the chosen option are the
 //! orchestrator's own text and stay data; the wake note makes them one line. Pure.
 
-use proto::RunState;
+use proto::{PlanEdit, RunState};
 
 use super::requests::log;
 use super::{Effect, EngineState, ReplyId, wake};
@@ -20,15 +20,15 @@ fn quoted(text: &str) -> String {
     crate::run::orch::json::cut(&line, LOG_QUESTION_MAX)
 }
 
-/// Stores `(question, options, context)` as the pending question, replacing an
-/// unanswered one, and answers at once.
-pub(super) fn ask(
+/// Stores `(question, options, context)` as the pending question, with `proposal`
+/// (milestone 9.13 decision 21), replacing an unanswered one, and logs it. The
+/// replaced question, if any.
+pub(super) fn store(
     run: &mut Run,
-    reply: ReplyId,
     (question, options, context): (String, Vec<String>, String),
+    proposal: Option<PlanEdit>,
     now: u64,
-    fx: &mut Vec<Effect>,
-) {
+) -> Option<AskRecord> {
     run.orch.ask_seq = run.orch.ask_seq.saturating_add(1);
     let old = run.orch.ask.replace(AskRecord {
         id: run.orch.ask_seq,
@@ -36,22 +36,32 @@ pub(super) fn ask(
         options,
         context,
         asked_at: now,
+        proposal,
     });
-    let (text, reply_text) = match old {
-        Some(old) => (
-            format!(
-                "orchestrator asks: {} (replaces \"{}\")",
-                quoted(&question),
-                quoted(&old.question)
-            ),
-            "asked, replacing your earlier question; the answer arrives as a message",
+    let text = match &old {
+        Some(old) => format!(
+            "orchestrator asks: {} (replaces \"{}\")",
+            quoted(&question),
+            quoted(&old.question)
         ),
-        None => (
-            format!("orchestrator asks: {}", quoted(&question)),
-            "asked; the answer arrives as a message",
-        ),
+        None => format!("orchestrator asks: {}", quoted(&question)),
     };
     log(run, now, text);
+    old
+}
+
+/// `ask_user`: [`store`] the question, and answer at once.
+pub(super) fn ask(
+    run: &mut Run,
+    reply: ReplyId,
+    ask: (String, Vec<String>, String),
+    now: u64,
+    fx: &mut Vec<Effect>,
+) {
+    let reply_text = match store(run, ask, None, now) {
+        Some(_) => "asked, replacing your earlier question; the answer arrives as a message",
+        None => "asked; the answer arrives as a message",
+    };
     fx.push(Effect::Reply {
         reply,
         result: Ok(reply_text.into()),
@@ -60,6 +70,8 @@ pub(super) fn ask(
 
 /// `AnswerAsk`: `choice` is an option's 0-based index. `Some` wakes the orchestrator with
 /// the option and clears the question; `None` clears it (the user typed in the window).
+/// A question that carries a proposal runs, declines or drops it (milestone 9.13
+/// decision 21); a "do it" override's reply waits for its commit count.
 pub(super) fn answer(
     state: &mut EngineState,
     reply: ReplyId,
@@ -68,29 +80,43 @@ pub(super) fn answer(
     fx: &mut Vec<Effect>,
 ) {
     let result = match state.runs.get_mut(run_id) {
-        Some(run) => answered(run, id, choice, now),
-        None => Err(format!("unknown run {run_id}")),
+        Some(run) => answered(run, reply, (id, choice), now, fx),
+        None => Some(Err(format!("unknown run {run_id}"))),
     };
-    fx.push(Effect::Reply { reply, result });
+    if let Some(result) = result {
+        fx.push(Effect::Reply { reply, result });
+    }
 }
 
-fn answered(run: &mut Run, id: u64, choice: Option<u32>, now: u64) -> Result<String, String> {
+fn answered(
+    run: &mut Run,
+    reply: ReplyId,
+    (id, choice): (u64, Option<u32>),
+    now: u64,
+    fx: &mut Vec<Effect>,
+) -> Option<Result<String, String>> {
     let Some(ask) = run.orch.ask.as_ref() else {
-        return Err(format!("run {} has no pending question", run.id));
+        return Some(Err(format!("run {} has no pending question", run.id)));
     };
     if ask.id != id {
-        return Err("that question was replaced; answer the new one".into());
+        return Some(Err("that question was replaced; answer the new one".into()));
     }
     let picked = match choice {
         None => None,
         Some(i) => match ask.options.get(i as usize) {
             Some(option) => Some(option.clone()),
-            None if ask.options.is_empty() => return Err("this question has no options".into()),
-            None => return Err(format!("choose 1 to {}", ask.options.len())),
+            None if ask.options.is_empty() => {
+                return Some(Err("this question has no options".into()));
+            }
+            None => return Some(Err(format!("choose 1 to {}", ask.options.len()))),
         },
     };
-    run.orch.ask = None;
-    match picked {
+    let ask = run.orch.ask.take()?;
+    if let Some(proposal) = &ask.proposal {
+        let call = (proposal, choice);
+        return super::untrusted::answered_proposal(run, reply, call, now, fx);
+    }
+    Some(match picked {
         Some(option) => {
             wake::note(run, format!("the user chose: {option}"));
             log(
@@ -101,7 +127,7 @@ fn answered(run: &mut Run, id: u64, choice: Option<u32>, now: u64) -> Result<Str
             Ok(format!("answered: {option}"))
         }
         None => Ok("answered in the window".into()),
-    }
+    })
 }
 
 /// Post-step (decision 16, ruling R5): the question is dropped when the run enters

@@ -8,7 +8,7 @@ use proto::{OutputFilter, Plan, ProfileSource, ProfileSpec, RepoProfile};
 use super::proposal::{EDIT_KEYS, apply_edit, from_findings, validate};
 use super::resolve::{apply_choice, derived_prefixes, run_profile};
 use crate::run::model::Profile;
-use crate::run::plan::{BUILTIN_PROTECTED, BuildContext, Preflight, build_run, resolve_profile};
+use crate::run::plan::{BuildContext, Preflight, build_run, builtin_protected, resolve_profile};
 
 fn stored_path() -> PathBuf {
     PathBuf::from("/data/repos/p-12345678/profile.toml")
@@ -203,7 +203,7 @@ fn builtins_always_apply_whatever_the_stored_list() {
             ..Default::default()
         };
         let (profile, notes) = resolved(Some(&stored), &plan, &config);
-        for builtin in BUILTIN_PROTECTED {
+        for builtin in &builtin_protected() {
             assert!(
                 profile.protected.iter().any(|p| p == builtin),
                 "{builtin} missing from {:?}",
@@ -275,6 +275,7 @@ fn confinement_still_comes_from_the_users_config() {
         base_branch: "main".into(),
         base_sha: "b".repeat(40),
         protected_files: Vec::new(),
+        gate_files: Vec::new(),
     };
     let ctx = BuildContext {
         tuning: Default::default(),
@@ -399,7 +400,7 @@ fn edit_of_protected_refuses_builtins() {
         &ProfileSpec::default(),
         &ProfileSpec::default(),
     );
-    assert_eq!(profile.protected, strings(BUILTIN_PROTECTED));
+    assert_eq!(profile.protected, builtin_protected());
 }
 
 #[test]
@@ -510,7 +511,7 @@ fn summary_prints_the_built_ins_and_the_degradations() {
     assert_eq!(
         text,
         "languages: rust\n\
-         protected: built-in .claude/**, .mcp.json, .codex/**, **/CLAUDE.md, **/AGENTS.md, **/AGENTS.override.md, **/CLAUDE.local.md, .agents/** + .cursor/**\n\
+         protected: built-in .claude/**, .mcp.json, .codex/**, **/CLAUDE.md, **/AGENTS.md, **/AGENTS.override.md, **/CLAUDE.local.md, .agents/**, .github/workflows/**, .github/actions/**, .gitlab-ci.yml, .circleci/**, .buildkite/**, Jenkinsfile, azure-pipelines.yml, .githooks/**, .husky/**, .pre-commit-config.yaml, **/.cargo/**, **/rust-toolchain, **/rust-toolchain.toml + .cursor/**\n\
          setup: none\n\
          check: none (runs are unverified)\n\
          single test: none (tdd is impossible; code tasks use check)"
@@ -541,6 +542,7 @@ fn a_stale_profile_gets_the_attention_line() {
         base_branch: "main".into(),
         base_sha: "b".repeat(40),
         protected_files: Vec::new(),
+        gate_files: Vec::new(),
     };
     let ctx = BuildContext {
         tuning: Default::default(),

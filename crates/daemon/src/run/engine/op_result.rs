@@ -54,6 +54,10 @@ pub enum OpResult {
     Commits {
         count: u32,
         head: String,
+        /// Milestone 9.13 decision 5: the changed paths decision 56 protects that the
+        /// task's `owns` does not name literally; empty when the op asked for none.
+        #[serde(default)]
+        protected: Vec<String>,
     },
     Diff {
         stat: String,
@@ -214,6 +218,11 @@ pub enum OpResult {
     /// The task's addendum: the documents folder goes through `path`, a symbolic link
     /// tracked in the run head's tree; nothing was written.
     DocsThroughSymlink {
+        path: String,
+    },
+    /// Milestone 9.13 decision 12: a gate command was not run, because the pinned gate
+    /// script `path` differs from its blob at the run's base commit. Appended last.
+    GateRefused {
         path: String,
     },
 }

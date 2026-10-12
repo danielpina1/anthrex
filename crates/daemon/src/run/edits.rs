@@ -388,7 +388,13 @@ impl Batch {
                 continue;
             }
             let text = format!("dependency {id} was cancelled");
+            // PR #60 review I1: a review or CI fix task's line never embeds its worker's
+            // block text, which the digest would show as its `last` without tainting.
+            let fix = super::orch::untrusted::fix_kind(dependent).is_some();
             let history = match (&dependent.block, dependent.state) {
+                (Some(_), TaskState::Blocked) if fix => {
+                    format!("blocked: {text} (was {})", state_label(dependent))
+                }
                 (Some(old), TaskState::Blocked) => format!(
                     "blocked: {text} (was {}: {})",
                     state_label(dependent),

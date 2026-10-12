@@ -400,3 +400,111 @@ fn a_long_task_id_gets_the_plan_rules_error() {
     assert_eq!(value["errors"][0]["field"], "id", "{value}");
     assert_eq!(value["errors"][0]["rule"], "id", "{value}");
 }
+
+/// An `add_task` of an S task owning `owns`, with no epic.
+fn add_owning(id: &str, owns: &[&str]) -> serde_json::Value {
+    let mut edit = add(id, "x");
+    edit["task"]["owns"] = json!(owns);
+    edit
+}
+
+/// Milestone 9.13 decision 6: past the plan gate, a task the orchestrator adds whose
+/// `owns` names a protected file, and that no undecided hold holds, is refused.
+#[test]
+fn adding_a_task_that_names_a_protected_file_outside_a_hold_is_refused() {
+    let mut fx = super::wake_notes::approved();
+    let before = fx.run().clone();
+    let effects = edit_plan(
+        &mut fx,
+        json!({"edits": [add_owning("t3", &[".github/workflows/ci.yml"])]}),
+    );
+    assert_eq!(
+        error(&effects),
+        "owns names protected .github/workflows/ci.yml; ask the user (ask_user)"
+    );
+    assert_eq!(fx.run().tasks, before.tasks, "the run is unchanged");
+    assert_eq!(fx.run().orch.gate_holds, before.orch.gate_holds);
+    let record = fx.run().plan_edits.last().unwrap();
+    assert!(!record.accepted);
+}
+
+/// Task 4 review I1: an escaped literal (`[*]`) and a non-ASCII literal name protected
+/// files to the done gate, so past the plan gate each is a grant and is refused.
+#[test]
+fn escaped_and_non_ascii_grants_outside_a_hold_are_refused() {
+    let cases = [
+        (
+            ".github/workflows/deploy[*].yml",
+            ".github/workflows/deploy*.yml",
+        ),
+        ("AGENT\u{17f}.md", "AGENT\u{17f}.md"),
+    ];
+    for (entry, path) in cases {
+        let mut fx = super::wake_notes::approved();
+        let before = fx.run().clone();
+        let effects = edit_plan(&mut fx, json!({"edits": [add_owning("t3", &[entry])]}));
+        assert_eq!(
+            error(&effects),
+            format!("owns names protected {path}; ask the user (ask_user)"),
+            "{entry}"
+        );
+        assert_eq!(fx.run().tasks, before.tasks, "the run is unchanged");
+    }
+}
+
+/// Decision 6: a batch that makes a task's grants grow is refused the same way.
+/// `amend_task` carries no `owns` (`proto::PlanEdit::AmendTask`), so no orchestrator
+/// edit can do this today; the rule is checked on the batch's result, so the edited
+/// run is built here directly (see the brief's implementation notes).
+#[test]
+fn amending_owns_to_name_a_protected_file_is_refused() {
+    let mut fx = super::wake_notes::approved();
+    fx.launch_all();
+    let before = fx.run().clone();
+    let mut edited = before.clone();
+    let t1 = edited.tasks.iter_mut().find(|t| t.id() == "t1").unwrap();
+    t1.spec.owns.push(".husky/pre-commit".into());
+    assert_eq!(
+        crate::run::engine::protected_grants::unheld(&edited, &before, &[]),
+        Some("owns names protected .husky/pre-commit; ask the user (ask_user)".to_string())
+    );
+    // A grant the task already had does not grow.
+    assert_eq!(
+        crate::run::engine::protected_grants::unheld(&edited, &edited, &[]),
+        None
+    );
+}
+
+/// Decision 6: in a promoted run the addition waits under the open `promotion` hold,
+/// so the user approves the grant with it.
+#[test]
+fn a_held_task_may_name_a_protected_file() {
+    let mut fx = super::promote::promoted();
+    let (ok, value) = answer(&edit_plan(
+        &mut fx,
+        json!({"edits": [add_owning("t3", &[".github/workflows/ci.yml"])]}),
+    ));
+    assert!(ok, "{value}");
+    assert_eq!(value["held"], "promotion");
+    assert_eq!(fx.task("t3").orch.gate_hold.as_deref(), Some("promotion"));
+}
+
+/// Ruling C4: before the plan gate the draft's grants are the user's to approve with the
+/// plan, so the orchestrator's draft may carry one; it gets decision 4's note.
+#[test]
+fn a_draft_naming_a_protected_file_before_the_gate_is_accepted() {
+    let mut fx = launched(false);
+    fx.run_mut().protected_files = vec![".github/workflows/ci.yml".into()];
+    let (ok, value) = answer(&edit_plan(
+        &mut fx,
+        json!({"edits": [add_owning("t1", &[".github/workflows/ci.yml"])], "submit": true}),
+    ));
+    assert!(ok, "{value}");
+    let note = "t1: owns names protected .github/workflows/ci.yml; the user approves this grant with the plan";
+    let notes = value["notes"].as_array().unwrap();
+    assert!(notes.iter().any(|n| n == note), "{notes:?}");
+    assert_eq!(fx.run().state, RunState::AwaitingApproval);
+    fx.approve();
+    assert_eq!(fx.run().state, RunState::Running);
+    assert!(fx.task("t1").orch.gate_hold.is_none());
+}

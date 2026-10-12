@@ -42,6 +42,7 @@ pub mod rules;
 #[cfg(test)]
 pub(crate) mod test_support;
 pub mod tools;
+pub mod untrusted;
 
 pub use attention::{START_PROMPT, WAKE_HELD, orchestrator_lines};
 pub use limits::{AgentLimits, DesignLimits, OrchLimits, PlannerLimits};
@@ -150,6 +151,10 @@ pub struct RunOrch {
     pub ask: Option<AskRecord>,
     #[serde(skip_serializing_if = "is_zero_u64")]
     pub ask_seq: u64,
+    /// Milestone 9.13 decision 18: the session read text from outside the run; the
+    /// first such read, kept for the session's life. Not written while `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub untrusted: Option<untrusted::UntrustedRecord>,
 }
 
 /// Milestone 9.9 decision 15: a question the orchestrator put to the user. The text is
@@ -164,6 +169,13 @@ pub struct AskRecord {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub context: String,
     pub asked_at: u64,
+    /// Milestone 9.13 decision 21: the tainted orchestrator's op the user decides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposal: Option<proto::PlanEdit>,
+}
+
+fn is_zero_u32(n: &u32) -> bool {
+    *n == 0
 }
 
 /// `Task.orch`: a task's milestone 9 state. Absent from an older run: empty.
@@ -189,6 +201,10 @@ pub struct TaskOrch {
     pub refresh_targets: Vec<String>,
     /// Decision 25's restarts of the task by a rewrite (M9.9 review fixes, M2).
     pub rewrite_restarts: u32,
+    /// Milestone 9.13 decision 14: the orchestrator's retries of the task since the user
+    /// last retried it; at `MAX_ORCH_RETRIES` the task's next block is the user's.
+    #[serde(skip_serializing_if = "is_zero_u32")]
+    pub orch_retries: u32,
     /// Text the next research session's first turn ends with (a worker's
     /// `FreshSession::append`, M9.9 second review, M-d).
     pub research_append: Option<String>,

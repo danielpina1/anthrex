@@ -216,6 +216,11 @@ pub struct Run {
     pub trust_project: bool,
     /// Tracked files at `base_sha` matching `profile.protected` (decision 56).
     pub protected_files: Vec<String>,
+    /// Milestone 9.13 decisions 9 and 10: the tracked files the gate's commands name,
+    /// with their blob ids at `base_sha`, read at run start; each is also in
+    /// `profile.protected`. A run from before 9.13: none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gate_files: Vec<super::gate_words::PinnedFile>,
     pub rate_limits: BTreeMap<String, u32>,
     pub outcome: Option<String>,
     pub log: Vec<LogEntry>,

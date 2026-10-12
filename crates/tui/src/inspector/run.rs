@@ -10,7 +10,7 @@ use super::run_format::{
     billable, clean, format_duration, format_tokens, kind_glyph, local_hhmm, progress_text,
     reason_text, rows, session_text,
 };
-use super::run_orch::{handled_rows, orchestrator_text};
+use super::run_orch::{handled_rows, orchestrator_text, untrusted_text};
 use super::{Field, Inspection, field};
 use crate::app::{App, state_text};
 use crate::tree::RowKind;
@@ -56,6 +56,9 @@ pub(crate) fn run_inspection(
     fields.extend(super::run_stage_pr::run_fields(run, app));
     if let Some(orchestrator) = &run.orchestrator {
         fields.push(field("orchestrator", orchestrator_text(orchestrator)));
+        if let Some(text) = untrusted_text(orchestrator) {
+            fields.push(field("untrusted", text));
+        }
         if let Some(summary) = &orchestrator.summary {
             fields.push(field("summary", clean(summary)));
         }

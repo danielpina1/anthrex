@@ -357,7 +357,13 @@ pub(super) fn task_note(
     add_worker_note(run, &task_id, note);
     history(run, i, now, format!("note ({kind_label}): {first}"));
     if kind != TaskNoteKind::Progress {
-        wake::note(run, format!("{task_id} noted a {kind_label}: {first}"));
+        // Task 8 review I1 (ruling): a fix task's worker read text from outside the
+        // run; its note reaches the orchestrator only through `run_status`, which taints.
+        let text = match crate::run::orch::untrusted::fix_kind(&run.tasks[i]) {
+            Some(_) => format!("{task_id} noted a {kind_label}; read it with run_status"),
+            None => format!("{task_id} noted a {kind_label}: {first}"),
+        };
+        wake::note(run, text);
     }
     answer(fx, Ok(NOTE_RECORDED.into()))
 }

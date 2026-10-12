@@ -239,6 +239,7 @@ fn an_override_with_a_due_hand_back_hands_back_first() {
         OpResult::Commits {
             count: 2,
             head: HEAD.into(),
+            protected: Vec::new(),
         },
     );
     assert!(one_reply(&effects).is_ok(), "{effects:#?}");
@@ -287,6 +288,7 @@ fn an_override_merges_an_accepted_claim_only_at_the_branch_tip() {
             OpResult::Commits {
                 count: 3,
                 head: tip,
+                protected: Vec::new(),
             },
         );
         if moved {
@@ -321,6 +323,7 @@ fn an_override_count_that_comes_after_a_retry_is_refused() {
         OpResult::Commits {
             count: 2,
             head: HEAD.into(),
+            protected: Vec::new(),
         },
     );
     assert_eq!(

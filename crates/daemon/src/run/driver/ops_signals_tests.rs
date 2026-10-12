@@ -144,6 +144,7 @@ impl Rig {
             git_timeout: Duration::from_secs(30),
             check_timeout: Duration::from_secs(30),
             confine: None,
+            pinned: Default::default(),
         };
         Rig {
             _tmp: tmp,

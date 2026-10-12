@@ -166,6 +166,7 @@ impl Rig {
             git_timeout: Duration::from_secs(30),
             check_timeout: Duration::from_secs(60),
             confine: None,
+            pinned: Default::default(),
         }
     }
 
@@ -547,3 +548,7 @@ mod full;
 // Decision 36: a bisect probe (task M9.1.15).
 #[path = "tier_tests_probe.rs"]
 mod probe;
+
+// Milestone 9.13 decision 12 (C5): a rewritten toolchain or graph script.
+#[path = "tier_tests_gate.rs"]
+mod gate;

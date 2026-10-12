@@ -13,6 +13,7 @@ use proto::{BlockReason, GateKind, TaskState, TestMode};
 use super::actions::rules;
 use super::actor::Actor;
 use super::dispatch::{block, history};
+use super::requests::log;
 use super::{
     Effect, EngineState, OpId, OpKind, OpResult, OverrideCount, ReplyId, ScratchAt, deciders,
     emit_op, ladder, next_op, review,
@@ -367,19 +368,20 @@ pub(super) fn override_task(
         return fx.push(Effect::Reply { reply, result });
     };
     let call = (task_id, reason);
-    if let Some(result) = override_on(run, reply, call, Actor::User, now, fx) {
+    if let Some(result) = override_on(run, reply, call, (Actor::User, false), now, fx) {
         fx.push(Effect::Reply { reply, result });
     }
 }
 
 /// The override's core, shared by the user's request and the orchestrator's op (milestone
 /// 9.9 decision 9). `None`: the reply waits for the commit count (`reply` is kept in
-/// [`OverrideCount`], decision 13).
+/// [`OverrideCount`], decision 13). `proposal`: the user's "do it" to the orchestrator's
+/// proposal (milestone 9.13 decision 21, C7), whose wake note waits with the reply.
 pub(super) fn override_on(
     run: &mut Run,
     reply: ReplyId,
     (task_id, reason): (&str, &str),
-    actor: Actor,
+    (actor, proposal): (Actor, bool),
     now: u64,
     fx: &mut Vec<Effect>,
 ) -> Option<Result<String, String>> {
@@ -404,6 +406,9 @@ pub(super) fn override_on(
         run_head: run.head_for(task).to_string(),
         not_own: super::worker_messages::not_own(task),
         not_run: super::worker_messages::not_run(task),
+        // Milestone 9.13 decision 5: the count lists the task's protected changes.
+        owns: task.spec.owns.clone(),
+        protected: run.profile.protected.clone(),
     };
     let op = next_op(run);
     run.tasks[i].override_count = Some(OverrideCount {
@@ -411,6 +416,7 @@ pub(super) fn override_on(
         reply,
         reason: reason.to_string(),
         actor,
+        proposal,
     });
     emit_op(run, op, Some(task_id), kind, fx);
     history(run, i, now, "counting its commits for an override");
@@ -469,6 +475,7 @@ pub(super) fn override_counted(
         reply,
         reason,
         actor,
+        proposal,
         ..
     }) = run.tasks[i].override_count.take()
     else {
@@ -492,9 +499,31 @@ pub(super) fn override_counted(
                 "task {id} has commits after its accepted claim; retry it to have them checked"
             ))
         }
-        OpResult::Commits { head, .. } => {
+        OpResult::Commits { protected, .. }
+            if actor == Actor::Orchestrator && !protected.is_empty() =>
+        {
+            protected_refusal(run, i, &protected)
+        }
+        OpResult::Commits {
+            head, protected, ..
+        } => {
             run.tasks[i].head = Some(head);
-            Ok(send_to_queue(run, i, &reason, actor, now, fx))
+            let text = send_to_queue(run, i, &reason, actor, now, fx);
+            Ok(match &protected[..] {
+                [] => text,
+                _ => {
+                    let paths = protected.join(", ");
+                    log(
+                        run,
+                        now,
+                        format!("the user overrode {id}, which changes protected {paths}"),
+                    );
+                    format!(
+                        "{text}; it changes protected {paths}{}",
+                        still_pinned(run, &protected)
+                    )
+                }
+            })
         }
         OpResult::Failed { message } => {
             Err(format!("could not count task {id}'s commits: {message}"))
@@ -504,5 +533,32 @@ pub(super) fn override_counted(
     if actor == Actor::Orchestrator {
         super::orch_ops::override_landed(run, (&id, &reason), &result, now);
     }
+    if proposal {
+        super::untrusted::approved_note(run, &format!("override {id}"), &result);
+    }
     fx.push(Effect::Reply { reply, result });
+}
+
+/// Milestone 9.13 decision 5 (ruling C25): for each of `changed` that is a gate script
+/// still pinned, the clause that says the next gate command will refuse it.
+fn still_pinned(run: &Run, changed: &[String]) -> String {
+    let pinned = super::gate_pins::pinned(run);
+    changed
+        .iter()
+        .filter(|path| pinned.iter().any(|f| f.path == **path))
+        .map(|path| format!("; {path} stays pinned until a task's owns names it (run edit)"))
+        .collect()
+}
+
+/// Milestone 9.13 decision 5: the orchestrator may not merge a protected change
+/// unchecked; the task's block becomes the user's.
+fn protected_refusal(run: &mut Run, i: usize, protected: &[String]) -> Result<String, String> {
+    if let Some(block) = run.tasks[i].block.as_mut() {
+        block.user_only = true;
+    }
+    let id = run.tasks[i].id();
+    let paths = protected.join(", ");
+    Err(format!(
+        "task {id} changes protected {paths}; only the user can merge it unchecked"
+    ))
 }

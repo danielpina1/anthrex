@@ -268,6 +268,7 @@ fn override_only_from_review_or_blocked_with_commits() {
         OpResult::Commits {
             count: 0,
             head: BASE.into(),
+            protected: Vec::new(),
         },
     );
     assert_eq!(
@@ -288,6 +289,7 @@ fn override_only_from_review_or_blocked_with_commits() {
         OpResult::Commits {
             count: 2,
             head: HEAD.into(),
+            protected: Vec::new(),
         },
     );
     assert_eq!(
@@ -383,6 +385,7 @@ fn an_override_count_is_not_confused_with_a_fallback_count() {
         OpResult::Commits {
             count: 0,
             head: BASE.into(),
+            protected: Vec::new(),
         },
     );
     assert!(replies(&effects).is_empty(), "{effects:#?}");
@@ -392,6 +395,7 @@ fn an_override_count_is_not_confused_with_a_fallback_count() {
         OpResult::Commits {
             count: 2,
             head: HEAD.into(),
+            protected: Vec::new(),
         },
     );
     assert_eq!(

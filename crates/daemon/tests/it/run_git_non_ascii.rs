@@ -9,13 +9,13 @@ use daemon::run::git::{
     create_run_branch, preflight, prepare_worktree, protected_files, verify_done,
 };
 use daemon::run::globs::{OwnsMatcher, ProtectedMatcher, escape_path};
-use daemon::run::plan::BUILTIN_PROTECTED;
+use daemon::run::plan::builtin_protected;
 use daemon::run::triage::owned_protected;
 use daemon::run::validate::protected_notes;
 use support::run_git::{T, commit_file, out, real_git, repo, write, wt_dir};
 
 fn builtin() -> Vec<String> {
-    BUILTIN_PROTECTED.iter().map(|s| s.to_string()).collect()
+    builtin_protected()
 }
 
 #[test]

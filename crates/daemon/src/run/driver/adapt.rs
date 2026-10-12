@@ -487,6 +487,7 @@ mod tests {
             base_branch: "main".into(),
             base_sha: "b".repeat(40),
             protected_files: Vec::new(),
+            gate_files: Vec::new(),
         };
         let ctx = BuildContext {
             tuning: Default::default(),

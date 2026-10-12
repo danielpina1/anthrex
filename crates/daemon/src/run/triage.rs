@@ -260,14 +260,10 @@ pub fn owned_protected(
     if let Some(entry) = owns.iter().find(|entry| !entry.is_ascii()) {
         return Some(entry.clone());
     }
-    let literal = |entry: &&String| !entry.contains(['*', '?', '[']);
     if let Ok(matcher) = globs::ProtectedMatcher::new(protected)
-        && let Some(entry) = owns
-            .iter()
-            .filter(literal)
-            .find(|entry| matcher.matches(entry.trim_end_matches('/')))
+        && let Some(entry) = globs::literal_protected(owns, &matcher).into_iter().next()
     {
-        return Some(entry.clone());
+        return Some(entry);
     }
     if let Ok(matcher) = globs::OwnsMatcher::new(owns)
         && let Some(path) = protected_files.iter().find(|path| matcher.matches(path))

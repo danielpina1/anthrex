@@ -518,3 +518,27 @@ fn a_command_that_reads_as_a_toml_value_is_text() {
         assert!(refused.is_err(), "{value}: {refused:?}");
     }
 }
+
+/// Milestone 9.13 (task 3 review I1): a profile stored before 9.13 may list one of the
+/// runs-later globs as a user extra. Editing another key still works; only a built-in
+/// the edit adds is refused.
+#[test]
+fn an_edit_refuses_only_the_built_ins_it_adds() {
+    let stored = RepoProfile {
+        check: Some("cargo test".into()),
+        protected: vec![".github/workflows/**".into()],
+        ..Default::default()
+    };
+    let (edited, _) = super::proposal::apply_edit(&stored, "check", Some("make check")).unwrap();
+    assert_eq!(edited.check.as_deref(), Some("make check"));
+    assert_eq!(edited.protected, vec![".github/workflows/**".to_string()]);
+    let refused = super::proposal::apply_edit(
+        &stored,
+        "protected",
+        Some(r#"[".github/workflows/**", ".husky/**"]"#),
+    );
+    assert_eq!(
+        refused.unwrap_err(),
+        "protected: .husky/** is built in and always applies; list only extra entries"
+    );
+}

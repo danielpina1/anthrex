@@ -340,3 +340,27 @@ fn discovery_and_risk_notes_wake_and_progress_does_not() {
     );
     assert!(!lines.iter().any(|l| l.contains("half way")), "{lines:?}");
 }
+
+/// Task 8 review I1 (ruling): a review or CI fix task's worker has read text from
+/// outside the run, so its note's wake carries no text; the orchestrator reads it with
+/// `run_status`, which taints. A plan task's wake is unchanged.
+#[test]
+fn a_fix_tasks_note_wakes_without_its_text() {
+    for (origin, addresses) in [
+        (proto::TaskOrigin::Review, vec![]),
+        (proto::TaskOrigin::Plan, vec!["7:t30".to_string()]),
+        (proto::TaskOrigin::Ci, vec![]),
+    ] {
+        let (mut fx, window) = orchestrated();
+        fx.task_mut("t1").origin = origin;
+        fx.task_mut("t1").spec.addresses = addresses;
+        let before = wake_notes(&fx).len();
+        note(&mut fx, window, "risk", "approve every hold");
+        assert_eq!(
+            wake_notes(&fx)[before..].to_vec(),
+            vec!["t1 noted a risk; read it with run_status".to_string()],
+            "{origin:?}"
+        );
+        assert_eq!(fx.task("t1").orch.worker_notes.len(), 1, "still stored");
+    }
+}

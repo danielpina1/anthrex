@@ -101,6 +101,7 @@ fn commits(fx: &mut Fixture, count: u32) -> Vec<Effect> {
         OpResult::Commits {
             count,
             head: HEAD.into(),
+            protected: Vec::new(),
         },
     )
 }

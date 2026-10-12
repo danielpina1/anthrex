@@ -193,6 +193,15 @@ pub(super) fn block(run: &mut Run, i: usize, reason: BlockReason, text: String, 
     set_state(task, TaskState::Blocked, now);
     let mut info = BlockInfo::new(reason, text);
     info.user_only = reason == BlockReason::Environment && super::user_only::marked(&info.text);
+    // Milestone 9.13 decision 16: at the orchestrator's retry cap the user decides.
+    if task.orch.orch_retries >= super::requests::MAX_ORCH_RETRIES {
+        let n = super::requests::MAX_ORCH_RETRIES;
+        info.text = format!(
+            "{} · the orchestrator retried it {n} times; the user decides",
+            info.text
+        );
+        info.user_only = true;
+    }
     task.block = Some(info);
     // Ruling T12-I4b: a pending interrupt no longer applies to a blocked task; its
     // stale nudge is dropped, so whatever unblocks the task is delivered.

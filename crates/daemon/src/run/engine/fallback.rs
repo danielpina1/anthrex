@@ -77,6 +77,9 @@ fn count(run: &mut Run, i: usize, r: usize, fx: &mut Vec<Effect>) {
         run_head: run.head_for(task).to_string(),
         not_own: super::worker_messages::not_own(task),
         not_run: super::worker_messages::not_run(task),
+        // Milestone 9.13 decision 5: the fallback's count lists no protected change.
+        owns: Vec::new(),
+        protected: Vec::new(),
     };
     let id = task.id().to_string();
     let op = next_op(run);

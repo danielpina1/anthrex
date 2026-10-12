@@ -122,6 +122,10 @@ impl RunService {
             .run(dir, &setup, &env, ctx.check_timeout)
             .await
         {
+            Ok(ShellOutcome {
+                gate_refused: Some(path),
+                ..
+            }) => OpResult::GateRefused { path },
             Ok(outcome) if outcome.ok => OpResult::Worktree { head },
             Ok(outcome) => OpResult::SetupFailed {
                 output: setup_output(&outcome),
@@ -374,12 +378,22 @@ pub(super) async fn run(
             run_head,
             not_own,
             not_run,
+            owns,
+            protected,
         } => settle(
             service
                 .write(ctx, move |g, t| {
+                    // Milestone 9.13 decision 5: with `protected` empty no diff runs.
                     let refreshed = RefreshedIn::of(&not_own, &not_run);
-                    git::count_commits_excluding(g, &worktree, &start, &run_head, &refreshed, t)
-                        .map(|(count, head)| OpResult::Commits { count, head })
+                    let range = (start.as_str(), run_head.as_str());
+                    let lists = (&owns[..], &protected[..]);
+                    git::count_commits_checked(g, &worktree, range, &refreshed, lists, t).map(
+                        |((count, head), protected)| OpResult::Commits {
+                            count,
+                            head,
+                            protected,
+                        },
+                    )
                 })
                 .await,
         ),
@@ -421,6 +435,7 @@ pub(super) async fn run(
                 env,
                 confine: ctx.confine.as_deref().cloned(),
                 red_only,
+                pinned: ctx.pinned.to_vec(),
             };
             proof(service, ctx, op_id, op).await
         }

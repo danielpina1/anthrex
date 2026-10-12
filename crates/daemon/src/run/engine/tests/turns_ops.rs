@@ -55,6 +55,7 @@ fn commits(count: u32) -> OpResult {
     OpResult::Commits {
         count,
         head: HEAD.into(),
+        protected: Vec::new(),
     }
 }
 
@@ -276,7 +277,7 @@ fn a_bounce_after_the_turn_is_the_next_turn() {
     let result = protected(&fx);
     let effects = fx.done(verify, result);
     assert_eq!(fx.task("t1").rung, 1);
-    let bounce = protected_file_message(&["AGENTS.md".to_string()]);
+    let bounce = protected_file_message(&["AGENTS.md".to_string()], &[]);
     assert_eq!(delivers(&effects), vec![bounce], "{effects:#?}");
     assert_alive(&fx);
     let effects = fx.send(fx.now + 10, EventKind::Tick);
@@ -296,7 +297,7 @@ fn a_bounce_after_the_process_exited_resumes_with_it() {
     exited(&mut fx, window);
     let result = protected(&fx);
     let effects = fx.done(verify, result);
-    let bounce = protected_file_message(&["AGENTS.md".to_string()]);
+    let bounce = protected_file_message(&["AGENTS.md".to_string()], &[]);
     assert_eq!(resume_messages(&effects), vec![bounce], "{effects:#?}");
     assert_alive(&fx);
 }

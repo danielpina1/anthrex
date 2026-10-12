@@ -10,7 +10,10 @@ use proto::{PlanEdit, RunState, ToolCall};
 use super::actor::Actor;
 use super::batch::record_rejected;
 use super::orch::refuse;
-use super::{Effect, ReplyId, delivery, full, gate_holds, gates, requests, restore, user_only};
+use super::{
+    Effect, ReplyId, delivery, full, gate_holds, gates, protected_grants, requests, restore,
+    untrusted, user_only,
+};
 use crate::run::edit_log::{self, EditOutcome};
 use crate::run::engine::actions::rules;
 use crate::run::model::Run;
@@ -73,7 +76,11 @@ pub(super) fn intercept(
     }
     let result = match &edits[0] {
         PlanEdit::Retry { task_id, .. } => {
-            let result = match user_only_task(run, task_id, rules::retry(run, task_id)) {
+            let rule = rules::retry(run, task_id);
+            // Milestone 9.13 decision 17: after the user's rule, before the user-only
+            // block check (pre-flight ruling C20).
+            let rule = rule.or_else(|| at_retry_cap(run, task_id));
+            let result = match user_only_task(run, task_id, rule) {
                 Some(refusal) => Err(refusal),
                 None => requests::retry_on(run, task_id, Actor::Orchestrator, now, fx),
             };
@@ -90,7 +97,12 @@ pub(super) fn intercept(
                 refuse(fx, reply, refusal);
                 return true;
             }
-            match gates::override_on(run, reply, call, Actor::Orchestrator, now, fx) {
+            // Milestone 9.13 decision 21: after the user's rules, a tainted session's
+            // override is the user's question.
+            if untrusted::divert(run, reply, (&edits[0], reason), now, fx) {
+                return true;
+            }
+            match gates::override_on(run, reply, call, (Actor::Orchestrator, false), now, fx) {
                 Some(result) => result,
                 // The reply, the handled record and the log entry wait for the count.
                 None => return true,
@@ -98,10 +110,20 @@ pub(super) fn intercept(
         }
         PlanEdit::ApproveHold { hold, .. } => {
             // Final review I-2: a promotion round is the user's plan approval (OFA §4.2).
+            let grants = protected_grants::of_hold(run, hold);
             let result = if gate_holds::promotion(run, hold) {
                 Err(format!(
                     "hold {hold} approves a promoted run's plan; only the user can"
                 ))
+            } else if !grants.is_empty() {
+                // Milestone 9.13 decision 6: a protected grant is the user's to approve.
+                let paths = grants.join(", ");
+                Err(format!(
+                    "hold {hold} grants protected {paths}; only the user can approve it"
+                ))
+            } else if let Some(refusal) = untrusted::hold_refusal(run, hold) {
+                // Milestone 9.13 decision 21: after the promotion and grant refusals.
+                Err(refusal)
             } else {
                 gate_holds::decide_on(run, hold, true, Actor::Orchestrator, now, fx)
             };
@@ -112,7 +134,12 @@ pub(super) fn intercept(
             result
         }
         PlanEdit::ResumeRun { stage, .. } => resume_run(run, *stage, reason, now, fx),
-        PlanEdit::AcceptRed { stage, .. } => accept_red(run, *stage, reason, now),
+        PlanEdit::AcceptRed { stage, .. } => match rules::accept_red(run, *stage) {
+            Some(refusal) => Err(refusal),
+            // Decision 21: as `override`, the user's question once tainted.
+            None if untrusted::divert(run, reply, (&edits[0], reason), now, fx) => return true,
+            None => accept_red(run, *stage, reason, now),
+        },
         _ => return false,
     };
     match result {
@@ -131,6 +158,15 @@ pub(super) fn intercept(
         }
     }
     true
+}
+
+/// Decision 17: the refusal for a task the orchestrator has retried as often as it may.
+fn at_retry_cap(run: &Run, task_id: &str) -> Option<String> {
+    let task = run.tasks.iter().find(|t| t.id() == task_id)?;
+    let n = super::requests::MAX_ORCH_RETRIES;
+    (task.orch.orch_retries >= n).then(|| {
+        format!("task {task_id} was retried by the orchestrator {n} times; only the user can retry it now")
+    })
 }
 
 /// Decision 10: the user path's own refusal first, then a block only the user can fix.
@@ -194,7 +230,7 @@ fn accept_red(run: &mut Run, n: u16, reason: &str, now: u64) -> Result<String, S
     if let Some(refusal) = rules::accept_red(run, n) {
         return Err(refusal);
     }
-    let sha = full::accept_red(run, n, now).ok_or(rules::DRIFT)?;
+    let sha = full::accept_red(run, n, Actor::Orchestrator, now).ok_or(rules::DRIFT)?;
     let target = format!("stage {n}");
     let line = format!("accepted the red tier 3 of stage {n}");
     handled::record_line(run, now, ("accept_red", &target, &line), reason);

@@ -13,6 +13,7 @@ use super::super::{OpCtx, RunService};
 use super::scheduled::{Class, common_dir, hold_blocking, scheduled};
 use super::{blocking, failed, setup_output};
 use crate::run::engine::{OpResult, ScratchAt};
+use crate::run::exec::ShellOutcome;
 use crate::run::git;
 use crate::run::model::OpId;
 use crate::run::proof::{ProofError, ProofOp, ProofStep, SETUP_MARKER, run_proof_scheduled};
@@ -63,6 +64,7 @@ pub(super) async fn proof(
             head_tail: runs.head_tail,
         },
         Ok(Err(ProofError::SetupFailed { output })) => OpResult::SetupFailed { output },
+        Ok(Err(ProofError::GateRefused { path })) => OpResult::GateRefused { path },
         Ok(Err(ProofError::Failed(message))) => failed(message),
         Err(error) => failed(format!("the proof did not finish: {error}")),
     }
@@ -127,6 +129,10 @@ pub(super) async fn check(
                     .run(&dir, &setup, &env, timeout)
                     .await;
                 match outcome {
+                    Ok(ShellOutcome {
+                        gate_refused: Some(path),
+                        ..
+                    }) => return OpResult::GateRefused { path },
                     Ok(outcome) if !outcome.ok => {
                         return OpResult::SetupFailed {
                             output: setup_output(&outcome),
@@ -157,6 +163,10 @@ pub(super) async fn check(
         .run(&dir, &command, &env, timeout)
         .await
     {
+        Ok(ShellOutcome {
+            gate_refused: Some(path),
+            ..
+        }) => OpResult::GateRefused { path },
         Ok(outcome) => OpResult::Check {
             ok: outcome.ok,
             code: outcome.code,
