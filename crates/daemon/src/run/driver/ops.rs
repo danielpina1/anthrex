@@ -122,6 +122,10 @@ impl RunService {
             .run(dir, &setup, &env, ctx.check_timeout)
             .await
         {
+            Ok(ShellOutcome {
+                gate_refused: Some(path),
+                ..
+            }) => OpResult::GateRefused { path },
             Ok(outcome) if outcome.ok => OpResult::Worktree { head },
             Ok(outcome) => OpResult::SetupFailed {
                 output: setup_output(&outcome),
@@ -431,6 +435,7 @@ pub(super) async fn run(
                 env,
                 confine: ctx.confine.as_deref().cloned(),
                 red_only,
+                pinned: ctx.pinned.to_vec(),
             };
             proof(service, ctx, op_id, op).await
         }

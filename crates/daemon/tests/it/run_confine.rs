@@ -134,6 +134,7 @@ fn a_confined_proof_cannot_write_the_users_git() {
         env: vec![("HOME".to_string(), home.display().to_string())],
         confine: Some(w.spec(&[])),
         red_only: false,
+        pinned: Vec::new(),
     };
     let index_before = std::fs::read(w.common().join("index")).unwrap();
     let runs = run_proof(real_git(), &op, T, &direct).unwrap();
@@ -180,6 +181,7 @@ fn a_worker_committed_setup_at_the_proof_checkout_is_confined() {
         env: vec![("HOME".to_string(), home.display().to_string())],
         confine: Some(w.spec(&[])),
         red_only: false,
+        pinned: Vec::new(),
     };
     let index_before = std::fs::read(w.common().join("index")).unwrap();
     let runs = run_proof(real_git(), &op, T, &direct).unwrap();
@@ -369,6 +371,7 @@ fn a_confined_tier_step_binds_its_own_socket_and_not_the_daemons() {
         base: base.clone(),
         name: "s1-1".to_string(),
         collect: false,
+        pinned: Vec::new(),
     };
     let ran = run_isolated(&step);
     let tmp = base.join("s1-1");

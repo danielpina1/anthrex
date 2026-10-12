@@ -70,6 +70,7 @@ mod fixes;
 // Milestone 9.1 decisions 17-19: tier 3 (`request` is 9.2's entry).
 pub(crate) mod full;
 mod gate_holds;
+pub(crate) mod gate_pins;
 mod gates;
 mod goal_rounds;
 mod goal_rounds_end;

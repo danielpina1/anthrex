@@ -23,7 +23,9 @@ use std::time::Duration;
 use regex::Regex;
 
 use super::confine::ConfineSpec;
+use super::driver::gate_files::verify;
 use super::exec::{ShellOutcome, run_matching};
+use super::gate_words::PinnedFile;
 use super::git::{absolute_git_dir, materialize, prepare_scratch_in};
 use crate::launch::shell_quote;
 
@@ -54,6 +56,9 @@ pub struct ProofOp {
     /// Milestone 9.5 decision 25 (ruling RP-1): a paired task's red check, the run at
     /// `red` alone; the run at `head` never happens.
     pub red_only: bool,
+    /// Milestone 9.13 decision 12: the gate scripts checked in the proof worktree before
+    /// `setup` and before each test run (`OpCtx.pinned`).
+    pub pinned: Vec<PinnedFile>,
 }
 
 /// What the two runs showed: `OpResult::Proof`'s fields, which M8a.11 wraps (as
@@ -72,7 +77,7 @@ pub struct ProofRuns {
     pub head_tail: String,
 }
 
-/// Why no proof could be made at all. Neither is a verdict on the worker's test.
+/// Why no proof could be made at all. None is a verdict on the worker's test.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProofError {
     /// `setup` failed in the proof worktree (`OpResult::SetupFailed`); `output` is its
@@ -80,6 +85,9 @@ pub enum ProofError {
     SetupFailed { output: String },
     /// A git step failed, or `passed` is not a regular expression.
     Failed(String),
+    /// Milestone 9.13 decision 12: the pinned gate script `path` differs from its blob
+    /// at the base commit, so the next command was not run.
+    GateRefused { path: String },
 }
 
 /// Decision 33: `single_test` with `{test}` replaced by the shell-quoted test name, so
@@ -179,6 +187,7 @@ pub fn run_proof_scheduled(
         if let Some(setup) = &op.setup {
             // A reused worktree may be at any commit; setup runs at red, as in a new one.
             git_write(checkout(git, &op.path, &op.red, git_timeout)).map_err(ProofError::Failed)?;
+            pins_hold(op)?;
             let (extra, held) = slot(ProofStep::Setup)?;
             let (outcome, _) =
                 run_matching(&op.path, setup, (&op.env, &extra), timeout, None, confined);
@@ -195,6 +204,7 @@ pub fn run_proof_scheduled(
     }
 
     git_write(checkout(git, &op.path, &op.red, git_timeout)).map_err(ProofError::Failed)?;
+    pins_hold(op)?;
     let (extra, held) = slot(ProofStep::Red)?;
     let (red, _) = run_matching(
         &op.path,
@@ -216,6 +226,7 @@ pub fn run_proof_scheduled(
     }
 
     git_write(checkout(git, &op.path, &op.head, git_timeout)).map_err(ProofError::Failed)?;
+    pins_hold(op)?;
     let (extra, held) = slot(ProofStep::Head)?;
     let (head, matched) = run_matching(
         &op.path,
@@ -230,6 +241,12 @@ pub fn run_proof_scheduled(
     runs.matched = matched;
     runs.head_tail = with_timeout_note(head);
     Ok(runs)
+}
+
+/// Milestone 9.13 decision 12: the proof worktree's pinned gate scripts are as at the
+/// base commit, else the command about to run is refused.
+fn pins_hold(op: &ProofOp) -> Result<(), ProofError> {
+    verify(&op.path, &op.pinned).map_err(|path| ProofError::GateRefused { path })
 }
 
 /// `materialize` as an owned [`GitStep`]: `checkout --detach --force <commit>`, then
@@ -278,6 +295,7 @@ mod tests {
             timed_out: true,
             tail: "compiling".into(),
             secs: 7,
+            gate_refused: None,
         };
         assert_eq!(
             with_timeout_note(outcome),

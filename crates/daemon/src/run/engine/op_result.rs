@@ -220,4 +220,9 @@ pub enum OpResult {
     DocsThroughSymlink {
         path: String,
     },
+    /// Milestone 9.13 decision 12: a gate command was not run, because the pinned gate
+    /// script `path` differs from its blob at the run's base commit. Appended last.
+    GateRefused {
+        path: String,
+    },
 }

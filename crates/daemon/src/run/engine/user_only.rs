@@ -21,6 +21,8 @@ pub(crate) const USER_ONLY_MARKERS: &[&str] = &[
     "could not read username",
     "permission denied (publickey)",
     "command not found",
+    // Milestone 9.13 decision 13: a gate script the run changed.
+    "the run changed what measures it",
 ];
 
 /// Whether `text` names a problem only the user can fix.

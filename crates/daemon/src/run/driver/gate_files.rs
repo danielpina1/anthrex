@@ -1,11 +1,14 @@
 //! Milestone 9.13 decision 9: the tracked files a run's gate commands name, read at
 //! run start. Blocking: [`read`] runs git, so `driver/build.rs` calls it on
-//! `spawn_blocking`, never under the engine lock (AGENTS.md rule 2).
+//! `spawn_blocking`, never under the engine lock (AGENTS.md rule 2). Decision 12:
+//! [`verify`] hashes them in a checkout before every gate command, also only ever on a
+//! blocking thread, never on a tokio worker.
 
 use std::ffi::OsStr;
 use std::path::Path;
 use std::time::Duration;
 
+use crate::headless::codex_guard::ObjectFormat;
 use crate::run::gate_words::PinnedFile;
 use crate::run::git::{Git, os};
 
@@ -34,6 +37,24 @@ pub fn read(
     args.extend(words.iter().map(|w| os(w)));
     let listing = Git::new(git, timeout).ok(root, &args)?;
     Ok(parse(&listing))
+}
+
+/// Decision 12: every file of `pinned` in the checkout `dir` is a regular file (not a
+/// symbolic link) whose bytes hash to its blob id; the first that is missing, a link,
+/// not a regular file, unreadable or different is `Err(path)`. Blocking: call only on a
+/// blocking thread (AGENTS.md rule 2).
+pub fn verify(dir: &Path, pinned: &[PinnedFile]) -> Result<(), String> {
+    for file in pinned {
+        let path = dir.join(&file.path);
+        let regular = std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.file_type().is_file());
+        let same = regular
+            && std::fs::read(&path)
+                .is_ok_and(|bytes| ObjectFormat::of(&file.blob).blob_id(&bytes) == file.blob);
+        if !same {
+            return Err(file.path.clone());
+        }
+    }
+    Ok(())
 }
 
 /// `ls-tree -z` entries (`<mode> SP <type> SP <object> TAB <path> NUL`) that are

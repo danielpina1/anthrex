@@ -283,6 +283,7 @@ fn cargo_runs_across_a_commit(setup: &dyn Fn(&Path), change: &dyn Fn(&Path)) -> 
             timed_out: false,
             tail: String::new(),
             secs: 0,
+            gate_refused: None,
         };
         let json = r#"{"workspace_root":"/w","workspace_members":[],"packages":[]}"#;
         (outcome, Some(json.to_string()))

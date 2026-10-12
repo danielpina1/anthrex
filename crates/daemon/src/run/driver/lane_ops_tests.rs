@@ -108,6 +108,7 @@ impl Rig {
             git_timeout: T,
             check_timeout: T,
             confine: None,
+            pinned: Default::default(),
         };
         Rig {
             _tmp: tmp,

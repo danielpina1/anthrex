@@ -195,6 +195,8 @@ impl Steps {
             base: step_base(&self.repo_dir, dir),
             name: format!("v{n}"),
             collect: false,
+            // Milestone 9.13: profile verification has no run, so nothing is pinned.
+            pinned: Vec::new(),
         };
         let mut matched = false;
         let outcome = run_isolated_with(&step, &mut |line: &str| {

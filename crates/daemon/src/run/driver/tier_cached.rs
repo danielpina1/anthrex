@@ -102,7 +102,8 @@ pub(crate) async fn cached_outcome(
     if !same_graph {
         return None;
     }
-    let (affected, graph_note) = affected_of(&job, spec, &changed).await;
+    // Milestone 9.13: a refused graph command is no cached outcome; the job refuses.
+    let (affected, graph_note) = affected_of(&job, spec, &changed).await.ok()?;
     // Ruling C-17 (2a): a graph the stage head's read could not know is not trusted.
     if graph_note.is_some() && spec.profile.module_graph != GraphSource::None {
         return None;

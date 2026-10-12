@@ -452,6 +452,7 @@ fn ok(stdout: &str) -> (ShellOutcome, Option<String>) {
         timed_out: false,
         tail: String::new(),
         secs: 0,
+        gate_refused: None,
     };
     (outcome, Some(stdout.to_string()))
 }

@@ -69,6 +69,12 @@ fn route(
     now: u64,
     fx: &mut Vec<Effect>,
 ) -> Option<u32> {
+    // Milestone 9.13 decision 13: before the per-kind arms, whatever the op's kind
+    // (ruling C6).
+    if let OpResult::GateRefused { path } = &result {
+        super::gate_pins::refused(run, (op, &kind, task), path, now, fx);
+        return None;
+    }
     let mut bound = None;
     // Controller ruling C-21 (3): a later hand-back into a sync task is recorded.
     if let (OpKind::HandBack { run_head, .. }, Some(i)) = (&kind, task) {

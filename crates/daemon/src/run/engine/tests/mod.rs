@@ -127,6 +127,7 @@ mod full;
 mod full_fixes;
 mod gate_holds;
 mod gate_holds_epics;
+mod gate_pins;
 mod gates;
 mod gates_exits;
 mod gates_fixes;

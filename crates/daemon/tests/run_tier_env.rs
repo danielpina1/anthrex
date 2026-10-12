@@ -42,6 +42,7 @@ fn an_unconfined_step_never_sees_the_daemons_socket_or_data_dir() {
         base: base.clone(),
         name: "s9-1".to_string(),
         collect: true,
+        pinned: Vec::new(),
     };
     let ran = run_isolated(&step);
     let _ = std::fs::remove_dir_all(&base);

@@ -132,6 +132,7 @@ impl Rig {
             git_timeout: Duration::from_secs(30),
             check_timeout: Duration::from_secs(30),
             confine: None,
+            pinned: Default::default(),
         };
         // M9.12.13: its checks' temporary directory is named from a repository
         // directory the integration worktree never has.

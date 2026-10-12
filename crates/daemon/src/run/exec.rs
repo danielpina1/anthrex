@@ -75,6 +75,9 @@ pub struct ShellOutcome {
     pub tail: String,
     /// Whole seconds from spawn to return.
     pub secs: u64,
+    /// Milestone 9.13 decision 12: not run, because this pinned gate script differs
+    /// from its blob at the run's base commit.
+    pub gate_refused: Option<String>,
 }
 
 impl ShellOutcome {
@@ -87,6 +90,17 @@ impl ShellOutcome {
             timed_out: false,
             tail: format!("not run: {reason}"),
             secs: 0,
+            gate_refused: None,
+        }
+    }
+
+    /// A command that was not run because the pinned gate script `path` changed
+    /// (milestone 9.13 decision 12): as [`ShellOutcome::refused`], naming it.
+    pub fn gate_refused(path: String) -> Self {
+        let reason = format!("the gate's script {path} differs from the base commit's");
+        ShellOutcome {
+            gate_refused: Some(path),
+            ..ShellOutcome::refused(reason)
         }
     }
 }
@@ -244,6 +258,7 @@ fn run_observed<'a>(
         timed_out: false,
         tail: format!("could not run /bin/sh in {}: {error}", dir.display()),
         secs: started.elapsed().as_secs(),
+        gate_refused: None,
     };
     let profile = match confine.map(Confinement::profile).transpose() {
         Ok(profile) => profile,
@@ -378,6 +393,7 @@ fn run_observed<'a>(
         timed_out,
         tail,
         secs: started.elapsed().as_secs(),
+        gate_refused: None,
     };
     (outcome, matched)
 }

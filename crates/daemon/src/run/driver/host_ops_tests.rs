@@ -244,6 +244,7 @@ pub(in crate::run::driver) fn op_ctx(data_dir: &Path, project: &Path) -> OpCtx {
         git_timeout: Duration::from_secs(30),
         check_timeout: Duration::from_secs(30),
         confine: None,
+        pinned: Default::default(),
     }
 }
 

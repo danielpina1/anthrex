@@ -150,6 +150,11 @@ pub(crate) struct OpCtx {
     /// workers are sandboxed and this platform can confine them. Boxed: it is large,
     /// and every queued op carries a context.
     pub confine: Option<Box<crate::run::confine::ConfineSpec>>,
+    /// Milestone 9.13 decision 12: the run's gate scripts still pinned
+    /// (`gate_pins::pinned`), checked before every gate command. Taken from the run
+    /// with the rest of this context, never stored in the op, so an op replayed from
+    /// the journal is checked against the run's current pins.
+    pub pinned: std::sync::Arc<[crate::run::gate_words::PinnedFile]>,
 }
 
 impl OpCtx {
@@ -162,6 +167,8 @@ impl OpCtx {
             git_timeout: Duration::from_secs(run.limits.git_timeout_secs),
             check_timeout: Duration::from_secs(run.profile.check_timeout_secs),
             confine: crate::run::confine::ConfineSpec::for_run(run).map(Box::new),
+            // Pure: computed from the run under the engine lock, no I/O.
+            pinned: crate::run::engine::gate_pins::pinned(run).into(),
         }
     }
 }

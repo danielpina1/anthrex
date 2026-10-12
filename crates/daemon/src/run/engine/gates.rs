@@ -515,7 +515,10 @@ pub(super) fn override_counted(
                         now,
                         format!("the user overrode {id}, which changes protected {paths}"),
                     );
-                    format!("{text}; it changes protected {paths}")
+                    format!(
+                        "{text}; it changes protected {paths}{}",
+                        still_pinned(run, &protected)
+                    )
                 }
             })
         }
@@ -528,6 +531,17 @@ pub(super) fn override_counted(
         super::orch_ops::override_landed(run, (&id, &reason), &result, now);
     }
     fx.push(Effect::Reply { reply, result });
+}
+
+/// Milestone 9.13 decision 5 (ruling C25): for each of `changed` that is a gate script
+/// still pinned, the clause that says the next gate command will refuse it.
+fn still_pinned(run: &Run, changed: &[String]) -> String {
+    let pinned = super::gate_pins::pinned(run);
+    changed
+        .iter()
+        .filter(|path| pinned.iter().any(|f| f.path == **path))
+        .map(|path| format!("; {path} stays pinned until a task's owns names it (run edit)"))
+        .collect()
 }
 
 /// Milestone 9.13 decision 5: the orchestrator may not merge a protected change
