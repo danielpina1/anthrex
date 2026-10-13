@@ -454,6 +454,12 @@ pub(super) fn remove_worktree(
             false => Reconciled::NotStarted,
         });
     }
+    // Final fix batch F1d: its temporary directory is outside it, named only from the
+    // repository's path, so it goes first: a stop before the repository goes leaves
+    // the repository to name it to the next reconcile.
+    if let Err(err) = crate::run::git::remove_task_tmp(repo) {
+        notes.push(format!("could not remove the removed checkout's {err}"));
+    }
     if repo.exists() {
         match std::fs::remove_dir_all(repo) {
             Ok(()) => notes.push(format!(
@@ -465,10 +471,6 @@ pub(super) fn remove_worktree(
                 repo.display()
             )),
         }
-    }
-    // Final fix batch F1d: its temporary directory is outside it.
-    if let Err(err) = crate::run::git::remove_task_tmp(repo) {
-        notes.push(format!("could not remove the removed checkout's {err}"));
     }
     if let Some(entry) = listed_worktree_in(g, root, path)? {
         match forget_missing(g, root, path, &entry) {
