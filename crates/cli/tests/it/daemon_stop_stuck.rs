@@ -66,7 +66,7 @@ fn daemon_stop_returns_with_a_blocking_task_stuck() {
         || -> Option<u32> { std::fs::read_to_string(&pid_file).ok()?.trim().parse().ok() };
     let deadline = Instant::now() + tui::spawn::ENSURE_DAEMON_SOCKET_WAIT;
     let pid = loop {
-        if socket.exists()
+        if support::socket_ready::accepts(&socket)
             && let Some(pid) = read_pid()
         {
             break pid;

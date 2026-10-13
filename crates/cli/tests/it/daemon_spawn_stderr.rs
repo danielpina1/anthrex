@@ -54,7 +54,7 @@ fn detached_daemon_captures_its_stderr_to_a_file() {
 
     let socket = dir.path().join("daemon.sock");
     let deadline = Instant::now() + Duration::from_secs(3);
-    while !socket.exists() {
+    while !support::socket_ready::accepts(&socket) {
         assert!(Instant::now() < deadline, "daemon did not start in time");
         std::thread::sleep(Duration::from_millis(10));
     }

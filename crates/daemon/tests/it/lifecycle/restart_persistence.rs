@@ -4,7 +4,7 @@
 //! restored window's `Runtime::Claude`/`Runtime::Codex` sessions resuming is
 //! `lifecycle_resume.rs`, alone in its binary because it sets environment variables. A
 //! submodule of `lifecycle.rs` (AGENTS.md rule 8), sharing its `opts`,
-//! `shell_spec`, `wait_for_path` and `Client` fixtures via `use super::*`.
+//! `shell_spec`, `wait_accepting` and `Client` fixtures via `use super::*`.
 
 use super::*;
 
@@ -20,7 +20,7 @@ async fn windows_survive_a_daemon_restart_as_exited() {
     let data_dir = dir.path().join("data");
 
     let handle = tokio::spawn(run(opts(socket.clone(), data_dir.clone())));
-    wait_for_path(&socket, Duration::from_secs(5)).await;
+    wait_accepting(&socket, Duration::from_secs(5)).await;
 
     let (mut c, _welcome) = Client::connect(&socket).await;
     c.send(ClientMsg::CreateWindow {
@@ -73,7 +73,7 @@ async fn windows_survive_a_daemon_restart_as_exited() {
     // Second daemon, same data dir: the window comes back exited, with decision 14's
     // reason and placeholder screen.
     let handle2 = tokio::spawn(run(opts(socket.clone(), data_dir.clone())));
-    wait_for_path(&socket, Duration::from_secs(5)).await;
+    wait_accepting(&socket, Duration::from_secs(5)).await;
 
     let (mut c2, welcome) = Client::connect(&socket).await;
     let windows = match welcome {

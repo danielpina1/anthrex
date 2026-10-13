@@ -20,6 +20,7 @@ pub mod run_rounds;
 pub mod run_tiers;
 pub mod run_trail;
 pub mod run_watcher;
+pub mod socket_ready;
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -301,9 +302,11 @@ impl TestDaemon {
         // pre-bind loads, which a fresh data directory keeps trivial; the client's start
         // bound, `ENSURE_DAEMON_SOCKET_WAIT` (`LOCK_WAIT` + `PRE_BIND_ALLOWANCE`), covers
         // both. A daemon that exits early is seen at once in the loop, so only a hung
-        // start waits this out.
+        // start waits this out. Ready means the socket accepts (task 4's review, I2),
+        // not that its file exists: `listen(2)` follows `bind(2)` inside the same
+        // `UnixListener::bind` call, so the bound needs no term of its own.
         let deadline = Instant::now() + tui::spawn::ENSURE_DAEMON_SOCKET_WAIT;
-        while !daemon.socket().exists() {
+        while !socket_ready::accepts(&daemon.socket()) {
             assert!(
                 daemon.child.try_wait().unwrap().is_none(),
                 "daemon exited: {}",
@@ -311,7 +314,7 @@ impl TestDaemon {
             );
             assert!(
                 Instant::now() < deadline,
-                "daemon did not create socket: {}",
+                "daemon did not accept on its socket: {}",
                 daemon.log()
             );
             std::thread::sleep(Duration::from_millis(10));

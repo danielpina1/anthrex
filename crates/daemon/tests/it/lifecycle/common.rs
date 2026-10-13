@@ -1,5 +1,5 @@
 //! The fixtures `lifecycle.rs` and `lifecycle_resume.rs` share: a `DaemonOptions` for an
-//! isolated socket and data directory, a shell window spec, a wait for a path, and a
+//! isolated socket and data directory, a shell window spec, a wait for a socket that accepts, and a
 //! minimal raw-frame client. Included in each with `#[path]`.
 #![allow(dead_code)]
 
@@ -36,17 +36,20 @@ pub fn shell_spec(name: &str) -> WindowSpec {
     }
 }
 
-pub async fn wait_for_path(path: &Path, timeout: Duration) {
+/// Waits until the daemon's `socket` accepts a connection (task 4's review, I2): its
+/// file appears at `bind(2)`, and a connect is refused until `listen(2)`, so the file
+/// alone is not a daemon that is up.
+pub async fn wait_accepting(socket: &Path, timeout: Duration) {
     tokio::time::timeout(timeout, async {
         loop {
-            if path.exists() {
+            if UnixStream::connect(socket).await.is_ok() {
                 return;
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     })
     .await
-    .unwrap_or_else(|_| panic!("timed out waiting for {} to appear", path.display()));
+    .unwrap_or_else(|_| panic!("timed out waiting for {} to accept", socket.display()));
 }
 
 pub struct Client {

@@ -48,7 +48,7 @@ impl Drop for StopOnDrop<'_> {
     fn drop(&mut self) {
         let socket = self.0.join("daemon.sock");
         let deadline = Instant::now() + tui::spawn::ENSURE_DAEMON_SOCKET_WAIT;
-        while !socket.exists() && Instant::now() < deadline {
+        while !support::socket_ready::accepts(&socket) && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(20));
         }
         if socket.exists() {
