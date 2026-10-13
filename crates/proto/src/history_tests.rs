@@ -67,3 +67,37 @@ fn old_history_decodes_without_signatures() {
     }
     assert!(tasks >= 2, "{tasks} task lines");
 }
+
+/// Review I2 of task M9.15.7 (decision 32): `RunRecord.discard_reason`. The 9.14 run
+/// line decodes with no reason and writes no `discard_reason` key back; a record with a
+/// reason round-trips through JSON (as a history line) and MessagePack.
+#[test]
+fn run_record_discard_reason_round_trips_and_is_left_out_while_none() {
+    let line = (M914_HISTORY.lines())
+        .find(|l| l.contains("\"type\":\"run\""))
+        .expect("the 9.14 run line");
+    let HistoryLine::Run(old) = serde_json::from_str(line).unwrap() else {
+        panic!("a run line: {line}");
+    };
+    assert_eq!(old.discard_reason, None);
+    let again = serde_json::to_value(HistoryLine::Run(old.clone())).unwrap();
+    assert!(again.get("discard_reason").is_none(), "{again}");
+    let captured: Value = serde_json::from_str(line).unwrap();
+    assert_eq!(keys(&again), keys(&captured), "{line}");
+
+    let mut record = old;
+    record.outcome = "discarded".into();
+    record.discard_reason = Some("wrong approach: the cache belongs in the client".into());
+    let line = HistoryLine::Run(record.clone());
+    let json = serde_json::to_string(&line).unwrap();
+    assert!(
+        json.contains("\"discard_reason\":\"wrong approach"),
+        "{json}"
+    );
+    assert_eq!(serde_json::from_str::<HistoryLine>(&json).unwrap(), line);
+    let bytes = rmp_serde::to_vec_named(&record).unwrap();
+    let back: crate::history::RunRecord = rmp_serde::from_slice(&bytes).unwrap();
+    assert_eq!(back, record);
+    let bytes = rmp_serde::to_vec_named(&line).unwrap();
+    assert_eq!(rmp_serde::from_slice::<HistoryLine>(&bytes).unwrap(), line);
+}
