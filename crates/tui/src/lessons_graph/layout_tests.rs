@@ -299,3 +299,26 @@ fn coincident_ids_are_separated() {
     let min = 0.5 / 3f64.sqrt();
     assert!(distance(laid.positions[0], laid.positions[1]) >= min);
 }
+
+/// Task 14's review, M3: the start nudge separates every node before the forces run,
+/// so `towards`'s coincident branch is pinned on its own: two equal points push along
+/// a unit direction taken from their ranks, at distance `COINCIDENT`, and a different
+/// pair of ranks pushes another way.
+#[test]
+fn coincident_points_push_along_a_rank_direction() {
+    let p = (0.5, 0.5);
+    let (ux, uy, d) = towards(p, p, 1, 2);
+    assert_eq!(d, COINCIDENT);
+    assert!((ux.hypot(uy) - 1.0).abs() < 1e-12, "a unit direction");
+    let angle = GOLDEN_ANGLE * (31 + 2) as f64;
+    assert_eq!((ux, uy), (angle.cos(), angle.sin()));
+    assert_eq!(towards(p, p, 1, 2), (ux, uy, d), "deterministic");
+    let (vx, vy, _) = towards(p, p, 2, 1);
+    assert_ne!((vx, vy), (ux, uy), "another pair, another direction");
+    // Just above the threshold, the ordinary branch: the real offset.
+    let q = (0.5 + 2.0 * COINCIDENT, 0.5);
+    let (wx, wy, dw) = towards(q, p, 1, 2);
+    assert_eq!((wx, wy), (1.0, 0.0));
+    // `0.5 + 2e-9 − 0.5` is exact to within 0.5's last bit (about 1e-16).
+    assert!((dw - 2.0 * COINCIDENT).abs() < 1e-15);
+}

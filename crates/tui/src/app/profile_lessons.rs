@@ -1,9 +1,9 @@
 //! Milestone 9.15 decisions 35 and 36 (task M9.15.12): the Profile screen's Lessons page.
 //! `l` opens it and sends `List { dir, all: false }`; `j`/`k` move, `a` approves at once,
 //! `r` and `d` ask `reject <id>? y/n` / `forget <id>? y/n` and send on `y` (`n` or Esc
-//! cancels), `t` lists rejected and retired lessons too, `g` is the graph page's key
-//! (task M9.15.15), Esc goes back. After any reply the page lists again; a refusal
-//! shows on the page in the daemon's words. The screen itself lists once when it opens,
+//! cancels), `t` lists rejected and retired lessons too, `g` opens the graph page
+//! (task M9.15.15, `app/lessons_graph_screen.rs`), Esc goes back. After any reply the
+//! page lists again; a refusal shows on the page in the daemon's words. The screen itself lists once when it opens,
 //! for its hint line's ` · <n> to review` (decision 36); proposals raise no alert
 //! (decision 38). Mounted from `app/profile_screen.rs` (decision 39). Pure: every
 //! request leaves as an `Effect`.
@@ -13,9 +13,6 @@ use crate::app::{App, Effect, ToastLevel};
 use crossterm::event::{KeyCode, KeyEvent};
 use proto::{LessonInfo, LessonStatus, LessonsRequest, RunReply, RunRequest};
 use std::path::{Path, PathBuf};
-
-/// What `g` says until the graph screen exists (task M9.15.15).
-pub const GRAPH_NOT_YET: &str = "not available yet";
 
 /// A verb the page asks `y/n` for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,7 +106,7 @@ impl App {
     }
 
     /// The page's `List` (with its `all`), recorded as the page's latest.
-    fn lessons_list(&mut self) -> Vec<Effect> {
+    pub(in crate::app) fn lessons_list(&mut self) -> Vec<Effect> {
         if !self.connected() {
             self.toast_at(ToastLevel::Warn, "not connected");
             return vec![];
@@ -225,7 +222,7 @@ impl App {
                 page.all = !page.all;
                 return self.lessons_list();
             }
-            KeyCode::Char('g') => self.toast_at(ToastLevel::Info, GRAPH_NOT_YET),
+            KeyCode::Char('g') => return self.open_lessons_graph(),
             _ => {}
         }
         vec![]

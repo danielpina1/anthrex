@@ -89,6 +89,12 @@ pub enum PendingWhat {
         run_id: String,
     },
     DocGate(super::doc_gate_replies::GateAsk),
+    /// Milestone 9.15 decision 48: the lessons graph page's `Graph` (`graph: true`) or
+    /// `Decide`/`Forget` on `dir` (`app/lessons_graph_screen.rs`).
+    LessonsGraph {
+        dir: std::path::PathBuf,
+        graph: bool,
+    },
 }
 
 /// One request waiting for its reply.
@@ -206,6 +212,9 @@ impl App {
         if let Some(effects) = self.route_lessons_reply(reply) {
             return Some(effects);
         }
+        if let Some(effects) = self.route_lessons_graph_reply(reply) {
+            return Some(effects);
+        }
         if let Some(effects) = self.route_stats_reply(reply) {
             return Some(effects);
         }
@@ -256,8 +265,8 @@ impl App {
                 }
             }
             // Milestone 9.15 decision 32: the Profile screen's own (task M9.15.12) are
-            // `route_lessons_reply`'s; the graph page (M9.15.15) takes its replies by
-            // id; until then any other is dropped.
+            // `route_lessons_reply`'s, the graph page's (M9.15.15)
+            // `route_lessons_graph_reply`'s; any other is dropped.
             RunReply::Lessons { request_id, .. } | RunReply::LessonsGraph { request_id, .. } => {
                 self.replies.take(*request_id);
             }
@@ -354,6 +363,7 @@ impl App {
             }
             PendingWhat::Profile { dir, ask } => self.profile_view_failed(id, dir, *ask, why),
             PendingWhat::DocShow { .. } => self.doc_show_failed(id, why),
+            PendingWhat::LessonsGraph { dir, .. } => self.lessons_graph_failed(dir, why),
             _ => false,
         }
     }
@@ -435,6 +445,7 @@ impl App {
                     dir,
                     ask: ProfileAsk::Lessons { list },
                 }) => !self.lessons_failed(dir, *list, why),
+                Some(PendingWhat::LessonsGraph { dir, .. }) => !self.lessons_graph_failed(dir, why),
                 _ => true,
             },
             _ => true,

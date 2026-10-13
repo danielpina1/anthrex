@@ -325,14 +325,17 @@ fn the_page_lists_again_after_a_reply() {
     assert_eq!(page(&app).lessons.as_ref().map(Vec::len), Some(3));
 }
 
-/// Until the graph screen exists (task M9.15.15), `g` says so; M9.15.15 rewrites this
-/// test to assert the `Graph` request.
+/// `g` asks for the graph and opens its page (task M9.15.15; until then it toasted
+/// `not available yet`, which this test asserted).
 #[test]
 fn g_opens_the_graph_screen() {
     let mut app = page_app();
-    assert!(tagged(&tap(&mut app, KeyCode::Char('g'))).is_empty());
-    assert_eq!(app.toast_text(), Some("not available yet"));
-    assert!(matches!(screen(&app).page, Some(ProfilePage::Lessons(_))));
+    let (_, request) = one(&tap(&mut app, KeyCode::Char('g')));
+    assert_eq!(request, LessonsRequest::Graph { dir: dir() });
+    assert!(matches!(
+        app.screen,
+        Some(crate::app::screens::Screen::LessonsGraph(_))
+    ));
 }
 
 /// A decision whose page closed before its reply is toasted, as the screen's other
@@ -394,3 +397,6 @@ fn no_alerts_for_proposals() {
     assert_eq!(screen(&app).to_review, 5, "the reply was taken");
     assert_eq!(crate::app::alerts(&app), before);
 }
+
+#[path = "lessons_graph.rs"]
+mod lessons_graph;

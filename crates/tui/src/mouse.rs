@@ -177,6 +177,15 @@ impl App {
         now: Instant,
     ) -> Vec<Effect> {
         self.forget_stale_panel_state();
+        // Milestone 9.15 decision 46: a click on the lessons graph page's canvas.
+        if self.modal.is_none()
+            && matches!(
+                self.screen,
+                Some(crate::app::screens::Screen::LessonsGraph(_))
+            )
+        {
+            return self.lessons_graph_click(column, row, layout.lessons_canvas);
+        }
         if self.modal.is_some() || self.plan_review.is_some() || self.screen.is_some() {
             return vec![];
         }

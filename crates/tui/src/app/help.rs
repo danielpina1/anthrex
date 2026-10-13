@@ -48,6 +48,7 @@ impl App {
                 Some(Screen::Profile(_)) => "profile",
                 Some(Screen::Settings(_)) => "settings",
                 Some(Screen::DocGate(_)) => "document gate",
+                Some(Screen::LessonsGraph(_)) => "lessons graph",
                 _ => "global",
             },
             KeyRegion::Pane | KeyRegion::Dialog => "global",
