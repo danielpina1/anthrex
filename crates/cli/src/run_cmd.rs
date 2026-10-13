@@ -13,7 +13,7 @@ mod status_orch;
 
 pub(crate) use status::printable;
 
-use finish::{accept, confirm_id};
+use finish::{accept, confirm_id, discard};
 
 use crate::client::CliClient;
 use clap::{Args, Subcommand};
@@ -233,6 +233,9 @@ enum RunCommand {
         /// The run id, instead of typing it
         #[arg(long)]
         confirm: Option<String>,
+        /// Why: kept in the run's history record, one line of at most 500 characters
+        #[arg(long)]
+        reason: Option<String>,
     },
     #[command(flatten)]
     Design(design::DesignCommand),
@@ -393,23 +396,11 @@ async fn dispatch(command: RunCommand, socket: &Path, dir: Option<PathBuf>) -> a
             let info = runs.resolve_info(&run).await?;
             accept(&mut runs, &info, yes, base.as_deref()).await
         }
-        RunCommand::Discard { run, confirm } => {
-            let run_id = runs.resolve(&run).await?;
-            if confirm.is_none() {
-                // The daemon's own wording of what a discard does.
-                let prompt = match runs.finish(&run_id, FinishAction::Discard, None).await? {
-                    RunReply::ConfirmNeeded { prompt, .. } => prompt,
-                    other => return print_outcome(other),
-                };
-                confirm_id(&run_id, None, &prompt).await?;
-            } else {
-                confirm_id(&run_id, confirm, "").await?;
-            }
-            let reply = runs
-                .finish(&run_id, FinishAction::Discard, Some(run_id.clone()))
-                .await?;
-            print_outcome(reply)
-        }
+        RunCommand::Discard {
+            run,
+            confirm,
+            reason,
+        } => discard(&mut runs, &run, confirm, reason.as_deref()).await,
     }
 }
 

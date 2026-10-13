@@ -211,3 +211,50 @@ fn a_full_list_names_the_cap() {
         "no run matches 'nope'"
     );
 }
+
+/// Milestone 9.15 decision 26: `run discard --reason <text>` sends the text cleaned to
+/// one line; a blank one is no reason.
+#[test]
+fn discard_takes_a_reason() {
+    use clap::Parser;
+    let parsed = |argv: &[&str]| match crate::Cli::try_parse_from(argv).unwrap().command {
+        Some(crate::Command::Run(args)) => match args.command {
+            super::RunCommand::Discard { run, reason, .. } => (run, reason),
+            other => panic!("{other:?}"),
+        },
+        other => panic!("{other:?}"),
+    };
+    let argv = [
+        "anthrex",
+        "run",
+        "discard",
+        "r",
+        "--reason",
+        "too big\nsplit it",
+        "--confirm",
+        "r",
+    ];
+    let (run, reason) = parsed(&argv);
+    assert_eq!(
+        (run.as_str(), reason.as_deref()),
+        ("r", Some("too big\nsplit it"))
+    );
+    assert_eq!(
+        super::finish::discard_request("r", Some("r".into()), reason.as_deref()),
+        RunRequest::Finish {
+            run_id: "r".into(),
+            action: FinishAction::Discard,
+            confirm: Some("r".into()),
+            reason: Some("too big split it".into()),
+        }
+    );
+    let (_, none) = parsed(&["anthrex", "run", "discard", "r"]);
+    assert_eq!(none, None);
+    for blank in [None, Some(""), Some("  \n ")] {
+        let RunRequest::Finish { reason, .. } = super::finish::discard_request("r", None, blank)
+        else {
+            unreachable!()
+        };
+        assert_eq!(reason, None, "{blank:?}");
+    }
+}

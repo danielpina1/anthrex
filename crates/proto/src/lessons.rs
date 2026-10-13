@@ -183,3 +183,12 @@ pub struct LessonGraph {
 pub const GRAPH_NODES_MAX: usize = 300;
 /// The longest discard reason kept (decision 26).
 pub const DISCARD_REASON_MAX: usize = 500;
+
+/// Decision 26: a discard reason as it is sent and kept: on one line (`one_line`),
+/// trimmed and clipped to [`DISCARD_REASON_MAX`] characters; a blank one is `None`.
+/// The client and the daemon both apply it.
+pub fn discard_reason(text: Option<&str>) -> Option<String> {
+    let line = crate::safe_text::one_line(text?);
+    let kept: String = line.trim().chars().take(DISCARD_REASON_MAX).collect();
+    (!kept.is_empty()).then_some(kept)
+}

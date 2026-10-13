@@ -294,6 +294,10 @@ pub struct RunRecord {
     pub accepted_commit: Option<String>,
     pub tasks: u32,
     pub usage: Option<RunUsage>,
+    /// Milestone 9.15 decision 26: why the user discarded the run (one line, at most
+    /// `DISCARD_REASON_MAX` characters). Left out while `None`; `HISTORY_VERSION` stays.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discard_reason: Option<String>,
 }
 
 /// A merged task's commit that was later reverted on the base branch.

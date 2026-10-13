@@ -2,7 +2,7 @@
 //! `run discard`, with the prompts they read from stdin.
 
 use super::{Runs, print_outcome, status};
-use proto::{FinishAction, RunInfo, RunReply, RunState};
+use proto::{FinishAction, RunInfo, RunReply, RunRequest, RunState};
 use std::io::{IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -125,6 +125,44 @@ pub(super) async fn accept(
         "{} kept moving; not merged; run accept again",
         info.base_branch
     )
+}
+
+/// `run discard` (decision 20): the daemon's own wording of what a discard does, the
+/// typed or `--confirm`ed run id, then the discard with milestone 9.15's `--reason`
+/// (decision 26).
+pub(super) async fn discard(
+    runs: &mut Runs,
+    run: &str,
+    confirm: Option<String>,
+    reason: Option<&str>,
+) -> anyhow::Result<()> {
+    let run_id = runs.resolve(run).await?;
+    if confirm.is_none() {
+        let prompt = match runs.finish(&run_id, FinishAction::Discard, None).await? {
+            RunReply::ConfirmNeeded { prompt, .. } => prompt,
+            other => return print_outcome(other),
+        };
+        confirm_id(&run_id, None, &prompt).await?;
+    } else {
+        confirm_id(&run_id, confirm, "").await?;
+    }
+    let request = discard_request(&run_id, Some(run_id.clone()), reason);
+    print_outcome(runs.request(request).await?)
+}
+
+/// Decision 26: a discard's request, its reason cleaned (`proto::discard_reason`) as
+/// the daemon cleans it again.
+pub(super) fn discard_request(
+    run_id: &str,
+    confirm: Option<String>,
+    reason: Option<&str>,
+) -> RunRequest {
+    RunRequest::Finish {
+        run_id: run_id.to_string(),
+        action: FinishAction::Discard,
+        confirm,
+        reason: proto::discard_reason(reason),
+    }
 }
 
 /// The question for a run that merged nothing (a research or review run): accepting

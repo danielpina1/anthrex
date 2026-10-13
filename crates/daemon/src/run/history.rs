@@ -271,6 +271,7 @@ pub fn run_record(run: &Run, outcome: &str, now: u64) -> RunRecord {
         accepted_commit: None,
         tasks: count(run.tasks.len()),
         usage: Some(super::snapshot::run_usage(run)),
+        discard_reason: run.discard_reason.clone(),
     }
 }
 

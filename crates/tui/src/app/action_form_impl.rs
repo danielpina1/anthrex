@@ -16,6 +16,7 @@ impl ActionForm {
             ActionForm::Override(f) => &f.info,
             ActionForm::Resume(f) => &f.info,
             ActionForm::Promote(f) => &f.info,
+            ActionForm::DiscardReason(f) => &f.info,
         }
     }
 
@@ -26,6 +27,7 @@ impl ActionForm {
             ActionForm::Override(f) => f.info = info,
             ActionForm::Resume(f) => f.info = info,
             ActionForm::Promote(f) => f.info = info,
+            ActionForm::DiscardReason(f) => f.info = info,
         }
     }
 
@@ -47,7 +49,9 @@ impl ActionForm {
                     ActionForm::Answer(f) => f.blank = !ready,
                     ActionForm::Message(f) => f.blank = !ready,
                     ActionForm::Override(f) => f.blank = !ready,
-                    ActionForm::Resume(_) | ActionForm::Promote(_) => {}
+                    ActionForm::Resume(_)
+                    | ActionForm::Promote(_)
+                    | ActionForm::DiscardReason(_) => {}
                 }
                 return if ready {
                     FormOutcome::Page
@@ -77,6 +81,12 @@ impl ActionForm {
                 // One line: a newline has no place in a reason.
                 if !is_ctrl_j(&key) && f.reason.on_key_in(key, width) {
                     f.blank = false;
+                }
+            }
+            ActionForm::DiscardReason(f) => {
+                // One line, as the override's reason.
+                if !is_ctrl_j(&key) {
+                    f.reason.on_key_in(key, width);
                 }
             }
             ActionForm::Resume(f) => {
@@ -118,6 +128,9 @@ impl ActionForm {
                 f.reason.on_paste(&text.replace(['\r', '\n'], " "));
                 f.blank = false;
             }
+            ActionForm::DiscardReason(f) => {
+                f.reason.on_paste(&text.replace(['\r', '\n'], " "));
+            }
             ActionForm::Resume(_) | ActionForm::Promote(_) => {}
         }
     }
@@ -140,6 +153,8 @@ impl ActionForm {
             ActionForm::Resume(f) => Ok(ActionInput::Resume {
                 rebaseline: f.rebaseline,
             }),
+            // A blank reason is allowed: it is sent as none.
+            ActionForm::DiscardReason(f) => Ok(ActionInput::DiscardReason(sent(&f.reason))),
             ActionForm::Promote(f) => Ok(ActionInput::Promote(
                 f.options.get(f.at).and_then(|o| o.choice.clone()),
             )),
@@ -162,6 +177,13 @@ impl ActionForm {
                 row("message", preview(&f.text)),
             ],
             ActionForm::Override(f) => vec![row("reason", preview(&f.reason))],
+            ActionForm::DiscardReason(f) => vec![row(
+                "reason",
+                match preview(&f.reason) {
+                    shown if shown.is_empty() => "(none)".to_string(),
+                    shown => shown,
+                },
+            )],
             ActionForm::Resume(f) => vec![row(
                 "rebaseline",
                 if f.rebaseline { "on" } else { "off" }.to_string(),

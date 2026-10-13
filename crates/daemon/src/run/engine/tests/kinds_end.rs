@@ -29,6 +29,7 @@ fn finish(fx: &mut Fixture, action: FinishAction) -> Vec<Effect> {
         reply,
         run_id: RUN_ID.into(),
         action,
+        reason: None,
     })
 }
 

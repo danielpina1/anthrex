@@ -110,6 +110,7 @@ fn merged(
 
 fn run(id: &str, calls: u32, fallbacks: u32) -> RunRecord {
     RunRecord {
+        discard_reason: None,
         v: HISTORY_VERSION,
         record_id: id.into(),
         at: 200,

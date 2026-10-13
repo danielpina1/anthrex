@@ -150,6 +150,7 @@ fn line(t: TaskRecord) -> HistoryLine {
 
 fn run(run: &str, at: u64, outcome: &str) -> HistoryLine {
     HistoryLine::Run(RunRecord {
+        discard_reason: None,
         v: HISTORY_VERSION,
         record_id: run.into(),
         at,

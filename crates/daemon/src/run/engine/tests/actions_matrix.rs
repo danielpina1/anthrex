@@ -52,11 +52,13 @@ fn event_for(fx: &mut Fixture, node: &ActionNode, kind: &ActionKind) -> EventKin
             reply,
             run_id,
             action: FinishAction::Accept,
+            reason: None,
         },
         ActionKind::Discard => EventKind::Finish {
             reply,
             run_id,
             action: FinishAction::Discard,
+            reason: None,
         },
         ActionKind::ApproveHold { hold } | ActionKind::RejectHold { hold } => {
             let approve = matches!(kind, ActionKind::ApproveHold { .. });

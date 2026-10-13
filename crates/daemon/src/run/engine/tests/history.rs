@@ -26,7 +26,7 @@ fn history_path() -> std::path::PathBuf {
 }
 
 /// A running run of `tasks` whose history is on, every dispatched worker launched.
-fn start_history(profile: &str, tasks: &[String]) -> (Fixture, Vec<(String, u32)>) {
+pub(super) fn start_history(profile: &str, tasks: &[String]) -> (Fixture, Vec<(String, u32)>) {
     let plan = plan_with(profile, tasks);
     let mut fx = Fixture::with_config(&plan, config());
     fx.start_with(true, |run| run.repo_dir = REPO.into());
@@ -59,7 +59,7 @@ fn is_persist(e: &Effect) -> bool {
 }
 
 /// The `AppendHistory` ops among `effects`: (op, record id, line).
-fn appends(effects: &[Effect]) -> Vec<(u64, String, HistoryLine)> {
+pub(super) fn appends(effects: &[Effect]) -> Vec<(u64, String, HistoryLine)> {
     ops_in(effects, "AppendHistory")
         .into_iter()
         .map(|(op, kind)| match kind {
@@ -350,6 +350,7 @@ fn accept_appends_the_run_record_after_the_tasks() {
         reply,
         run_id: RUN_ID.into(),
         action: FinishAction::Accept,
+        reason: None,
     });
     let (accept, _) = fx.op("Accept");
     let effects = fx.done(

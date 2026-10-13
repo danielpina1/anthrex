@@ -107,6 +107,9 @@ mod actions_replies;
 #[path = "../app_tests/action_forms.rs"]
 mod action_forms;
 
+#[path = "../app_tests/discard_reason.rs"]
+mod discard_reason;
+
 #[path = "../app_tests/alerts_menu.rs"]
 mod alerts_menu;
 

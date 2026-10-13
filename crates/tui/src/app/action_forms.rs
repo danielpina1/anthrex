@@ -115,6 +115,13 @@ pub struct PromoteForm {
     pub at: usize,
 }
 
+/// Milestone 9.15 decision 40: a run's discard asks for an optional one-line reason.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiscardForm {
+    pub info: ActionInfo,
+    pub reason: TextArea,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActionForm {
     Answer(AnswerForm),
@@ -122,6 +129,7 @@ pub enum ActionForm {
     Override(OverrideForm),
     Resume(ResumeForm),
     Promote(PromoteForm),
+    DiscardReason(DiscardForm),
 }
 
 /// The word a message kind is shown and sent as.
@@ -241,6 +249,10 @@ fn build_form(
             info,
             options: promote_options(catalogs),
             at: 0,
+        }),
+        (InputKind::DiscardReason, ActionTarget::Run) => ActionForm::DiscardReason(DiscardForm {
+            info,
+            reason: TextArea::new(),
         }),
         _ => return None,
     })

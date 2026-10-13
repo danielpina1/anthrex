@@ -95,8 +95,8 @@ pub enum RunRequest {
         run_id: String,
         action: FinishAction,
         confirm: Option<String>,
-        /// Milestone 9.15 decision 26: why a run is discarded (ignored for an accept,
-        /// and passed but ignored until task M9.15.7). Left out while `None`.
+        /// Milestone 9.15 decision 26: why a run is discarded (ignored for an accept).
+        /// Left out while `None`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
     },

@@ -135,6 +135,7 @@ fn iterate_is_refused_with_each_states_text() {
         reply: reply_id,
         run_id: RUN_ID.into(),
         action: proto::FinishAction::Accept,
+        reason: None,
     });
     refused(fx, &format!("run {RUN_ID} is being accepted"));
     // 2. No orchestrator: a plan-file run.

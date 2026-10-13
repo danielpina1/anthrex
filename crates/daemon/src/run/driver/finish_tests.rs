@@ -56,7 +56,7 @@ async fn accept_of_a_running_run_is_refused_before_any_git_read() {
         expected,
         format!("run {id} is running; accept applies only to a complete run")
     );
-    let reply = s.finish(id.clone(), FinishAction::Accept, None).await;
+    let reply = s.finish(id.clone(), FinishAction::Accept, None, None).await;
     assert_eq!(reply, RunReply::refused(request::FINISH, expected));
 }
 
@@ -65,6 +65,8 @@ async fn discard_of_a_running_run_is_refused_before_its_confirmation() {
     let data = tempfile::tempdir().unwrap();
     let (s, id) = with_running_run(data.path());
     let expected = checked(&s, &id, ActionKind::Discard);
-    let reply = s.finish(id.clone(), FinishAction::Discard, None).await;
+    let reply = s
+        .finish(id.clone(), FinishAction::Discard, None, None)
+        .await;
     assert_eq!(reply, RunReply::refused(request::FINISH, expected));
 }

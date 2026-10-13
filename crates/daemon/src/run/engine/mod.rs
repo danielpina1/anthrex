@@ -228,7 +228,8 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
             reply,
             run_id,
             action,
-        } => complete::finish(&mut state, reply, &run_id, action, now, &mut fx),
+            reason,
+        } => complete::finish(&mut state, reply, &run_id, action, reason, now, &mut fx),
         EventKind::Tool { reply, call } => done::tool(&mut state, reply, call, now, &mut fx),
         EventKind::Promote {
             reply,

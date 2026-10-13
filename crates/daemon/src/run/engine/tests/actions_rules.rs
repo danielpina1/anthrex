@@ -462,6 +462,7 @@ fn handlers_refuse_through_the_rules() {
         reply,
         run_id: run_id(),
         action: FinishAction::Discard,
+        reason: None,
     });
     assert_eq!(got, vec![Err(expected)]);
     let expected = rules::promote(fx.run()).unwrap();

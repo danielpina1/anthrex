@@ -433,6 +433,10 @@ pub struct Run {
     /// before 9.15, or one built outside a start): lessons off (ruling C2).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lessons: Option<RunLessons>,
+    /// Milestone 9.15 decision 26: why the user discarded the run, for its run record;
+    /// `None` (left out of `run.json`, ruling C2) for any other run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discard_reason: Option<String>,
 }
 
 pub(crate) fn is_zero(n: &u64) -> bool {

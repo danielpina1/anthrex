@@ -225,7 +225,7 @@ fn an_old_run_json_still_loads() {
         assert_eq!(count(&written, key), 0, "run.json gained {key}");
     }
     // Milestone 9.15 ruling C2: lessons off, so none of its keys either.
-    for key in ["lessons", "lessons_shown"] {
+    for key in ["lessons", "lessons_shown", "discard_reason"] {
         assert_eq!(count(&written, key), 0, "run.json gained {key}");
     }
     assert_eq!(count(&written, "lane"), count(&before, "lane"));

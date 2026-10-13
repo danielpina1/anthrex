@@ -22,10 +22,17 @@ pub enum ActionTarget {
 pub enum ActionInput {
     None,
     Answer(String),
-    Message { kind: MessageKind, text: String },
+    Message {
+        kind: MessageKind,
+        text: String,
+    },
     Reason(String),
-    Resume { rebaseline: bool },
+    Resume {
+        rebaseline: bool,
+    },
     Promote(Option<OrchestratorChoice>),
+    /// Milestone 9.15 decision 40: the discard form's reason, as typed (blank: none).
+    DiscardReason(String),
 }
 
 /// The request `kind` on `target` of `run` sends, given `input`. `None` for the kinds
@@ -87,7 +94,13 @@ pub fn request_for(
         },
         (ActionKind::Accept, ActionTarget::Run) => Some(finish(&run.run_id, FinishAction::Accept)),
         (ActionKind::Discard, ActionTarget::Run) => {
-            Some(finish(&run.run_id, FinishAction::Discard))
+            let mut request = finish(&run.run_id, FinishAction::Discard);
+            if let (RunRequest::Finish { reason, .. }, ActionInput::DiscardReason(typed)) =
+                (&mut request, input)
+            {
+                *reason = proto::discard_reason(Some(typed));
+            }
+            Some(request)
         }
         (ActionKind::MessageStage { stage }, ActionTarget::Stage(n)) if stage == n => {
             let ActionInput::Message { kind, text } = input else {

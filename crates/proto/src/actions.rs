@@ -99,6 +99,8 @@ impl ActionKind {
             Override => ActionNeeds::Input(InputKind::Reason),
             Resume => ActionNeeds::Input(InputKind::Resume),
             Promote => ActionNeeds::Input(InputKind::Promote),
+            // Milestone 9.15 decision 32: the discard form's optional reason first.
+            Discard => ActionNeeds::Input(InputKind::DiscardReason),
             Approve
             | Reject
             | Submit
@@ -108,7 +110,6 @@ impl ActionKind {
             | Unpause
             | Cancel
             | Accept
-            | Discard
             | Refresh
             | Retry
             | CancelTask => ActionNeeds::Confirm,

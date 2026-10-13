@@ -238,6 +238,7 @@ pub use history::{
 pub use lessons::{
     DISCARD_REASON_MAX, GRAPH_NODES_MAX, GraphEdge, GraphEdgeKind, GraphNode, GraphNodeKind,
     LessonGraph, LessonInfo, LessonLayer, LessonOrigin, LessonStatus, LessonsRequest, ModuleSource,
+    discard_reason,
 };
 pub use lessons_store::{
     AttemptLine, DismissedLine, DistillCause, DistilledLine, GaveUpLine, LESSONS_VERSION,
