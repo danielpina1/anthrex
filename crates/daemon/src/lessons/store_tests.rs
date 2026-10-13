@@ -107,3 +107,34 @@ fn read_store_of_a_missing_file_is_empty() {
     assert_eq!(problems.len(), 1, "{problems:?}");
     assert!(problems[0].starts_with("could not read "), "{problems:?}");
 }
+
+/// Task 3's review, I1 (the controller's ruling): "already written" is decided only from
+/// lines that parse. A line torn by a crash or a full disk still carries the
+/// `"record_id":"…"` needle in its first bytes, and the fold skips it; were the needle
+/// enough, the record could never be written again.
+#[tokio::test]
+async fn append_once_writes_a_record_whose_only_line_is_torn() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(LESSONS_FILE);
+    let whole = serde_json::to_string(&retired(1)).unwrap();
+    let torn = &whole[..whole.len() - 10];
+    assert!(torn.contains("\"record_id\":\"l-0123456789abcdef/retired\""));
+    std::fs::write(&path, torn).unwrap();
+    let locks = LessonLocks::default();
+    assert!(append_once(&locks, dir.path(), retired(2)).await.unwrap());
+    // Now a line that parses holds it.
+    assert!(!append_once(&locks, dir.path(), retired(3)).await.unwrap());
+    let (lines, problems) = read_store(&path);
+    assert_eq!(lines, [retired(2)]);
+    assert_eq!(problems.len(), 1, "{problems:?}");
+}
+
+/// An unreadable store is an error for `append_once`, not "nothing written".
+#[tokio::test]
+async fn append_once_on_an_unreadable_store_is_an_error() {
+    let dir = tempfile::tempdir().unwrap();
+    // The store's path is a directory.
+    std::fs::create_dir_all(dir.path().join(LESSONS_FILE)).unwrap();
+    let locks = LessonLocks::default();
+    assert!(append_once(&locks, dir.path(), retired(1)).await.is_err());
+}

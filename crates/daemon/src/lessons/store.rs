@@ -63,6 +63,11 @@ pub async fn append(locks: &LessonLocks, repo_dir: &Path, line: LessonLine) -> i
 }
 
 /// Appends `line` unless the store holds its `record_id` already; true when appended.
+///
+/// Task 3's review, I1 (the controller's ruling): "already" means a line that parses,
+/// by the fold's own parse. A torn line (a crash or a full disk mid-append) carries
+/// the `record_id` in its first bytes but is skipped by the fold, so it must not stop
+/// the record from being written whole. An unreadable store is an error.
 pub async fn append_once(
     locks: &LessonLocks,
     repo_dir: &Path,
@@ -70,7 +75,19 @@ pub async fn append_once(
 ) -> io::Result<bool> {
     let path = repo_dir.join(LESSONS_FILE);
     let _guard = locks.lock(repo_dir).await;
-    blocking(move || history_io::append_once_json(&path, line.record_id(), &line)).await
+    blocking(move || {
+        let text = match std::fs::read(&path) {
+            Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+            Err(error) => return Err(error),
+        };
+        let (lines, _) = fold::parse(&text, "");
+        if lines.iter().any(|l| l.record_id() == line.record_id()) {
+            return Ok(false);
+        }
+        history_io::append_json(&path, &line).map(|()| true)
+    })
+    .await
 }
 
 /// `work` on `spawn_blocking`; a panicked task is an error.
