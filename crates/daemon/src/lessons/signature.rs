@@ -65,8 +65,9 @@ fn re(pattern: &str) -> Regex {
     Regex::new(pattern).expect("a valid signature pattern")
 }
 
-/// Ruling C10 (a): CSI and OSC sequences, and any other two-character escape.
-static ESCAPE: LazyLock<Regex> = LazyLock::new(|| {
+/// Ruling C10 (a): CSI and OSC sequences, and any other two-character escape. Also
+/// stripped from a dossier before its redaction (task 8's review, I1).
+pub(crate) static ESCAPE: LazyLock<Regex> = LazyLock::new(|| {
     re(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[@-Z\\-_]?")
 });
 /// `…/runs/<run id>/<checkout>/` (`model_paths.rs`'s `<wt_dir>/runs/<id>/<task>`).

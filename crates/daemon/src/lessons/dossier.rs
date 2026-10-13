@@ -8,7 +8,7 @@ use proto::{DistillCause, Severity, SigRef};
 use serde::Serialize;
 
 use super::redact::redact;
-use super::signature::task_signatures;
+use super::signature::{ESCAPE, task_signatures};
 use crate::run::contract::finding_line;
 use crate::run::history::outcome as task_outcome;
 use crate::run::model::{LessonLimits, Run, Task};
@@ -59,9 +59,12 @@ impl Block {
 
 /// Decision 11's order: redaction, then `multi_line`, then marker breaking. Redaction
 /// runs again after `multi_line`, which drops hidden format characters and so could
-/// join a token a hidden character had split.
+/// join a token a hidden character had split. Task 8's review, I1: terminal escape
+/// sequences (a check's colours) are stripped first, as a signature's are (ruling
+/// C10 a), so neither a colour code before a token nor one inside it hides it.
 pub fn clean(text: &str) -> String {
-    break_markers(&redact(&multi_line(&redact(text))))
+    let text = ESCAPE.replace_all(text, "");
+    break_markers(&redact(&multi_line(&redact(&text))))
 }
 
 fn clip(text: &str, max: usize, keep: Keep) -> String {

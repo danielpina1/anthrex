@@ -419,3 +419,48 @@ fn dossier_is_deterministic() {
         build(&twin, None, DistillCause::RunFailed, &limits(12_000))
     );
 }
+
+/// Task 8's review, I1: check output is raw command output, colour codes included. A
+/// token right after an escape sequence, or split by one, is still replaced whole.
+#[test]
+fn ansi_wrapped_tokens_are_replaced() {
+    let token = ghp();
+    let sk_ant = format!("sk-ant-{}", "fake0".repeat(8));
+    let segment = format!("{}{}", "eyJmYWtl", "IjoiZmFrZSJ9");
+    let jwt = format!("{segment}.{segment}.{}", "FAKE_sig-".repeat(4));
+    let cases = [
+        (format!("\x1b[1;31m{token}\x1b[0m"), token.clone()),
+        (
+            format!("\x1b[01;31m\x1b[K{sk_ant}\x1b[m\x1b[K"),
+            sk_ant.clone(),
+        ),
+        (format!("\x1b[32m{jwt}\x1b[0m"), jwt.clone()),
+        (
+            format!("{}\x1b[0m{}", &token[..12], &token[12..]),
+            token.clone(),
+        ),
+        (
+            format!("\x1b]8;;https://x\x07{token}\x1b]8;;\x07"),
+            token.clone(),
+        ),
+    ];
+    for (input, secret) in cases {
+        let out = super::clean(&input);
+        assert!(out.contains("[redacted token]"), "{input:?} -> {out:?}");
+        for fragment in [&secret[..8], &secret[secret.len() - 8..]] {
+            assert!(
+                !out.contains(fragment),
+                "{fragment:?} in {input:?} -> {out:?}"
+            );
+        }
+    }
+    // Through the dossier: a coloured check tail.
+    let mut run = run_of(&["t1"]);
+    blocked(&mut run, "x");
+    let tail = format!("\x1b[1;31merror\x1b[0m: bad token \x1b[1m{token}\x1b[0m\n");
+    run.tasks[0].checks.push(failed_check(&tail));
+    let task = &run.tasks[0];
+    let (dossier, _) = build(&run, Some(task), DistillCause::TaskBlocked, &limits(12_000));
+    assert!(!dossier.contains("FAKEFAKE"), "{dossier}");
+    assert!(!dossier.contains("ghp_"), "{dossier}");
+}
