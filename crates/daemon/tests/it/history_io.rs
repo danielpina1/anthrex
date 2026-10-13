@@ -541,3 +541,35 @@ fn version_1_history_and_an_old_run_json_still_load() {
     let back: daemon::run::orch::OrchestratorRecord = serde_json::from_value(value).unwrap();
     assert_eq!(back, record);
 }
+
+/// The coordinator's ruling on task 4's follow-up (as e3f81b84 did for the lessons
+/// store): `append_once` decides "already written" only from lines that parse. A line
+/// torn by a crash or a full disk carries the record's id in its first bytes but is no
+/// record, so the record must still be written whole. An unreadable file is an error.
+#[test]
+fn append_once_writes_a_record_whose_only_line_is_torn() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.jsonl");
+    let line = role_line(9, proto::RoleOutcome::Fallback);
+    let whole = serde_json::to_string(&line).unwrap();
+    let HistoryLine::RoleRoute(d) = &line else {
+        unreachable!()
+    };
+    let torn = &whole[..whole.find(&d.record_id).unwrap() + d.record_id.len() + 2];
+    std::fs::write(&path, torn).unwrap();
+    assert!(
+        contains_record(&path, &d.record_id).unwrap(),
+        "the needle is there"
+    );
+    assert!(
+        append_once(&path, &line).unwrap(),
+        "written despite the torn line"
+    );
+    let (records, problems) = read_history(&path);
+    assert_eq!(records, vec![line.clone()]);
+    assert_eq!(problems.len(), 1, "the torn line: {problems:?}");
+    assert!(!append_once(&path, &line).unwrap(), "now held");
+    let unreadable = dir.path().join("dir.jsonl");
+    std::fs::create_dir(&unreadable).unwrap();
+    assert!(append_once(&unreadable, &line).is_err());
+}

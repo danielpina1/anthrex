@@ -47,21 +47,37 @@ pub fn append_json<T: Serialize + ?Sized>(path: &Path, value: &T) -> std::io::Re
 /// Milestone 9 decision 43, for a record the driver writes itself (pre-run triage's):
 /// `line` appended with [`append_line`] unless the file holds its record already.
 /// True when it was appended. Blocking: the driver calls it on `spawn_blocking`.
+///
+/// "Holds" means a line that parses (the coordinator's ruling, as the lessons store's
+/// `append_once` since task 3's review, I1): a line torn by a crash or a full disk
+/// carries the record's id in its first bytes but is no record, so it must not stop
+/// the record from being written whole. An unreadable file is an error.
 pub fn append_once(path: &Path, line: &HistoryLine) -> std::io::Result<bool> {
-    append_once_json(path, record_id(line), line)
-}
-
-/// [`append_once`] for any `Serialize` whose JSON carries `"record_id": record_id`
-/// (milestone 9.15 decision 3: the lessons store's lines).
-pub fn append_once_json<T: Serialize + ?Sized>(
-    path: &Path,
-    record_id: &str,
-    value: &T,
-) -> std::io::Result<bool> {
-    if contains_record(path, record_id)? {
+    if holds_record(path, record_id(line))? {
         return Ok(false);
     }
-    append_json(path, value).map(|()| true)
+    append_line(path, line).map(|()| true)
+}
+
+/// Whether a line of the file that parses as a history line is a record of
+/// `record_id`. No file holds nothing.
+fn holds_record(path: &Path, id: &str) -> std::io::Result<bool> {
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    let needle = needle(id);
+    for raw in std::io::BufReader::new(file).split(b'\n') {
+        let text = String::from_utf8_lossy(&raw?).into_owned();
+        // The needle first: most lines are not this record, and need no parse.
+        if text.contains(&needle)
+            && serde_json::from_str::<HistoryLine>(&text).is_ok_and(|l| record_id(&l) == id)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Whether `file` is non-empty and its last byte is not `\n`.
