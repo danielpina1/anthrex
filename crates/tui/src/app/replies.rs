@@ -203,6 +203,9 @@ impl App {
         if let Some(effects) = self.route_profile_reply(reply) {
             return Some(effects);
         }
+        if let Some(effects) = self.route_lessons_reply(reply) {
+            return Some(effects);
+        }
         if let Some(effects) = self.route_stats_reply(reply) {
             return Some(effects);
         }
@@ -252,8 +255,9 @@ impl App {
                     _ => return None,
                 }
             }
-            // Milestone 9.15 decision 32: the Lessons page (task M9.15.12) and the graph
-            // page (M9.15.13) take these by id; until then each is dropped.
+            // Milestone 9.15 decision 32: the Profile screen's own (task M9.15.12) are
+            // `route_lessons_reply`'s; the graph page (M9.15.15) takes its replies by
+            // id; until then any other is dropped.
             RunReply::Lessons { request_id, .. } | RunReply::LessonsGraph { request_id, .. } => {
                 self.replies.take(*request_id);
             }
@@ -425,6 +429,14 @@ impl App {
                 true
             }
             RunRequest::ShowDoc { .. } | RunRequest::DocGate { .. } => self.doc_gate_not_sent(id),
+            // Milestone 9.15: the Profile screen's lessons requests are its to show.
+            RunRequest::Lessons(_) => match &pending {
+                Some(PendingWhat::Profile {
+                    dir,
+                    ask: ProfileAsk::Lessons { list },
+                }) => !self.lessons_failed(dir, *list, why),
+                _ => true,
+            },
             _ => true,
         }
     }

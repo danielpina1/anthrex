@@ -84,6 +84,7 @@ impl App {
             }
             ProfileAsk::Status if s.status.is_none() => s.status_failed = Some(why.into()),
             ProfileAsk::Status => {}
+            ProfileAsk::Lessons { list } => return self.lessons_failed(dir, list, why),
             _ => return false,
         }
         true

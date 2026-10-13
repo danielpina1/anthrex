@@ -184,8 +184,8 @@ fn enter_on_each_priority() {
     select_alert(&mut app, &AlertKey::Proposal("/r/shop".into()));
     assert_eq!(
         tap(&mut app, KeyCode::Enter).len(),
-        3,
-        "status and both shows"
+        4,
+        "status, both shows and the lessons list"
     );
     assert!(app.screen.is_some());
     assert_eq!(app.toast_text(), None);
