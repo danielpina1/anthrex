@@ -22,7 +22,7 @@ use support::run_design::{
 };
 use support::run_harness::{RUN_WAIT, RunHarness};
 use support::run_orch::ORCH_WAIT;
-use support::run_plans::{approve, capture, commit, done, done_tdd, plan, t, task};
+use support::run_plans::{approve, capture, commit, done, done_tdd, plan, sh, t, task};
 
 /// MR §7: a role whose runtime's CLI is missing fails its launch naming the role and
 /// the way out. The reviewer row is the Codex default and Codex's command does not
@@ -94,6 +94,27 @@ fn argv(h: &RunHarness, name: &str) -> Vec<String> {
         panic!("{name} never started\n{}", h.log_tail());
     });
     serde_json::from_str(first).unwrap()
+}
+
+/// How long a racer's `sh` step waits for another session's argv: the lanes are
+/// launched together, so the other session's `fake-agent` start (tens of ms warmed,
+/// seconds on a loaded host) is all it covers. 300 s is the spec's `RUN_WAIT`, the
+/// longest a scripted deadline loop may run, and stays under `fake-agent`'s own
+/// `SH_TIMEOUT` (330 s, `crates/fake-agent/src/headless.rs`), so the loop fails with
+/// its own message before the step is killed as a timeout.
+const RECORDED_WAIT_SECS: u32 = 300;
+
+/// An `sh` command that waits, at most [`RECORDED_WAIT_SECS`], until `fake-agent` has
+/// recorded session `name`'s argv: its line in `$FAKE_AGENT_ARGS_FILE/<name>.args`,
+/// the file [`argv`] reads, appended with one write.
+fn recorded(name: &str) -> String {
+    let polls = RECORDED_WAIT_SECS * 20;
+    format!(
+        "f=\"$FAKE_AGENT_ARGS_FILE/{name}.args\"; i=0; \
+         while [ ! -s \"$f\" ]; do i=$((i+1)); \
+         [ $i -gt {polls} ] && {{ echo \"{name}'s argv was never recorded\" >&2; exit 1; }}; \
+         sleep 0.05; done"
+    )
 }
 
 /// Whether `argv` holds `flag` immediately followed by `value`.
@@ -174,9 +195,16 @@ fn each_role_launches_its_configured_model() {
         "worker-t1-1",
         &[commit("a.txt", "a\n"), done("added a.txt")],
     );
+    // Lane a wins only once lane b's argv is recorded: its win stops lane b, which on
+    // a loaded host could otherwise be before `fake-agent` wrote that line, and the
+    // assertions below read it.
     h.script(
         "racer-t2-a-1",
-        &[commit("b.txt", "b\n"), done("added b.txt in lane a")],
+        &[
+            sh(&recorded("racer-t2-b-1")),
+            commit("b.txt", "b\n"),
+            done("added b.txt in lane a"),
+        ],
     );
     h.script("racer-t2-b-1", &[hang()]);
     h.script(
