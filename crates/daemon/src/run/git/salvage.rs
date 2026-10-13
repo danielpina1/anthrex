@@ -305,6 +305,14 @@ pub fn remove_checkout(
     // remove` already deregisters, and a prune would also forget the user's own
     // worktrees whose directories are merely missing.
     crate::worktree::pinned::unpin(path);
+    // A linked worktree (the integration and `.full` checkouts) has no repository of
+    // its own, but its checks, proofs and the target pool's clean ran in the temporary
+    // directory named from `repo` all the same (`tier_step::step_base`,
+    // `ConfineSpec::for_checkout`): it goes with the checkout, as a standalone one's
+    // does in `checkout::remove`. Removing one already gone is not an error.
+    if let Some(repo) = repo {
+        super::tmp::remove(repo)?;
+    }
     Ok(())
 }
 
