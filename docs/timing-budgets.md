@@ -951,6 +951,18 @@ The distill worker's bounds (`daemon/src/lessons/service.rs`) are injected in it
 | `PASS_WAIT` (a pass, a seam's call, an append) | `daemon/src/lessons/service_tests.rs` | 10 s | Failure-only deadline: a pass reads one small store per repository on `spawn_blocking`; the seam answers at once. | **Recorded.** |
 | `a_recovered_task_queues_one_distill_entry`: the wait for the `queued` line | `cli/tests/it/run_e2e_lessons.rs` (`wait_queued`) | `RUN_WAIT` | One op of the run, under a 3 s debug-build hold on the write (`ANTHREX_TEST_DELAY_DISTILL_MS`, task 9's review I3). | **Recorded.** |
 
+### Recorded, from M9.15.16 (the lessons smoke stage, 2026-10-13)
+
+Smoke stage 11n (`scripts/pty_smoke_lessons.py`), its daemon its own child under its own `/tmp` root as stage 11g's. Its bounds restate the Rust rows above across the language boundary (the module's comments name the coupling). Every wait is a deadline loop on a CLI reply, a file the daemon writes or the rendered screen. Measured: the stage alone takes 17 s (five runs in a row passed); the whole smoke script with it took 2 min 41 s.
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| The `distilled` line in `lessons.jsonl` after run 1 completes (`DISTILLED_WAIT`) | `scripts/pty_smoke_lessons.py` | `RUN_WAIT` (300 s) + `DISTILL_BOUND` (120 s) = 420 s, polled every 0.5 s | Ruling C22: the stage's run wait plus the distill call's own bound (`decide_within`'s routing probe and call; the stage's `deciders.timeout_secs` is 30 s, under it). The worker is woken by the `QueueDistill` write, which the run's completion waits for. An `attempt` with an error, or a `gave_up`, fails the stage at once rather than after the retries (60 s, 300 s). | **Recorded.** |
+| Each run to `complete`, and the discarded run's run record in `history.jsonl` | `scripts/pty_smoke_lessons.py` | `RUN_WAIT` (300 s) each | One task path (stage 11c's derivation); the run record is one `AppendHistory` op after the discard's reply. | **Recorded.** |
+| `run start`, `run status`, `lessons list`/`approve`, `profile status` (`RUN_CMD_TIMEOUT`) and `run discard` (`ACCEPT_CMD_TIMEOUT`) | `scripts/pty_smoke_lessons.py` | 610 s; 900 s | Stage 11c's constants, imported: `run start`'s 600.25 s; `discard` waits `FINISH_REQUEST_TIMEOUT` as accept does (675.25 s). | **Recorded.** |
+| The Lessons page's rows and the graph page's hubs and dots (`PAGE_WAIT`) | `scripts/pty_smoke_lessons.py` | 45 s | One tagged request each (`List`, `Graph`), answered on `spawn_blocking`; the client gives up at `REPLY_TIMEOUT` (30 s), plus 15 s, as stage 11l's `CARD_WAIT`. The graph's layout runs once in the reply's update (about 60 ms in release, 360 ms in debug). | **Recorded.** |
+| Each other screen (`SCREEN_WAIT`) and the detach (`DETACH_WAIT`) | `scripts/pty_smoke_lessons.py` | 10 s; 5 s | Stage 11t's: a badge or frame drawn on the client's 100 ms tick; the detach is local. | **Recorded.** |
+
 ### Fixed, from the environment-block flake on macOS CI (2026-10-12)
 
 | Test | Site | Bound | The code's own legal worst case | Status |

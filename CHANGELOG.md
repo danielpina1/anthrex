@@ -7,18 +7,45 @@ release is a pre-release and any release may change behaviour or the protocol.
 
 ## [Unreleased]
 
-The protocol version is now 22 (milestone 9.13, `OrchestratorInfo.untrusted`): a client
+The protocol version is now 24 (22 for milestone 9.13's `OrchestratorInfo.untrusted`,
+23 for milestone 9.14's build admission, 24 for milestone 9.15's lessons): a client
 needs a daemon of the same release. Stop the old daemon (`anthrex daemon stop`) after
 upgrading.
 
-**Downgrading.** `run.json` is now format 2. A 0.2.0 daemon skips a run this release
-wrote (`run format 2; this one reads up to 1`) and leaves it as it is. Releases before
+**Downgrading.** `run.json` is now format 4 (milestone 9.15: a run's frozen lessons,
+its discard reason, a task's lessons shown and risk note, and the distill and
+risk-note ops). A 0.2.0 daemon skips a run this release wrote (`run format 4; this one
+reads up to 1`) and leaves it as it is, as does any daemon that reads an older format. Releases before
 0.2.0 have no such guard and can drop this release's new run fields when they save
 (the untrusted-read record, the orchestrator's retry count, the pinned gate files, a
 pending override proposal and an override count's protected list): finish or discard
 your runs before downgrading below 0.2.0.
 
 ### Added
+
+- **Lessons** (milestone 9.15). anthrex now learns from its own runs in a repository.
+  Each failed check or proof records a failure signature on the task's history record,
+  and a signature seen in two runs within 14 days becomes a known failure. After a
+  recovered, blocked or blocking-review task, or a failed or discarded run, a
+  background distiller (one decider call, off the run, at most 20 a day per
+  repository, on a redacted dossier) proposes lessons: episodic ones go on trial at
+  once, procedural and semantic ones wait for your approval. A run freezes the active
+  lessons at its start, and each worker's first turn gets the best few for its files
+  under `Notes from earlier runs in this repository. …`, its reviewer the same under
+  `Known pitfalls in this repository`; a lesson earns credit when the tasks shown it
+  merge. A reviewer can also get a short risk note written from the brief alone. The
+  new `[lessons]` table turns each part on or off and sizes it.
+- **`anthrex lessons list | approve | reject | forget`.** List the repository's lessons
+  with their status, layer and `green/outcomes` (`--all`, `--json`), approve or reject
+  proposed ones, and forget a lesson or dismiss a known failure (`y/N` per id unless
+  `--yes`).
+- **The Lessons page and the knowledge graph page.** On the Profile screen (`C-b P`),
+  `l` lists the lessons (`a` approve, `r` reject, `d` forget, `t` all) and its hint
+  counts those waiting for review; `g` there draws them as a graph of module hubs and
+  lesson dots, with selection by arrows, an inspect panel, search, zoom and pan.
+- **A discard reason.** `anthrex run discard <run> --reason "<text>"`, and a reason
+  field in the TUI's discard form, record why a run was thrown away on its history
+  record and in its distill dossier.
 
 - **Files that run outside the sandbox are protected.** CI, git-hook, cargo and
   toolchain files join the protected paths: `.github/workflows/**`,
