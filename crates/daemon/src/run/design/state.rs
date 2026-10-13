@@ -85,6 +85,14 @@ pub struct DesignState {
     /// drafts was pending; the orchestrator is woken once it lands. In memory only.
     #[serde(skip)]
     pub read_back_owed: bool,
+    /// The wake notes owed to an orchestrator whose plan submit or sub-planner spawn was
+    /// refused while the approved spec was read back (`READ_BACK_PENDING`,
+    /// `SPAWN_PENDING`): each is sent once its requirements are stored
+    /// (`design_review::requirements_read`). Told to try again in a moment, it may end
+    /// its turn, and nothing else would wake it. In memory only, as
+    /// [`DesignState::read_back_owed`].
+    #[serde(skip)]
+    pub requirements_owed: Vec<String>,
     /// Ruling T8-5: this brainstorm round's drafts are in (`design::drafts_in` ran), so
     /// the brainstorm never settles again until brainstormers are queued anew.
     #[serde(skip_serializing_if = "std::ops::Not::not")]

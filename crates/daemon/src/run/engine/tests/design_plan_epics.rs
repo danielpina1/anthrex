@@ -105,6 +105,9 @@ fn a_spawn_waits_for_the_approved_specs_read_back() {
     );
     assert!(fx.run().orch.epics.is_empty());
     read_back(&mut fx, 1, SPEC);
+    // The flaky-races fix (bug 1): the refused spawn is owed a wake once it lands.
+    let owed = "the approved spec's requirements are stored; spawn the sub-planner again";
+    assert!(notes(&fx).contains(&owed.to_string()), "{:?}", notes(&fx));
     spawn_owning(&mut fx, "mail", Some(json!(["R1"]))).unwrap();
 }
 

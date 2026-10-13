@@ -27,12 +27,18 @@ use crate::run::snapshot::snapshot;
 ///   events reach the engine before its round has the window (the race in the
 ///   followups file), as `e2e_a_session_that_exits_before_its_window_is_known_still_escalates`
 ///   needs.
+/// - `ANTHREX_TEST_DELAY_READ_BACK_MS` holds an `Effect::ReadBack`'s result, so the
+///   approved spec's requirements are stored that long after the run enters planning:
+///   the gap a plan submit or a spawn is refused in (`READ_BACK_PENDING`), which the
+///   design e2e tests' scripted orchestrator must wait out on the digest's
+///   `gate.requirements_stored`.
 ///
 /// Each hold that is armed is logged once, so a test can check it is in force.
 #[derive(Debug, Clone, Copy, Default)]
 pub(super) struct DoneHolds {
     ops: Option<Duration>,
     window: Option<Duration>,
+    pub(super) read_back: Option<Duration>,
 }
 
 impl DoneHolds {
@@ -48,6 +54,7 @@ impl DoneHolds {
         Self {
             ops: read("ANTHREX_TEST_DELAY_DONE_MS"),
             window: read("ANTHREX_TEST_DELAY_WINDOW_MS"),
+            read_back: read("ANTHREX_TEST_DELAY_READ_BACK_MS"),
         }
     }
 

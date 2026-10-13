@@ -271,6 +271,7 @@ fn edit_plan(
     let submitted = super::design::plan::submit(&mut edited, author, responses, now, &mut effects);
     if let Err(text) = submitted {
         super::design_agents::reviewer::refused(run, &text, now);
+        super::design::review::refused(run, &text);
         record_rejected(run, edits, &source, text.clone(), now);
         return refuse(fx, reply, text);
     }

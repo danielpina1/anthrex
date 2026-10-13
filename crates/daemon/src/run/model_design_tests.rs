@@ -217,6 +217,7 @@ fn the_state_survives_save_and_load() {
         // Ruling T9-1a: in memory only.
         unread: Vec::new(),
         read_back_owed: false,
+        requirements_owed: Vec::new(),
         // Ruling T8-5.
         drafts_settled: true,
         // Ruling T8-2: the pack's frozen inputs.

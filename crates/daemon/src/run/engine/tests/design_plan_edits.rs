@@ -194,6 +194,51 @@ fn a_plan_submit_waits_for_the_approved_specs_read_back() {
     assert_eq!(reply["awaiting_review"], true);
 }
 
+const STORED: &str = "the approved spec's requirements are stored; submit the plan again";
+
+/// The flaky-races fix (bug 1): an orchestrator told "submit again in a moment" may end
+/// its turn, so the read-back that lands afterwards owes it a wake, once. A read-back
+/// with no refused submit before it owes none. The digest's `requirements_stored`
+/// says, in planning, whether a submit is still refused for the read-back.
+#[test]
+fn a_submit_refused_for_the_read_back_is_owed_a_wake_when_it_lands() {
+    let mut fx = at_spec_gate(false);
+    act(&mut fx, DocGateKind::Spec, DocGateAction::APPROVE).unwrap();
+    let stored = |fx: &Fixture| {
+        let digest = crate::run::orch::digest::digest(fx.run(), fx.now);
+        digest["gate"]["requirements_stored"].clone()
+    };
+    assert_eq!(stored(&fx), json!(false));
+    let edits = json!([covering("t1", &["R1", "R2"])]);
+    let refused = plan_submit(&mut fx, edits.clone(), Value::Null);
+    assert_eq!(refused.unwrap_err(), PENDING);
+    assert!(
+        !notes(&fx).contains(&STORED.to_string()),
+        "{:?}",
+        notes(&fx)
+    );
+    read_back(&mut fx, 1, SPEC);
+    assert_eq!(stored(&fx), json!(true));
+    let owed = notes(&fx).iter().filter(|n| *n == STORED).count();
+    assert_eq!(owed, 1, "{:?}", notes(&fx));
+    // Once: a second read-back (a resume's) owes nothing more.
+    read_back(&mut fx, 1, SPEC);
+    let owed = notes(&fx).iter().filter(|n| *n == STORED).count();
+    assert_eq!(owed, 1, "{:?}", notes(&fx));
+}
+
+#[test]
+fn a_read_back_with_no_refused_submit_owes_no_wake() {
+    let mut fx = at_spec_gate(false);
+    act(&mut fx, DocGateKind::Spec, DocGateAction::APPROVE).unwrap();
+    read_back(&mut fx, 1, SPEC);
+    assert!(
+        !notes(&fx).contains(&STORED.to_string()),
+        "{:?}",
+        notes(&fx)
+    );
+}
+
 const UNREAD: &str = "design flow: the approved spec could not be read back: its file is missing";
 
 fn read_failed(fx: &mut Fixture) -> Vec<Effect> {

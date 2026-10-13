@@ -77,7 +77,11 @@ impl RunService {
     /// sent as each version's error, so the engine never waits for it.
     pub(super) fn read_back(self: &Arc<Self>, run_id: String, docs: Vec<(DocVersion, PathBuf)>) {
         let service = self.clone();
+        let hold = self.done_holds.read_back;
         tokio::spawn(async move {
+            if let Some(hold) = hold {
+                tokio::time::sleep(hold).await; // the debug builds' test hold (`DoneHolds`)
+            }
             let named: Vec<(DocKind, u32)> = docs.iter().map(|(v, _)| (v.kind, v.n)).collect();
             let docs = (docs.into_iter())
                 .map(|(v, path)| (v, path, true))

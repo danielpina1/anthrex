@@ -119,7 +119,11 @@ async fn an_exit_before_insert_is_applied_at_insert() {
 
     let window = listed(&manager, info.id);
     assert_eq!(window.status, Status::Exited, "{window:?}");
-    assert_eq!(window.exit.as_ref().and_then(|e| e.code), Some(3), "{window:?}");
+    assert_eq!(
+        window.exit.as_ref().and_then(|e| e.code),
+        Some(3),
+        "{window:?}"
+    );
 }
 
 /// A one-shot startup title, as a Codex session with no hooks gives: sent once, before
