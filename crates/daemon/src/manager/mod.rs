@@ -174,6 +174,11 @@ pub struct WindowManager {
     /// (`remove.rs`). Written only while `inner` is held too, so `shutdown` sees every
     /// removal admitted before it.
     removals: Mutex<BTreeMap<u32, remove::Tracked>>,
+    /// Tests only: when set, the next `create_run_window` takes it and waits on it
+    /// between phase B and phase C, so a test can hand the window's first events to
+    /// `handle_event` before its entry exists (`role_window_tests`).
+    #[cfg(test)]
+    run_window_hold: Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
 }
 
 impl WindowManager {
@@ -201,6 +206,8 @@ impl WindowManager {
             signals,
             config,
             removals: Mutex::new(BTreeMap::new()),
+            #[cfg(test)]
+            run_window_hold: Mutex::new(None),
         });
         (manager, events_rx)
     }

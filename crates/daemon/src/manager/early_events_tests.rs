@@ -19,7 +19,7 @@ use tokio::sync::mpsc;
 /// and a `/bin/sh` start, about 0.02 s warmed and 0.44 s for a fresh file's first exec
 /// on macOS (`docs/timing-budgets.md`, "Measured primitive costs"); ten seconds is a
 /// tenfold margin over that on a loaded host. The wait ends as soon as the event comes.
-const EVENT_WAIT: Duration = Duration::from_secs(10);
+pub(super) const EVENT_WAIT: Duration = Duration::from_secs(10);
 
 fn spec(dir: &Path, runtime: Runtime) -> WindowSpec {
     WindowSpec {
