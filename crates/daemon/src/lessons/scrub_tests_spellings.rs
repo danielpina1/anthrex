@@ -13,7 +13,7 @@ use super::{BEARER, TOKEN, scrub};
 
 /// Task 11's review, I1, and task 12's review, I2: escape spellings, each placed right
 /// before the three ambiguous prefixes.
-const SPELLINGS: [&str; 30] = [
+pub(super) const SPELLINGS: [&str; 30] = [
     // Task 11's review, I1.
     r"\33[31m",
     r"\E[31m",

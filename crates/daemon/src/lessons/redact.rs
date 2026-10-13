@@ -6,12 +6,16 @@
 //!
 //! The text it sees may already have been clipped (a check's tail, a signature's
 //! headline, decision 5) or rewritten by decision 5's normaliser, so each pattern also
-//! takes the shapes a clip leaves: a key block missing either marker, and an
-//! unambiguous token or a user's password cut at a line's end or split by one of the
-//! normaliser's placeholders. Wrongly replacing ordinary text costs the distiller a
-//! word. The ambiguous `sk-`, `npm_` and `Bearer` are judged by their body alone (a
-//! digit and a minimum length, task 12's review, I2), so a short, clipped or all-letter
-//! one is not caught: redaction is best-effort defence in depth, not a guarantee.
+//! takes the shapes a clip leaves: a key block missing either marker, a user's password
+//! cut at a line's end, and an unambiguous token cut short or split by one of the
+//! normaliser's placeholders. Task 13's review, I1 (the controller's ruling): an
+//! unambiguous prefix (`ghp_`, `AKIA`, `glpat-`, `xoxb-`, `sk-ant-`…) matches anywhere,
+//! with no left boundary, and is a token from four body characters on, so a clipped or
+//! split one is replaced from its prefix onward whatever stands before it. Wrongly
+//! replacing ordinary text costs the distiller a word. The ambiguous `sk-`, `npm_` and
+//! `Bearer` are judged by their body alone (a digit and a minimum length, task 12's
+//! review, I2), so a short, clipped or all-letter one is not caught: redaction is
+//! best-effort defence in depth, not a guarantee.
 //!
 //! [`scrub`] is the one safe entry point for text that may carry terminal escapes,
 //! written out or real (task 10's review, I1 and I2; the controller's ruling at
@@ -21,6 +25,7 @@
 
 use std::sync::LazyLock;
 
+use proto::safe_text::is_hidden_format;
 use regex::{Captures, Regex};
 
 /// What a private key block becomes.
@@ -42,8 +47,8 @@ pub const BEARER_MIN: usize = 16;
 
 #[cfg(test)]
 thread_local! {
-    /// Characters the ambiguous prefixes' body check read on this thread: the
-    /// linearity test's measure, with no wall-clock bound.
+    /// Characters the body checks (the ambiguous prefixes' digit check and the
+    /// unambiguous prefixes' [`body_end`]) read on this thread: the linearity tests' measure, with no wall-clock bound.
     pub(super) static BODY_READ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
@@ -83,26 +88,6 @@ static URL_USERINFO: LazyLock<Regex> =
 /// `<scheme>://<user>:<password>` a clip cut before its `@`.
 static URL_CUT: LazyLock<Regex> =
     LazyLock::new(|| re(r"(?m)([A-Za-z][A-Za-z0-9+.-]*://)[^\s/?#@:]*:([^\s/?#@]*)$"));
-/// Task 8's review, I2: what may stand right before a clipped or placeholder-split
-/// token of an unambiguous prefix besides a character that cannot be part of a word: a
-/// written-out escape (`\n`, `\b`, `\uXXXX`, `\u{1b}`, `\x1b`, `\U00000041`, `\033`,
-/// `\e[31m`), a percent encoding, whole or broken (`%3D`, `%2`, `%zz`), or a real escape
-/// sequence (a CSI, an nF escape, an OSC string, and the single-byte CSI U+009B). Each
-/// may end in an alphanumeric character. No list of spellings is ever complete (task
-/// 12's review, I2), so the ambiguous `sk-`, `npm_` and `Bearer` no longer use one:
-/// see [`AMBIGUOUS`] and [`BEARER_RE`]. A whole unambiguous token needs none
-/// ([`UNAMBIGUOUS`]).
-macro_rules! escape_boundary {
-    () => {
-        concat!(
-            r"\\[A-Za-z]|\\u[0-9A-Fa-f]{4}|\\u\{[0-9A-Fa-f]{1,6}\}|\\x[0-9A-Fa-f]{2}",
-            r"|\\U[0-9A-Fa-f]{8}|\\[0-7]{1,4}|\\e\[[0-9;]*[A-Za-z]|%[0-9A-Za-z]{0,2}",
-            r"|\x{9b}[0-?]*[ -/]*[@-~]",
-            r"|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[ -/]+[0-~]|\x1b[\]PX^_][^\x07\x1b]*(?:\x07|\x1b\\)?"
-        )
-    };
-}
-
 /// Task 12's review, I2 and M7 (the controller's ruling): `Bearer` and whitespace,
 /// anywhere, with no left boundary; [`bearer`] keeps it only when the credential is at
 /// least [`BEARER_MIN`] characters holding a digit, so `Bearer authentication-required`
@@ -123,7 +108,7 @@ static JWT: LazyLock<Regex> =
 /// may stand before a token (`\u001b[31m`, `\x1b`, `\b`, `\U…`, `%253D`) is ever
 /// complete. AWS's key id in its full shape (and the token characters after it). Task
 /// 10's review, I1: OpenAI's `sk-proj-`, `sk-svcacct-` and `sk-admin-`. A clipped or
-/// placeholder-split token of these prefixes still needs [`PREFIXED`]'s boundary.
+/// placeholder-split token of these prefixes is [`PREFIXED`]'s.
 static UNAMBIGUOUS: LazyLock<Regex> = LazyLock::new(|| {
     re(
         r"(?:github_pat_|gh[pousr]_|glpat-|sk-ant-|sk-proj-|sk-svcacct-|sk-admin-|xox[abprs]-)[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}[A-Za-z0-9_-]*",
@@ -139,41 +124,82 @@ static UNAMBIGUOUS: LazyLock<Regex> = LazyLock::new(|| {
 /// shorter one, a clipped one, or one split by a placeholder.
 static AMBIGUOUS: LazyLock<Regex> =
     LazyLock::new(|| re(&format!(r"(?:sk-|npm_)[A-Za-z0-9_-]{{{AMBIGUOUS_MIN},}}")));
-/// Every unambiguous prefix's clipped or placeholder-split form: a prefix with what
-/// stands before it (a non-alphanumeric character or an escape), and the token
-/// characters after it, where decision 5's placeholders count as token characters.
+/// The least body a clipped or placeholder-split unambiguous token keeps (task 13's
+/// review, I1: the controller's ruling).
+pub const UNAMBIGUOUS_BODY_MIN: usize = 4;
+
+/// Task 13's review, I1 (the controller's ruling): every unambiguous prefix, anywhere,
+/// with no left boundary (no list of what may stand before one is ever complete:
+/// `^[[31m`, `\33[31m`, `&#27;[31m`, `%1b%5B31m` each end in a letter). [`prefixed`]
+/// reads its body.
 static PREFIXED: LazyLock<Regex> = LazyLock::new(|| {
+    re(r"github_pat_|gh[pousr]_|glpat-|sk-ant-|sk-proj-|sk-svcacct-|sk-admin-|xox[abprs]-|AKIA")
+});
+/// A real escape sequence at the start of the text, in [`ESCAPE`]'s forms.
+static ESCAPE_HERE: LazyLock<Regex> = LazyLock::new(|| {
     re(concat!(
-        r"(^|[^A-Za-z0-9]|",
-        escape_boundary!(),
-        r")",
-        r"(github_pat_|gh[pousr]_|glpat-|sk-ant-|sk-proj-|sk-svcacct-|sk-admin-|xox[abprs]-|AKIA)",
-        r"((?:[A-Za-z0-9_-]|<(?:sha|id|dur|l|c|tmp|time|tid)>)*)"
+        r"^(?:\x1b\[[0-?]*[ -/]*[@-~]|\x1b[\]PX^_][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[ -/]*[0-~]?",
+        r"|\x{9b}[0-?]*[ -/]*[@-~]|\x{9b})"
     ))
 });
+/// Decision 5's placeholders, which count as a token's characters.
+const PLACEHOLDERS: [&str; 8] = [
+    "<sha>", "<id>", "<dur>", "<l>", "<c>", "<tmp>", "<time>", "<tid>",
+];
 
-/// Whether `text` ends at `end`, or a line does.
-fn at_line_end(text: &str, end: usize) -> bool {
-    matches!(text[end..].chars().next(), None | Some('\n' | '\r'))
+/// The end of an unambiguous token's body that starts at `start`, and how many body
+/// characters it holds: the prefix's own alphabet (`AKIA`'s is `[0-9A-Z]`, the others'
+/// `[A-Za-z0-9_-]`) and decision 5's placeholders count; a real escape sequence (which
+/// [`scrub`] strips) and a hidden format character (which `multi_line` and `one_line`
+/// drop) are read through without counting, so a token they split is replaced whole and
+/// leaves no remainder once they are gone. One pass; each character is read once.
+fn body_end(text: &str, start: usize, aws: bool) -> (usize, usize) {
+    let mut at = start;
+    let mut count = 0;
+    while let Some(c) = text[at..].chars().next() {
+        let rest = &text[at..];
+        let step = if (aws && (c.is_ascii_uppercase() || c.is_ascii_digit()))
+            || (!aws && (c.is_ascii_alphanumeric() || c == '_' || c == '-'))
+        {
+            count += 1;
+            1
+        } else if let Some(p) = PLACEHOLDERS.iter().find(|p| rest.starts_with(**p)) {
+            count += p.len();
+            p.len()
+        } else if c == '\u{1b}' || c == '\u{9b}' {
+            ESCAPE_HERE
+                .find(rest)
+                .map_or(c.len_utf8(), |m| m.end().max(1))
+        } else if is_hidden_format(c) {
+            c.len_utf8()
+        } else {
+            break;
+        };
+        at += step;
+    }
+    #[cfg(test)]
+    BODY_READ.with(|n| n.set(n.get() + (at - start) as u64));
+    (at, count)
 }
 
+/// Task 13's review, I1 (the controller's ruling): an unambiguous prefix with at least
+/// [`UNAMBIGUOUS_BODY_MIN`] body characters ([`body_end`]) is a token, replaced from its
+/// prefix onward; a shorter one is kept. Linear: the search resumes after each body.
 fn prefixed(text: &str) -> String {
-    PREFIXED
-        .replace_all(text, |c: &Captures| {
-            let (before, prefix, rest) = (&c[1], &c[2], &c[3]);
-            // A `sk-…` prefix inside a word (`task-sk-ant-ic`) is a word.
-            let in_word = prefix.starts_with("sk-") && matches!(before, "-" | "_");
-            let end = c.get(0).map_or(0, |m| m.end());
-            let token = rest.chars().count() >= TOKEN_MIN
-                || rest.contains('<')
-                || (!rest.is_empty() && at_line_end(text, end));
-            if token && !in_word {
-                format!("{before}{TOKEN}")
-            } else {
-                c[0].to_string()
-            }
-        })
-        .into_owned()
+    let mut out = String::with_capacity(text.len());
+    let mut from = 0;
+    while let Some(m) = PREFIXED.find_at(text, from) {
+        let (end, count) = body_end(text, m.end(), m.as_str() == "AKIA");
+        out.push_str(&text[from..m.start()]);
+        if count >= UNAMBIGUOUS_BODY_MIN {
+            out.push_str(TOKEN);
+        } else {
+            out.push_str(&text[m.start()..end]);
+        }
+        from = end;
+    }
+    out.push_str(&text[from..]);
+    out
 }
 
 /// Whether `body` holds a digit; it is read once (counted in the tests).
@@ -339,3 +365,7 @@ mod scrub_tests;
 #[cfg(test)]
 #[path = "scrub_tests_spellings.rs"]
 mod scrub_tests_spellings;
+
+#[cfg(test)]
+#[path = "scrub_tests_unambiguous.rs"]
+mod scrub_tests_unambiguous;

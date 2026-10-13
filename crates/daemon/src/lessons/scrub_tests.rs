@@ -89,7 +89,9 @@ fn ordinary_text_is_left_alone() {
     for text in [
         format!("commit {sha} on main; abbrev {}", &sha[..7]),
         "task-sk-ipaaaaaaaaaaaaaaaaaaaaaa xnpm_config_cache_directory_x".to_string(),
-        "the laughs_count and sighs_total fields; AKIAno; eyJ alone; glpat".to_string(),
+        // Task 13's review, I1: `laughs_count` and `sighs_total` (`ghs_` and four more)
+        // are now tokens; see `the_ruling_costs_these_words`.
+        "the laughs_at and sighs fields; AKIAno; eyJ alone; glpat".to_string(),
         "risk-assessment-of-the-new-pipeline-module desk-reservation-x".to_string(),
         "https://example.com/a%20b/c?x=1&y=%2Fz https://host:8080/p".to_string(),
         "/tmp/my%20dir/file%20name.txt and 100% done, 50%off".to_string(),

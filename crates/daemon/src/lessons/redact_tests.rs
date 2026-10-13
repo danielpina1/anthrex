@@ -136,9 +136,16 @@ fn prefixed_tokens_are_replaced() {
 
 #[test]
 fn fifteen_token_characters_are_not_a_token() {
-    for prefix in ["ghp_", "sk-", "AKIA", "npm_", "glpat-"] {
+    // Task 13's review, I1: an unambiguous prefix with four body characters is a token
+    // (`ghp_` and `glpat-` moved to the second list); `AKIA`'s body is `[0-9A-Z]`, so
+    // lowercase letters are no body.
+    for prefix in ["sk-", "AKIA", "npm_"] {
         let short = format!("{prefix}{} tail", "a".repeat(15));
         assert_eq!(redact(&short), short);
+    }
+    for prefix in ["ghp_", "glpat-"] {
+        let short = format!("{prefix}{} tail", "a".repeat(15));
+        assert_eq!(redact(&short), format!("{TOKEN} tail"));
     }
 }
 
@@ -149,8 +156,26 @@ fn a_token_cut_at_a_line_end_is_replaced() {
     // body alone (a clipped one is the ruling's residual gap).
     let ambiguous =
         |t: &str| (t.starts_with("sk-") && !t.starts_with("sk-ant-")) || t.starts_with("npm_");
+    // Task 13's review, I1: a cut token keeps at least four body characters
+    // (`github_pat_F`, with one, is no longer a token).
+    let prefix_len = |t: &str| {
+        [
+            "github_pat_",
+            "sk-ant-",
+            "glpat-",
+            "xoxa-",
+            "xoxb-",
+            "xoxp-",
+            "xoxr-",
+            "xoxs-",
+        ]
+        .iter()
+        .find(|p| t.starts_with(**p))
+        .map_or(4, |p| p.len())
+    };
     for token in prefixed().into_iter().filter(|t| !ambiguous(t)) {
-        for keep in [12, 14, 16] {
+        for body in [4, 6, 8] {
+            let keep = prefix_len(&token) + body;
             let cut: String = token.chars().take(keep).collect();
             for input in [format!("error: {cut}"), format!("error: {cut}\nnext")] {
                 let out = redact(&input);
@@ -431,7 +456,9 @@ fn prose_and_shas_are_not_over_redacted() {
     for text in [
         format!(r"commit\x1b[33m{sha}\x1b[0m %253D{sha} \U00000041{sha}"),
         "task-sk-ipaaaaaaaaaaaaaaaaaaaaaa xnpm_config_cache_directory_x".to_string(),
-        "the laughs_count and sighs_total fields; AKIAno; eyJ alone; glpat".to_string(),
+        // Task 13's review, I1: `laughs_count` and `sighs_total` (`ghs_` and four more)
+        // are now tokens; see `the_ruling_costs_these_words`.
+        "the laughs_at and sighs fields; AKIAno; eyJ alone; glpat".to_string(),
         "use rustfmt; it laughs_at nothing.\nnext".to_string(),
         // Task 10's review, I1: `\b` is now a boundary, so a short `npm_` at the text's
         // end reads as a clipped token; mid-line it is a word.
