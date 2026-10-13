@@ -449,6 +449,71 @@ fn known_expires_after_days() {
     );
 }
 
+/// The controller's ruling on task 4's review, I1: each life of a known failure forms on
+/// its own. Once five clean runs end one, only hits after that end can form the next,
+/// and they still need `known_min` runs within `known_window_days`.
+#[test]
+fn a_regression_after_the_clean_run_end_forms_a_new_known_failure() {
+    let store = Store::default();
+    let mut history = vec![hit(1, T0, FP), hit(2, T0 + DAY, FP)];
+    for n in 0..5 {
+        history.push(clean(10 + n, T0 + (2 + u64::from(n)) * DAY, "crates/a/**"));
+    }
+    let now = T0 + 40 * DAY;
+    assert!(known(&history, &store, now, &cfg()).is_empty(), "ended");
+    // One run of the regression is not a known failure yet.
+    history.push(hit(3, T0 + 30 * DAY, FP));
+    assert!(known(&history, &store, now, &cfg()).is_empty(), "one run");
+    // A second run within the window forms the new life, counted from its own hits.
+    history.push(hit(4, T0 + 31 * DAY, FP));
+    let got = known(&history, &store, now, &cfg());
+    assert_eq!(ids(&got), vec![kf(FP)]);
+    assert_eq!(got[0].created_at, T0 + 30 * DAY);
+    assert_eq!(got[0].runs, vec![rid(3), rid(4)]);
+    assert!(
+        got[0].body.starts_with("Seen 2 times in 2 runs"),
+        "{}",
+        got[0].body
+    );
+}
+
+/// I1's ruling: after the expiry ended a life, one new hit does not bring it back.
+#[test]
+fn a_single_hit_after_expiry_does_not_form_one() {
+    let store = Store::default();
+    let late = T0 + DAY + 100 * DAY;
+    let history = [hit(1, T0, FP), hit(2, T0 + DAY, FP), hit(3, late, FP)];
+    assert!(known(&history, &store, late + DAY, &cfg()).is_empty());
+}
+
+/// I1's ruling: after the expiry, two runs within the window form a new life.
+#[test]
+fn two_hits_within_the_window_after_expiry_form_one() {
+    let store = Store::default();
+    let late = T0 + DAY + 100 * DAY;
+    let history = [
+        hit(1, T0, FP),
+        hit(2, T0 + DAY, FP),
+        hit(3, late, FP),
+        hit(4, late + 13 * DAY, FP),
+    ];
+    let got = known(&history, &store, late + 14 * DAY, &cfg());
+    assert_eq!(ids(&got), vec![kf(FP)]);
+    assert_eq!(
+        (got[0].created_at, got[0].last_seen),
+        (late, late + 13 * DAY)
+    );
+    assert_eq!(got[0].runs, vec![rid(3), rid(4)]);
+    // Fifteen days apart, they do not.
+    let apart = [
+        hit(1, T0, FP),
+        hit(2, T0 + DAY, FP),
+        hit(3, late, FP),
+        hit(4, late + 15 * DAY, FP),
+    ];
+    assert!(known(&apart, &store, late + 16 * DAY, &cfg()).is_empty());
+}
+
 #[test]
 fn dismissed_fp_absent() {
     let store = fold(&[dismissed(FP, T0 + 2 * DAY)]);

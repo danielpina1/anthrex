@@ -7,6 +7,8 @@
 //!   `kf-<fp>`. It ends after `known_clean_runs` later clean runs over its files, past
 //!   `expiry_days` since it was last seen, when its `fp` is dismissed, or when one of
 //!   its headlines names a flaky test as a whole word. An ended one is never returned.
+//!   Each life forms on its own: only hits after the previous life ended count toward
+//!   the next (task 4's review, I1).
 //! - **Trial** (decision 17): an `on_trial` lesson with `episodic_trial_runs` run
 //!   records after its trial start reads `kept` when it was credited green at least
 //!   once, else `retired` with reason [`TRIAL_ENDED`].
@@ -94,8 +96,8 @@ pub fn known(history: &[HistoryLine], store: &Store, now: u64, cfg: &Lessons) ->
     found
 }
 
-/// One `fp`'s known failure from its hits (sorted by `at`), or `None` when it never
-/// formed or has ended.
+/// One `fp`'s known failure from its hits (sorted by `at`), or `None` when its current
+/// life never formed or has ended.
 fn known_failure(
     fp: &str,
     hits: &[(&TaskRecord, &SigRef)],
@@ -104,46 +106,12 @@ fn known_failure(
     now: u64,
     cfg: &Lessons,
 ) -> Option<Lesson> {
-    let formed_at = formed_at(hits, cfg)?;
+    let hits = live(fp, hits, tasks, now, cfg)?;
     let (first, sig) = *hits.first()?;
     let (newest, newest_sig) = *hits.last()?;
     let last_seen = newest.at;
-    if now.saturating_sub(last_seen) > u64::from(cfg.expiry_days) * DAY_SECS {
-        return None;
-    }
-    let mut headlines: Vec<String> = Vec::new();
-    let mut files: Vec<String> = Vec::new();
-    let mut runs: Vec<String> = Vec::new();
-    for (task, sig) in hits {
-        if headlines.len() < HEADLINES_MAX && !headlines.contains(&sig.headline) {
-            headlines.push(sig.headline.clone());
-        }
-        for own in &task.owns {
-            if files.len() < KNOWN_FILES_MAX && !files.contains(own) {
-                files.push(own.clone());
-            }
-        }
-        if !runs.contains(&task.run_id) {
-            runs.push(task.run_id.clone());
-        }
-    }
+    let (headlines, files, mut runs) = gather(hits);
     if (headlines.iter()).any(|h| flaky.iter().any(|test| whole_word(h, test))) {
-        return None;
-    }
-    let hit_runs: HashSet<&str> = hits.iter().map(|(t, _)| t.run_id.as_str()).collect();
-    let clean_runs: HashSet<&str> = (tasks.iter())
-        .filter(|t| t.at > formed_at && !hit_runs.contains(t.run_id.as_str()))
-        .filter(|t| {
-            matches!(
-                t.outcome,
-                TaskOutcome::Merged | TaskOutcome::MergedWithoutApproval
-            ) && t.gates.checks >= 1
-                && any_intersect(&t.owns, &files)
-                && !t.signatures.iter().any(|s| s.fp == fp)
-        })
-        .map(|t| t.run_id.as_str())
-        .collect();
-    if clean_runs.len() >= cfg.known_clean_runs as usize {
         return None;
     }
     let body = format!(
@@ -181,18 +149,114 @@ fn known_failure(
     })
 }
 
-/// When the hits (sorted by `at`) first held `known_min` distinct runs inside one
-/// `known_window_days` span: the `at` of the hit that completed it.
-fn formed_at(hits: &[(&TaskRecord, &SigRef)], cfg: &Lessons) -> Option<u64> {
+/// The hits of `fp`'s live known failure, or `None` when it has none.
+///
+/// Task 4's review, I1 (the controller's ruling): each life forms on its own. A life
+/// forms from the hits after the previous life ended (decision 7: `known_min` runs
+/// inside one `known_window_days` span), takes every later hit until it ends, and ends
+/// at the `known_clean_runs`-th clean run after it formed (decision 8 a) or when a
+/// hit comes, or `now` is, more than `expiry_days` after its last hit (8 b). The hits
+/// after an end can only form the next life. Dismissal and flaky tests (8 c, d) end
+/// every life, and are checked by the callers.
+fn live<'h>(
+    fp: &str,
+    hits: &'h [(&'h TaskRecord, &'h SigRef)],
+    tasks: &[&TaskRecord],
+    now: u64,
+    cfg: &Lessons,
+) -> Option<&'h [(&'h TaskRecord, &'h SigRef)]> {
+    let expiry = u64::from(cfg.expiry_days) * DAY_SECS;
+    let hit_runs: HashSet<&str> = hits.iter().map(|(t, _)| t.run_id.as_str()).collect();
+    let mut start = 0;
+    loop {
+        let formed = start + formed_at(&hits[start..], cfg)?;
+        let formed_at = hits[formed].0.at;
+        let mut end = formed + 1;
+        let next_start = loop {
+            let (_, files, _) = gather(&hits[start..end]);
+            let superseded = superseded_at(fp, formed_at, &files, tasks, &hit_runs, cfg);
+            let last = hits[end - 1].0.at;
+            match hits.get(end) {
+                Some((next, _))
+                    if superseded.is_some_and(|at| next.at > at) || next.at - last > expiry =>
+                {
+                    break Some(end);
+                }
+                Some(_) => end += 1,
+                None if superseded.is_some() || now.saturating_sub(last) > expiry => {
+                    break None;
+                }
+                None => return Some(&hits[start..end]),
+            }
+        };
+        start = next_start?;
+    }
+}
+
+/// When the `known_clean_runs`-th distinct clean run after `formed_at` came (decision
+/// 8 a): a merged task with a check, owning some of `files`, in a run that never
+/// carried `fp`.
+fn superseded_at(
+    fp: &str,
+    formed_at: u64,
+    files: &[String],
+    tasks: &[&TaskRecord],
+    hit_runs: &HashSet<&str>,
+    cfg: &Lessons,
+) -> Option<u64> {
+    let mut clean: Vec<&TaskRecord> = (tasks.iter().copied())
+        .filter(|t| t.at > formed_at && !hit_runs.contains(t.run_id.as_str()))
+        .filter(|t| {
+            matches!(
+                t.outcome,
+                TaskOutcome::Merged | TaskOutcome::MergedWithoutApproval
+            ) && t.gates.checks >= 1
+                && any_intersect(&t.owns, files)
+                && !t.signatures.iter().any(|s| s.fp == fp)
+        })
+        .collect();
+    clean.sort_by_key(|t| t.at);
+    let mut runs: HashSet<&str> = HashSet::new();
+    clean.into_iter().find_map(|t| {
+        runs.insert(t.run_id.as_str());
+        (runs.len() >= cfg.known_clean_runs as usize).then_some(t.at)
+    })
+}
+
+/// The distinct headlines (at most 3), files (at most 8) and runs of `hits`, first
+/// seen first.
+fn gather(hits: &[(&TaskRecord, &SigRef)]) -> (Vec<String>, Vec<String>, Vec<String>) {
+    let mut headlines: Vec<String> = Vec::new();
+    let mut files: Vec<String> = Vec::new();
+    let mut runs: Vec<String> = Vec::new();
+    for (task, sig) in hits {
+        if headlines.len() < HEADLINES_MAX && !headlines.contains(&sig.headline) {
+            headlines.push(sig.headline.clone());
+        }
+        for own in &task.owns {
+            if files.len() < KNOWN_FILES_MAX && !files.contains(own) {
+                files.push(own.clone());
+            }
+        }
+        if !runs.contains(&task.run_id) {
+            runs.push(task.run_id.clone());
+        }
+    }
+    (headlines, files, runs)
+}
+
+/// The index of the hit (of `hits`, sorted by `at`) that first completed `known_min`
+/// distinct runs inside one `known_window_days` span.
+fn formed_at(hits: &[(&TaskRecord, &SigRef)], cfg: &Lessons) -> Option<usize> {
     let window = u64::from(cfg.known_window_days) * DAY_SECS;
-    (0..hits.len()).find_map(|j| {
+    (0..hits.len()).find(|&j| {
         let end = hits[j].0.at;
         let runs: BTreeSet<&str> = hits[..=j]
             .iter()
             .filter(|(t, _)| end - t.at <= window)
             .map(|(t, _)| t.run_id.as_str())
             .collect();
-        (runs.len() >= cfg.known_min as usize).then_some(end)
+        runs.len() >= cfg.known_min as usize
     })
 }
 
