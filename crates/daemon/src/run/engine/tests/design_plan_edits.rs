@@ -227,6 +227,26 @@ fn a_submit_refused_for_the_read_back_is_owed_a_wake_when_it_lands() {
     assert_eq!(owed, 1, "{:?}", notes(&fx));
 }
 
+/// Review M1: a submit that succeeds after the read-back (in the same turn, without a
+/// digest read) drops the owed "submit the plan again" note, so the orchestrator is not
+/// woken to resubmit a plan it already submitted.
+#[test]
+fn a_successful_submit_drops_the_owed_wake() {
+    let mut fx = at_spec_gate(false);
+    act(&mut fx, DocGateKind::Spec, DocGateAction::APPROVE).unwrap();
+    let edits = json!([covering("t1", &["R1", "R2"])]);
+    let refused = plan_submit(&mut fx, edits.clone(), Value::Null);
+    assert_eq!(refused.unwrap_err(), PENDING);
+    read_back(&mut fx, 1, SPEC);
+    assert!(notes(&fx).contains(&STORED.to_string()), "{:?}", notes(&fx));
+    plan_submit(&mut fx, edits, Value::Null).unwrap();
+    assert!(
+        !notes(&fx).contains(&STORED.to_string()),
+        "{:?}",
+        notes(&fx)
+    );
+}
+
 #[test]
 fn a_read_back_with_no_refused_submit_owes_no_wake() {
     let mut fx = at_spec_gate(false);

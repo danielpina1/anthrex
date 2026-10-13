@@ -280,6 +280,11 @@ fn edit_plan(
     }
     let notes = new_notes(run, &edited);
     *run = edited;
+    if submit {
+        // Review M1: a submit refused for the read-back and then retried in the same
+        // turn needs no "submit the plan again" wake any more.
+        super::wake::unnote(run, super::design::review::STORED_SUBMIT);
+    }
     fx.extend(effects);
     accepted(run, reply, (notes, held, message), (now, base), fx)
 }
