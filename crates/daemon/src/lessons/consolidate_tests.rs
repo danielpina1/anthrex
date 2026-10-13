@@ -574,3 +574,6 @@ mod credit;
 
 #[path = "consolidate_tests_lives.rs"]
 mod lives;
+
+#[path = "consolidate_tests_scale.rs"]
+mod scale;

@@ -16,7 +16,8 @@
 //!   counts green when merged and not reverted, not green when reverted or blocked,
 //!   and nothing otherwise.
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::ops::Range;
 
 use config::Lessons;
 use proto::{
@@ -64,23 +65,76 @@ pub fn consolidate(store: &Store, history: &[HistoryLine], now: u64, cfg: &Lesso
     lessons
 }
 
+/// One signature hit: its task record and the signature.
+type Hit<'h> = (&'h TaskRecord, &'h SigRef);
+
+#[cfg(test)]
+thread_local! {
+    /// Task records the clean-run scans visited on this thread (task M9.15.6's review,
+    /// I1): the complexity test's measure, with no wall-clock bound.
+    pub(super) static SCANS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Counts one visited task record (tests only).
+fn count_scan() {
+    #[cfg(test)]
+    SCANS.with(|c| c.set(c.get() + 1));
+}
+
 /// Decisions 7 and 8: the live known failures, newest `last_seen` first, then by id.
 /// Their credit is left at zero; [`consolidate`] fills it.
+///
+/// Task M9.15.6's review, I1: linear in the history. The clean-run candidates are
+/// gathered and sorted once, a life grows hit by hit, and a life's clean runs are
+/// counted again only when its files grow (at most [`KNOWN_FILES_MAX`] + 1 scans).
 pub fn known(history: &[HistoryLine], store: &Store, now: u64, cfg: &Lessons) -> Vec<Lesson> {
-    let tasks: Vec<&TaskRecord> = (history.iter())
+    let tasks = task_records(history);
+    let clean = clean_candidates(&tasks);
+    known_by(history, &tasks, store, |fp, hits| {
+        live(fp, hits, &clean, now, cfg)
+    })
+}
+
+fn task_records(history: &[HistoryLine]) -> Vec<&TaskRecord> {
+    (history.iter())
         .filter_map(|line| match line {
             HistoryLine::Task(t) => Some(t),
             _ => None,
         })
+        .collect()
+}
+
+/// Decision 8 a's candidates: the merged tasks with a check, oldest first (history
+/// order within one second).
+fn clean_candidates<'h>(tasks: &[&'h TaskRecord]) -> Vec<&'h TaskRecord> {
+    let mut clean: Vec<&TaskRecord> = (tasks.iter().copied())
+        .filter(|t| {
+            matches!(
+                t.outcome,
+                TaskOutcome::Merged | TaskOutcome::MergedWithoutApproval
+            ) && t.gates.checks >= 1
+        })
         .collect();
+    clean.sort_by_key(|t| t.at);
+    clean
+}
+
+/// The known failures, each `fp`'s live hits given by `live` (a range of its hits,
+/// sorted by `at`).
+fn known_by<'h>(
+    history: &'h [HistoryLine],
+    tasks: &[&'h TaskRecord],
+    store: &Store,
+    live: impl Fn(&str, &[Hit<'h>]) -> Option<Range<usize>>,
+) -> Vec<Lesson> {
     let flaky: Vec<&str> = (history.iter())
         .filter_map(|line| match line {
             HistoryLine::Flaky(f) => Some(f.test.as_str()),
             _ => None,
         })
         .collect();
-    let mut hits: BTreeMap<&str, Vec<(&TaskRecord, &SigRef)>> = BTreeMap::new();
-    for &task in &tasks {
+    let mut hits: BTreeMap<&str, Vec<Hit<'h>>> = BTreeMap::new();
+    for &task in tasks {
         for sig in &task.signatures {
             hits.entry(sig.fp.as_str()).or_default().push((task, sig));
         }
@@ -89,24 +143,17 @@ pub fn known(history: &[HistoryLine], store: &Store, now: u64, cfg: &Lessons) ->
         .filter(|(fp, _)| !store.dismissed.contains(*fp))
         .filter_map(|(fp, mut hits)| {
             hits.sort_by_key(|(task, _)| task.at);
-            known_failure(fp, &hits, &tasks, &flaky, now, cfg)
+            let range = live(fp, &hits)?;
+            known_failure(fp, &hits[range], &flaky)
         })
         .collect();
     found.sort_by(|a, b| b.last_seen.cmp(&a.last_seen).then(a.id.cmp(&b.id)));
     found
 }
 
-/// One `fp`'s known failure from its hits (sorted by `at`), or `None` when its current
-/// life never formed or has ended.
-fn known_failure(
-    fp: &str,
-    hits: &[(&TaskRecord, &SigRef)],
-    tasks: &[&TaskRecord],
-    flaky: &[&str],
-    now: u64,
-    cfg: &Lessons,
-) -> Option<Lesson> {
-    let hits = live(fp, hits, tasks, now, cfg)?;
+/// One `fp`'s known failure from its live life's hits (sorted by `at`), or `None` when
+/// a flaky test ends it.
+fn known_failure(fp: &str, hits: &[Hit], flaky: &[&str]) -> Option<Lesson> {
     let (first, sig) = *hits.first()?;
     let (newest, newest_sig) = *hits.last()?;
     let last_seen = newest.at;
@@ -149,24 +196,27 @@ fn known_failure(
     })
 }
 
-/// The hits of `fp`'s live known failure, or `None` when it has none.
+/// The range of `fp`'s hits (sorted by `at`) its live known failure holds, or `None`
+/// when it has none. `clean` is [`clean_candidates`].
 ///
 /// Task 4's review, I1 (the controller's ruling): each life forms on its own. A life
 /// forms from the hits after the previous life ended (decision 7: `known_min` runs
 /// inside one `known_window_days` span; task 5's review, I1: it holds the hits of that
 /// span onward, never an expired one before it, [`formation`]), takes every later hit
-/// until it ends, and ends
-/// at the `known_clean_runs`-th clean run after it formed (decision 8 a) or when a
-/// hit comes, or `now` is, more than `expiry_days` after its last hit (8 b). The hits
-/// after an end can only form the next life. Dismissal and flaky tests (8 c, d) end
-/// every life, and are checked by the callers.
-fn live<'h>(
+/// until it ends, and ends at the `known_clean_runs`-th clean run after it formed
+/// (decision 8 a) or when a hit comes, or `now` is, more than `expiry_days` after its
+/// last hit (8 b). The hits after an end can only form the next life. Dismissal and
+/// flaky tests (8 c, d) end every life, and are checked by the callers.
+///
+/// The clean runs depend only on when the life formed and on its files, which only
+/// grow, so they are counted again only when its files grow.
+fn live(
     fp: &str,
-    hits: &'h [(&'h TaskRecord, &'h SigRef)],
-    tasks: &[&TaskRecord],
+    hits: &[Hit],
+    clean: &[&TaskRecord],
     now: u64,
     cfg: &Lessons,
-) -> Option<&'h [(&'h TaskRecord, &'h SigRef)]> {
+) -> Option<Range<usize>> {
     let expiry = u64::from(cfg.expiry_days) * DAY_SECS;
     let hit_runs: HashSet<&str> = hits.iter().map(|(t, _)| t.run_id.as_str()).collect();
     let mut after = 0;
@@ -174,74 +224,89 @@ fn live<'h>(
         let (first, formed) = formation(&hits[after..], cfg)?;
         let (start, formed) = (after + first, after + formed);
         let formed_at = hits[formed].0.at;
+        let superseded =
+            |files: &[String]| superseded_at(fp, formed_at, files, clean, &hit_runs, cfg);
+        let mut files = Vec::new();
+        for (task, _) in &hits[start..=formed] {
+            add_files(&mut files, task);
+        }
+        let mut superseded_by = superseded(&files);
         let mut end = formed + 1;
         let next_start = loop {
-            let (_, files, _) = gather(&hits[start..end]);
-            let superseded = superseded_at(fp, formed_at, &files, tasks, &hit_runs, cfg);
             let last = hits[end - 1].0.at;
             match hits.get(end) {
                 Some((next, _))
-                    if superseded.is_some_and(|at| next.at > at) || next.at - last > expiry =>
+                    if superseded_by.is_some_and(|at| next.at > at) || next.at - last > expiry =>
                 {
                     break Some(end);
                 }
-                Some(_) => end += 1,
-                None if superseded.is_some() || now.saturating_sub(last) > expiry => {
+                Some((next, _)) => {
+                    end += 1;
+                    if add_files(&mut files, next) {
+                        superseded_by = superseded(&files);
+                    }
+                }
+                None if superseded_by.is_some() || now.saturating_sub(last) > expiry => {
                     break None;
                 }
-                None => return Some(&hits[start..end]),
+                None => return Some(start..end),
             }
         };
         after = next_start?;
     }
 }
 
+/// Adds `task`'s `owns` to a life's `files`, first seen first, at most
+/// [`KNOWN_FILES_MAX`]; whether any was added.
+fn add_files(files: &mut Vec<String>, task: &TaskRecord) -> bool {
+    let before = files.len();
+    for own in &task.owns {
+        if files.len() < KNOWN_FILES_MAX && !files.contains(own) {
+            files.push(own.clone());
+        }
+    }
+    files.len() > before
+}
+
 /// When the `known_clean_runs`-th distinct clean run after `formed_at` came (decision
-/// 8 a): a merged task with a check, owning some of `files`, in a run that never
-/// carried `fp`.
+/// 8 a): a merged task with a check (one of `clean`, sorted by `at`), owning some of
+/// `files`, in a run that never carried `fp`.
 fn superseded_at(
     fp: &str,
     formed_at: u64,
     files: &[String],
-    tasks: &[&TaskRecord],
+    clean: &[&TaskRecord],
     hit_runs: &HashSet<&str>,
     cfg: &Lessons,
 ) -> Option<u64> {
-    let mut clean: Vec<&TaskRecord> = (tasks.iter().copied())
-        .filter(|t| t.at > formed_at && !hit_runs.contains(t.run_id.as_str()))
+    let from = clean.partition_point(|t| t.at <= formed_at);
+    let mut runs: HashSet<&str> = HashSet::new();
+    (clean[from..].iter().copied())
+        .inspect(|_| count_scan())
         .filter(|t| {
-            matches!(
-                t.outcome,
-                TaskOutcome::Merged | TaskOutcome::MergedWithoutApproval
-            ) && t.gates.checks >= 1
+            !hit_runs.contains(t.run_id.as_str())
                 && any_intersect(&t.owns, files)
                 && !t.signatures.iter().any(|s| s.fp == fp)
         })
-        .collect();
-    clean.sort_by_key(|t| t.at);
-    let mut runs: HashSet<&str> = HashSet::new();
-    clean.into_iter().find_map(|t| {
-        runs.insert(t.run_id.as_str());
-        (runs.len() >= cfg.known_clean_runs as usize).then_some(t.at)
-    })
+        .find_map(|t| {
+            runs.insert(t.run_id.as_str());
+            (runs.len() >= cfg.known_clean_runs as usize).then_some(t.at)
+        })
 }
 
 /// The distinct headlines (at most 3), files (at most 8) and runs of `hits`, first
 /// seen first.
-fn gather(hits: &[(&TaskRecord, &SigRef)]) -> (Vec<String>, Vec<String>, Vec<String>) {
+fn gather(hits: &[Hit]) -> (Vec<String>, Vec<String>, Vec<String>) {
     let mut headlines: Vec<String> = Vec::new();
     let mut files: Vec<String> = Vec::new();
+    let mut seen: HashSet<&str> = HashSet::new();
     let mut runs: Vec<String> = Vec::new();
     for (task, sig) in hits {
         if headlines.len() < HEADLINES_MAX && !headlines.contains(&sig.headline) {
             headlines.push(sig.headline.clone());
         }
-        for own in &task.owns {
-            if files.len() < KNOWN_FILES_MAX && !files.contains(own) {
-                files.push(own.clone());
-            }
-        }
-        if !runs.contains(&task.run_id) {
+        add_files(&mut files, task);
+        if seen.insert(task.run_id.as_str()) {
             runs.push(task.run_id.clone());
         }
     }
@@ -252,23 +317,31 @@ fn gather(hits: &[(&TaskRecord, &SigRef)]) -> (Vec<String>, Vec<String>, Vec<Str
 /// hit that first completed `known_min` distinct runs inside one `known_window_days`
 /// span. Task 5's review, I1 (the controller's ruling): the life holds only the hits of
 /// that span onward, and a hit followed by a gap longer than `expiry_days` has expired
-/// before any life formed, so it never counts toward one.
-fn formation(hits: &[(&TaskRecord, &SigRef)], cfg: &Lessons) -> Option<(usize, usize)> {
+/// before any life formed, so it never counts toward one. One pass: the span's first
+/// hit only moves forward, and the span's runs are counted as it moves.
+fn formation(hits: &[Hit], cfg: &Lessons) -> Option<(usize, usize)> {
     let window = u64::from(cfg.known_window_days) * DAY_SECS;
     let expiry = u64::from(cfg.expiry_days) * DAY_SECS;
-    let mut alive = 0;
+    let mut first = 0;
+    let mut runs: HashMap<&str, usize> = HashMap::new();
     for j in 0..hits.len() {
         if j > 0 && hits[j].0.at - hits[j - 1].0.at > expiry {
-            alive = j;
+            runs.clear();
+            first = j;
         }
         let end = hits[j].0.at;
-        // Hit `j` itself is always inside its own window.
-        let first = (alive..=j)
-            .find(|&k| end - hits[k].0.at <= window)
-            .unwrap_or(j);
-        let runs: BTreeSet<&str> = (hits[first..=j].iter())
-            .map(|(t, _)| t.run_id.as_str())
-            .collect();
+        *runs.entry(hits[j].0.run_id.as_str()).or_default() += 1;
+        // Hit `j` itself is always inside its own window, so `first` stops at `j`.
+        while end - hits[first].0.at > window {
+            let run = hits[first].0.run_id.as_str();
+            if let Some(n) = runs.get_mut(run) {
+                *n -= 1;
+                if *n == 0 {
+                    runs.remove(run);
+                }
+            }
+            first += 1;
+        }
         if runs.len() >= cfg.known_min as usize {
             return Some((first, j));
         }
@@ -405,6 +478,10 @@ impl Lesson {
             .then(|| (1000 * u64::from(self.green) / u64::from(self.outcomes)) as u16)
     }
 }
+
+#[cfg(test)]
+#[path = "consolidate_oracle.rs"]
+mod oracle;
 
 #[cfg(test)]
 #[path = "consolidate_tests.rs"]
