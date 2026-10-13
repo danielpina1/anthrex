@@ -40,6 +40,15 @@ fn label(event: &SessionEvent) -> Option<String> {
             };
             format!("TurnEnded({outcome},{denials:?})")
         }
+        SessionEvent::Quota(sample) => {
+            let windows: Vec<String> = sample
+                .windows
+                .iter()
+                .map(|(window, used, _)| format!("{} {}", window.label(), used.0))
+                .collect();
+            format!("Quota({})", windows.join(","))
+        }
+        SessionEvent::ContextWindow { model, tokens } => format!("Window({model},{tokens})"),
         SessionEvent::Other { .. } | SessionEvent::UserText { .. } => return None,
         other => format!("{other:?}"),
     })
@@ -67,11 +76,15 @@ fn claude_stream_parses_every_fixture_line() {
         "Init",
         "TurnStarted",
         "ToolUse(Bash,toolu_fixture01,None)",
+        // Milestone 9.16: the `rate_limit_event` line, `Other` before.
+        "Quota(5h 50,7d 530)",
         "ToolResult(toolu_fixture01,true,None)",
         "ToolUse(Agent,toolu_fixture02,None)",
         "ToolResult(toolu_fixture02,true,None)",
         "Text(Done.,None)",
         "TurnEnded(Completed,[])",
+        // Milestone 9.16: each result's `modelUsage` window, after its turn's end.
+        "Window(claude-haiku-4-5-20251001,200000)",
         "Init",
         "TurnStarted",
         "ToolUse(Write,toolu_fixture03,None)",
@@ -79,11 +92,13 @@ fn claude_stream_parses_every_fixture_line() {
         "ToolResult(toolu_fixture03,false,None)",
         "Text(Write blocked: path /tmp/fixture/outside.txt is outside allowed working directories.,None)",
         "TurnEnded(Completed,[\"Write\"])",
+        "Window(claude-haiku-4-5-20251001,200000)",
         "Init",
         "TurnStarted",
         "ToolUse(Bash,toolu_fixture04,None)",
         "ToolResult(toolu_fixture04,false,None)",
         "TurnEnded(Interrupted,[])",
+        "Window(claude-haiku-4-5-20251001,200000)",
     ];
     assert_eq!(sequence, expected);
 
@@ -564,9 +579,11 @@ fn a_results_structured_output_is_emitted_before_its_turn_ends() {
         .find(|line| line_type(line) == "result")
         .unwrap();
     let events = ClaudeStream::default().parse_line(result);
+    // Milestone 9.16 decision 23: the result's `modelUsage` window follows the turn's end.
     let [
         SessionEvent::StructuredOutput { value },
         SessionEvent::TurnEnded { outcome, .. },
+        SessionEvent::ContextWindow { .. },
     ] = events.as_slice()
     else {
         panic!("{events:#?}");

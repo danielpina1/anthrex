@@ -7,6 +7,7 @@
 
 mod claude;
 mod codex;
+pub mod fill;
 pub mod reader;
 
 /// A transcript format version, as recognised by a parser's `detect`. It names the
@@ -143,6 +144,3 @@ fn object(line: &str) -> Option<serde_json::Map<String, serde_json::Value>> {
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-mod fill_tests;

@@ -336,3 +336,202 @@ fn the_2_1_280_captures_pin_the_one_million_window_shapes() {
         "0.160.1 added no rate_limits key over 0.155.0"
     );
 }
+
+// Milestone 9.16 decisions 5, 22 and 24: the pure readers over these fixtures.
+
+mod readers {
+    use super::super::{Fill, claude_fill, codex_fill, codex_limits, fill_percent, handoff_due};
+    use crate::headless::quota::QuotaSample;
+    use proto::brakes::Permille;
+    use proto::brakes::QuotaWindow::{FiveHour, SevenDay};
+    use serde_json::{Value, json};
+
+    const CLAUDE_278: &str = fixture!("transcripts/claude-2.1.278.jsonl");
+    const CLAUDE_280: &str = fixture!("transcripts/claude-2.1.280-usage.jsonl");
+    const CODEX_155: &str = fixture!("transcripts/codex-0.155.0.jsonl");
+    const CODEX_160: &str = fixture!("transcripts/codex-0.160.1-rollout-limits.jsonl");
+
+    /// The fixture's last `token_count` line with its payload changed by `edit`.
+    fn token_count_with(fixture: &str, edit: impl FnOnce(&mut Value)) -> String {
+        let line = fixture
+            .lines()
+            .rfind(|l| l.contains(r#""type":"token_count""#))
+            .unwrap();
+        let mut value: Value = serde_json::from_str(line).unwrap();
+        edit(&mut value["payload"]);
+        value.to_string()
+    }
+
+    #[test]
+    fn claude_fill_counts_cache_writes_and_output() {
+        // Line 46: 2 + 45,833 + 3,189 + 4.
+        assert_eq!(
+            claude_fill(CLAUDE_278),
+            Some(Fill {
+                tokens: 49_028,
+                window: None,
+                model: Some("claude-opus-5".into()),
+            })
+        );
+        // 2.1.280, line 39: 2 + 23,356 + 27,395 + 4; the model has no `[1m]` tag.
+        assert_eq!(
+            claude_fill(CLAUDE_280),
+            Some(Fill {
+                tokens: 50_757,
+                window: None,
+                model: Some("claude-opus-5-5".into()),
+            })
+        );
+    }
+
+    #[test]
+    fn claude_fill_skips_sidechain_and_cut_lines() {
+        let lines: Vec<&str> = CLAUDE_278.lines().collect();
+        let mut sidechain: Value = serde_json::from_str(lines[45]).unwrap();
+        sidechain["isSidechain"] = json!(true);
+        sidechain["message"]["usage"]["cache_read_input_tokens"] = json!(900_000);
+        // The tail starts in the middle of line 44 and ends with a sub-agent's line.
+        let start = CLAUDE_278.find(lines[43]).unwrap() + lines[43].len() / 2;
+        let tail = format!("{}\n{sidechain}\n", &CLAUDE_278[start..]);
+        assert!(serde_json::from_str::<Value>(tail.lines().next().unwrap()).is_err());
+        assert_eq!(claude_fill(&tail).map(|f| f.tokens), Some(49_028));
+
+        // A line that does not parse, after the last assistant line, is skipped.
+        let broken = format!("{CLAUDE_278}{{\"type\":\"assistant\",\"message\":{{\n");
+        assert_eq!(claude_fill(&broken).map(|f| f.tokens), Some(49_028));
+
+        // No main-chain assistant line, or one whose usage lacks a field: no reading.
+        assert_eq!(claude_fill(&format!("{sidechain}\n")), None);
+        assert_eq!(claude_fill(""), None);
+        for field in [
+            "input_tokens",
+            "cache_creation_input_tokens",
+            "cache_read_input_tokens",
+            "output_tokens",
+        ] {
+            let mut last: Value = serde_json::from_str(lines[45]).unwrap();
+            last["message"]["usage"][field] = json!("x");
+            assert_eq!(
+                claude_fill(&format!("{CLAUDE_278}{last}\n")),
+                None,
+                "{field}"
+            );
+        }
+    }
+
+    #[test]
+    fn codex_fill_reads_last_token_usage_and_window() {
+        // Line 26, not line 22's 23,193 (decision 22): input + output, cached inside input.
+        assert_eq!(
+            codex_fill(CODEX_155),
+            Some(Fill {
+                tokens: 23_276,
+                window: Some(258_400),
+                model: None,
+            })
+        );
+        // The window is the line's own: 0.160.1 says 475,000.
+        assert_eq!(
+            codex_fill(CODEX_160),
+            Some(Fill {
+                tokens: 23_021,
+                window: Some(475_000),
+                model: None,
+            })
+        );
+        // No window on the line: the tokens still count, the window is unknown.
+        let line = token_count_with(CODEX_155, |p| {
+            p["info"]
+                .as_object_mut()
+                .unwrap()
+                .remove("model_context_window");
+        });
+        assert_eq!(
+            codex_fill(&line),
+            Some(Fill {
+                tokens: 23_276,
+                window: None,
+                model: None,
+            })
+        );
+        // A `token_count` with no usage yet (`info: null`) leaves the last one standing.
+        let empty = token_count_with(CODEX_155, |p| p["info"] = Value::Null);
+        assert_eq!(
+            codex_fill(&format!("{CODEX_155}{empty}\n")).map(|f| f.tokens),
+            Some(23_276)
+        );
+        assert_eq!(codex_fill(&format!("{empty}\n")), None);
+        // A changed usage shape is no reading.
+        let changed = token_count_with(CODEX_155, |p| {
+            p["info"]["last_token_usage"]["output_tokens"] = json!("5");
+        });
+        assert_eq!(codex_fill(&changed), None);
+        assert_eq!(codex_fill(CLAUDE_278), None);
+    }
+
+    #[test]
+    fn codex_limits_maps_by_window_minutes() {
+        assert_eq!(
+            codex_limits(CODEX_155),
+            Some(QuotaSample {
+                windows: vec![(SevenDay, Permille(990), Some(1_790_332_405))],
+                rejected: None,
+            })
+        );
+        // Mapped by length, never by position.
+        let five = json!({"used_percent": 12.5, "window_minutes": 300, "resets_at": 100});
+        let seven = json!({"used_percent": 40.0, "window_minutes": 10080, "resets_at": 200});
+        let want = QuotaSample {
+            windows: vec![
+                (FiveHour, Permille(125), Some(100)),
+                (SevenDay, Permille(400), Some(200)),
+            ],
+            rejected: None,
+        };
+        for (primary, secondary) in [(&five, &seven), (&seven, &five)] {
+            let line = token_count_with(CODEX_155, |p| {
+                p["rate_limits"]["primary"] = primary.clone();
+                p["rate_limits"]["secondary"] = secondary.clone();
+            });
+            assert_eq!(codex_limits(&line), Some(want.clone()), "{line}");
+        }
+        // No limits, an unknown window, or an unreadable percentage: no reading.
+        for edit in [
+            json!(null),
+            json!({"primary": null, "secondary": null}),
+            json!({"primary": {"used_percent": 50.0, "window_minutes": 60}, "secondary": null}),
+            json!({"primary": {"used_percent": "50", "window_minutes": 300}, "secondary": null}),
+            json!({"primary": {"used_percent": -1.0, "window_minutes": 300}, "secondary": null}),
+        ] {
+            let line = token_count_with(CODEX_155, |p| p["rate_limits"] = edit.clone());
+            assert_eq!(codex_limits(&line), None, "{line}");
+        }
+        assert_eq!(codex_limits(CLAUDE_278), None);
+    }
+
+    #[test]
+    fn handoff_due_whichever_first() {
+        type Case = (u64, Option<u64>, u8, u64);
+        let cases: [(Case, bool); 7] = [
+            ((240_000, Some(1_000_000), 80, 300_000), false),
+            ((300_000, Some(1_000_000), 80, 300_000), true),
+            ((160_000, Some(200_000), 80, 300_000), true),
+            ((159_999, Some(200_000), 80, 300_000), false),
+            ((400_000, None, 80, 300_000), true),
+            ((400_000, None, 80, 0), false),
+            ((999_999, Some(200_000), 0, 0), false),
+        ];
+        for ((tokens, window, percent, cap), want) in cases {
+            assert_eq!(
+                handoff_due(tokens, window, percent, cap),
+                want,
+                "{tokens} {window:?} {percent} {cap}"
+            );
+        }
+        // No overflow at the extremes.
+        assert!(handoff_due(u64::MAX, Some(u64::MAX), 100, 0));
+        assert_eq!(fill_percent(160_000, 200_000), 80);
+        assert_eq!(fill_percent(23_276, 258_400), 9);
+        assert_eq!(fill_percent(1, 0), 0);
+    }
+}

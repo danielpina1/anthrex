@@ -154,6 +154,19 @@ fn a_retry_restores_the_status_it_interrupted_and_ignores_bookkeeping_lines() {
         SessionEvent::Unknown { line: "?".into() },
         SessionEvent::StderrLine { line: "w".into() },
         SessionEvent::Diagnostic { text: "d".into() },
+        // Milestone 9.16: a quota reading and a learned context window are bookkeeping.
+        SessionEvent::Quota(crate::headless::quota::QuotaSample {
+            windows: vec![(
+                proto::brakes::QuotaWindow::FiveHour,
+                proto::brakes::Permille(50),
+                None,
+            )],
+            rejected: None,
+        }),
+        SessionEvent::ContextWindow {
+            model: "claude-haiku-4-5".into(),
+            tokens: 200_000,
+        },
     ];
     // A retry inside an open turn: bookkeeping lines keep it pending.
     let mut state = run(&[init(), retry()]);

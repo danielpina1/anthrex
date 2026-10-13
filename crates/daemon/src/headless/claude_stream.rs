@@ -15,10 +15,13 @@
 //! - `result.usage` is per turn and is passed through.
 //! - `result.structured_output` (a decider's answer under `--json-schema`, M8b.1) is
 //!   `StructuredOutput`, just before the result's `TurnEnded`.
+//! - `result.modelUsage` gives one `ContextWindow` per model with a `contextWindow`, keyed
+//!   as written, just after the result's `TurnEnded` (milestone 9.16 decision 23).
+//! - A `rate_limit_event` with a usable window is `Quota` (milestone 9.16 decision 4,
+//!   [`super::quota`]); one without stays `Other`.
 //! - The line types the stream meta lists as `unmodelled` (hook progress, thinking-token
-//!   counts, task progress, `rate_limit_event`, `control_response`, …) are recognised
-//!   and yield `Other`, so they never crowd real diagnostics out of the window's
-//!   last-lines ring.
+//!   counts, task progress, `control_response`, …) are recognised and yield `Other`, so
+//!   they never crowd real diagnostics out of the window's last-lines ring.
 
 use super::{FailureKind, SessionEvent, TurnOutcome, bounded_text, unknown};
 use proto::TokenUsage;
@@ -122,7 +125,17 @@ impl ClaudeStream {
                     .into_iter()
                     .collect();
                 events.push(self.result(&object));
+                events.extend(context_windows(object.get("modelUsage")));
                 events
+            }
+            ("rate_limit_event", _) => {
+                match object
+                    .get("rate_limit_info")
+                    .and_then(super::quota::claude_rate_limit)
+                {
+                    Some(sample) => vec![SessionEvent::Quota(sample)],
+                    None => vec![SessionEvent::Other { kind: kind.into() }],
+                }
             }
             (other, _) if RECOGNISED_TYPES.contains(&other) => {
                 vec![SessionEvent::Other { kind: other.into() }]
@@ -350,6 +363,23 @@ fn failure_text(object: &serde_json::Map<String, Value>, subtype: &str) -> Strin
     }
 }
 
+/// `result.modelUsage`'s `<model>.contextWindow`s, in key order; an entry without a
+/// positive whole number gives none.
+fn context_windows(model_usage: Option<&Value>) -> Vec<SessionEvent> {
+    model_usage
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+        .filter_map(|(model, usage)| {
+            let tokens = usage.get("contextWindow")?.as_u64().filter(|t| *t > 0)?;
+            Some(SessionEvent::ContextWindow {
+                model: model.clone(),
+                tokens,
+            })
+        })
+        .collect()
+}
+
 fn usage(value: &Value) -> Option<TokenUsage> {
     let object = value.as_object()?;
     let n = |key: &str| object.get(key).and_then(Value::as_u64).unwrap_or(0);
@@ -364,3 +394,7 @@ fn usage(value: &Value) -> Option<TokenUsage> {
 #[cfg(test)]
 #[path = "claude_stream_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "claude_stream_window_tests.rs"]
+mod window_tests;
