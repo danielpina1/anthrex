@@ -109,13 +109,19 @@ pub fn submit_merged(labels: &[String; 2], report: &str) -> Vec<Value> {
 }
 
 /// Waits, the turn kept open, until the user approved the `kind` gate: the phase after
-/// it is the digest's gate state (`brainstorm` → `specifying`, `spec` → `planning`,
-/// `plan` → `approved`). A wait on state, never on the wake note's text (task M9.6.20,
-/// from the task 19 review): a `run_status` read clears the note it covers.
+/// it is the digest's gate state (`brainstorm` → `specifying`, `plan` → `approved`). A
+/// wait on state, never on the wake note's text (task M9.6.20, from the task 19
+/// review): a `run_status` read clears the note it covers.
+///
+/// The spec's is `gate.requirements_stored`, shown in planning only: `planning` comes
+/// one engine step before the approved spec's read-back stores its requirements, and a
+/// plan submit or a spawn in that gap is refused (`READ_BACK_PENDING`), so a wait on
+/// `planning` alone lost the race whenever the next step was a submit (the gates and
+/// pr e2e flakes; `ANTHREX_TEST_DELAY_READ_BACK_MS` widens the gap on purpose).
 pub fn approved(kind: &str) -> Value {
     let next = match kind {
         "brainstorm" => "specifying",
-        "spec" => "planning",
+        "spec" => return until("/gate/requirements_stored", json!(true), ORCH_WAIT),
         _ => "approved",
     };
     until("/gate/state", json!(next), ORCH_WAIT)

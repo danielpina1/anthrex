@@ -671,7 +671,9 @@ ORCHESTRATOR = [
         {"id": "F1", "answer": "fixed"},
         {"id": "F2", "answer": "kept: one instance today; the store trait leaves room for Redis"},
     ]}),
-    _until("/gate/state", "planning", USER_WAIT),
+    # Not "planning": the approved spec's requirements are stored one step later,
+    # and a plan submit before then is refused for its read-back.
+    _until("/gate/requirements_stored", True, USER_WAIT),
     _call("edit_plan", {"edits": [{"op": "add_task", "task": t} for t in PLAN_TASKS], "submit": True}),
     _expect("/awaiting_review", True),
     _until("/gate/plan_review/running", False, ORCH_WAIT),

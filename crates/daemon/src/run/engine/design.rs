@@ -121,6 +121,7 @@ pub(super) fn tool(
     if let OrchCall::SpawnSubplanner { epic, covers, .. } = &parsed
         && let Some(text) = plan::spawn_refusal(run, epic, covers)
     {
+        review::refused(run, &text);
         refuse(fx, reply, text);
         return None;
     }

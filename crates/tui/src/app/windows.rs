@@ -132,6 +132,7 @@ impl App {
             self.run_view.as_ref(),
         );
         self.tree.repair_selection(&rows);
+        let any_rows = !rows.is_empty();
         // Only on the edges decision 15 names, never on every list. The daemon
         // republishes on every status flip and every output event — several
         // times a second while agents work — and revealing unconditionally
@@ -144,6 +145,7 @@ impl App {
         {
             self.reveal_tree_anchor();
         }
+        self.select_arrived_rows(any_rows);
 
         if let Some(id) = self.pending_focus
             && self.windows.iter().any(|w| w.id == id)

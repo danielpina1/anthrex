@@ -306,9 +306,11 @@ impl App {
         );
         self.tree.repair_selection(&rows);
         let changed = rows.iter().map(|row| &row.key).ne(previous_keys.iter());
+        let any_rows = !rows.is_empty();
         if changed || self.tree.selected != previous_selection {
             self.reveal_tree_anchor();
         }
+        self.select_arrived_rows(any_rows);
     }
 
     /// Decision 2: the daemon's unix seconds as this client sees them now — the

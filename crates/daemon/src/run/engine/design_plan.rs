@@ -86,6 +86,16 @@ pub(crate) fn approve_refusal(run: &Run) -> Option<String> {
     at_plan.then(|| checks(run))?
 }
 
+/// The digest's `gate.requirements_stored`, in planning only: `false` while a plan
+/// submit or a sub-planner spawn is refused because the approved spec is still read
+/// back, so an orchestrator can wait on it rather than on `planning`, which comes one
+/// step earlier.
+pub(crate) fn requirements_stored(run: &Run) -> Option<bool> {
+    let design = run.orch.design.as_ref().filter(|d| !d.round_off())?;
+    (run.state == RunState::Planning)
+        .then(|| !(design.approved_spec.is_some() && design.requirements.is_empty()))
+}
+
 fn checks(run: &Run) -> Option<String> {
     let design = run.orch.design.as_ref().filter(|d| !d.round_off())?;
     if design.approved_spec.is_some() && design.requirements.is_empty() {
