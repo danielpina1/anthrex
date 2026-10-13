@@ -80,6 +80,14 @@ static TMP: LazyLock<Regex> = LazyLock::new(|| {
 static RUN_ID: LazyLock<Regex> =
     LazyLock::new(|| re(r"\b(runs/|anthrex/)[a-z0-9-]+-[0-9a-f]{4}\b"));
 static TASK_ID: LazyLock<Regex> = LazyLock::new(|| re(r"\bt\d+[a-z]?\b"));
+/// Review I2 (task M9.15.2), an amendment to decision 5: an ISO-8601 timestamp, with
+/// or without fractional seconds and a `Z` or `±hh:mm` offset; before [`LINE_COL`].
+static TIME: LazyLock<Regex> = LazyLock::new(|| {
+    re(r"\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?")
+});
+/// Review I1 (task M9.15.2), an amendment to decision 5: a panic line's thread id
+/// (`thread '<name>' (<tid>) panicked at`).
+static TID: LazyLock<Regex> = LazyLock::new(|| re(r"\(\d+\) panicked"));
 static LINE_COL: LazyLock<Regex> = LazyLock::new(|| re(r":\d+:\d+"));
 /// `:<line>` after a file name (one with an extension).
 static LINE: LazyLock<Regex> = LazyLock::new(|| re(r"(\.[A-Za-z0-9]+):\d+\b"));
@@ -95,6 +103,8 @@ fn normalise(line: &str) -> String {
     let line = TMP.replace_all(&line, "<tmp>");
     let line = RUN_ID.replace_all(&line, "${1}<id>");
     let line = TASK_ID.replace_all(&line, "<id>");
+    let line = TIME.replace_all(&line, "<time>");
+    let line = TID.replace_all(&line, "(<tid>) panicked");
     let line = LINE_COL.replace_all(&line, ":<l>:<c>");
     let line = LINE.replace_all(&line, "${1}:<l>");
     let line = DURATION.replace_all(&line, "<dur>");

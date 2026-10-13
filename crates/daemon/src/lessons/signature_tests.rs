@@ -129,6 +129,50 @@ fn signature_none_for_empty_or_boilerplate_output() {
     ] {
         assert_eq!(of(output), None, "{output:?}");
     }
+    // Review M1: the same boilerplate with one line of its own is a signature.
+    let sig = of("   Compiling app v0.1.0 (/src/app)\nboom\n    Finished `dev` profile in 3.2s\n")
+        .expect("a line survives the skips");
+    assert_eq!(sig.headline, "boom");
+    assert_eq!(sig.fp, fp_of(&["boom"]));
+}
+
+/// Review I1 (task M9.15.2): Rust 1.99's panic line carries the thread id, often under
+/// the hex rule's 7 characters.
+#[test]
+fn signature_ignores_panic_thread_ids() {
+    let panic = |tid: &str| {
+        format!("thread 'a::b' ({tid}) panicked at src/lib.rs:12:5:\nassertion failed: x\n")
+    };
+    let (a, b) = (of(&panic("201395")).unwrap(), of(&panic("4242")).unwrap());
+    assert_eq!(a, b);
+    assert_eq!(
+        a.headline,
+        "thread 'a::b' (<tid>) panicked at src/lib.rs:<l>:<c>:"
+    );
+    assert_eq!(a, of(&panic("12724030")).unwrap());
+}
+
+/// Review I2 (task M9.15.2): ISO-8601 timestamps become `<time>` before the
+/// line:column rule sees their `:mm:ss`.
+#[test]
+fn signature_ignores_iso_timestamps() {
+    let logged = |at: &str| format!("[{at} ERROR app] connection failed\n");
+    let stamps = [
+        "2026-10-13T12:34:56Z",
+        "2027-01-02T03:04:05Z",
+        "2026-10-13T12:34:56.123456Z",
+        "2026-10-13T12:34:56+02:00",
+        "2026-10-13 23:59:59.5-07:00",
+        "2026-10-13T12:34:56",
+    ];
+    let first = of(&logged(stamps[0])).unwrap();
+    assert_eq!(first.headline, "[<time> ERROR app] connection failed");
+    for at in stamps {
+        assert_eq!(of(&logged(at)).unwrap(), first, "{at}");
+    }
+    // A location still becomes `<l>:<c>`.
+    let located = of("error at src/file.rs:12:5 on 2026-10-13T12:34:56Z\n").unwrap();
+    assert_eq!(located.headline, "error at src/file.rs:<l>:<c> on <time>");
 }
 
 #[test]
