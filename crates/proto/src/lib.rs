@@ -321,6 +321,10 @@ mod orch_first_tests;
 mod admit_tests;
 
 #[cfg(test)]
+#[path = "history_tests.rs"]
+mod history_tests;
+
+#[cfg(test)]
 mod tests {
     #[test]
     fn proto_version_is_twenty_three() {
