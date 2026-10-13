@@ -43,6 +43,7 @@ fn a_run_title_round_trips() {
         proposals: Vec::new(),
         idle_orchestrators: Vec::new(),
         queued_goals: Vec::new(),
+        brakes: Default::default(),
     })));
 }
 

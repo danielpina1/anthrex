@@ -107,6 +107,7 @@ pub fn snapshot(state: &EngineState, now: u64) -> RunsSnapshot {
         proposals: Vec::new(),
         idle_orchestrators: super::chain::idle_list(&state.chains, &state.runs),
         queued_goals: Vec::new(),
+        brakes: Default::default(),
     }
 }
 
@@ -239,6 +240,7 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
         halted_phase,
         design_agents: super::snapshot_design::design_agents(run),
         title: run.title.clone(),
+        handoff: None,
     }
 }
 

@@ -419,6 +419,7 @@ fn old_run_info_still_decodes() {
         proposals: Vec::new(),
         idle_orchestrators: Vec::new(),
         queued_goals: Vec::new(),
+        brakes: Default::default(),
     };
     let msg = DaemonMsg::Run(RunReply::Snapshot(snapshot));
     both_ways(&msg);

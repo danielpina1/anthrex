@@ -33,7 +33,7 @@ fn doc_of_a_default_config_is_the_empty_table_and_defaults() {
 fn origin_marks_only_what_the_file_sets() {
     let text = "[orchestrator]\nmax_writers = 2\n\n[[orchestrator.models]]\nruntime = \"codex\"\nmodel = \"gpt-6-sol\"\nstrength = \"standard\"\n";
     let origin = origin_of(&text.parse().unwrap());
-    assert_eq!(origin.len(), 11);
+    assert_eq!(origin.len(), 15);
     for k in proto::SETTINGS_KEYS {
         let want = if k == key::MAX_WRITERS || k == key::ROLES {
             proto::Origin::File
@@ -183,7 +183,7 @@ fn load_with_origin_of_a_missing_or_broken_file_is_all_default() {
     assert_eq!(config, crate::Config::default());
     assert!(problems.is_empty());
     assert!(origin.values().all(|o| *o == proto::Origin::Default));
-    assert_eq!(origin.len(), 11);
+    assert_eq!(origin.len(), 15);
     std::fs::write(&missing, "[orchestrator\nmax_writers = 2\n").unwrap();
     let (_, problems, origin) = load_with_origin(&missing);
     assert_eq!(problems.len(), 1);

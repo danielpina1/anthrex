@@ -51,6 +51,8 @@ pub fn doc_of(o: &Orchestrator) -> SettingsDoc {
         design_default: Some(o.design.default),
         // Milestone 9.8 (M9.8.12): the table the settings screen edits and a save writes.
         roles: o.roles.clone(),
+        // Milestone 9.16: `[orchestrator.brakes]` is read from task M9.16.4.
+        brakes: Default::default(),
     }
 }
 

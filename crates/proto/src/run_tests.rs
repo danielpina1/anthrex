@@ -308,6 +308,7 @@ fn every_run_request_and_reply_round_trips() {
         proposals: Vec::new(),
         idle_orchestrators: Vec::new(),
         queued_goals: Vec::new(),
+        brakes: Default::default(),
     };
 
     let requests = vec![

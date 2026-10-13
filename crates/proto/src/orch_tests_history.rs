@@ -53,6 +53,7 @@ fn a_role_decision(role: AgentRole, run_id: Option<&str>) -> RoleRoutingDecision
         ],
         outcome: Some(RoleOutcome::Completed),
         result: Some("submitted".into()),
+        failover: None,
     }
 }
 

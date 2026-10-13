@@ -87,6 +87,7 @@ fn a_settings_doc() -> SettingsDoc {
         },
         design_default: None,
         roles: Default::default(),
+        brakes: Default::default(),
     }
 }
 

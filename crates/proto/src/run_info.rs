@@ -519,6 +519,10 @@ pub struct RunInfo {
     /// run from before), and then left out. A client shows it in place of the goal.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub title: String,
+    /// Milestone 9.16 decision 30: the run's orchestrator started fresh at the goal
+    /// boundary; left out while `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handoff: Option<crate::brakes::HandoffInfo>,
 }
 
 /// Every run the daemon knows about, at one revision.
@@ -538,6 +542,9 @@ pub struct RunsSnapshot {
     /// Milestone 9.10 decision 33: the goals waiting for their repository's profile.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub queued_goals: Vec<crate::profile::QueuedGoalInfo>,
+    /// Milestone 9.16 (NA §5): the hold and the quota brake; left out while empty.
+    #[serde(default, skip_serializing_if = "crate::brakes::BrakesInfo::is_empty")]
+    pub brakes: crate::brakes::BrakesInfo,
 }
 
 #[cfg(test)]

@@ -218,6 +218,11 @@ pub enum RunRequest {
     /// lessons. Answered with `RunReply::Lessons`, `RunReply::LessonsGraph`, `Done`
     /// or `Refused` under `request::LESSONS`.
     Lessons(crate::lessons::LessonsRequest),
+    /// Milestone 9.16 decision 17 (appended last): turn the daemon-wide dispatch hold
+    /// on or off. Answered with `RunReply::Held` or `Refused` under `request::HOLD`.
+    Hold {
+        on: bool,
+    },
 }
 
 /// `anthrex profile …`, carried inside `RunRequest::Profile` (milestone 8b decision 10).
@@ -376,6 +381,14 @@ pub enum RunReply {
         #[serde(default)]
         request_id: Option<u64>,
     },
+    /// Milestone 9.16 decision 17 (appended last): the hold after a `RunRequest::Hold`
+    /// (`None` is off), and the line to show.
+    Held {
+        hold: Option<crate::brakes::DispatchHold>,
+        message: String,
+        #[serde(default)]
+        request_id: Option<u64>,
+    },
 }
 
 impl RunReply {
@@ -439,6 +452,7 @@ impl RunReply {
             | RunReply::Queued { request_id, .. }
             | RunReply::Lessons { request_id, .. }
             | RunReply::LessonsGraph { request_id, .. }
+            | RunReply::Held { request_id, .. }
             | RunReply::Doc { request_id, .. } => *request_id = id,
             RunReply::Snapshot(_) => {}
         }
@@ -461,6 +475,7 @@ impl RunReply {
             | RunReply::Queued { request_id, .. }
             | RunReply::Lessons { request_id, .. }
             | RunReply::LessonsGraph { request_id, .. }
+            | RunReply::Held { request_id, .. }
             | RunReply::Doc { request_id, .. } => *request_id,
             RunReply::Snapshot(_) => None,
         }
@@ -527,4 +542,6 @@ pub mod request {
     pub const ANSWER_ASK: &str = "run answer-ask";
     /// Milestone 9.15 decision 32.
     pub const LESSONS: &str = "lessons";
+    /// Milestone 9.16 decision 17.
+    pub const HOLD: &str = "hold";
 }

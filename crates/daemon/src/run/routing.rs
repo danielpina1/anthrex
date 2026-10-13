@@ -175,6 +175,7 @@ fn decision(
         chosen: chosen.clone(),
         selected_index,
         candidates,
+        failover: None,
     }
 }
 

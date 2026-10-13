@@ -41,6 +41,7 @@ fn a_doc() -> SettingsDoc {
         },
         design_default: None,
         roles: a_table(),
+        brakes: Default::default(),
     }
 }
 
@@ -161,9 +162,10 @@ fn settings_variants_are_appended_last() {
     // `rounds_tests.rs`) and milestone 9.5 `McpReady` after `Iterate` (protocol 16,
     // `tuning_tests.rs`), and milestone 9.6 `DocGate` and `ShowDoc` after it (protocol
     // 17, `design_tests.rs`), then 9.9 `AnswerAsk` and 9.15 `Lessons` (protocol 24,
-    // `lessons_tests.rs`); `Settings` keeps its index right after `TaskDetail`.
+    // `lessons_tests.rs`), then 9.16 `Hold` (protocol 25, `brakes_tests.rs`); `Settings`
+    // keeps its index right after `TaskDetail`.
     assert_eq!(
-        requests[requests.len() - 10..requests.len() - 4],
+        requests[requests.len() - 11..requests.len() - 5],
         [
             "TaskDetail",
             "Settings",
@@ -177,19 +179,21 @@ fn settings_variants_are_appended_last() {
     // Milestone 9.6 appends `Doc` after `Settings` (`design_tests.rs`).
     // Milestone 9.10 appends `Queued` after `Doc` (`profile_tests.rs`), and 9.15
     // `Lessons` and `LessonsGraph` after it (`lessons_tests.rs`).
-    assert_eq!(replies[replies.len() - 3], "Queued");
-    assert_eq!(replies[replies.len() - 4], "Doc");
-    assert_eq!(replies[replies.len() - 5], "Settings");
-    assert_eq!(replies[replies.len() - 6], "TaskDetail");
+    // Milestone 9.16 appends `Held` after `LessonsGraph` (`brakes_tests.rs`).
+    assert_eq!(replies[replies.len() - 4], "Queued");
+    assert_eq!(replies[replies.len() - 5], "Doc");
+    assert_eq!(replies[replies.len() - 6], "Settings");
+    assert_eq!(replies[replies.len() - 7], "TaskDetail");
 }
 
 #[test]
-fn settings_keys_are_eleven_and_distinct() {
-    assert_eq!(SETTINGS_KEYS.len(), 11);
+fn settings_keys_are_fifteen_and_distinct() {
+    // Milestone 9.16 decision 10 appends the four `[orchestrator.brakes]` keys.
+    assert_eq!(SETTINGS_KEYS.len(), 15);
     let mut sorted = SETTINGS_KEYS.to_vec();
     sorted.sort_unstable();
     sorted.dedup();
-    assert_eq!(sorted.len(), 11);
+    assert_eq!(sorted.len(), 15);
     // Milestone 9.8 (M9.8.12): the role table replaced the roster and the agent keys.
     assert_eq!(SETTINGS_KEYS[0], key::ROLES);
     assert_eq!(key::ROLES, "models");

@@ -188,6 +188,7 @@ fn every_new_or_changed_message_round_trips() {
         proposals: Vec::new(),
         idle_orchestrators: Vec::new(),
         queued_goals: Vec::new(),
+        brakes: Default::default(),
     };
     reply_both_ways(RunReply::Snapshot(snapshot));
     both_ways(&DaemonMsg::WindowsChanged {
@@ -356,12 +357,13 @@ fn appended_variants_keep_their_indices() {
     let names = variant_names::<RunRequest>();
     // Milestone 9.6 appends `DocGate` and `ShowDoc` after `McpReady`.
     assert_eq!(
-        names[names.len() - 7..names.len() - 4],
+        names[names.len() - 8..names.len() - 5],
         ["Watch", "Iterate", "McpReady"],
         "{names:?}"
     );
     // Milestone 9.15 appends `Lessons` after `AnswerAsk` (`lessons_tests.rs`).
-    let n = names.len() as u8 - 4;
+    // Milestone 9.16 appends `Hold` after `Lessons` (`brakes_tests.rs`).
+    let n = names.len() as u8 - 5;
     assert_eq!(
         variant_at::<RunRequest>(n - 1, &json!({"run_id": "r1", "window_id": 3})),
         Some(RunRequest::McpReady {

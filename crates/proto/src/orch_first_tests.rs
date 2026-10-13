@@ -97,8 +97,9 @@ fn the_five_ops_are_appended_last() {
         "{names}"
     );
     // Milestone 9.15 appends `Lessons` after `AnswerAsk` (`lessons_tests.rs`).
+    // Milestone 9.16 appends `Hold` after `Lessons` (`brakes_tests.rs`).
     let requests = variant_names::<RunRequest>();
-    assert_eq!(requests[requests.len() - 2], "AnswerAsk");
+    assert_eq!(requests[requests.len() - 3], "AnswerAsk");
 }
 
 fn route() -> Route {

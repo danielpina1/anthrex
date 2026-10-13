@@ -258,6 +258,7 @@ fn old_snapshot_still_decodes() {
         proposals: Vec::new(),
         idle_orchestrators: Vec::new(),
         queued_goals: Vec::new(),
+        brakes: Default::default(),
     };
     let written = serde_json::to_value(&snapshot).unwrap();
     assert!(written.get("idle_orchestrators").is_none());
@@ -389,12 +390,13 @@ fn appended_variants_keep_their_indices() {
     let names = variant_names::<RunRequest>();
     // Milestone 9.5 appends `McpReady` after `Iterate` (`tuning_tests.rs`).
     assert_eq!(
-        names[names.len() - 8..names.len() - 4],
+        names[names.len() - 9..names.len() - 5],
         ["Deliver", "Watch", "Iterate", "McpReady"],
         "{names:?}"
     );
     // Milestone 9.15 appends `Lessons` after `AnswerAsk` (`lessons_tests.rs`).
-    let n = names.len() as u8 - 5;
+    // Milestone 9.16 appends `Hold` after `Lessons` (`brakes_tests.rs`).
+    let n = names.len() as u8 - 6;
     assert_eq!(
         variant_at::<RunRequest>(n - 1, &json!({"run": "r1", "goal": "more"})),
         Some(RunRequest::Iterate {

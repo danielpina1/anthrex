@@ -193,6 +193,7 @@ impl SettingsScreen {
             },
             design_default: None,
             roles: Default::default(),
+            brakes: Default::default(),
         };
         let mut s = Self {
             section: SettingsSection::Models,
@@ -259,6 +260,8 @@ impl SettingsScreen {
             // Ruling T18-2: read-only here; the screen carries what the daemon said.
             design_default: self.base.design_default,
             roles: self.models.global.clone(),
+            // Milestone 9.16: carried as the daemon sent it until M9.16.10's rows.
+            brakes: self.base.brakes,
         }
     }
 

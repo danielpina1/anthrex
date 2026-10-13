@@ -11,7 +11,7 @@ use proto::settings::{SETTINGS_KEYS, key};
 
 use crate::{Config, Problem};
 
-/// The origin of each of the eleven `SETTINGS_KEYS` in `table`.
+/// The origin of each of the fifteen `SETTINGS_KEYS` in `table`.
 pub fn origin_of(table: &toml::Table) -> BTreeMap<String, Origin> {
     let has = |path: &str| lookup(table, path).is_some();
     SETTINGS_KEYS

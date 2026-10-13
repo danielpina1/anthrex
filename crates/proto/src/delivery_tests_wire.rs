@@ -80,13 +80,13 @@ fn appended_variants_keep_their_indices() {
     let names = variant_names::<RunRequest>();
     // Milestone 9.3 appends `Iterate` after `Watch`, 9.5 `McpReady` after it, and 9.6
     // `DocGate` and `ShowDoc` after that (`design_tests.rs`), 9.9 `AnswerAsk` and 9.15
-    // `Lessons` (`lessons_tests.rs`).
+    // `Lessons` (`lessons_tests.rs`), and 9.16 `Hold` (`brakes_tests.rs`).
     assert_eq!(
-        names[names.len() - 10..names.len() - 5],
+        names[names.len() - 11..names.len() - 6],
         ["TaskDetail", "Settings", "Deliver", "Watch", "Iterate"],
         "{names:?}"
     );
-    let n = names.len() as u8 - 6;
+    let n = names.len() as u8 - 7;
     assert_eq!(
         variant_at::<RunRequest>(n - 2, &serde_json::json!({"run_id": "r1", "stage": 2})),
         Some(RunRequest::Deliver {

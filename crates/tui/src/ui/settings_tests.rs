@@ -30,6 +30,7 @@ pub(crate) fn sample() -> SettingsDoc {
         },
         design_default: None,
         roles: Default::default(),
+        brakes: Default::default(),
     }
 }
 

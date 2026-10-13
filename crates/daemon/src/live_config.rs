@@ -44,7 +44,7 @@ impl LiveSettings {
         })
     }
 
-    /// `orchestrator` with every one of the eleven keys `Default` (preflight F20: what a
+    /// `orchestrator` with every one of the fifteen keys `Default` (preflight F20: what a
     /// context built without a config file holds).
     pub fn defaults_of(orchestrator: config::Orchestrator) -> Arc<Self> {
         let origin = proto::settings::SETTINGS_KEYS

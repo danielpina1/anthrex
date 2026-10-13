@@ -92,6 +92,7 @@ pub(super) fn no_runs() -> RunsSnapshot {
         proposals: Vec::new(),
         idle_orchestrators: Vec::new(),
         queued_goals: Vec::new(),
+        brakes: Default::default(),
     }
 }
 
@@ -274,7 +275,9 @@ impl App {
             | RunReply::Doc { .. }
             // Milestone 9.15: routed by id in `app/replies.rs`, never here.
             | RunReply::Lessons { .. }
-            | RunReply::LessonsGraph { .. } => {}
+            | RunReply::LessonsGraph { .. }
+            // Milestone 9.16: the hold's reply is shown from task M9.16.10.
+            | RunReply::Held { .. } => {}
             RunReply::TaskDetail { detail, request_id } => self.on_task_detail(detail, request_id),
         }
         vec![]

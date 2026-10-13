@@ -258,6 +258,7 @@ pub(super) fn a_run_info() -> RunInfo {
         halted_phase: None,
         design_agents: Vec::new(),
         title: String::new(),
+        handoff: None,
     }
 }
 

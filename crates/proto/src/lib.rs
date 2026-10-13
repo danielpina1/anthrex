@@ -167,7 +167,16 @@
 /// all appended last, plus `RunRequest::Finish.reason` and `TaskDetailInfo.risk_note`,
 /// defaulted and left out while `None`. Derivation: 23 at `lib.rs:163` before this
 /// change (milestone 9.14); 23 + 1 = 24.
-pub const PROTO_VERSION: u32 = 24;
+///
+/// Milestone 9.16 task M9.16.2 bumps this to 25: `RunRequest::Hold` and
+/// `RunReply::Held`, appended last (after 9.15's `Lessons` and `LessonsGraph`), the brake
+/// types (`proto::brakes`), `RunsSnapshot.brakes`, `RunInfo.handoff`, `RunRecord.handoff`,
+/// `SettingsDoc.brakes` with its four `SETTINGS_KEYS`, and the history fields
+/// `RoutingDecision.failover` and `RoleRoutingDecision.failover` (decision 42). Every new
+/// field is defaulted (and left out while empty or `None`, bar `SettingsDoc.brakes`), so
+/// a protocol-24 snapshot, `run.json` and history still load (`HISTORY_VERSION` stays 5).
+/// Derivation: 24 at `lib.rs:170` before this change (milestone 9.15); 24 + 1 = 25.
+pub const PROTO_VERSION: u32 = 25;
 
 /// `skip_serializing_if` for a `u32` count that is left out while zero.
 pub(crate) fn is_zero_u32(n: &u32) -> bool {
@@ -183,6 +192,7 @@ pub const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_sec
 
 pub mod actions;
 pub mod adapt;
+pub mod brakes;
 pub mod codec;
 pub mod conversation;
 pub mod delivery;
@@ -214,6 +224,10 @@ pub use actions::{ACTION_TEXT_MAX, ActionInfo, ActionKind, ActionNeeds, InputKin
 pub use adapt::{
     DeciderMode, DeciderSource, DiffStats, PhaseSecs, RunPath, RunUsage, Scale, SizeCheckInfo,
     TriageInfo,
+};
+pub use brakes::{
+    BrakeTripInfo, BrakesInfo, DispatchHold, FIVE_HOUR_SECS, HandoffInfo, Permille, QuotaInfo,
+    QuotaState, QuotaWindow, QuotaWindowInfo, SEVEN_DAY_SECS,
 };
 pub use codec::{CodecError, MAX_FRAME, decode, encode, read_frame, write_frame};
 pub use conversation::{
@@ -280,7 +294,8 @@ pub use run_info::{
 pub use run_wire::{ProfileReply, ProfileRequest, RunReply, RunRequest, ToolCall};
 pub use scout::{ScoutFile, ScoutInfo, ScoutKind, ScoutReport, ScoutState};
 pub use settings::{
-    BudgetLimit, Origin, SETTINGS_KEYS, SettingsDoc, SettingsLimits, SettingsReply, SettingsRequest,
+    BudgetLimit, Origin, SETTINGS_KEYS, SettingsBrakes, SettingsDoc, SettingsLimits, SettingsReply,
+    SettingsRequest,
 };
 pub use task_detail::{ACTIVITY_MAX, SummarySource, TaskDetailInfo, WORKER_SUMMARY_MAX};
 pub use tiers::{FullInfo, FullState, SignalInfo, StageInfo, TaskOrigin, TierInfo};
@@ -347,10 +362,14 @@ mod history_tests;
 mod lessons_tests;
 
 #[cfg(test)]
+#[path = "brakes_tests.rs"]
+mod brakes_tests;
+
+#[cfg(test)]
 mod tests {
     #[test]
-    fn proto_version_is_twenty_four() {
-        assert_eq!(super::PROTO_VERSION, 24);
+    fn proto_version_is_twenty_five() {
+        assert_eq!(super::PROTO_VERSION, 25);
     }
 
     #[test]

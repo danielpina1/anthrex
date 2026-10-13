@@ -109,6 +109,10 @@ impl RunService {
                 reason,
             } => self.finish(run_id, action, confirm, reason).await,
             RunRequest::Lessons(req) => self.lessons(req).await,
+            // Milestone 9.16 decision 17: protocol 25 carries it; M9.16.8 answers it.
+            RunRequest::Hold { .. } => {
+                RunReply::refused(request::HOLD, "the hold arrives in task M9.16.8")
+            }
             RunRequest::List => RunReply::Snapshot(self.current()),
             RunRequest::Tool(call) => self.tool(call).await,
             // Milestone 8b: `run start --goal` (decision 22), `run promote` (25), `run

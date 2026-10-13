@@ -164,6 +164,7 @@ pub fn record(
         candidates,
         outcome: None,
         result: None,
+        failover: None,
     }
 }
 
