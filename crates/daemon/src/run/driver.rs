@@ -162,7 +162,7 @@ pub struct RunService {
     settings_write: Arc<tokio::sync::Mutex<()>>,
     tuning: tuning::TuningLocks,
     /// Milestone 9.15 (C9): the one lessons store lock map of the daemon.
-    lessons: crate::lessons::store::LessonLocks,
+    lessons: Arc<crate::lessons::store::LessonLocks>,
     /// Milestone 9.8: the discovered models (`crate::models`), and what cancels their
     /// probes when the service stops.
     models: Arc<crate::models::ModelService>,

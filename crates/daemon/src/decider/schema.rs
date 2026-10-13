@@ -6,7 +6,8 @@ use super::DeciderKind;
 use serde_json::Value;
 
 /// The schemas, keyed by the kind's label (M8b's "Decider schemas (exact)", 9.2's
-/// `ci_summary` from its Interfaces, and the run title change's `run_name`).
+/// `ci_summary` from its Interfaces, the run title change's `run_name`, and milestone
+/// 9.15 decision 13's `distill`).
 const SCHEMAS: &str = r#"{"triage":{"type":"object","additionalProperties":false,"required":["kinds","scale","reason","task"],"properties":{
   "kinds":{"type":"array","minItems":1,"maxItems":4,"items":{"enum":["code","docs","research","review"]}},
   "scale":{"enum":["single","plan","large"]},
@@ -37,7 +38,14 @@ const SCHEMAS: &str = r#"{"triage":{"type":"object","additionalProperties":false
   "category":{"enum":["test","build","lint","infra","unknown"]}}},
  "run_name":{"type":"object","additionalProperties":false,"required":["title","slug"],"properties":{
   "title":{"type":"string","minLength":1,"maxLength":60},
-  "slug":{"type":"string","minLength":1,"maxLength":32,"pattern":"^[a-z0-9]+(-[a-z0-9]+)*$"}}}}"#;
+  "slug":{"type":"string","minLength":1,"maxLength":32,"pattern":"^[a-z0-9]+(-[a-z0-9]+)*$"}}},
+ "distill":{"type":"object","additionalProperties":false,"required":["items"],"properties":{
+  "items":{"type":"array","maxItems":5,"items":{"type":"object","additionalProperties":false,
+    "required":["layer","title","body","files"],"properties":{
+      "layer":{"enum":["episodic","semantic","procedural"]},
+      "title":{"type":"string","minLength":1,"maxLength":120},
+      "body":{"type":"string","minLength":1,"maxLength":600},
+      "files":{"type":"array","maxItems":8,"items":{"type":"string","minLength":1,"maxLength":300}}}}}}}}"#;
 
 /// The schema of `kind`'s answer.
 pub fn schema(kind: DeciderKind) -> Value {

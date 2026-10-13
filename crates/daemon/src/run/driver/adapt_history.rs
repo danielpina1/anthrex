@@ -71,8 +71,8 @@ impl RunService {
 
     /// `OpKind::QueueDistill` (milestone 9.15 decision 10): `line` written once to the
     /// store at `path` (`<repo_dir>/lessons.jsonl`) under the daemon's lessons lock,
-    /// on `spawn_blocking`, never under the manager lock. The distill worker is woken
-    /// here once it exists (task M9.15.10); until then the entry waits in the file.
+    /// on `spawn_blocking`, never under the manager lock; then the distill worker is
+    /// woken for the repository (task M9.15.10), already written or not.
     pub(in crate::run::driver) async fn queue_distill(
         &self,
         path: PathBuf,
@@ -86,7 +86,13 @@ impl RunService {
             tokio::time::sleep(hold).await;
         }
         match crate::lessons::store::append_once(&self.lessons, &repo_dir, line).await {
-            Ok(_) => OpResult::DistillQueued,
+            Ok(_) => {
+                let service = self.adaptation.get().and_then(|a| a.lessons.as_ref());
+                if let Some(service) = service {
+                    service.wake(repo_dir);
+                }
+                OpResult::DistillQueued
+            }
             Err(error) => failed(format!("could not append to {}: {error}", path.display())),
         }
     }

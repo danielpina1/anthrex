@@ -176,6 +176,7 @@ fn answers(answer: &DeciderAnswer, request: &DeciderRequest) -> bool {
                 DeciderRequest::CiSummary(_)
             )
             | (DeciderAnswer::RunName { .. }, DeciderRequest::RunName(_))
+            | (DeciderAnswer::Distill { .. }, DeciderRequest::Distill(_))
     )
 }
 

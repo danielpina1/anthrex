@@ -937,6 +937,20 @@ Milestone 9.14's new bounds, each against the constant it must exceed (brief tas
 | `wait_reached` (a test seam reached), `eventually` (the background unlink of a trashed link) | `daemon/src/run/target_pool/io_tests_table.rs`, `io_tests.rs` | 10 s | Failure-only deadlines: one or two `spawn_blocking` file steps, milliseconds; no code constant on the path. | **Recorded.** |
 | `a_re_lease_waits_for_the_holders_pending_save`: the negative 300 ms wait | `daemon/src/run/target_pool/io_tests_table.rs` | 300 ms | Not a bound on the code: the re-lease must *not* finish while the seam holds the first save. A slow machine can only let a broken pool pass, never fail a correct one. | **Recorded.** |
 
+### Recorded, from M9.15.10 (the distill worker, 2026-10-13)
+
+The distill worker's bounds (`daemon/src/lessons/service.rs`) are injected in its tests (`ServiceTiming { bound, retry, now }`, ruling C6), so no test sleeps for `DISTILL_BOUND` (120 s), `DISTILL_RETRY_SECS` (60 s, 300 s) or the daily cap's day. Every test that observes the background worker waits with a deadline loop on the store, `history.jsonl` or the worker's pass count; none reads a file once.
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| A distill call's code bound | `daemon/src/lessons/service.rs` (`DISTILL_BOUND`) | 120 s | `decide_within`: the routing probe and the call, the call's own timeout `min(deciders.timeout_secs, 120 s)`; past it the call is dropped, which kills its process. Not a test bound. | **Recorded.** |
+| Every wait for one call's lines (`call_wait`) | `cli/tests/it/lessons_service.rs` | `INSTALLED_PROBE_TIMEOUT` (5 s) + `TIMEOUT_SECS` (5 s) + `EXIT_WAIT` (2 s) + `KILL_GRACE` (2 s) + `SPAWN_SLACK` (5 s) = 19 s; × 3 for three attempts with retries injected as zero | One routed `fake-agent` decider call, its exit or kill, and two or three `spawn_blocking` appends (milliseconds). | **Recorded.** |
+| `deciders_off_gives_up_at_once` | `cli/tests/it/lessons_service.rs` | `SPAWN_SLACK` (5 s) | No call: one store read and one append on `spawn_blocking`. | **Recorded.** |
+| `distill_runs_off_lock`: the store lock, the engine's `List` | `cli/tests/it/lessons_service.rs` | `REQUEST_WAIT` (75 s) each | One engine step; the store's lock is not held across the call. The hung call is dropped by `stop`, and its process must be gone within `GONE_WITHIN` (5 s, `KILL_GRACE` 2 s inside it). | **Recorded.** |
+| `recovered_task_gives_an_on_trial_lesson_listed_by_the_cli`: the wait for the lesson after the run is complete | `cli/tests/it/run_e2e_lessons_distill.rs` (`distill_wait`) | 19 s (as `call_wait`, the harness's `deciders.timeout_secs = 5`) + `REQUEST_WAIT` (75 s, one `lessons list`) = 94 s | The worker is woken by the `QueueDistill` executor, which the run's completion waits for (`complete_pass` needs no op pending); then one call and two appends. | **Recorded.** |
+| `PASS_WAIT` (a pass, a seam's call, an append) | `daemon/src/lessons/service_tests.rs` | 10 s | Failure-only deadline: a pass reads one small store per repository on `spawn_blocking`; the seam answers at once. | **Recorded.** |
+| `a_recovered_task_queues_one_distill_entry`: the wait for the `queued` line | `cli/tests/it/run_e2e_lessons.rs` (`wait_queued`) | `RUN_WAIT` | One op of the run, under a 3 s debug-build hold on the write (`ANTHREX_TEST_DELAY_DISTILL_MS`, task 9's review I3). | **Recorded.** |
+
 ### Fixed, from the environment-block flake on macOS CI (2026-10-12)
 
 | Test | Site | Bound | The code's own legal worst case | Status |

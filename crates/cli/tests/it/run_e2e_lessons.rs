@@ -96,5 +96,11 @@ fn a_recovered_task_queues_one_distill_entry() {
     assert_eq!(queued_lines(&h).len(), 1);
     let path = h.repo_dir().join(daemon::lessons::LESSONS_FILE);
     let text = std::fs::read_to_string(path).unwrap();
-    assert_eq!(text.lines().count(), 1, "{text}");
+    // Task M9.15.10: the worker closes the entry (`gave_up`, the harness's deciders are
+    // off), so only the `queued` lines are counted.
+    let queued = text
+        .lines()
+        .filter(|l| l.contains("\"type\":\"queued\""))
+        .count();
+    assert_eq!(queued, 1, "{text}");
 }
