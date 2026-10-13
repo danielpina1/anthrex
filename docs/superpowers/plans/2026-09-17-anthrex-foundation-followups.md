@@ -2365,3 +2365,17 @@ Five minors from the merge review of milestone 9.11, none blocking:
 - **`run.json` holds up to 50 frozen lesson briefs** (ruling C30): about 50 KB in every save of a run with a full store. Not changed.
 - **The graph panel's scroll bound is measured at the side panel's width** (task 15's review, M4). `panel_move` measures a lesson's lines with `ui::lessons_graph_panel::lesson_lines(…, PANEL_WIDTH − 2, PLAIN)` from app state: pure, but app state now depends on `ui`, and in the wider lower-half panel (80×24) the lesson has fewer lines, so `j` can push the row past the last drawn line; the render clamps it and the next few `k` presses seem to do nothing. Measure at the panel's drawn width (kept in state by the render's layout) or clamp on the drawn line count.
 - **No linearity test exercises redaction's kept-body path** (task 15's review, M6). `the_unambiguous_body_check_is_linear` has no all-lowercase kept unit (`ghs_abcd `, or `ghs_` plus 20 lowercase letters), and `BODY_READ` does not count the scan in `unambiguous()`'s closure. The reviewer's timing probe found it linear (×4 input, ×3.7–×4.1 time); no test pins it.
+
+### Recorded by the milestone 9.15 review (2026-10-13), for later
+
+- **A redistilled lesson that a trial retired comes back `on_trial`** (task 3's review, M2). When a later distill call produces again a lesson that its trial retired, it comes back as `on_trial` instead of staying retired, so a lesson the evidence rejected returns to prompts for another trial. Decide whether a retired lesson's id (or content key) blocks its return, or needs the user's approval to come back.
+- **Redaction residuals the review found** (in addition to the known gaps above; `lessons::redact::scrub` leaves each of these in place):
+  - a JSON-escaped URL credential, `https:\/\/user:pass@host` (the `\/` spelling hides the `://`);
+  - a percent-encoded URL, `https%3A%2F%2Fuser%3Atok%40host`;
+  - clipped tokens whose surviving body is all lowercase or has no digit;
+  - Stripe secret keys, `sk_live_…`: the `sk-` rules match a dash, not an underscore;
+  - AWS secret access keys (40 characters of base64 with no prefix; only the `AKIA` access key id is matched);
+  - `Authorization: Basic <base64>` credentials.
+  Decide which to cover, and share the result with PR-body redaction (9.2, NA §6).
+- **`lessons.jsonl` has no compaction.** Every `queued`, `attempt`, `distilled`, `gave_up`, outcome and status line is appended forever, and the start's read and fold grow with it. Once reading it takes longer than `LESSONS_START_BOUND` (5 s), every run starts with `lessons: none (the lessons store could not be read in time)`, silently. A compaction (fold, then rewrite the live state under the store's lock) or a rotation is needed before stores get that large.
+- **The graph's profile fallback walks `module_dirs` with no time bound.** `run/driver/lessons_requests.rs`'s module source, with no module-graph cache, calls `profile::verify_tiers::module_dirs(checkout, &profile.modules)`, which lists the checkout's directories for the profile's module globs; it runs on the blocking pool but has no deadline, so a huge or slow (network) checkout holds the Graph request's reply. Bound it as the other filesystem walks are, falling back to `ModuleSource::None`.
