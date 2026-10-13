@@ -107,16 +107,41 @@ fn bind_socket_locked(path: &Path) -> anyhow::Result<UnixListener> {
 /// rename: it fails when `path` exists, as `bind` on `path` did, so a socket another
 /// daemon put there after `prepare_socket` is never replaced. The staging name is removed
 /// on every path out of here.
+///
+/// Review I2: the staging name is longer than `path`, and a socket path must fit
+/// `sun_path` ([`sun_path_bytes`]). A `path` that fits when its staging name does not is
+/// bound where it is, as before the staging name existed (its file then appears at
+/// `bind`, a moment before `listen`); a `path` that does not fit is refused by name.
 fn bind_socket_with(
     path: &Path,
     before_listen: impl FnOnce(&Path),
 ) -> anyhow::Result<UnixListener> {
     use socket2::{Domain, SockAddr, Socket, Type};
-    let staged = Staged(staging_name(path)?);
-    // A staging name a crashed daemon of this pid left behind.
-    let _ = std::fs::remove_file(&staged.0);
+    let limit = sun_path_bytes();
+    let fits = |candidate: &Path| candidate.as_os_str().len() < limit;
+    anyhow::ensure!(
+        fits(path),
+        "the socket path {} is {} bytes long; a Unix socket path must be shorter than {} bytes on this platform (set ANTHREX_SOCKET to a shorter path)",
+        path.display(),
+        path.as_os_str().len(),
+        limit
+    );
+    let staging = staging_name(path)?;
+    let staged = if fits(&staging) {
+        // A staging name a crashed daemon of this pid left behind.
+        let _ = std::fs::remove_file(&staging);
+        Some(Staged(staging))
+    } else {
+        tracing::debug!(
+            path = %path.display(),
+            staging = %staging.display(),
+            "the socket's staging name does not fit sun_path; binding at the socket path itself"
+        );
+        None
+    };
+    let bound_at = staged.as_ref().map_or(path, |staged| staged.0.as_path());
     let socket = Socket::new(Domain::UNIX, Type::STREAM, None)?;
-    let address = SockAddr::unix(&staged.0)?;
+    let address = SockAddr::unix(bound_at)?;
     // SAFETY: `umask` has no preconditions and cannot fail; it only ever changes this
     // process's file-creation mask, which we restore immediately below on every path.
     // Callers serialize through `UMASK_LOCK`.
@@ -126,19 +151,29 @@ fn bind_socket_with(
     // mask in place.
     unsafe { libc::umask(previous_umask) };
     bound?;
-    std::fs::set_permissions(&staged.0, std::fs::Permissions::from_mode(0o600))?;
-    before_listen(&staged.0);
+    std::fs::set_permissions(bound_at, std::fs::Permissions::from_mode(0o600))?;
+    before_listen(bound_at);
     socket.listen(libc::SOMAXCONN)?;
-    std::fs::hard_link(&staged.0, path).map_err(|error| {
-        anyhow::anyhow!(
-            "cannot put the daemon's socket at {}: {error}",
-            path.display()
-        )
-    })?;
-    drop(staged);
+    if let Some(staged) = staged {
+        std::fs::hard_link(&staged.0, path).map_err(|error| {
+            anyhow::anyhow!(
+                "cannot put the daemon's socket at {}: {error}",
+                path.display()
+            )
+        })?;
+        staged.remove();
+    }
     let listener = std::os::unix::net::UnixListener::from(socket);
     listener.set_nonblocking(true)?;
     Ok(UnixListener::from_std(listener)?)
+}
+
+/// How many bytes `sun_path` holds on this platform, its NUL included (104 on macOS, 108
+/// on Linux): a socket path must be shorter.
+fn sun_path_bytes() -> usize {
+    // SAFETY: an all-zero `sockaddr_un` is a valid value; only its field's size is read.
+    let address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    address.sun_path.len()
 }
 
 /// Where [`bind_socket_with`] binds before the socket is put at `path`: a hidden name in
@@ -156,6 +191,17 @@ fn staging_name(path: &Path) -> anyhow::Result<PathBuf> {
 
 /// A staging socket name, removed when dropped.
 struct Staged(PathBuf);
+
+impl Staged {
+    /// Removes the name once the socket is linked at its path, and says so when it
+    /// cannot: the name would stay a second way to reach the live socket (review M2).
+    fn remove(self) {
+        if let Err(error) = std::fs::remove_file(&self.0) {
+            tracing::warn!(staging = %self.0.display(), %error, "cannot remove the socket's staging name");
+        }
+        std::mem::forget(self);
+    }
+}
 
 impl Drop for Staged {
     fn drop(&mut self) {

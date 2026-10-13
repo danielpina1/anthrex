@@ -2335,3 +2335,12 @@ Five minors from the merge review of milestone 9.11, none blocking:
 - **A refused submit or spawn may bump the run's revision**, which costs one extra `run.json` write (PR #62 review).
 - **The design e2e harness now restarts the daemon once per test** to arm the read-back hold (PR #62 review). This costs time, not correctness. A per-run seam would avoid it.
 - **The e2e waits depend on `requirements_stored`, a key the digest shows only during planning** (PR #62 review). A digest change that drops or renames it breaks the fixtures' waits.
+
+### From the PR #63 reviews (2026-10-13), for later
+
+- **A predictable staging name in a shared sticky directory** (Master). Another user can pre-create `.<name>.<pid>.bind` beside a socket in a shared sticky directory such as `/tmp`, which denies the start, just as a pre-created socket does today. Proposed: give the staging name a random suffix, or bind it in a private directory on the same filesystem.
+- **A daemon killed between bind and link leaves its `.<name>.<pid>.bind` file** (Master; own review M3). Only a later daemon with the same pid removes it. Sweeping other daemons' staging names needs a liveness check first.
+- **Hard links are now required in the socket directory** (Master; own review M4). A filesystem without them fails the bind with an error that names the path.
+- **The staging name is a second name for the live socket for a few microseconds** (own review M2). The macOS sandbox's literal-path deny rule doesn't cover it.
+- **`crates/daemon/src/lifecycle.rs` is at 598 lines.** The next change there should split the socket code out first.
+- The long-path failure (a custom `ANTHREX_SOCKET` within about 14 bytes of `sun_path`'s limit) is **fixed in b5ca735b**: such a path binds directly at the real path.

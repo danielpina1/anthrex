@@ -36,9 +36,9 @@ pub fn shell_spec(name: &str) -> WindowSpec {
     }
 }
 
-/// Waits until the daemon's `socket` accepts a connection (task 4's review, I2): its
-/// file appears at `bind(2)`, and a connect is refused until `listen(2)`, so the file
-/// alone is not a daemon that is up.
+/// Waits until the daemon's `socket` accepts a connection (task 4's review, I2). The
+/// daemon puts its socket in place only once it listens (`lifecycle::bind_socket`); this
+/// checks that property itself, as a second guard.
 pub async fn wait_accepting(socket: &Path, timeout: Duration) {
     tokio::time::timeout(timeout, async {
         loop {
