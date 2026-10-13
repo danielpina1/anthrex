@@ -11,19 +11,26 @@ use std::path::Path;
 use std::time::Duration;
 
 use proto::{DiffStats, HISTORY_VERSION, HistoryLine, HistoryStats, RevertRecord};
+use serde::Serialize;
 
 use super::git::{DIFF_FLAGS, Git, os, read_ref};
 
-/// Appends `line` as one JSON line, then `sync_all`. The file and its directory are
+/// Appends `line` as one JSON line through [`append_json`].
+pub fn append_line(path: &Path, line: &HistoryLine) -> std::io::Result<()> {
+    append_json(path, line)
+}
+
+/// Appends `value` as one JSON line, then `sync_all`. The file and its directory are
 /// created when missing. The line is written with one `write_all` of the whole line,
 /// so a reader sees it whole or torn at its end, never interleaved. A file whose last
 /// line was torn (a crash or a full disk mid-append) gets a `\n` in front of the line,
 /// in the same write, so the torn line cannot swallow it (M8b.17 review, m7).
-pub fn append_line(path: &Path, line: &HistoryLine) -> std::io::Result<()> {
+/// Milestone 9.15 decision 3 generalised it from history lines to any `Serialize`.
+pub fn append_json<T: Serialize + ?Sized>(path: &Path, value: &T) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    let mut text = serde_json::to_string(line).map_err(std::io::Error::other)?;
+    let mut text = serde_json::to_string(value).map_err(std::io::Error::other)?;
     text.push('\n');
     let mut file = std::fs::OpenOptions::new()
         .create(true)
@@ -41,10 +48,20 @@ pub fn append_line(path: &Path, line: &HistoryLine) -> std::io::Result<()> {
 /// `line` appended with [`append_line`] unless the file holds its record already.
 /// True when it was appended. Blocking: the driver calls it on `spawn_blocking`.
 pub fn append_once(path: &Path, line: &HistoryLine) -> std::io::Result<bool> {
-    if contains_record(path, record_id(line))? {
+    append_once_json(path, record_id(line), line)
+}
+
+/// [`append_once`] for any `Serialize` whose JSON carries `"record_id": record_id`
+/// (milestone 9.15 decision 3: the lessons store's lines).
+pub fn append_once_json<T: Serialize + ?Sized>(
+    path: &Path,
+    record_id: &str,
+    value: &T,
+) -> std::io::Result<bool> {
+    if contains_record(path, record_id)? {
         return Ok(false);
     }
-    append_line(path, line).map(|()| true)
+    append_json(path, value).map(|()| true)
 }
 
 /// Whether `file` is non-empty and its last byte is not `\n`.

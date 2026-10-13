@@ -182,6 +182,7 @@ pub mod delivery;
 pub mod design;
 pub mod effort;
 pub mod history;
+pub mod lessons;
 pub mod lessons_store;
 pub mod messages;
 pub mod models;
@@ -227,7 +228,14 @@ pub use history::{
     RoutingDecision, RoutingInput, RunRecord, SeverityTally, StageLine, StatsRow, TaskOutcome,
     TaskRecord, TierRunRecord,
 };
-pub use lessons_store::{SigGate, SigRef};
+pub use lessons::{
+    DISCARD_REASON_MAX, GRAPH_NODES_MAX, GraphEdge, GraphEdgeKind, GraphNode, GraphNodeKind,
+    LessonGraph, LessonInfo, LessonLayer, LessonOrigin, LessonStatus, LessonsRequest, ModuleSource,
+};
+pub use lessons_store::{
+    AttemptLine, DismissedLine, DistillCause, DistilledLine, GaveUpLine, LESSONS_VERSION,
+    LessonDraft, LessonLine, QueuedLine, RetiredLine, SigGate, SigRef, VerdictLine,
+};
 pub use messages::{ClientMsg, DaemonMsg, HookSource};
 // `models::Role` stays under `models::`: the crate root's `Role` is the conversation's.
 pub use models::{
@@ -325,6 +333,10 @@ mod admit_tests;
 #[cfg(test)]
 #[path = "history_tests.rs"]
 mod history_tests;
+
+#[cfg(test)]
+#[path = "lessons_tests.rs"]
+mod lessons_tests;
 
 #[cfg(test)]
 mod tests {
