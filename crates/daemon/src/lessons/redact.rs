@@ -76,12 +76,17 @@ static URL_CUT: LazyLock<Regex> =
 /// `\x1b`, `\U00000041`, `\033`, `\e[31m`), a percent encoding, whole or broken (`%3D`,
 /// `%2`, `%zz`), or a real escape sequence (a CSI, an nF escape, an OSC string). Each
 /// may end in an alphanumeric character. Task 10's review, I1: the ambiguous `sk-`,
-/// `npm_` and `bearer` keep a boundary, and this is it.
+/// `npm_` and `bearer` keep a boundary, and this is it. Task 11's review, I1 (the
+/// controller's ruling): a colour-code-shaped tail (`[` or `%5B`, digits and `;`, one
+/// letter) is a boundary whatever stands before it, so no escape spelling, listed or
+/// not (`\33[`, `^[[`, `&#27;[`, `␛[`), glues itself to a prefix; and the single-byte
+/// CSI (U+009B) is an ESC's CSI.
 macro_rules! escape_boundary {
     () => {
         concat!(
             r"\\[A-Za-z]|\\u[0-9A-Fa-f]{4}|\\u\{[0-9A-Fa-f]{1,6}\}|\\x[0-9A-Fa-f]{2}",
             r"|\\U[0-9A-Fa-f]{8}|\\[0-7]{1,4}|\\e\[[0-9;]*[A-Za-z]|%[0-9A-Za-z]{0,2}",
+            r"|(?:\[|%5[bB])[0-9;]*[A-Za-z]|\x{9b}[0-?]*[ -/]*[@-~]",
             r"|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[ -/]+[0-~]|\x1b[\]PX^_][^\x07\x1b]*(?:\x07|\x1b\\)?"
         )
     };
@@ -206,8 +211,10 @@ static TEXT_ESCAPE: LazyLock<Regex> = LazyLock::new(|| {
     ))
 });
 
-/// Decoding rounds at most (`%25253D` takes three).
-const DECODE_ROUNDS: usize = 3;
+/// Decoding passes at most: until the text stops changing (`%25253D` takes three).
+/// Task 11's review, I1 (the controller's ruling): eight, so percent encoding nested
+/// seven levels deep still decodes; each pass is linear, so the whole stays linear.
+const DECODE_ROUNDS: usize = 8;
 
 /// `text` with every text-escaped control character (an ESC, written `\u001b`,
 /// `\u{1b}`, `\x1b`, `\033` or `%1B`) decoded, and `%25` decoded to `%`, until stable
@@ -244,11 +251,15 @@ fn decode(text: &str) -> String {
 /// Ruling C10 (a): terminal escape sequences. Task 9's review, I1 (the controller's
 /// ruling): a CSI; an OSC, DCS, SOS, PM or APC string up to its BEL or ST; ECMA-48's
 /// general form `ESC <intermediates 0x20-0x2F> <final 0x30-0x7E>` (nF escapes such as
-/// `tput sgr0`'s `ESC ( B`, and `ESC # 8`); and a lone ESC. The general form can take a
+/// `tput sgr0`'s `ESC ( B`, and `ESC # 8`); a lone ESC; and (task 11's review, I1) the
+/// single-byte CSI (U+009B), with its sequence or alone. The general form can take a
 /// token's first character as its final (`ESC g…`), so it is private: only [`scrub`]
 /// strips, after it redacts.
 static ESCAPE: LazyLock<Regex> = LazyLock::new(|| {
-    re(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b[\]PX^_][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[ -/]*[0-~]?")
+    re(concat!(
+        r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b[\]PX^_][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[ -/]*[0-~]?",
+        r"|\x{9b}[0-?]*[ -/]*[@-~]|\x{9b}"
+    ))
 });
 
 /// `text` without its escape sequences ([`ESCAPE`]). An ESC right before a redaction's
@@ -258,9 +269,11 @@ fn strip_escapes(text: &str) -> String {
     ESCAPE
         .replace_all(text, |c: &Captures| {
             let m = c.get(0).expect("the whole match");
-            let after = &text[m.start() + 1..];
+            // ESC is one byte, the single-byte CSI two.
+            let lead = m.as_str().chars().next().map_or(1, char::len_utf8);
+            let after = &text[m.start() + lead..];
             if after.starts_with("[redacted") || after.starts_with("Bearer [redacted") {
-                m.as_str()[1..].to_string()
+                m.as_str()[lead..].to_string()
             } else {
                 String::new()
             }
@@ -284,3 +297,7 @@ mod tests;
 #[cfg(test)]
 #[path = "scrub_tests.rs"]
 mod scrub_tests;
+
+#[cfg(test)]
+#[path = "scrub_tests_spellings.rs"]
+mod scrub_tests_spellings;
