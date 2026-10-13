@@ -60,8 +60,9 @@ pub fn append_once(path: &Path, line: &HistoryLine) -> std::io::Result<bool> {
 }
 
 /// Whether a line of the file that parses as a history line is a record of
-/// `record_id`. No file holds nothing.
-fn holds_record(path: &Path, id: &str) -> std::io::Result<bool> {
+/// `record_id`. No file holds nothing. [`append_once`]'s test, and the `AppendHistory`
+/// reconcile row's (the controller's ruling at task M9.15.6: a torn line is no record).
+pub fn holds_record(path: &Path, id: &str) -> std::io::Result<bool> {
     let file = match std::fs::File::open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
@@ -102,8 +103,9 @@ fn needle(record_id: &str) -> String {
     format!("\"record_id\":{id}")
 }
 
-/// Whether the file holds a line of `record_id` (decision 33's reconcile row). No
-/// file holds nothing.
+/// Whether the file holds a line carrying `record_id`'s needle, whatever its format;
+/// a torn line counts. No file holds nothing. A history file's "already written" is
+/// [`holds_record`]'s, which parses.
 pub fn contains_record(path: &Path, record_id: &str) -> std::io::Result<bool> {
     let file = match std::fs::File::open(path) {
         Ok(file) => file,

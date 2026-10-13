@@ -297,6 +297,39 @@ fn history_append_is_reconciled_exactly_once() {
     assert_eq!(ops, vec![(7, Reconciled::NotStarted)]);
 }
 
+/// Task 3's review I1, its last part (the controller's ruling at task M9.15.6): the
+/// `AppendHistory` reconcile row decides "already written" from lines that parse, as
+/// `append_once` does. A line torn by a crash carries the record's id in its first
+/// bytes but is no record: the op is appended again, not replayed as written.
+#[test]
+fn a_torn_history_line_is_not_reconciled_as_written() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.jsonl");
+    let (run, kind) = run_appending(dir.path(), &path);
+    let journal = vec![JournalLine::Intent { op: 7, kind }];
+    let git = std::ffi::OsStr::new("/nonexistent/anthrex-test/git");
+    let answer = |run: &Run| reconcile(git, run, &journal, &[], T).ops;
+    let whole = serde_json::to_string(&revert("history-5a1e/t1", 9)).unwrap();
+    let id = "history-5a1e/t1";
+    let torn = &whole[..whole.find(id).unwrap() + id.len() + 2];
+    std::fs::write(&path, torn).unwrap();
+    assert!(contains_record(&path, id).unwrap(), "the needle is there");
+    assert_eq!(answer(&run), vec![(7, Reconciled::NotStarted)]);
+    // The whole line after it (as `append_line` heals the torn tail) is the record.
+    append_line(&path, &revert(id, 9)).unwrap();
+    assert_eq!(
+        answer(&run),
+        vec![(7, Reconciled::Replay(OpResult::HistoryAppended))]
+    );
+    // An unreadable file cannot be checked: treated as not started, with a note.
+    let unreadable = dir.path().join("dir.jsonl");
+    std::fs::create_dir(&unreadable).unwrap();
+    let (run, kind) = run_appending(dir.path(), &unreadable);
+    let journal = vec![JournalLine::Intent { op: 7, kind }];
+    let found = reconcile(git, &run, &journal, &[], T);
+    assert_eq!(found.ops, vec![(7, Reconciled::NotStarted)]);
+}
+
 /// Milestone 9.6 ruling T13-4: a phase approved again after a back is appended under
 /// its own id (`…/v<n>`), so a restart with that append pending writes it although the
 /// first approval's line is there; the refit then counts the latest approval only.
