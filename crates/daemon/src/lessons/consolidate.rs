@@ -153,7 +153,9 @@ fn known_failure(
 ///
 /// Task 4's review, I1 (the controller's ruling): each life forms on its own. A life
 /// forms from the hits after the previous life ended (decision 7: `known_min` runs
-/// inside one `known_window_days` span), takes every later hit until it ends, and ends
+/// inside one `known_window_days` span; task 5's review, I1: it holds the hits of that
+/// span onward, never an expired one before it, [`formation`]), takes every later hit
+/// until it ends, and ends
 /// at the `known_clean_runs`-th clean run after it formed (decision 8 a) or when a
 /// hit comes, or `now` is, more than `expiry_days` after its last hit (8 b). The hits
 /// after an end can only form the next life. Dismissal and flaky tests (8 c, d) end
@@ -167,9 +169,10 @@ fn live<'h>(
 ) -> Option<&'h [(&'h TaskRecord, &'h SigRef)]> {
     let expiry = u64::from(cfg.expiry_days) * DAY_SECS;
     let hit_runs: HashSet<&str> = hits.iter().map(|(t, _)| t.run_id.as_str()).collect();
-    let mut start = 0;
+    let mut after = 0;
     loop {
-        let formed = start + formed_at(&hits[start..], cfg)?;
+        let (first, formed) = formation(&hits[after..], cfg)?;
+        let (start, formed) = (after + first, after + formed);
         let formed_at = hits[formed].0.at;
         let mut end = formed + 1;
         let next_start = loop {
@@ -189,7 +192,7 @@ fn live<'h>(
                 None => return Some(&hits[start..end]),
             }
         };
-        start = next_start?;
+        after = next_start?;
     }
 }
 
@@ -245,19 +248,32 @@ fn gather(hits: &[(&TaskRecord, &SigRef)]) -> (Vec<String>, Vec<String>, Vec<Str
     (headlines, files, runs)
 }
 
-/// The index of the hit (of `hits`, sorted by `at`) that first completed `known_min`
-/// distinct runs inside one `known_window_days` span.
-fn formed_at(hits: &[(&TaskRecord, &SigRef)], cfg: &Lessons) -> Option<usize> {
+/// How a life forms from `hits` (sorted by `at`): the index of its first hit and of the
+/// hit that first completed `known_min` distinct runs inside one `known_window_days`
+/// span. Task 5's review, I1 (the controller's ruling): the life holds only the hits of
+/// that span onward, and a hit followed by a gap longer than `expiry_days` has expired
+/// before any life formed, so it never counts toward one.
+fn formation(hits: &[(&TaskRecord, &SigRef)], cfg: &Lessons) -> Option<(usize, usize)> {
     let window = u64::from(cfg.known_window_days) * DAY_SECS;
-    (0..hits.len()).find(|&j| {
+    let expiry = u64::from(cfg.expiry_days) * DAY_SECS;
+    let mut alive = 0;
+    for j in 0..hits.len() {
+        if j > 0 && hits[j].0.at - hits[j - 1].0.at > expiry {
+            alive = j;
+        }
         let end = hits[j].0.at;
-        let runs: BTreeSet<&str> = hits[..=j]
-            .iter()
-            .filter(|(t, _)| end - t.at <= window)
+        // Hit `j` itself is always inside its own window.
+        let first = (alive..=j)
+            .find(|&k| end - hits[k].0.at <= window)
+            .unwrap_or(j);
+        let runs: BTreeSet<&str> = (hits[first..=j].iter())
             .map(|(t, _)| t.run_id.as_str())
             .collect();
-        runs.len() >= cfg.known_min as usize
-    })
+        if runs.len() >= cfg.known_min as usize {
+            return Some((first, j));
+        }
+    }
+    None
 }
 
 /// Whether `word` occurs in `text` with no letter, digit or `_` on either side.

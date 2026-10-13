@@ -570,3 +570,6 @@ fn flaky_test_is_not_a_known_failure() {
 
 #[path = "consolidate_tests_credit.rs"]
 mod credit;
+
+#[path = "consolidate_tests_lives.rs"]
+mod lives;
