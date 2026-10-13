@@ -1036,7 +1036,9 @@ def run_resume_stage():
         with open(ANTHREX_CONFIG_PATH, "w", encoding="utf-8") as handle:
             handle.write(
                 f"[runtimes.claude]\ncommand = {json.dumps(script_path)}\n\n"
-                f"[runtimes.codex]\ncommand = {json.dumps(script_path)}\n"
+                f"[runtimes.codex]\ncommand = {json.dumps(script_path)}\n\n"
+                # Milestone 9.15 ruling C3: lessons off, as every stage.
+                "[lessons]\nenabled = false\nrisk_note = false\n"
             )
 
         resume_env = dict(ENV)
@@ -1331,7 +1333,11 @@ def run_conversation_view_stage():
 # Settings save edits this file and then removes its directory (so stage 11t's `rmtree`
 # deletes this design-off table; no planned goal runs after 11t), as 12b does its own;
 # the module's `finally` removes the directory only when this run wrote the table.
-DESIGN_OFF_CONFIG = '[orchestrator.design]\ndefault = "off"\n'
+# Milestone 9.15 ruling C3: lessons off too (no background distill or risk-note call).
+DESIGN_OFF_CONFIG = (
+    '[orchestrator.design]\ndefault = "off"\n\n'
+    "[lessons]\nenabled = false\nrisk_note = false\n"
+)
 WROTE_DESIGN_OFF_CONFIG = False
 
 

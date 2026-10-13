@@ -116,9 +116,7 @@ impl RunHarness {
         extra_toml: &str,
     ) -> Self {
         let harness = Self::unstarted(orchestrator, env, true, files);
-        let config = harness.dir.path().join("config.toml");
-        let text = std::fs::read_to_string(&config).unwrap();
-        std::fs::write(&config, format!("{text}\n{extra_toml}\n")).unwrap();
+        super::lessons::append_toml(&harness.dir.path().join("config.toml"), extra_toml);
         if let Err(error) = harness.start_daemon(DAEMON_START_WAIT) {
             panic!("the daemon did not start: {error}\n{}", harness.log_tail());
         }
@@ -173,10 +171,17 @@ impl RunHarness {
         let cache = dir.path().join("cache");
         std::fs::create_dir_all(&cache).unwrap();
         let repo_key = repo.canonicalize().unwrap_or_else(|_| repo.clone());
+        // Milestone 9.15 ruling C3: lessons off unless the test's own `[lessons]` table
+        // replaces this one (`lessons::append_toml`).
+        let lessons = if super::lessons::has_lessons_table(&orchestrator) {
+            ""
+        } else {
+            super::lessons::LESSONS_OFF
+        };
         std::fs::write(
             &config,
             format!(
-                "[orchestrator]\ngit_timeout_secs = {GIT_TIMEOUT_SECS}\n{orchestrator}\n\n                 [orchestrator.cache_dirs]\n{:?} = [{:?}]\n\n                 [orchestrator.profile]\ncheck_timeout_secs = {CHECK_TIMEOUT_SECS}\n",
+                "{lessons}\n[orchestrator]\ngit_timeout_secs = {GIT_TIMEOUT_SECS}\n{orchestrator}\n\n                 [orchestrator.cache_dirs]\n{:?} = [{:?}]\n\n                 [orchestrator.profile]\ncheck_timeout_secs = {CHECK_TIMEOUT_SECS}\n",
                 repo_key.display().to_string(),
                 cache.display().to_string(),
             ),

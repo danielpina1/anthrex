@@ -23,6 +23,7 @@ mod empty_session_tui;
 mod filter_hook;
 mod filter_run;
 mod hook_command;
+mod lessons_harness;
 mod mcp_cli;
 mod models_discovery;
 mod models_migration;

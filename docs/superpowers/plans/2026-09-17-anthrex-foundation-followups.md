@@ -2310,3 +2310,7 @@ Five minors from the merge review of milestone 9.11, none blocking:
 - **`AllBut` could be scoped by `agent_id`** (task 9 review Minor 3). The status hook forwards every tool's `PreToolUse`, a subagent's too, and holds are keyed by window only, so any tool call of a concurrent Task subagent releases the main agent's (or another subagent's) running `cargo` hold early. Fail-open by C8 (c), never a deadlock; keying holds by `(window, agent_id)` would narrow it.
 - **`fake-agent` fires `PostToolUse` for a failed `bash` step too** (M9.14.10). The Interfaces define one `PostToolUse` per `bash` step, with its `exit_code`; the real CLI fires `PostToolUseFailure` instead for a failed `Bash` (F4). Both release a hold, so no test depends on it; a test of the failure path through `fake-agent` would want the real CLI's choice.
 - **Brief follow-ups not yet taken** (the brief's "Follow-ups handled"): Codex admission once fact F6 is known; a TUI line for the pool's leases and for admission holds; aging of agent asks if starvation shows up.
+
+## From milestone 9.15 (2026-10-13, recorded by M9.15.4 and its extra commits), for later
+
+- **Daemon starts outside `TestDaemon` and `RunHarness` read no `[lessons]` default** (ruling C3, M9.15.4). `codex_version.rs`, `daemon_stop_stuck.rs`, `daemon_spawn_stderr.rs` and `daemon_start_lock.rs` start daemons through `isolated_command` with no config of their own (some read the user's), and run no goal; if one ever starts a run it should write `support::lessons::LESSONS_OFF` too.
