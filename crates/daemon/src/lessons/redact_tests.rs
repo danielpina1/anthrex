@@ -305,3 +305,60 @@ fn redaction_is_idempotent() {
         assert_gone(&once, &secret);
     }
 }
+
+/// A JWT shaped as a real one: an `HS256` header, a claim, and a base64url signature
+/// with `-` and `_`.
+fn real_jwt() -> String {
+    let header = format!("{}{}", "eyJhbGciOiJIUzI1NiIs", "InR5cCI6IkpXVCJ9");
+    let claim = format!("{}{}", "eyJzdWIiOiJm", "YWtlIn0");
+    format!("{header}.{claim}.{}", "FAKE_sig-".repeat(5))
+}
+
+/// Task 8's review, I2: an escape right before a token (JSON's `\n`, `\t`, `\r` and
+/// `\uXXXX`, a quote, percent-encoding) ends in an alphanumeric character, and must not
+/// hide the token.
+#[test]
+fn a_token_behind_an_escape_is_replaced() {
+    let secrets = [ghp(), sk_ant(), akia(), real_jwt()];
+    let escapes = [r"\n", r"\t", r"\r", r"\u0020", "\"", "%3D", "%20", r#"\""#];
+    for secret in &secrets {
+        for escape in escapes {
+            for input in [
+                format!("{escape}{secret}"),
+                format!("left: \"export{escape}{secret}{escape}\""),
+                format!("https://x/?q{escape}{secret}&b=1"),
+            ] {
+                let out = redact(&input);
+                assert!(out.contains(TOKEN), "{input:?} -> {out:?}");
+                assert_gone(&out, secret);
+                assert!(
+                    out.contains(escape),
+                    "{input:?} -> {out:?}: the escape is kept"
+                );
+                assert_eq!(redact(&out), out, "{input:?}: idempotent");
+            }
+        }
+    }
+    // A bearer credential behind an escape goes too.
+    let credential = "z".repeat(30);
+    for escape in escapes {
+        let input = format!("headers{escape}Bearer {credential}{escape}x");
+        let out = redact(&input);
+        assert!(out.contains(BEARER), "{input:?} -> {out:?}");
+        assert!(!out.contains(&credential), "{input:?} -> {out:?}");
+    }
+}
+
+/// I2's boundary does not reach ordinary hex: SHAs, percent-encoded or escaped, stay.
+#[test]
+fn escapes_before_ordinary_hex_are_unchanged() {
+    let sha = "3f2a9c01".repeat(5);
+    for text in [
+        format!(r"commit\n{sha}\t{sha}"),
+        format!("%3D{sha}%20{sha}"),
+        format!(r"\u0041{sha} \nAKIAno \tsk-short %3Dghp_"),
+        r"C:\temp\new\token\sky".to_string(),
+    ] {
+        assert_eq!(redact(&text), text, "{text:?}");
+    }
+}

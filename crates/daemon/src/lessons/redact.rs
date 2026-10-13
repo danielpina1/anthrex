@@ -65,16 +65,40 @@ static URL_USERINFO: LazyLock<Regex> =
 /// `<scheme>://<user>:<password>` a clip cut before its `@`.
 static URL_CUT: LazyLock<Regex> =
     LazyLock::new(|| re(r"(?m)([A-Za-z][A-Za-z0-9+.-]*://)[^\s/?#@:]*:([^\s/?#@]*)$"));
-static BEARER_RE: LazyLock<Regex> = LazyLock::new(|| re(r"(?i)\bbearer[ \t]+[A-Za-z0-9._~+/=-]+"));
+/// Task 8's review, I2: what may stand right before a token besides a character that
+/// cannot be part of a word: a JSON escape (`\n`, `\r`, `\t`, `\uXXXX`) or a percent
+/// encoding (`%3D`, `%20`), each of which ends in an alphanumeric character.
+macro_rules! escape_boundary {
+    () => {
+        r"\\[nrt]|\\u[0-9A-Fa-f]{4}|%[0-9A-Fa-f]{2}"
+    };
+}
+
+/// `Bearer <credential>`, after a non-word character or an escape.
+static BEARER_RE: LazyLock<Regex> = LazyLock::new(|| {
+    re(concat!(
+        r"(?i)(^|[^A-Za-z0-9_]|",
+        escape_boundary!(),
+        r")(bearer[ \t]+[A-Za-z0-9._~+/=-]+)"
+    ))
+});
 /// Three dot-separated base64url segments, the first two JSON objects (`eyJ`); a clip
-/// may have cut the signature.
-static JWT: LazyLock<Regex> =
-    LazyLock::new(|| re(r"\beyJ[A-Za-z0-9_-]{2,}\.eyJ[A-Za-z0-9_-]{2,}(?:\.[A-Za-z0-9_-]*)?"));
-/// A prefix with the character before it, and the token characters after it, where
-/// decision 5's placeholders count as token characters.
+/// may have cut the signature. After a non-word character or an escape.
+static JWT: LazyLock<Regex> = LazyLock::new(|| {
+    re(concat!(
+        r"(^|[^A-Za-z0-9_]|",
+        escape_boundary!(),
+        r")eyJ[A-Za-z0-9_-]{2,}\.eyJ[A-Za-z0-9_-]{2,}(?:\.[A-Za-z0-9_-]*)?"
+    ))
+});
+/// A prefix with what stands before it (a non-alphanumeric character or an escape), and
+/// the token characters after it, where decision 5's placeholders count as token
+/// characters.
 static PREFIXED: LazyLock<Regex> = LazyLock::new(|| {
     re(concat!(
-        r"(^|[^A-Za-z0-9])",
+        r"(^|[^A-Za-z0-9]|",
+        escape_boundary!(),
+        r")",
         r"(github_pat_|gh[pousr]_|glpat-|sk-ant-|sk-|xox[abprs]-|AKIA|npm_)",
         r"((?:[A-Za-z0-9_-]|<(?:sha|id|dur|l|c|tmp|time|tid)>)*)"
     ))
@@ -108,13 +132,18 @@ fn bearer(text: &str) -> String {
     BEARER_RE
         .replace_all(text, |c: &Captures| {
             let m = c.get(0).expect("the whole match");
-            let credential = m.as_str().split_whitespace().nth(1).unwrap_or("");
+            let credential = c[2].split_whitespace().nth(1).unwrap_or("");
             if credential.len() >= BEARER_MIN || at_line_end(text, m.end()) {
-                BEARER.to_string()
+                format!("{}{BEARER}", &c[1])
             } else {
                 m.as_str().to_string()
             }
         })
+        .into_owned()
+}
+
+fn jwt(text: &str) -> String {
+    JWT.replace_all(text, |c: &Captures| format!("{}{TOKEN}", &c[1]))
         .into_owned()
 }
 
@@ -140,7 +169,7 @@ pub fn redact(text: &str) -> String {
     let text = URL_USERINFO.replace_all(&text, format!("${{1}}{USERINFO}@"));
     let text = url_cut(&text);
     let text = bearer(&text);
-    let text = JWT.replace_all(&text, TOKEN);
+    let text = jwt(&text);
     prefixed(&text)
 }
 
