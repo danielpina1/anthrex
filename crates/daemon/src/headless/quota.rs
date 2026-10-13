@@ -9,8 +9,9 @@
 //! checked-in rollouts have the weekly window as `primary`).
 //!
 //! Both units go through `proto::brakes::Permille`'s two constructors, the only conversion in
-//! the workspace. A window whose usage is missing, not a number, or negative is dropped, and
-//! a line with no usable window is no reading (fail open, decision 8): never a wrong number.
+//! the workspace. A window whose usage is missing, not a number, negative or (Claude) above
+//! 1.5 is dropped, and a line with no usable window is no reading (fail open, decision 8):
+//! never a wrong number.
 
 use proto::brakes::{Permille, QuotaWindow};
 use serde::{Deserialize, Serialize};
@@ -47,15 +48,14 @@ pub fn claude_rate_limit(info: &Value) -> Option<QuotaSample> {
         let reading = unified
             .and_then(|u| u.get(key))
             .and_then(|w| {
-                let used = Permille::from_fraction(w.get("utilization")?.as_f64()?)?;
+                let used = fraction(w.get("utilization")?)?;
                 Some((used, w.get("resetsAt").and_then(Value::as_u64)))
             })
             .or_else(|| {
                 // The warning's top-level copy of the window it is about.
                 (top_window == Some(window))
-                    .then(|| info.get("utilization")?.as_f64())
+                    .then(|| fraction(info.get("utilization")?))
                     .flatten()
-                    .and_then(Permille::from_fraction)
                     .map(|used| (used, top_resets))
             });
         if let Some((used, resets_at)) = reading {
@@ -73,6 +73,19 @@ pub fn claude_rate_limit(info: &Value) -> Option<QuotaSample> {
         windows.insert(at.min(windows.len()), (window, Permille::FULL, top_resets));
     }
     (!windows.is_empty()).then_some(QuotaSample { windows, rejected })
+}
+
+/// Review I1: the largest `utilization` read as a fraction. Above it the value is no
+/// fraction (a percent, say `5` for 5 %), so the window is dropped (fail open) instead of
+/// clamped to full; (1.0, 1.5] is an overage and clamps to 1000 ‰ (decision 2).
+const MAX_FRACTION: f64 = 1.5;
+
+/// A Claude `utilization`, or `None` when it is not a plausible fraction.
+fn fraction(value: &Value) -> Option<Permille> {
+    value
+        .as_f64()
+        .filter(|x| *x <= MAX_FRACTION)
+        .and_then(Permille::from_fraction)
 }
 
 /// A Codex `token_count` payload's `rate_limits`, or `None` when it has no usable window.

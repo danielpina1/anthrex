@@ -158,6 +158,40 @@ fn rate_limit_event_without_windows_stays_other() {
     );
 }
 
+/// Review I1: a `utilization` above 1.5 is not a fraction (a CLI that switched to percent
+/// would say `5` for 5 %), so that window is dropped (fail open), never clamped to full. A
+/// value in (1.0, 1.5] is an overage and still clamps to 1000 ‰ (decision 2).
+#[test]
+fn implausible_utilization_is_dropped_not_clamped() {
+    for (value, want) in [
+        (json!(1.2), Some(Permille::FULL)),
+        (json!(1.5), Some(Permille::FULL)),
+        (json!(1.51), None),
+        (json!(5), None),
+        (json!(94.0), None),
+    ] {
+        let line = edited(rate_limit_line(CLAUDE_STREAM), |info| {
+            info["unifiedWindows"]["five_hour"]["utilization"] = value.clone();
+        });
+        let mut windows = vec![(SevenDay, Permille(530), Some(1_790_456_400))];
+        if let Some(used) = want {
+            windows.insert(0, (FiveHour, used, Some(1_790_154_600)));
+        }
+        assert_eq!(quota(&line).windows, windows, "{value}");
+    }
+    // The warning's top-level copy is held to the same bound.
+    let line = edited(rate_limit_line(SCOUT_280), |info| {
+        info.as_object_mut().unwrap().remove("unifiedWindows");
+        info["utilization"] = json!(94);
+    });
+    assert_eq!(
+        ClaudeStream::default().parse_line(&line),
+        vec![SessionEvent::Other {
+            kind: "rate_limit_event".into(),
+        }]
+    );
+}
+
 /// The patterns decision 2 forbids outside `proto/src/brakes.rs`: a usage field scaled by
 /// hand. Built from pieces so this file does not match itself.
 fn unit_violations(text: &str) -> Vec<String> {
