@@ -338,8 +338,10 @@ fn remove(
         return git::remove_checkout(git, root, path, Some(repo), timeout);
     }
     remove_plain(path)?;
-    remove_plain(repo)?;
+    // The temporary directory before the repository whose path names it
+    // (`checkout::remove`'s order).
     git::remove_task_tmp(repo)?;
+    remove_plain(repo)?;
     pinned::unpin(path);
     Ok(())
 }
