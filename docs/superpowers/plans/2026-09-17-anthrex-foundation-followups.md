@@ -2336,6 +2336,8 @@ Five minors from the merge review of milestone 9.11, none blocking:
 - **The design e2e harness now restarts the daemon once per test** to arm the read-back hold (PR #62 review). This costs time, not correctness. A per-run seam would avoid it.
 - **The e2e waits depend on `requirements_stored`, a key the digest shows only during planning** (PR #62 review). A digest change that drops or renames it breaks the fixtures' waits.
 
+- **Rig fixtures that change `runs.state` behind a live loop** (the chain long-poll flake, `chain_tests::two_runs`, fixed by `Rig::settled`). `idle`, `delivered` and the inline set-ups in `chain_tests.rs`, and the state edits in `orch_read_tests*.rs`, still change the engine state while the rig's loop may have a push of the older state in flight. None of them then long-polls on what it changed, so none can fail this way today; a new test that does must await `Rig::settled` after its change. `wait_digest` reading a run missing from a push as gone is correct only while every change to the runs is a loop step that publishes before the next one; worth a sentence in `orch.rs` if that ever changes.
+
 ### From the PR #63 reviews (2026-10-13), for later
 
 - **A predictable staging name in a shared sticky directory** (Master). Another user can pre-create `.<name>.<pid>.bind` beside a socket in a shared sticky directory such as `/tmp`, which denies the start, just as a pre-created socket does today. Proposed: give the staging name a random suffix, or bind it in a private directory on the same filesystem.
