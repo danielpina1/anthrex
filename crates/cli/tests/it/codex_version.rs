@@ -115,8 +115,8 @@ fn probe(script: &str) -> (String, Duration, tempfile::TempDir) {
     // Only the socket has to accept here: `bind_socket` runs before the version probe
     // starts, and since the launch-gate fix `server::serve` is already accepting and
     // answering by the time the probe is under way — so this wait is genuinely just "the
-    // daemon got far enough to bind and listen" (the file alone appears at `bind(2)`,
-    // before `listen(2)`: task 4's review, I2). 7s is far past the near-instant real
+    // daemon got far enough to bind and listen" (the daemon's socket appears only once
+    // it listens; accepting is checked anyway: task 4's review, I2). 7s is far past the near-instant real
     // cost of both, so it is not itself an instance of this file's defect shape.
     // (It could not detect that defect either, which is what
     // `daemon_start_does_not_wait_on_a_slow_codex_probe` below was strengthened over.)
