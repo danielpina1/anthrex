@@ -23,6 +23,14 @@ pub const PREFLIGHT_BOUND: Duration =
 /// start bound that counts the build counts it (`docs/timing-budgets.md`).
 pub const TUNING_START_BOUND: Duration = Duration::from_secs(10);
 
+/// Milestone 9.15 decision 21: how long a start waits to read and fold the
+/// repository's lessons store and history; past it the run starts with no lessons and
+/// says so (the daemon's `run::driver::lessons::LESSONS_SLOW`). Ruling C7: it runs
+/// concurrently with the tuning, under [`TUNING_START_BOUND`], so no start bound that
+/// counts the tuning grows (`docs/timing-budgets.md`).
+pub const LESSONS_START_BOUND: Duration = Duration::from_secs(5);
+const _: () = assert!(LESSONS_START_BOUND.as_secs() <= TUNING_START_BOUND.as_secs());
+
 /// How long the probe may take. It stats two paths; only a hung file system is slower.
 /// A goal start's triage waits for it before the decider call (`docs/timing-budgets.md`).
 pub const INSTALLED_PROBE_TIMEOUT: Duration = Duration::from_secs(5);

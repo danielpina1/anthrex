@@ -88,6 +88,8 @@ pub(super) struct TuneOnce {
     /// The run title change: a goal's run name, asked once per start, so a fast build
     /// that falls back to a planned one does not ask again.
     named: tokio::sync::OnceCell<RunName>,
+    /// Milestone 9.15 decision 21: the start's frozen lessons and their log line.
+    lessons: tokio::sync::OnceCell<(crate::run::model::RunLessons, String)>,
 }
 
 impl TuneOnce {
@@ -343,7 +345,13 @@ impl RunService {
         // goal whose fast build fell back reuses the first build's (`once`).
         let repo_dir = crate::profile::repo_dir(&self.ctx.data_dir, &pre.project);
         let tune = super::tuning::tune_for_start(&config, &self.tuning, &repo_dir, now);
-        let tuning = once.tuned.get_or_init(|| tune).await.clone();
+        // Milestone 9.15 decision 21 (ruling C7): the lessons freeze runs alongside.
+        let lessons = super::lessons::lessons_for_start(&repo_dir, &self.ctx.lessons, now);
+        let (tuning, lessons) = tokio::join!(
+            once.tuned.get_or_init(|| tune),
+            once.lessons.get_or_init(|| lessons)
+        );
+        let tuning = tuning.clone();
         let (models, models_log) = self.freeze_models(&config.roles, &pre.project).await;
         let ctx = BuildContext {
             id: id.clone(),
@@ -360,6 +368,7 @@ impl RunService {
         };
         let mut run = crate::run::plan::build_run(plan, pre, ctx).map_err(BuildError::Plan)?;
         run.title = named.title;
+        super::lessons::freeze(&mut run, lessons.clone());
         if let Some(usage) = named.usage {
             run.decider_usage += usage;
         }

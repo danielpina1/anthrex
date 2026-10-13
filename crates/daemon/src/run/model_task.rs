@@ -244,6 +244,10 @@ pub struct Task {
     /// in flight together never share a number.
     #[serde(default, skip_serializing_if = "super::is_zero")]
     pub salvage_seq: u64,
+    /// Milestone 9.15 decision 24: the lesson ids its worker launches showed, a set,
+    /// first seen first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lessons_shown: Vec<String>,
 }
 
 impl Task {

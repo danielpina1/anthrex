@@ -49,6 +49,11 @@ mod goal_rounds;
 pub use goal_rounds::Round;
 
 // Milestone 9.5's race, pair and writer caps (decisions 16, 19, 20, 25; ruling I3).
+// Milestone 9.15 decisions 21 and 31: the frozen lessons (`Run.lessons`).
+#[path = "model_lessons.rs"]
+mod lessons;
+pub use lessons::{LessonBrief, LessonLimits, RunLessons};
+
 #[path = "model_tuning.rs"]
 mod tuning;
 pub use tuning::*;
@@ -424,6 +429,10 @@ pub struct Run {
     /// file's run, or a run from before), and then left out of `run.json`.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub title: String,
+    /// Milestone 9.15 decision 21: the lessons the start froze. `None` (a run from
+    /// before 9.15, or one built outside a start): lessons off (ruling C2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lessons: Option<RunLessons>,
 }
 
 pub(crate) fn is_zero(n: &u64) -> bool {

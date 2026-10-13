@@ -159,6 +159,7 @@ mod kinds_limits;
 mod kinds_research;
 mod ladder_roles;
 mod launch_pid;
+mod lessons_shown;
 mod liveness;
 mod merge;
 mod merge_complete;

@@ -28,6 +28,7 @@ pub mod chain;
 pub mod confine;
 mod confine_cache;
 pub mod contract;
+pub mod contract_lessons;
 pub mod contract_patterns;
 mod contract_protected;
 pub mod delivery;

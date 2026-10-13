@@ -39,6 +39,7 @@ pub(crate) mod gate_files;
 mod graph;
 mod guard;
 mod host_ops;
+pub mod lessons;
 pub mod lessons_requests;
 mod merge;
 mod observe;

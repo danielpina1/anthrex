@@ -224,6 +224,10 @@ fn an_old_run_json_still_loads() {
     for key in NEW_KEYS {
         assert_eq!(count(&written, key), 0, "run.json gained {key}");
     }
+    // Milestone 9.15 ruling C2: lessons off, so none of its keys either.
+    for key in ["lessons", "lessons_shown"] {
+        assert_eq!(count(&written, key), 0, "run.json gained {key}");
+    }
     assert_eq!(count(&written, "lane"), count(&before, "lane"));
     // `save_and_load` moved the run's data directory under the temp dir.
     again["data_dir"] = captured["data_dir"].clone();

@@ -95,7 +95,8 @@ fn level_label(level: Option<ReviewLevel>) -> &'static str {
 pub fn worker_prompt(run: &Run, task: &Task, extract: &str, notes: &str) -> String {
     let mut out = worker_head(run, task);
     let reqs = requirements_block(run, task).unwrap_or_default();
-    let sections = [extract, &reqs, notes];
+    let lessons = super::contract_lessons::worker_block(run, task); // 9.15 decision 23
+    let sections = [extract, &reqs, notes, &lessons];
     for section in sections.into_iter().filter(|s| !s.is_empty()) {
         out.push_str("\n\n");
         out.push_str(section);
@@ -283,6 +284,8 @@ pub fn reviewer_prompt(
     if !messages.is_empty() {
         lines.push(messages.to_string());
     }
+    let lessons = super::contract_lessons::reviewer_block(run, task); // 9.15 decision 23
+    lines.extend((!lessons.is_empty()).then_some(lessons));
     if let Some(block) = requirements_block(run, task) {
         lines.extend([block, JUDGE_LINE.to_string()]);
     }
