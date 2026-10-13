@@ -1,0 +1,247 @@
+{
+ "packages": [
+  {
+   "name": "app",
+   "version": "0.1.0",
+   "id": "path+file:///fixture/ws/app#0.1.0",
+   "license": null,
+   "license_file": null,
+   "description": null,
+   "source": null,
+   "dependencies": [
+    {
+     "name": "cfg-if",
+     "source": "registry+https://github.com/rust-lang/crates.io-index",
+     "req": "^1",
+     "kind": null,
+     "rename": null,
+     "optional": false,
+     "uses_default_features": true,
+     "features": [],
+     "target": null,
+     "registry": null
+    },
+    {
+     "name": "vend",
+     "source": null,
+     "req": "*",
+     "kind": null,
+     "rename": null,
+     "optional": false,
+     "uses_default_features": true,
+     "features": [],
+     "target": null,
+     "registry": null,
+     "path": "/fixture/ws/vend"
+    }
+   ],
+   "targets": [
+    {
+     "kind": [
+      "bin"
+     ],
+     "crate_types": [
+      "bin"
+     ],
+     "name": "app",
+     "src_path": "/fixture/ws/app/src/main.rs",
+     "edition": "2021",
+     "doc": true,
+     "doctest": false,
+     "test": true
+    }
+   ],
+   "features": {},
+   "manifest_path": "/fixture/ws/app/Cargo.toml",
+   "metadata": null,
+   "publish": null,
+   "authors": [],
+   "categories": [],
+   "keywords": [],
+   "readme": null,
+   "repository": null,
+   "homepage": null,
+   "documentation": null,
+   "edition": "2021",
+   "links": null,
+   "default_run": null,
+   "rust_version": null
+  },
+  {
+   "name": "cfg-if",
+   "version": "1.0.5",
+   "id": "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.5",
+   "license": "MIT OR Apache-2.0",
+   "license_file": null,
+   "description": "A macro to ergonomically define an item depending on a large number of #[cfg]\nparameters. Structured like an if-else chain, the first matching branch is the\nitem that gets emitted.\n",
+   "source": "registry+https://github.com/rust-lang/crates.io-index",
+   "dependencies": [
+    {
+     "name": "rustc-std-workspace-core",
+     "source": "registry+https://github.com/rust-lang/crates.io-index",
+     "req": "^1.0.0",
+     "kind": null,
+     "rename": "core",
+     "optional": true,
+     "uses_default_features": true,
+     "features": [],
+     "target": null,
+     "registry": null
+    }
+   ],
+   "targets": [
+    {
+     "kind": [
+      "lib"
+     ],
+     "crate_types": [
+      "lib"
+     ],
+     "name": "cfg_if",
+     "src_path": "/home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cfg-if-1.0.5/src/lib.rs",
+     "edition": "2018",
+     "doc": true,
+     "doctest": true,
+     "test": true
+    },
+    {
+     "kind": [
+      "test"
+     ],
+     "crate_types": [
+      "bin"
+     ],
+     "name": "xcrate",
+     "src_path": "/home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cfg-if-1.0.5/tests/xcrate.rs",
+     "edition": "2018",
+     "doc": false,
+     "doctest": false,
+     "test": true
+    }
+   ],
+   "features": {
+    "core": [
+     "dep:core"
+    ],
+    "rustc-dep-of-std": [
+     "core"
+    ]
+   },
+   "manifest_path": "/home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cfg-if-1.0.5/Cargo.toml",
+   "metadata": null,
+   "publish": null,
+   "authors": [
+    "Alex Crichton <alex@alexcrichton.com>"
+   ],
+   "categories": [],
+   "keywords": [],
+   "readme": "README.md",
+   "repository": "https://github.com/rust-lang/cfg-if",
+   "homepage": null,
+   "documentation": null,
+   "edition": "2018",
+   "links": null,
+   "default_run": null,
+   "rust_version": "1.32"
+  },
+  {
+   "name": "vend",
+   "version": "0.1.0",
+   "id": "path+file:///fixture/ws/vend#0.1.0",
+   "license": null,
+   "license_file": null,
+   "description": null,
+   "source": null,
+   "dependencies": [],
+   "targets": [
+    {
+     "kind": [
+      "lib"
+     ],
+     "crate_types": [
+      "lib"
+     ],
+     "name": "vend",
+     "src_path": "/fixture/ws/vend/src/lib.rs",
+     "edition": "2021",
+     "doc": true,
+     "doctest": true,
+     "test": true
+    }
+   ],
+   "features": {},
+   "manifest_path": "/fixture/ws/vend/Cargo.toml",
+   "metadata": null,
+   "publish": null,
+   "authors": [],
+   "categories": [],
+   "keywords": [],
+   "readme": null,
+   "repository": null,
+   "homepage": null,
+   "documentation": null,
+   "edition": "2021",
+   "links": null,
+   "default_run": null,
+   "rust_version": null
+  }
+ ],
+ "workspace_members": [
+  "path+file:///fixture/ws/app#0.1.0"
+ ],
+ "workspace_default_members": [
+  "path+file:///fixture/ws/app#0.1.0"
+ ],
+ "resolve": {
+  "nodes": [
+   {
+    "id": "path+file:///fixture/ws/app#0.1.0",
+    "dependencies": [
+     "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.5",
+     "path+file:///fixture/ws/vend#0.1.0"
+    ],
+    "deps": [
+     {
+      "name": "cfg_if",
+      "pkg": "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.5",
+      "dep_kinds": [
+       {
+        "kind": null,
+        "target": null
+       }
+      ]
+     },
+     {
+      "name": "vend",
+      "pkg": "path+file:///fixture/ws/vend#0.1.0",
+      "dep_kinds": [
+       {
+        "kind": null,
+        "target": null
+       }
+      ]
+     }
+    ],
+    "features": []
+   },
+   {
+    "id": "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.5",
+    "dependencies": [],
+    "deps": [],
+    "features": []
+   },
+   {
+    "id": "path+file:///fixture/ws/vend#0.1.0",
+    "dependencies": [],
+    "deps": [],
+    "features": []
+   }
+  ],
+  "root": null
+ },
+ "target_directory": "/fixture/ws/target",
+ "build_directory": "/fixture/ws/target",
+ "version": 1,
+ "workspace_root": "/fixture/ws",
+ "metadata": null
+}

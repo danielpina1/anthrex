@@ -356,6 +356,7 @@ pub(crate) fn read_only(
         run_ref: Some(run_ref),
         codex_config_guard: codex_config_guard(run, route.runtime),
         output_filter: None,
+        admit: None,
     }
 }
 

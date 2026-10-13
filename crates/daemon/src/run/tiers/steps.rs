@@ -22,8 +22,9 @@ struct Steps<'a> {
 impl Steps<'_> {
     /// A test-running step. A timing step is always exclusive; any other step is
     /// exclusive when it would run the timing tests without a slot to leave them out
-    /// (decision 25).
-    fn push(&mut self, kind: StepKind, template: &str, values: Placeholders) {
+    /// (decision 25). `per_module` when a module command made it (milestone 9.14
+    /// decision 26).
+    fn push(&mut self, kind: StepKind, template: &str, values: Placeholders, per_module: bool) {
         let timing = kind == StepKind::Timing;
         let exclusive = timing || (self.tiers.timing_tests.is_some() && !has_filter(template));
         let values = Placeholders {
@@ -35,6 +36,7 @@ impl Steps<'_> {
             command: substitute(template, &values),
             exclusive,
             affected_key: self.key.clone(),
+            per_module,
         });
     }
 
@@ -44,6 +46,7 @@ impl Steps<'_> {
             command: build_check.to_string(),
             exclusive: false,
             affected_key: "-".to_string(),
+            per_module: false,
         });
     }
 
@@ -54,13 +57,13 @@ impl Steps<'_> {
             shard: Some((1, 1)),
             ..Placeholders::default()
         };
-        self.push(StepKind::Tests, check, whole());
-        self.timing_of(check, whole);
+        self.push(StepKind::Tests, check, whole(), false);
+        self.timing_of(check, whole, false);
     }
 
-    fn timing_of(&mut self, template: &str, values: impl Fn() -> Placeholders) {
+    fn timing_of(&mut self, template: &str, values: impl Fn() -> Placeholders, per_module: bool) {
         if self.tiers.timing_tests.is_some() && has_filter(template) {
-            self.push(StepKind::Timing, template, values());
+            self.push(StepKind::Timing, template, values(), per_module);
         }
     }
 }
@@ -100,12 +103,13 @@ fn full(steps: &mut Steps<'_>, check: &str) {
             shard: Some((k, shards)),
             ..Placeholders::default()
         };
-        steps.push(StepKind::Shard { k, of: shards }, check, values);
+        steps.push(StepKind::Shard { k, of: shards }, check, values, false);
     }
-    steps.timing_of(check, || Placeholders {
+    let whole = || Placeholders {
         shard: Some((1, 1)),
         ..Placeholders::default()
-    });
+    };
+    steps.timing_of(check, whole, false);
 }
 
 /// Scope `gate` (tiers 1 and 2).
@@ -140,18 +144,18 @@ fn gate(steps: &mut Steps<'_>, affected: &Affected, check: Option<&str>) {
             modules: Some(list.clone()),
             ..Placeholders::default()
         };
-        steps.push(StepKind::Tests, template, all());
-        steps.timing_of(template, all);
+        steps.push(StepKind::Tests, template, all(), true);
+        steps.timing_of(template, all, true);
     } else if let Some(template) = tiers.module_test.as_deref() {
         let one = |name: &String| Placeholders {
             module: Some(name.clone()),
             ..Placeholders::default()
         };
         for name in &list {
-            steps.push(StepKind::Tests, template, one(name));
+            steps.push(StepKind::Tests, template, one(name), true);
         }
         for name in &list {
-            steps.timing_of(template, || one(name));
+            steps.timing_of(template, || one(name), true);
         }
     } else if let Some(check) = check {
         // No module command: `check` in place of the tests.

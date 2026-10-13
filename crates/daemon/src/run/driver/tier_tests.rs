@@ -167,6 +167,8 @@ impl Rig {
             check_timeout: Duration::from_secs(60),
             confine: None,
             pinned: Default::default(),
+            pool: None,
+            pool_grant: None,
         }
     }
 

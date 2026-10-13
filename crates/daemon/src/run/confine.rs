@@ -100,6 +100,10 @@ pub struct ConfineSpec {
     pub localhost_ports: Vec<u16>,
     /// The anthrex daemon's socket, never reachable (F1d).
     pub daemon_socket: PathBuf,
+    /// Milestone 9.14 decision 11: the op's leased pool directory (`CARGO_TARGET_DIR`),
+    /// writable. Set by the pool's `apply` on the op's own copy and by a release on its
+    /// own (C5); never routed through `cache_dirs`, which refuses the data directory.
+    pub target_dir: Option<PathBuf>,
 }
 
 /// One command's confinement: what it may write, its `TMPDIR`, and whether it has the
@@ -128,6 +132,7 @@ impl ConfineSpec {
                 unix_sockets: run.profile.confined_unix_sockets.clone(),
                 localhost_ports: run.profile.confined_localhost_ports.clone(),
                 daemon_socket: proto::paths::socket_path(),
+                target_dir: None,
             }
         })
     }
@@ -161,6 +166,10 @@ impl ConfineSpec {
             daemon_socket: &self.daemon_socket,
         };
         writable.extend(resolve_all(&self.cache_dirs, &areas)?);
+        // Milestone 9.14 decision 11: the leased pool directory, spelled as a checkout.
+        if let Some(target) = &self.target_dir {
+            writable.push(plain_dir(target)?);
+        }
         let unix_sockets = resolve_sockets(&self.unix_sockets, &areas)?;
         Ok(Confinement {
             checkout,
@@ -255,6 +264,7 @@ mod tests {
             unix_sockets: Vec::new(),
             localhost_ports: Vec::new(),
             daemon_socket: root.join("sock/daemon.sock"),
+            target_dir: None,
         }
     }
 
@@ -350,6 +360,36 @@ mod tests {
         std::fs::create_dir_all(checkout.parent().unwrap()).unwrap();
         std::os::unix::fs::symlink(&root, &checkout).unwrap();
         let err = spec(&root, &[]).for_checkout(&checkout).unwrap_err();
+        assert!(err.contains("tampered"), "{err}");
+    }
+
+    /// Milestone 9.14 decision 11: the leased pool directory is writable, checked as a
+    /// checkout is; a link in its place is refused.
+    #[test]
+    fn the_target_dir_is_writable_and_a_link_is_refused() {
+        let dir = crate::run::git::TestDir::new();
+        let root = dir.path().canonicalize().unwrap();
+        let checkout = root.join("wt/runs/r1/t1");
+        dir.also(crate::run::git::checkout_repo_dir(
+            &root.join("data/runs/r1"),
+            &checkout,
+        ));
+        std::fs::create_dir_all(&checkout).unwrap();
+        let target = root.join("data/repos/repo-1/target-pool/task-1");
+        std::fs::create_dir_all(&target).unwrap();
+        let mut leased = spec(&root, &[]);
+        leased.target_dir = Some(target.clone());
+        let c = leased.for_checkout(&checkout).unwrap();
+        assert!(c.writable().contains(&target), "{:?}", c.writable());
+        assert!(
+            c.profile()
+                .unwrap()
+                .contains(&format!("(subpath \"{}\")", target.display()))
+        );
+
+        std::fs::remove_dir(&target).unwrap();
+        std::os::unix::fs::symlink(&root, &target).unwrap();
+        let err = leased.for_checkout(&checkout).unwrap_err();
         assert!(err.contains("tampered"), "{err}");
     }
 

@@ -141,6 +141,8 @@ impl Rig {
             check_timeout: T,
             confine: None,
             pinned: Default::default(),
+            pool: None,
+            pool_grant: None,
         };
         Rig {
             _tmp: tmp,
@@ -167,11 +169,16 @@ impl Rig {
 
     /// `ops::worker_git_dirs` on `spec`, as `CreateWindow` runs it.
     fn complete(&self, spec: &mut HeadlessSpec) -> Result<(), String> {
+        self.complete_in(&self.ctx, spec)
+    }
+
+    /// [`Rig::complete`] with `ctx` (one carrying a pool grant, say).
+    fn complete_in(&self, ctx: &OpCtx, spec: &mut HeadlessSpec) -> Result<(), String> {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
             .unwrap();
-        rt.block_on(super::worker_git_dirs(&self.service, &self.ctx, spec))
+        rt.block_on(super::worker_git_dirs(&self.service, ctx, spec))
     }
 
     /// The repository (git directory, objects, temporary directory's owner) of the
@@ -495,4 +502,33 @@ async fn a_racers_tool_call_carries_its_lane() {
     call.abort();
     shutdown.cancel();
     let _ = server.await;
+}
+
+/// Milestone 9.14 decision 10 (C1): `apply` grants the leased pool directory before
+/// `worker_git_dirs` runs, which assigns the git grant to a sandboxed worker's writable
+/// roots; the pool grant (`OpCtx.pool_grant`) survives it, on Claude and on Codex,
+/// beside the git grant.
+#[test]
+fn the_pool_grant_survives_worker_git_dirs() {
+    let rig = Rig::new(&["t1", "t1.a", "t1.b"], |_| {});
+    let pool_dir = rig.data_dir.join("../../repos/repo-1/target-pool/task-1");
+    for (lane, own) in [(RaceLane::A, "t1.a"), (RaceLane::B, "t1.b")] {
+        let mut spec = rig.racer(lane);
+        if let Some(sandbox) = spec.claude_sandbox.as_mut() {
+            sandbox.writable_roots.push(pool_dir.clone());
+        } else {
+            spec.codex_writable_roots.push(pool_dir.clone());
+        }
+        let ctx = OpCtx {
+            pool_grant: Some(pool_dir.clone()),
+            ..rig.ctx.clone()
+        };
+        rig.complete_in(&ctx, &mut spec).unwrap();
+        let roots = granted(&spec);
+        assert!(roots.contains(&pool_dir), "{lane:?}: {roots:?}");
+        assert!(
+            roots.contains(&rig.repo(own).join("git/objects")),
+            "{lane:?}: {roots:?}"
+        );
+    }
 }

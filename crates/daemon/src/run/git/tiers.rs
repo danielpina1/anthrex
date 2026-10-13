@@ -1,5 +1,6 @@
 //! Milestone 9.1's git reads for the tier executor (decisions 15, 16 and 30): the paths
-//! a tier job's change touches and the tree it judges. Blocking; call only from
+//! a tier job's change touches, the tree it judges and that tree's entries (milestone
+//! 9.14 decision 31). Blocking; call only from
 //! `spawn_blocking` (AGENTS.md rule 2). Every call goes through [`Git`], so
 //! `--no-optional-locks`, the hooks-off read flags and the scrubbed environment hold
 //! (AGENTS.md rules 10 and 11).
@@ -51,6 +52,51 @@ pub fn tree_of(git: &OsStr, dir: &Path, commit: &str, timeout: Duration) -> Resu
         return Err(format!("{commit} has no tree"));
     }
     Ok(tree.to_string())
+}
+
+/// One entry of `git ls-tree -r --full-tree` (milestone 9.14 decision 26).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TreeEntry {
+    pub mode: String,
+    pub object: String,
+    pub path: String,
+}
+
+/// Every path of `tree`, in git's order: `git ls-tree -r -z --full-tree <tree>` in
+/// `dir` (milestone 9.14 decision 31). A tree that could be read as an option, and a
+/// line that does not parse, are errors, never a short list.
+pub fn tree_entries(
+    git: &OsStr,
+    dir: &Path,
+    tree: &str,
+    timeout: Duration,
+) -> Result<Vec<TreeEntry>, String> {
+    if tree.is_empty() || tree.starts_with('-') {
+        return Err(format!("not a tree: {tree:?}"));
+    }
+    let g = Git::new(git, timeout);
+    let args = [
+        os("ls-tree"),
+        os("-r"),
+        os("-z"),
+        os("--full-tree"),
+        os(tree),
+    ];
+    let out = g.ok(dir, &args)?;
+    nul_fields(&out)
+        .map(|line| {
+            let parsed = line.split_once('\t').and_then(|(meta, path)| {
+                let mut words = meta.split(' ');
+                let (mode, _kind, object) = (words.next()?, words.next()?, words.next()?);
+                Some(TreeEntry {
+                    mode: mode.to_string(),
+                    object: object.to_string(),
+                    path: path.to_string(),
+                })
+            });
+            parsed.ok_or_else(|| format!("not an ls-tree line: {line:?}"))
+        })
+        .collect()
 }
 
 /// The tree the checkout `dir` holds, when it holds exactly its `HEAD`: `HEAD^{tree}`

@@ -47,16 +47,24 @@ pub fn group(matcher: &str, commands: &[String]) -> Value {
 /// Runs `steps` in a headless Claude session with `settings`; returns the agent and
 /// the bash log's entries.
 pub fn run_bash(dir: &Path, settings: Option<&Value>, steps: &[Value]) -> (Agent, Vec<Value>) {
+    run_bash_with(dir, settings, steps, &[])
+}
+
+/// [`run_bash`] with `extra` in the agent's environment (`FAKE_AGENT_TOOL_IDS`, say).
+pub fn run_bash_with(
+    dir: &Path,
+    settings: Option<&Value>,
+    steps: &[Value],
+    extra: &[(&str, &Path)],
+) -> (Agent, Vec<Value>) {
     let script = write_steps(&dir.join("script.jsonl"), steps);
     let log = dir.join("bash.jsonl");
-    let mut agent = Agent::spawn(
-        &claude_with_settings(settings),
-        dir,
-        &[
-            ("FAKE_AGENT_SCRIPT", &script),
-            ("FAKE_AGENT_BASH_LOG", &log),
-        ],
-    );
+    let mut env: Vec<(&str, &Path)> = vec![
+        ("FAKE_AGENT_SCRIPT", &script),
+        ("FAKE_AGENT_BASH_LOG", &log),
+    ];
+    env.extend_from_slice(extra);
+    let mut agent = Agent::spawn(&claude_with_settings(settings), dir, &env);
     agent.send(&user_message("go", "s"));
     agent.until(RUN, is_result);
     agent.close_stdin();

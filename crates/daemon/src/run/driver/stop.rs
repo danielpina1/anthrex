@@ -15,6 +15,12 @@ impl RunService {
     pub async fn stop(&self) {
         // A model probe in flight ends now; `ProbeChild` kills and reaps its CLI.
         self.models_cancel.cancel();
+        // Milestone 9.14 (C27): the pool's sweep task ends, and is awaited.
+        let sweep = crate::lock(&self.pool_sweep).take();
+        if let Some((token, task)) = sweep {
+            token.cancel();
+            let _ = task.await;
+        }
         if self.saved.load(Ordering::SeqCst) {
             return;
         }
@@ -69,5 +75,29 @@ impl RunService {
         for (_, reply) in waiting {
             let _ = reply.send(Err("the daemon is shutting down".to_string()));
         }
+    }
+
+    /// Milestone 9.14 task 11: waits for every op the loop started. Each holds its run's
+    /// order lock (`op_lock`) for its whole life, so taking each exclusively waits for
+    /// it. For test rigs, after [`RunService::stop`]: the daemon's process exit ends its
+    /// ops, but a test's directory must outlive them. Unbounded; the caller bounds it.
+    /// An Accept or Discard op spawned but not yet scheduled may be missed; the caller
+    /// must bound the wait.
+    #[doc(hidden)]
+    pub async fn wait_for_ops(&self) {
+        let orders: Vec<_> = crate::lock(&self.op_order).values().cloned().collect();
+        for order in orders {
+            drop(order.write_owned().await);
+        }
+    }
+
+    /// How many runs have an op holding their order lock at this moment (M9.14.11): a
+    /// test rig's `stop()` checks it is none once it returns.
+    /// An Accept or Discard op spawned but not yet scheduled may be missed; the caller
+    /// must bound the wait.
+    #[doc(hidden)]
+    pub fn ops_in_flight(&self) -> usize {
+        let orders: Vec<_> = crate::lock(&self.op_order).values().cloned().collect();
+        orders.iter().filter(|o| o.try_write().is_err()).count()
     }
 }

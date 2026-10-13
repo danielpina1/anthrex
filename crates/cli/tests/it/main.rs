@@ -5,6 +5,7 @@
 #[path = "../support/mod.rs"]
 mod support;
 
+mod admit_hook;
 mod claude_status;
 mod claude_subagents;
 mod codex_status;
@@ -47,6 +48,7 @@ mod run_design_fixtures;
 mod run_e2e_adapt;
 mod run_e2e_adapt_engine;
 mod run_e2e_adapt_profile;
+mod run_e2e_admit;
 mod run_e2e_base;
 mod run_e2e_basic;
 mod run_e2e_bisect;
@@ -70,6 +72,7 @@ mod run_e2e_orch_ops;
 mod run_e2e_orch_wake;
 mod run_e2e_pair;
 mod run_e2e_patterns;
+mod run_e2e_pool;
 mod run_e2e_pr;
 mod run_e2e_pr_ci;
 mod run_e2e_pr_land;

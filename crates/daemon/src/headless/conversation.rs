@@ -332,8 +332,9 @@ pub fn observe_hook(
             cursor.hook_stopped = true;
             return ConversationInput::default();
         }
-        // The turn goes on after a real `Stop` (the user's own blocking `Stop` hook).
-        HookKind::PreToolUse | HookKind::PostToolUse => {
+        // The turn goes on after a real `Stop` (the user's own blocking `Stop` hook). A
+        // failed call's `PostToolUseFailure` stands for its `PostToolUse` (F4).
+        HookKind::PreToolUse | HookKind::PostToolUse | HookKind::PostToolUseFailure => {
             cursor.hook_stopped = false;
             return ConversationInput::default();
         }

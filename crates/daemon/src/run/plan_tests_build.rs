@@ -172,12 +172,15 @@ fn run_limits_freeze_the_testing_limits() {
         flaky_quarantine_after: 5,
         flaky_window_days: 30,
         bisect_fix_max: 4,
+        admit_wait_secs: 90,
+        ..config::Testing::default()
     };
     let frozen = TestingLimits {
         full_idle_secs: 300,
         bisect_fix_max: 4,
         flaky_quarantine_after: 5,
         flaky_window_days: 30,
+        admit_wait_secs: 90,
     };
     let data = tempfile::tempdir().unwrap();
     let config = config::Orchestrator::default();
@@ -207,6 +210,7 @@ fn run_limits_freeze_the_testing_limits() {
         bisect_fix_max: 2,
         flaky_quarantine_after: 3,
         flaky_window_days: 14,
+        admit_wait_secs: 300,
     };
     assert_eq!(TestingLimits::default(), defaults);
     assert_eq!(run_ok(EXAMPLE_PLAN).limits.testing, defaults);
@@ -225,6 +229,20 @@ fn run_limits_freeze_the_testing_limits() {
     assert!(limits.remove("testing").is_some());
     let old: crate::run::model::Run = serde_json::from_value(old).unwrap();
     assert_eq!(old.limits.testing, defaults);
+
+    // Milestone 9.14 decision 24: a 9.13 `run.json`, frozen before `admit_wait_secs`
+    // existed, keeps its own limits and reads the key's default, 300.
+    let mut old = serde_json::to_value(&run).unwrap();
+    let testing = old["limits"]["testing"].as_object_mut().unwrap();
+    assert!(testing.remove("admit_wait_secs").is_some());
+    let old: crate::run::model::Run = serde_json::from_value(old).unwrap();
+    assert_eq!(
+        old.limits.testing,
+        TestingLimits {
+            admit_wait_secs: 300,
+            ..frozen
+        }
+    );
 }
 
 /// Milestone 9.2 decision 16: `[delivery]` is frozen into the run at start

@@ -1,3 +1,4 @@
+mod admit;
 mod client;
 mod daemon_cmd;
 mod filter_hook;

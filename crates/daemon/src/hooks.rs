@@ -10,6 +10,9 @@ pub enum HookKind {
     UserPromptSubmit,
     PreToolUse,
     PostToolUse,
+    /// Milestone 9.14 fact F4: a tool use that failed (Claude Code fires it instead of
+    /// `PostToolUse`, with the same `tool_use_id`).
+    PostToolUseFailure,
     PermissionRequest,
     Notification,
     Stop,
@@ -80,6 +83,7 @@ pub fn parse(source: HookSource, payload: &Value) -> Option<ParsedHook> {
             "UserPromptSubmit" => HookKind::UserPromptSubmit,
             "PreToolUse" => HookKind::PreToolUse,
             "PostToolUse" => HookKind::PostToolUse,
+            "PostToolUseFailure" => HookKind::PostToolUseFailure,
             "PermissionRequest" => HookKind::PermissionRequest,
             "Notification" => HookKind::Notification,
             "Stop" => HookKind::Stop,
@@ -125,7 +129,7 @@ impl ParsedHook {
             HookKind::SessionStart => Some(StatusEvent::SessionStart),
             HookKind::UserPromptSubmit => Some(StatusEvent::UserPromptSubmit),
             HookKind::PreToolUse => Some(StatusEvent::PreToolUse),
-            HookKind::PostToolUse => Some(StatusEvent::PostToolUse),
+            HookKind::PostToolUse | HookKind::PostToolUseFailure => Some(StatusEvent::PostToolUse),
             HookKind::PermissionRequest => Some(StatusEvent::PermissionRequest),
             HookKind::Notification => match self.notification_type.as_deref() {
                 Some("permission_prompt") => Some(StatusEvent::PermissionPrompt),
@@ -156,6 +160,27 @@ mod tests {
         assert_eq!(hook.kind, HookKind::StopFailure);
         assert_eq!(hook.session_id.as_deref(), Some("s1"));
         assert_eq!(hook.status_event(), Some(StatusEvent::Stop));
+    }
+
+    /// Milestone 9.14 fact F4: a failed `Bash` fires `PostToolUseFailure` instead of
+    /// `PostToolUse`, with the same `tool_use_id`. It ends the tool use for the status
+    /// machine and releases that tool use's admission hold (decision 22).
+    #[test]
+    fn post_tool_use_failure_parses_and_releases() {
+        let payload = json!({"hook_event_name": "PostToolUseFailure", "session_id": "s1",
+            "tool_use_id": "toolu_9", "tool_name": "Bash",
+            "tool_input": {"command": "cargo test"}, "error": "exit 101",
+            "is_interrupt": false, "duration_ms": 1200});
+        let hook = parse(HookSource::Claude, &payload).expect("PostToolUseFailure parsed");
+        assert_eq!(hook.kind, HookKind::PostToolUseFailure);
+        assert_eq!(hook.tool_use_id.as_deref(), Some("toolu_9"));
+        assert_eq!(hook.tool_name.as_deref(), Some("Bash"));
+        assert_eq!(hook.tool_response, None);
+        assert_eq!(hook.status_event(), Some(StatusEvent::PostToolUse));
+        assert_eq!(
+            crate::admit::release_for(&hook),
+            crate::admit::Release::One("toolu_9".into())
+        );
     }
 
     #[test]

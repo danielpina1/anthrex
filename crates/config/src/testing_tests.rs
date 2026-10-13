@@ -46,6 +46,7 @@ fn testing_keys_are_read_and_ranged() {
             flaky_quarantine_after: 1,
             flaky_window_days: 1,
             bisect_fix_max: 0,
+            ..Testing::default()
         }
     );
     let high = "[testing]\ntest_slots = 256\nfull_idle_secs = 86400\ntest_cache_days = 365\n\
@@ -61,6 +62,7 @@ fn testing_keys_are_read_and_ranged() {
             flaky_quarantine_after: 100,
             flaky_window_days: 365,
             bisect_fix_max: 10,
+            ..Testing::default()
         }
     );
 
@@ -138,5 +140,52 @@ fn testing_keys_are_read_and_ranged() {
     assert_eq!(
         texts,
         ["testing: expected a table (using table of defaults)"]
+    );
+}
+
+/// Milestone 9.14 decision 24 (C8): the three admission keys.
+#[test]
+fn admission_keys_default_and_range() {
+    let (config, problems) = parse("");
+    assert!(problems.is_empty());
+    let t = &config.testing;
+    assert_eq!(t.admit_wait_secs, 300);
+    assert_eq!(ADMIT_HOLD_MAX_DEFAULT_SECS, 630);
+    assert_eq!(t.admit_hold_max_secs, ADMIT_HOLD_MAX_DEFAULT_SECS);
+    assert!(!t.admit_interactive);
+
+    // 0 turns admission off, and both ends of every range read.
+    let low =
+        "[testing]\nadmit_wait_secs = 0\nadmit_hold_max_secs = 60\nadmit_interactive = true\n";
+    let (config, problems) = parse(low);
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(config.testing.admit_wait_secs, 0);
+    assert_eq!(config.testing.admit_hold_max_secs, 60);
+    assert!(config.testing.admit_interactive);
+    let high = format!(
+        "[testing]\nadmit_wait_secs = {ADMIT_WAIT_MAX_SECS}\nadmit_hold_max_secs = 86400\n"
+    );
+    let (config, problems) = parse(&high);
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(config.testing.admit_wait_secs, ADMIT_WAIT_MAX_SECS);
+    assert_eq!(config.testing.admit_hold_max_secs, 86_400);
+
+    // Out of range or the wrong type: a problem each, the default kept.
+    let out = format!(
+        "[testing]\nadmit_wait_secs = {}\nadmit_hold_max_secs = 59\nadmit_interactive = 1\n",
+        ADMIT_WAIT_MAX_SECS + 1
+    );
+    let (config, problems) = parse(&out);
+    assert_eq!(config.testing, Testing::default());
+    let texts: Vec<String> = problems.iter().map(|p| p.to_string()).collect();
+    assert_eq!(
+        texts,
+        [
+            format!(
+                "testing.admit_wait_secs: must be between 0 and {ADMIT_WAIT_MAX_SECS} (using 300)"
+            ),
+            "testing.admit_hold_max_secs: must be between 60 and 86400 (using 630)".to_string(),
+            "testing.admit_interactive: must be true or false (using false)".to_string(),
+        ]
     );
 }

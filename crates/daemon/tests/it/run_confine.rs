@@ -389,3 +389,38 @@ fn a_confined_tier_step_binds_its_own_socket_and_not_the_daemons() {
     assert!(!accepted, "the daemon's socket was reached");
     assert!(!exists, "the step directory is removed: {}", tmp.display());
 }
+
+/// Milestone 9.14 decision 11: a confined check may write the pool directory leased to
+/// its checkout (`ConfineSpec.target_dir`, its `CARGO_TARGET_DIR`), and no other pool
+/// directory of the repository.
+#[test]
+fn a_confined_check_may_write_its_leased_dir_and_no_other_pool_dir() {
+    let w = world();
+    let task = w.task();
+    // `<data>/runs/cf01` → `<data>/repos/repo-1/target-pool/`.
+    let data = w.data.parent().and_then(Path::parent).unwrap();
+    let pool = data.join("repos/repo-1/target-pool");
+    let (leased, other) = (pool.join("task-1"), pool.join("task-2"));
+    std::fs::create_dir_all(&leased).unwrap();
+    std::fs::create_dir_all(&other).unwrap();
+    let mut spec = w.spec(&[]);
+    spec.target_dir = Some(leased.clone());
+    let confinement = spec.for_checkout(&task).unwrap();
+    let env = vec![("CARGO_TARGET_DIR".to_string(), leased.display().to_string())];
+
+    let allowed = run_confined(
+        &task,
+        "printf ok > \"$CARGO_TARGET_DIR/x\"",
+        &env,
+        &[],
+        LONG,
+        Some(&confinement),
+    );
+    assert!(allowed.ok, "{allowed:?}");
+    assert!(leased.join("x").is_file());
+
+    let denied = format!("printf no > '{}'", other.join("x").display());
+    let denied = run_confined(&task, &denied, &env, &[], LONG, Some(&confinement));
+    assert!(!denied.ok, "{denied:?}");
+    assert!(!other.join("x").exists());
+}

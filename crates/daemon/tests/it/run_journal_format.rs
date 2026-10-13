@@ -11,6 +11,7 @@ mod fixture;
 
 use daemon::manager::{ManagerConfig, WindowManager};
 use daemon::run::driver::{RunContext, RunService};
+use daemon::run::engine::OpKind;
 use daemon::run::journal::{RUN_FILE, RUN_FORMAT, RUN_TMP, load_all, save_run};
 use daemon::server::GitWiring;
 use fixture::{RUN_ID, plain_run};
@@ -31,9 +32,9 @@ fn run_file(data: &Path) -> std::path::PathBuf {
 #[test]
 fn a_saved_run_records_its_format() {
     let data = tempfile::tempdir().unwrap();
-    assert_eq!(RUN_FORMAT, 2);
+    assert_eq!(RUN_FORMAT, 3);
     let json = saved_json(data.path());
-    assert_eq!(json["format"], serde_json::json!(2), "{json}");
+    assert_eq!(json["format"], serde_json::json!(3), "{json}");
 }
 
 /// Pinning (milestone 9.13, decision 36's bump to 2): a `run.json` a 9.11 or 9.12
@@ -50,6 +51,64 @@ fn a_format_1_run_loads() {
     assert!(problems.is_empty(), "{problems:?}");
     assert_eq!(runs.len(), 1);
     assert_eq!(runs[0].0.id, RUN_ID);
+}
+
+/// Pinning (milestone 9.14, pre-flight ruling C3's bump to 3): a `run.json` a 9.13
+/// daemon wrote, stamped format 2, still loads.
+#[test]
+fn a_format_2_run_loads() {
+    let data = tempfile::tempdir().unwrap();
+    let mut json = saved_json(data.path());
+    json.as_object_mut()
+        .unwrap()
+        .insert("format".into(), serde_json::json!(2));
+    std::fs::write(run_file(data.path()), serde_json::to_vec(&json).unwrap()).unwrap();
+    let (runs, problems) = load_all(data.path());
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].0.id, RUN_ID);
+}
+
+/// Milestone 9.14 (M9.14.8): a 9.13 `run.json`, stamped format 2, whose pending
+/// `CreateWindow` spec has no `admit` loads with `admit: None`.
+#[test]
+fn a_format_2_pending_create_window_loads_without_admit() {
+    let data = tempfile::tempdir().unwrap();
+    let mut run = plain_run(data.path());
+    let mut kind = fixture::create_window(
+        data.path(),
+        fixture::run_ref("t1", proto::AgentRole::Worker, 1),
+        None,
+    );
+    if let OpKind::CreateWindow { spec, .. } = &mut kind {
+        spec.admit = Some(daemon::admit::AdmitHook {
+            wait_secs: 300,
+            slots: Some(2),
+            prefixes: Vec::new(),
+        });
+    }
+    fixture::pend(&mut run, 4, Some("t1"), kind);
+    save_run(&run).unwrap();
+    let file = run_file(data.path());
+    let mut json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+    json["format"] = serde_json::json!(2);
+    let spec = json["pending_ops"]
+        .as_object_mut()
+        .unwrap()
+        .values_mut()
+        .find_map(|op| op["kind"]["CreateWindow"]["spec"].as_object_mut())
+        .expect("the pending CreateWindow");
+    assert!(spec.remove("admit").is_some(), "the spec saves `admit`");
+    std::fs::write(&file, serde_json::to_vec(&json).unwrap()).unwrap();
+    let (runs, problems) = load_all(data.path());
+    assert!(problems.is_empty(), "{problems:?}");
+    let pending: Vec<_> = runs[0].0.pending_ops.values().collect();
+    assert_eq!(pending.len(), 1);
+    let OpKind::CreateWindow { spec, .. } = &pending[0].kind else {
+        panic!("{pending:?}");
+    };
+    assert_eq!(spec.admit, None);
 }
 
 /// Pinning: a protocol-21 `run.json` has no `format` and loads as format 0.
@@ -71,7 +130,7 @@ async fn a_run_from_a_newer_anthrex_is_left_alone() {
     let data = dir.path().join("data");
     let mut json = saved_json(&data);
     let object = json.as_object_mut().unwrap();
-    object.insert("format".into(), serde_json::json!(3));
+    object.insert("format".into(), serde_json::json!(4));
     object.insert(
         "a_field_from_the_future".into(),
         serde_json::json!({"kept": true}),
@@ -88,7 +147,7 @@ async fn a_run_from_a_newer_anthrex_is_left_alone() {
     assert_eq!(
         problems,
         [format!(
-            "run {RUN_ID} skipped: written by a newer anthrex (run format 3; this one reads up to 2); left as it is"
+            "run {RUN_ID} skipped: written by a newer anthrex (run format 4; this one reads up to 3); left as it is"
         )]
     );
     assert!(
@@ -146,7 +205,7 @@ fn a_run_whose_format_is_not_a_whole_number_is_left_alone() {
         assert_eq!(
             problems,
             [format!(
-                "run {RUN_ID} skipped: written by a newer anthrex (run format {format}; this one reads up to 2); left as it is"
+                "run {RUN_ID} skipped: written by a newer anthrex (run format {format}; this one reads up to 3); left as it is"
             )],
             "{format}"
         );

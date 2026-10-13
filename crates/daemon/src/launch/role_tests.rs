@@ -71,6 +71,8 @@ fn ctx<'a>(role: Option<&'a RoleLaunch>, caps: &'a CliCaps) -> LaunchContext<'a>
         resume: None,
         caps,
         role,
+        admit_interactive: false,
+        admit_wait_secs: 0,
     }
 }
 

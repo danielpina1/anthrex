@@ -235,6 +235,8 @@ mod tests {
             resume: None,
             caps: &crate::headless::argv::CLI_CAPS,
             role: None,
+            admit_interactive: false,
+            admit_wait_secs: 0,
         }
     }
 

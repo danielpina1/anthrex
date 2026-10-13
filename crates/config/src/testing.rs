@@ -30,6 +30,13 @@ pub struct Testing {
     pub flaky_quarantine_after: u32,
     pub flaky_window_days: u32,
     pub bisect_fix_max: u8,
+    /// Milestone 9.14 decision 24: how long an agent's heavy command waits for slots,
+    /// frozen into each run; 0 turns admission off.
+    pub admit_wait_secs: u64,
+    /// Daemon-wide: the sweep releases an agent hold older than this.
+    pub admit_hold_max_secs: u64,
+    /// Daemon-wide: interactive Claude windows get the admission hook too.
+    pub admit_interactive: bool,
 }
 
 impl Default for Testing {
@@ -41,6 +48,9 @@ impl Default for Testing {
             flaky_quarantine_after: 3,
             flaky_window_days: 14,
             bisect_fix_max: 2,
+            admit_wait_secs: 300,
+            admit_hold_max_secs: ADMIT_HOLD_MAX_DEFAULT_SECS,
+            admit_interactive: false,
         }
     }
 }
@@ -52,6 +62,14 @@ pub const TEST_CACHE_DAYS_RANGE: RangeInclusive<u32> = 0..=365;
 pub const FLAKY_QUARANTINE_AFTER_RANGE: RangeInclusive<u32> = 1..=100;
 pub const FLAKY_WINDOW_DAYS_RANGE: RangeInclusive<u32> = 1..=365;
 pub const BISECT_FIX_MAX_RANGE: RangeInclusive<u8> = 0..=10;
+/// Milestone 9.14 decision 24: the longest admission wait. Fact F3 found no hook
+/// `timeout` limit below `1830`, so it is not lowered.
+pub const ADMIT_WAIT_MAX_SECS: u64 = 1800;
+pub const ADMIT_WAIT_SECS_RANGE: RangeInclusive<u64> = 0..=ADMIT_WAIT_MAX_SECS;
+/// Decision 24 (pre-flight ruling C8 (a)): the `Bash` tool's longest foreground
+/// `timeout` (600 s on Claude Code) plus the hook slack (30 s).
+pub const ADMIT_HOLD_MAX_DEFAULT_SECS: u64 = 630;
+pub const ADMIT_HOLD_MAX_SECS_RANGE: RangeInclusive<u64> = 60..=86_400;
 
 /// What an absent `test_slots` means, as a problem's `(using …)` text.
 const TEST_SLOTS_DEFAULT_TEXT: &str = "logical cores minus 2, at least 1";
@@ -63,6 +81,9 @@ pub(crate) const KNOWN_TESTING_KEYS: &[&str] = &[
     "flaky_quarantine_after",
     "flaky_window_days",
     "bisect_fix_max",
+    "admit_wait_secs",
+    "admit_hold_max_secs",
+    "admit_interactive",
 ];
 
 pub(crate) fn read_testing(table: &toml::Table, config: &mut Config, problems: &mut Vec<Problem>) {
@@ -118,6 +139,30 @@ pub(crate) fn read_testing(table: &toml::Table, config: &mut Config, problems: &
         &mut t.bisect_fix_max,
         problems,
     );
+    read_into(
+        testing,
+        "admit_wait_secs",
+        &ADMIT_WAIT_SECS_RANGE,
+        &mut t.admit_wait_secs,
+        problems,
+    );
+    read_into(
+        testing,
+        "admit_hold_max_secs",
+        &ADMIT_HOLD_MAX_SECS_RANGE,
+        &mut t.admit_hold_max_secs,
+        problems,
+    );
+    if let Some(value) = testing.get("admit_interactive") {
+        match value.as_bool() {
+            Some(b) => t.admit_interactive = b,
+            None => problems.push(Problem {
+                key: "testing.admit_interactive".to_string(),
+                message: "must be true or false".to_string(),
+                default: t.admit_interactive.to_string(),
+            }),
+        }
+    }
 }
 
 /// Reads `testing.<key>` into `field` when it is an integer in `range`; otherwise a

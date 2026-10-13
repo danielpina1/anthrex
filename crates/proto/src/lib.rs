@@ -155,7 +155,12 @@
 /// Milestone 9.13 bumps this to 22: `OrchestratorInfo.untrusted` and the `UntrustedInfo`
 /// type, defaulted and left out while `None` so a protocol-21 snapshot still loads.
 /// Derivation: 21 at `lib.rs:154` before this change; 21 + 1 = 22.
-pub const PROTO_VERSION: u32 = 22;
+///
+/// Milestone 9.14 bumps this to 23: `ClientMsg::Admit`, `DaemonMsg::Admitted` and
+/// `DaemonMsg::AdmitTimedOut`, appended last in their enums (`Admit.slots` defaulted),
+/// so every older variant keeps its index. Derivation: 22 at `lib.rs:158` before this
+/// change (milestone 9.13); 22 + 1 = 23.
+pub const PROTO_VERSION: u32 = 23;
 
 /// `skip_serializing_if` for a `u32` count that is left out while zero.
 pub(crate) fn is_zero_u32(n: &u32) -> bool {
@@ -312,10 +317,14 @@ mod hardening_tests;
 mod orch_first_tests;
 
 #[cfg(test)]
+#[path = "admit_tests.rs"]
+mod admit_tests;
+
+#[cfg(test)]
 mod tests {
     #[test]
-    fn proto_version_is_twenty_two() {
-        assert_eq!(super::PROTO_VERSION, 22);
+    fn proto_version_is_twenty_three() {
+        assert_eq!(super::PROTO_VERSION, 23);
     }
 
     #[test]

@@ -113,6 +113,7 @@ pub(super) fn placeholder_spec(
         run_ref: None,
         codex_config_guard: None,
         output_filter: None,
+        admit: None,
     }
 }
 

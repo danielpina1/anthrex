@@ -290,6 +290,8 @@ fn e2e_tier_commands_and_workers_get_the_slot_variables() {
         serde_json::json!({
             "full_idle_secs": 600, "bisect_fix_max": 1,
             "flaky_quarantine_after": 5, "flaky_window_days": 9,
+            // Milestone 9.14 decision 24: the admission wait's default.
+            "admit_wait_secs": 300,
         })
     );
 

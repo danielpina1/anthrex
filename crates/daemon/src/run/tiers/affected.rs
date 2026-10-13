@@ -108,7 +108,11 @@ pub fn affected(
 
 /// A module directory's name in `graph`: its last component with `dir` names, the
 /// package whose manifest directory it is with `cargo` names.
-fn module_name(dir: &str, names: ModuleNames, graph: &ModuleGraph) -> Result<String, String> {
+pub(crate) fn module_name(
+    dir: &str,
+    names: ModuleNames,
+    graph: &ModuleGraph,
+) -> Result<String, String> {
     match names {
         ModuleNames::Cargo => graph
             .modules

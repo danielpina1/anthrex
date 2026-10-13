@@ -140,3 +140,54 @@ fn worker_caps_are_test_slots_over_writers_at_least_one() {
     assert!(worker_caps(2, 4).iter().all(|(_, v)| v == "1"));
     assert!(worker_caps(8, 0).iter().all(|(_, v)| v == "8"));
 }
+
+/// Milestone 9.14 decision 19: an agent ask sorts behind every engine class.
+#[test]
+fn an_agent_ask_waits_behind_a_verify_ask() {
+    let mut book = SlotBook::new(1);
+    let held = book.ask(req(Priority::Gate, Want::One));
+    assert_eq!(book.grant(), [(held, 1)]);
+    let agent = book.ask(req(Priority::Agent, Want::One));
+    let verify = book.ask(req(Priority::Verify, Want::One));
+    assert_eq!(book.grant(), []);
+    book.release(held);
+    assert_eq!(book.grant(), [(verify, 1)], "the verify ask first");
+    book.release(verify);
+    assert_eq!(book.grant(), [(agent, 1)]);
+}
+
+/// Decision 19: a waiting agent ask never delays an engine ask that comes later.
+#[test]
+fn an_agent_ask_never_jumps_a_later_gate_ask() {
+    let mut book = SlotBook::new(1);
+    let held = book.ask(req(Priority::Gate, Want::One));
+    assert_eq!(book.grant(), [(held, 1)]);
+    let agent = book.ask(req(Priority::Agent, Want::Count(1)));
+    let gate = book.ask(req(Priority::Gate, Want::Half));
+    book.release(held);
+    assert_eq!(book.grant(), [(gate, 1)], "the later gate ask first");
+    book.release(gate);
+    assert_eq!(book.grant(), [(agent, 1)]);
+}
+
+/// Decision 20: `Count(n).of(slots)` is `n.clamp(1, slots)`.
+#[test]
+fn want_count_is_clamped_to_the_book() {
+    assert_eq!(Want::Count(0).of(4), 1);
+    assert_eq!(Want::Count(3).of(4), 3);
+    assert_eq!(Want::Count(9).of(4), 4);
+}
+
+/// Decision 19's honest half: a granted agent hold is never pre-empted; an engine ask
+/// waits for its release.
+#[test]
+fn a_granted_agent_hold_is_not_preempted() {
+    let mut book = SlotBook::new(4);
+    let agent = book.ask(req(Priority::Agent, Want::Count(4)));
+    assert_eq!(book.grant(), [(agent, 4)]);
+    let candidate = book.ask(req(Priority::Candidate, Want::All));
+    assert_eq!(book.grant(), [], "every slot is the agent's");
+    assert_eq!(book.held(), 4);
+    book.release(agent);
+    assert_eq!(book.grant(), [(candidate, 4)]);
+}

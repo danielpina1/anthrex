@@ -58,6 +58,7 @@ impl World {
             unix_sockets: Vec::new(),
             localhost_ports: Vec::new(),
             daemon_socket: self.outside.join("daemon.sock"),
+            target_dir: None,
         }
     }
 

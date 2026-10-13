@@ -351,6 +351,7 @@ impl RunService {
             }
         };
         let id = self.pick_id(named.id_head(&plan.goal), &refs)?;
+        crate::manager::refuse_test_worktrees_root(&self.ctx.worktrees_root);
         let wt_dir = repo_worktrees_dir(&self.ctx.worktrees_root, &pre.project);
         let now = unix_now();
         // Milestone 9.5 decision 12 (ruling RH-8): every start kind tunes here, once; a

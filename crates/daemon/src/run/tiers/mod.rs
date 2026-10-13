@@ -20,6 +20,7 @@ pub mod cache_key;
 pub mod command;
 pub mod failing;
 pub mod graph;
+pub mod inputs;
 pub mod spec;
 pub mod steps;
 pub mod weakening;
@@ -36,6 +37,8 @@ mod command_tests;
 mod failing_tests;
 #[cfg(test)]
 mod graph_tests;
+#[cfg(test)]
+mod inputs_tests;
 #[cfg(test)]
 mod steps_tests;
 #[cfg(test)]
@@ -267,6 +270,11 @@ pub struct Step {
     pub command: String,
     pub exclusive: bool,
     pub affected_key: String,
+    /// Milestone 9.14 decision 26: a module command made it (a `module_tests` or
+    /// `module_test` step, or the timing step of either), so its key's tree is the
+    /// inputs id of its affected set's closure (`tiers::inputs`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub per_module: bool,
 }
 
 /// The steps a tier job runs, in order (decision 21).

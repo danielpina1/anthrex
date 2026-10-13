@@ -60,6 +60,8 @@ async fn an_m8a_check_waits_for_its_slots_then_runs_isolated() {
         check_timeout: Duration::from_secs(30),
         confine: None,
         pinned: Default::default(),
+        pool: None,
+        pool_grant: None,
     };
     // M9.12.13: the check's temporary directory is named from a repository directory
     // the project never has.

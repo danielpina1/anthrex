@@ -52,6 +52,7 @@ pub fn spec(runtime: Runtime, cwd: &Path) -> HeadlessSpec {
         run_ref: Some(run_ref()),
         codex_config_guard: None,
         output_filter: None,
+        admit: None,
     }
 }
 

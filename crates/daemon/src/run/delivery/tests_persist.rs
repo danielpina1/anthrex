@@ -37,6 +37,7 @@ fn old_run_json_loads_with_local_delivery() {
             assert_eq!(round, Some(serde_json::json!(1)), "{key}");
         }
     }
+    crate::run::test_support::take_written_admit_wait(&mut back);
     let mut stored: serde_json::Value = serde_json::from_str(text).unwrap();
     // Milestone 9.8 (task M9.8.13): the roster and the scouts' keys are not written back.
     crate::run::test_support::without_pre_9_8_keys(&mut stored);

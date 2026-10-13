@@ -74,6 +74,7 @@ mod run_git_sandbox;
 mod run_git_staging;
 mod run_git_summary;
 mod run_git_symref;
+mod run_git_tiers;
 mod run_git_users_git;
 mod run_git_worktrees;
 mod run_journal;
