@@ -26,6 +26,7 @@ use serde_json::{Value, json};
 use super::super::design_agents::reviewer;
 use super::super::requests::log;
 use super::super::{Effect, design_gate, wake};
+use super::plan::{READ_BACK_PENDING, SPAWN_PENDING};
 use super::{DocChecked, checked_text};
 use crate::run::design::requirements;
 use crate::run::design::state::{
@@ -254,6 +255,12 @@ pub(in crate::run::engine) fn requirements_read(
                 ids.join(", ")
             );
             log(run, now, text);
+            let owed = (run.orch.design.as_mut())
+                .map(|d| std::mem::take(&mut d.requirements_owed))
+                .unwrap_or_default();
+            for note in owed {
+                wake::note(run, note);
+            }
             None
         }
         Ok(None) => None,
@@ -274,6 +281,8 @@ pub(in crate::run::engine) fn requirements_read(
             }
             if let Some(design) = run.orch.design.as_mut() {
                 design.approved_spec = None;
+                // This failure's own wake below says what to do instead.
+                design.requirements_owed.clear();
             }
             let note =
                 format!("anthrex could not read back the approved spec v{n}; submit it again");
@@ -286,10 +295,34 @@ pub(in crate::run::engine) fn requirements_read(
     }
 }
 
+/// The orchestrator's plan submit or sub-planner spawn was refused with `error`: when
+/// it waited for the approved spec's read-back, the orchestrator is owed a wake once the
+/// requirements are stored ([`requirements_read`]), once per kind of call.
+pub(in crate::run::engine) fn refused(run: &mut Run, error: &str) {
+    let note = match error {
+        READ_BACK_PENDING => STORED_SUBMIT,
+        SPAWN_PENDING => STORED_SPAWN,
+        _ => return,
+    };
+    if let Some(design) = run.orch.design.as_mut()
+        && !design.requirements_owed.iter().any(|n| n == note)
+    {
+        design.requirements_owed.push(note.to_string());
+    }
+}
+
+/// The wake owed to a plan submit refused while the approved spec was read back.
+pub const STORED_SUBMIT: &str =
+    "the approved spec's requirements are stored; submit the plan again";
+/// The wake owed to a sub-planner spawn refused while the approved spec was read back.
+pub const STORED_SPAWN: &str =
+    "the approved spec's requirements are stored; spawn the sub-planner again";
+
 /// Ruling T10-5: a Back reopens the spec or the brainstorm, so the spec is no longer
 /// approved: its approved version, requirements and Goal section are cleared.
 pub(in crate::run::engine) fn unapproved(run: &mut Run) {
     if let Some(design) = run.orch.design.as_mut() {
+        design.requirements_owed.clear();
         design.approved_spec = None;
         design.requirements.clear();
         design.goal_section.clear();

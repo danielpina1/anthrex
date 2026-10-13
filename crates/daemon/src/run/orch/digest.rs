@@ -221,6 +221,11 @@ fn gate(run: &Run, for_fingerprint: bool) -> Value {
     if let Some(review) = crate::run::engine::design::review::digest(run) {
         gate["spec_review"] = review;
     }
+    // In planning: whether the approved spec's requirements are stored, so a plan
+    // submit or a spawn is no longer refused for its read-back.
+    if let Some(stored) = crate::run::engine::design::plan::requirements_stored(run) {
+        gate["requirements_stored"] = json!(stored);
+    }
     // Task M9.6.11: the plan review the orchestrator's next submit answers.
     if let Some(review) = crate::run::engine::design::plan::digest(run) {
         gate["plan_review"] = review;

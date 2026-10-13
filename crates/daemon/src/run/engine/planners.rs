@@ -297,6 +297,8 @@ pub(super) fn spawn_subplanner(
         hold = gate_holds::create_epic_hold(run, &epic, now);
     }
     log(run, now, format!("sub-planner {epic} queued"));
+    // Review M1: the owed "spawn the sub-planner again" wake is answered.
+    super::wake::unnote(run, super::design::review::STORED_SPAWN);
     if run.state == RunState::AwaitingApproval {
         run.state = RunState::Planning;
         if let Some(o) = run.orch.orchestrator.as_mut() {

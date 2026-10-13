@@ -122,6 +122,11 @@ fn e2e_a_replayed_accept_reports_its_clean_up() {
 /// `git_timeout_secs = 5`, and far over the one snapshot request made meanwhile.
 const CLEAN_UP_HELD: &str = "3";
 
+/// The bound on the stand-in's warm-up run: one `/bin/sh` start, macOS's first-exec
+/// assessment of a fresh file (up to 10 s loaded, `docs/timing-budgets.md`), and the
+/// real `git --version`. A hang guard.
+const WARM_UP_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// A `PATH` whose `git` holds the first `worktree remove` for [`CLEAN_UP_HELD`]
 /// seconds, then runs the real `git`.
 fn slow_worktree_removal(h: &RunHarness) -> String {
@@ -139,6 +144,17 @@ fn slow_worktree_removal(h: &RunHarness) -> String {
     );
     let git = bin.join("git");
     testexec::write_executable(&git, script);
+    // The warm-up (`docs/timing-budgets.md`, the codex-probe ordering row): the restarted
+    // daemon's `git` is this stand-in for every call, reconcile's reads included, each
+    // under the harness's `git_timeout_secs`. A fresh script's first exec pays macOS's
+    // assessment (measured up to 10 s loaded); inside a reconcile read it timed the read
+    // out, the accept was treated as not started, and the run stayed `Complete`.
+    let warm = support::RunningCommand::start(std::process::Command::new(&git).arg("--version"))
+        .finish(WARM_UP_WAIT);
+    assert!(
+        warm.status.success(),
+        "warming the git stand-in failed: {warm:?}"
+    );
     format!(
         "{}:{}",
         bin.display(),

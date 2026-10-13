@@ -58,10 +58,24 @@ pub fn labels() -> [String; 2] {
     LABELS.map(String::from)
 }
 
+/// The daemon's hold on each approved spec's read-back (`ANTHREX_TEST_DELAY_READ_BACK_MS`,
+/// `docs/timing-budgets.md`): every design e2e test here then meets the gap between
+/// `planning` and the stored requirements, so a script that submits the plan before
+/// `gate.requirements_stored` fails every time rather than once in a while.
+pub const READ_BACK_HOLD_MS: &str = "500";
+
 /// A design harness (`design.default = "full"`) with `lines` more `[orchestrator]`
-/// lines.
+/// lines, and the read-back hold armed.
 pub fn harness(lines: &str) -> RunHarness {
-    RunHarness::design(lines, &[])
+    let mut h = RunHarness::design(lines, &[]);
+    h.restart_daemon(&[("ANTHREX_TEST_DELAY_READ_BACK_MS", READ_BACK_HOLD_MS)]);
+    let log = std::fs::read_to_string(h.data().join("daemon.log")).unwrap_or_default();
+    assert!(
+        log.contains("ANTHREX_TEST_DELAY_READ_BACK_MS: holding"),
+        "the read-back hold was not armed:\n{}",
+        h.log_tail()
+    );
+    h
 }
 
 /// Both brainstormers submit their fixture drafts in their first session.

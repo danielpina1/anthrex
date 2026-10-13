@@ -3,6 +3,8 @@
 mod config;
 mod conversation;
 mod create;
+#[cfg(test)]
+mod early_events_tests;
 mod entry;
 mod headless;
 mod headless_end;
@@ -191,6 +193,7 @@ impl WindowManager {
                 cleanups: BTreeMap::new(),
                 orphaned_cleanups: Vec::new(),
                 runs: Vec::new(),
+                early_events: BTreeMap::new(),
             }),
             changed,
             conversations,
@@ -282,10 +285,31 @@ impl WindowManager {
     }
 
     pub fn handle_event(&self, id: u32, event: WindowEvent) {
-        let parser_panicked = matches!(&event, WindowEvent::ParserPanicked(_));
         let mut inner = crate::lock(&self.inner);
-        let Some(entry) = inner.entries.get_mut(&id) else {
+        if !inner.entries.contains_key(&id) {
+            // Admitted, not inserted yet: kept for `insert` to replay (`early_events`).
+            if let Some(early) = inner.early_events.get_mut(&id) {
+                // Consecutive `Output`s are one: each only stamps the last output time.
+                if !(matches!(event, WindowEvent::Output)
+                    && matches!(early.last(), Some(WindowEvent::Output)))
+                {
+                    early.push(event);
+                }
+            }
             return;
+        }
+        if self.apply_event(&mut inner, id, event) {
+            self.publish(&inner);
+        }
+    }
+
+    /// Applies one window event to its entry; whether anything a client sees changed.
+    /// `handle_event` and phase C's replay of `early_events` (`create::insert`) share
+    /// it, so an event means the same whenever it arrives.
+    fn apply_event(&self, inner: &mut Inner, id: u32, event: WindowEvent) -> bool {
+        let parser_panicked = matches!(&event, WindowEvent::ParserPanicked(_));
+        let Some(entry) = inner.entries.get_mut(&id) else {
+            return false;
         };
         let now = Instant::now();
         let changed = match event {
@@ -327,9 +351,7 @@ impl WindowManager {
         if parser_panicked && let Err(error) = inner.start_cleanup(id) {
             tracing::error!(id, %error, "parser panic cleanup failed");
         }
-        if changed {
-            self.publish(&inner);
-        }
+        changed
     }
 
     /// Called once a second by the daemon: Working windows that went quiet become Idle,

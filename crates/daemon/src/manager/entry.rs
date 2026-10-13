@@ -412,6 +412,16 @@ pub(super) struct Inner {
     /// starting point" treatment `next_id` gets, since `restore` runs once at startup in
     /// production and this field has no shape of its own for this module to merge by.
     pub(super) runs: Vec<serde_json::Value>,
+    /// The events of each admitted window that has no entry yet, in arrival order.
+    ///
+    /// `Window::spawn` (phase B) starts the window's reader and waiter at once, and both
+    /// send on the manager's event channel before phase C inserts the entry. A one-shot
+    /// startup title, or the exit of a program that fails at once, sent in that gap
+    /// would otherwise be dropped, and the window would stay `Starting` for good. `admit`
+    /// opens a slot for its id, `handle_event` appends to it, and `insert` replays it,
+    /// under one lock, right after the entry exists. The `Reservation` guard closes the
+    /// slot on every other exit path.
+    pub(super) early_events: BTreeMap<u32, Vec<crate::window::WindowEvent>>,
 }
 
 impl Inner {

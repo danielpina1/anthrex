@@ -200,7 +200,9 @@ ORCHESTRATOR = [
     _call("submit_doc", {"kind": "spec", "text": SPEC, "ready": True, "responses": []}),
     _until("/gate/doc_gate/revising", NOTE, USER_WAIT),
     _call("submit_doc", {"kind": "spec", "text": SPEC_V2, "ready": True, "responses": []}),
-    _until("/gate/state", "planning", USER_WAIT),
+    # Not "planning": the approved spec's requirements are stored one step later,
+    # and a plan submit before then is refused for its read-back.
+    _until("/gate/requirements_stored", True, USER_WAIT),
     _call("edit_plan", {"edits": [{"op": "add_task", "task": TASK}], "submit": True}),
     _expect("/awaiting_review", True),
     _until("/gate/plan_review/running", False, ORCH_WAIT),

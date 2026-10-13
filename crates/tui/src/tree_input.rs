@@ -399,6 +399,17 @@ impl App {
         self.repair_filtered_selection();
     }
 
+    /// Rows arrived (a runs snapshot or a window list) while the tree is being navigated
+    /// or filtered with nothing selected: a filter typed before the rows it matches
+    /// existed matched nothing, and `Tree::repair_selection` keeps no selection it
+    /// never had. The arriving rows get one as the filter's own keys would give it,
+    /// or `l`, `j`, `k` and Enter would do nothing until the filter was edited again.
+    pub(crate) fn select_arrived_rows(&mut self, any_rows: bool) {
+        if self.tree_input.is_some() && self.tree.selected.is_none() && any_rows {
+            self.repair_filtered_selection();
+        }
+    }
+
     fn repair_filtered_selection(&mut self) {
         let rows = nav_rows_of(
             &self.windows,
