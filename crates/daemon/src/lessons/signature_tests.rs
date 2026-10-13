@@ -210,6 +210,13 @@ fn a_headline_never_carries_a_token() {
             format!("error: token: \x1b(B\x1b[m{token}\n"),
             format!("error: \x1b#8{token}\n"),
             format!("error: \x1b{token}\n"),
+            // Task 9's review, I2: text-escaped colour codes and other escapes that end
+            // in an alphanumeric character.
+            format!("error: {{\"msg\":\"\\u001b[31m{token}\"}}\n"),
+            format!("error: left: \"\\x1b[31m{token}\"\n"),
+            format!("error: + \\033[31m{token}\n"),
+            format!("error: redirect_uri=x%253D{token}\n"),
+            format!("error: \\U00000041{token}\n"),
         ];
         for output in outputs {
             let sig = of(&output).expect("a signature");

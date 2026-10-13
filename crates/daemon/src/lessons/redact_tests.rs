@@ -362,3 +362,67 @@ fn escapes_before_ordinary_hex_are_unchanged() {
         assert_eq!(redact(&text), text, "{text:?}");
     }
 }
+
+/// Every unambiguous token shape, each with at least 16 token characters.
+fn unambiguous() -> Vec<String> {
+    let mut tokens: Vec<String> = ["ghp_", "gho_", "github_pat_", "glpat-", "xoxp-"]
+        .iter()
+        .map(|prefix| format!("{prefix}{}", "FAKE".repeat(5)))
+        .collect();
+    tokens.extend([ghp(), sk_ant(), akia(), xoxb(), real_jwt()]);
+    tokens
+}
+
+/// Task 9's review, I2: a text-escaped colour code, a lone text-escaped ESC, JSON's
+/// `\b` and `\f`, Python's `\U`, a double percent encoding and a broken one each end in
+/// an alphanumeric character right before the token, which must still go.
+#[test]
+fn a_token_behind_an_encoded_escape_is_replaced() {
+    let forms = [
+        r"\u001b[31m",
+        r"\u{1b}[31m",
+        r"\x1b[31m",
+        r"\033[31m",
+        r"\x1b[1m",
+        r"\x1b",
+        r"\b",
+        r"\f",
+        r"\U00000041",
+        "%253D",
+        "%zz",
+        "%2",
+        "q=",
+        "token",
+    ];
+    for secret in unambiguous() {
+        for form in forms {
+            for input in [
+                format!("{form}{secret}"),
+                format!("{{\"msg\":\"auth {form}{secret}\\u001b[0m\"}}"),
+                format!("assert_eq!(left: \"{form}{secret}\")"),
+            ] {
+                let out = redact(&input);
+                assert!(out.contains(TOKEN), "{input:?} -> {out:?}");
+                assert_gone(&out, &secret);
+                assert!(out.contains(form), "{input:?} -> {out:?}: the form is kept");
+                assert_eq!(redact(&out), out, "{input:?}: idempotent");
+            }
+        }
+    }
+}
+
+/// The ambiguous prefixes keep their word boundary, and ordinary prose, identifiers
+/// and SHAs, escaped or not, stay as they are.
+#[test]
+fn prose_and_shas_are_not_over_redacted() {
+    let sha = "3f2a9c01".repeat(5);
+    for text in [
+        format!(r"commit\x1b[33m{sha}\x1b[0m %253D{sha} \U00000041{sha}"),
+        "task-sk-ipaaaaaaaaaaaaaaaaaaaaaa xnpm_config_cache_directory_x".to_string(),
+        "the laughs_count and sighs_total fields; AKIAno; eyJ alone; glpat".to_string(),
+        "use rustfmt; it laughs_at nothing.\nnext".to_string(),
+        r"\x1bsk-short and \bnpm_ok".to_string(),
+    ] {
+        assert_eq!(redact(&text), text, "{text:?}");
+    }
+}

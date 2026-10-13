@@ -83,15 +83,24 @@ static BEARER_RE: LazyLock<Regex> = LazyLock::new(|| {
     ))
 });
 /// Three dot-separated base64url segments, the first two JSON objects (`eyJ`); a clip
-/// may have cut the signature. After a non-word character or an escape.
-static JWT: LazyLock<Regex> = LazyLock::new(|| {
-    re(concat!(
-        r"(^|[^A-Za-z0-9_]|",
-        escape_boundary!(),
-        r")eyJ[A-Za-z0-9_-]{2,}\.eyJ[A-Za-z0-9_-]{2,}(?:\.[A-Za-z0-9_-]*)?"
-    ))
+/// may have cut the signature. Task 9's review, I2 (the controller's ruling): the shape
+/// is unambiguous, so whatever stands before it (an escape that ends in a letter, an
+/// encoded colour code) cannot hide it.
+static JWT: LazyLock<Regex> =
+    LazyLock::new(|| re(r"eyJ[A-Za-z0-9_-]{2,}\.eyJ[A-Za-z0-9_-]{2,}(?:\.[A-Za-z0-9_-]*)?"));
+/// Task 9's review, I2 (the controller's ruling): the unambiguous prefixes, whole
+/// tokens of at least [`TOKEN_MIN`] characters, with no left boundary: no list of what
+/// may stand before a token (`\u001b[31m`, `\x1b`, `\b`, `\U…`, `%253D`) is ever
+/// complete. AWS's key id in its full shape (and the token characters after it). A clipped or placeholder-split token of
+/// these prefixes still needs [`PREFIXED`]'s boundary.
+static UNAMBIGUOUS: LazyLock<Regex> = LazyLock::new(|| {
+    re(
+        r"(?:github_pat_|gh[pousr]_|glpat-|sk-ant-|xox[abprs]-)[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}[A-Za-z0-9_-]*",
+    )
 });
-/// A prefix with what stands before it (a non-alphanumeric character or an escape), and
+/// The ambiguous `sk-` and `npm_` (`task-sk-ip`, `npm_config_*`), and every prefix's
+/// clipped or placeholder-split form: a prefix with what stands before it (a
+/// non-alphanumeric character or an escape), and
 /// the token characters after it, where decision 5's placeholders count as token
 /// characters.
 static PREFIXED: LazyLock<Regex> = LazyLock::new(|| {
@@ -143,8 +152,7 @@ fn bearer(text: &str) -> String {
 }
 
 fn jwt(text: &str) -> String {
-    JWT.replace_all(text, |c: &Captures| format!("{}{TOKEN}", &c[1]))
-        .into_owned()
+    JWT.replace_all(text, TOKEN).into_owned()
 }
 
 fn url_cut(text: &str) -> String {
@@ -170,6 +178,7 @@ pub fn redact(text: &str) -> String {
     let text = url_cut(&text);
     let text = bearer(&text);
     let text = jwt(&text);
+    let text = UNAMBIGUOUS.replace_all(&text, TOKEN);
     prefixed(&text)
 }
 
