@@ -32,7 +32,8 @@ fn pem(kind: &str, newline: &str) -> String {
     [marker("BEGIN"), body, marker("END")].join(newline)
 }
 
-/// Every prefixed shape the brief lists, each with 20 token characters.
+/// Every prefixed shape the brief lists, each with 20 token characters; the ambiguous
+/// `sk-` and `npm_` hold a digit (task 12's review, I2: the controller's ruling).
 fn prefixed() -> Vec<String> {
     let mut tokens: Vec<String> = [
         "ghp_",
@@ -53,7 +54,10 @@ fn prefixed() -> Vec<String> {
         "npm_",
     ]
     .iter()
-    .map(|prefix| format!("{prefix}{}", "FAKE".repeat(5)))
+    .map(|prefix| match *prefix {
+        "sk-" | "npm_" => format!("{prefix}{}", "FAKE0".repeat(4)),
+        _ => format!("{prefix}{}", "FAKE".repeat(5)),
+    })
     .collect();
     tokens.extend([ghp(), sk_ant(), akia(), xoxb()]);
     tokens
@@ -140,8 +144,12 @@ fn fifteen_token_characters_are_not_a_token() {
 
 #[test]
 fn a_token_cut_at_a_line_end_is_replaced() {
-    // A clip (a signature's headline, decision 5) can end a line inside a token.
-    for token in prefixed() {
+    // A clip (a signature's headline, decision 5) can end a line inside a token. Task
+    // 12's review, I2: not the ambiguous `sk-` and `npm_`, which are judged by their
+    // body alone (a clipped one is the ruling's residual gap).
+    let ambiguous =
+        |t: &str| (t.starts_with("sk-") && !t.starts_with("sk-ant-")) || t.starts_with("npm_");
+    for token in prefixed().into_iter().filter(|t| !ambiguous(t)) {
         for keep in [12, 14, 16] {
             let cut: String = token.chars().take(keep).collect();
             for input in [format!("error: {cut}"), format!("error: {cut}\nnext")] {
@@ -193,7 +201,8 @@ fn jwt_is_replaced() {
 
 #[test]
 fn bearer_is_replaced() {
-    let opaque = format!("{}{}", "abc.DEF_", "ghi-jkl~mno+pqr/stu==");
+    // Task 12's review, I2: a credential needs a digit and 16 characters.
+    let opaque = format!("{}{}", "abc.DEF_", "ghi-jkl~mno+pqr/stu0==");
     for (input, want) in [
         (
             format!("Authorization: Bearer {opaque}"),
@@ -208,20 +217,23 @@ fn bearer_is_replaced() {
             format!("AUTHORIZATION: {BEARER}\nnext"),
         ),
         (format!("-H 'bearer {opaque}'"), format!("-H '{BEARER}'")),
-        (format!("Bearer {}", ghp()), BEARER.to_string()),
-        // Cut at a line end, however short.
-        (
-            "header: Bearer abc".to_string(),
-            format!("header: {BEARER}"),
-        ),
+        // An all-letter credential is the token rule's, not the bearer rule's.
+        (format!("Bearer {}", ghp()), format!("Bearer {TOKEN}")),
     ] {
         let out = redact(&input);
         assert_eq!(out, want, "{input:?}");
         assert!(!out.contains(&opaque[..8]), "{out:?}");
     }
-    // A word, not a credential.
-    let prose = "the bearer of bad news";
-    assert_eq!(redact(prose), prose);
+    // A word, not a credential; and (task 12's review, I2) a credential with no digit,
+    // or a short one, even at a line's end: the ruling's residual gap.
+    for prose in [
+        "the bearer of bad news",
+        "Bearer authentication-required",
+        "header: Bearer abc",
+        "header: Bearer abc0",
+    ] {
+        assert_eq!(redact(prose), prose);
+    }
 }
 
 #[test]
@@ -339,8 +351,8 @@ fn a_token_behind_an_escape_is_replaced() {
             }
         }
     }
-    // A bearer credential behind an escape goes too.
-    let credential = "z".repeat(30);
+    // A bearer credential behind an escape goes too (with a digit: task 12's review, I2).
+    let credential = "z0".repeat(15);
     for escape in escapes {
         let input = format!("headers{escape}Bearer {credential}{escape}x");
         let out = redact(&input);

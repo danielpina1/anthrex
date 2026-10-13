@@ -219,7 +219,8 @@ fn written_out_escapes_never_hide_a_secret() {
     let proj = format!("sk-proj-{}", "FAKE0fake1".repeat(4));
     let bare = format!("sk-{}", "FAKE0fake1".repeat(4));
     let npm = format!("npm_{}", "FAKE0fake1".repeat(4));
-    let cred = "zFAKEcred".repeat(4);
+    // Task 12's review, I2: an ambiguous credential needs a digit.
+    let cred = "zFAKE0cred".repeat(4);
     let rows = [
         (format!("{{\"msg\":\"\\u001b[31m{proj}"), &proj),
         (format!("\"\\u{{1b}}[31m{proj}"), &proj),

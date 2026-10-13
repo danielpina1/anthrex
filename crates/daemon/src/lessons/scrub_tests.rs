@@ -53,7 +53,8 @@ fn secrets() -> Vec<(String, String)> {
         (s, tail)
     })
     .collect();
-    let credential = "zFAKEcred".repeat(4);
+    // Task 12's review, I2: an ambiguous credential needs a digit.
+    let credential = "zFAKE0cred".repeat(4);
     out.push((format!("Bearer {credential}"), credential));
     out
 }

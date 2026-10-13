@@ -6,10 +6,12 @@
 //!
 //! The text it sees may already have been clipped (a check's tail, a signature's
 //! headline, decision 5) or rewritten by decision 5's normaliser, so each pattern also
-//! takes the shapes a clip leaves: a key block missing either marker, and a token, a
-//! bearer credential or a user's password cut at a line's end or split by one of the
+//! takes the shapes a clip leaves: a key block missing either marker, and an
+//! unambiguous token or a user's password cut at a line's end or split by one of the
 //! normaliser's placeholders. Wrongly replacing ordinary text costs the distiller a
-//! word; letting a piece of a secret through is not allowed.
+//! word. The ambiguous `sk-`, `npm_` and `Bearer` are judged by their body alone (a
+//! digit and a minimum length, task 12's review, I2), so a short, clipped or all-letter
+//! one is not caught: redaction is best-effort defence in depth, not a guarantee.
 //!
 //! [`scrub`] is the one safe entry point for text that may carry terminal escapes,
 //! written out or real (task 10's review, I1 and I2; the controller's ruling at
@@ -32,8 +34,18 @@ const USERINFO: &str = "***";
 
 /// A prefixed token's characters after its prefix, at least (the brief).
 pub const TOKEN_MIN: usize = 16;
-/// A bearer credential's characters, at least, unless a line's end cut it.
-const BEARER_MIN: usize = 8;
+/// The ambiguous `sk-` and `npm_` tokens' body characters, at least (task 12's review,
+/// I2: the controller's ruling).
+pub const AMBIGUOUS_MIN: usize = 20;
+/// A bearer credential's characters, at least (the same ruling).
+pub const BEARER_MIN: usize = 16;
+
+#[cfg(test)]
+thread_local! {
+    /// Characters the ambiguous prefixes' body check read on this thread: the
+    /// linearity test's measure, with no wall-clock bound.
+    pub(super) static BODY_READ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
 
 fn re(pattern: &str) -> Regex {
     Regex::new(pattern).expect("a valid redaction pattern")
@@ -71,33 +83,33 @@ static URL_USERINFO: LazyLock<Regex> =
 /// `<scheme>://<user>:<password>` a clip cut before its `@`.
 static URL_CUT: LazyLock<Regex> =
     LazyLock::new(|| re(r"(?m)([A-Za-z][A-Za-z0-9+.-]*://)[^\s/?#@:]*:([^\s/?#@]*)$"));
-/// Task 8's review, I2: what may stand right before a token besides a character that
-/// cannot be part of a word: a written-out escape (`\n`, `\b`, `\uXXXX`, `\u{1b}`,
-/// `\x1b`, `\U00000041`, `\033`, `\e[31m`), a percent encoding, whole or broken (`%3D`,
-/// `%2`, `%zz`), or a real escape sequence (a CSI, an nF escape, an OSC string). Each
-/// may end in an alphanumeric character. Task 10's review, I1: the ambiguous `sk-`,
-/// `npm_` and `bearer` keep a boundary, and this is it. Task 11's review, I1 (the
-/// controller's ruling): a colour-code-shaped tail (`[` or `%5B`, digits and `;`, one
-/// letter) is a boundary whatever stands before it, so no escape spelling, listed or
-/// not (`\33[`, `^[[`, `&#27;[`, `␛[`), glues itself to a prefix; and the single-byte
-/// CSI (U+009B) is an ESC's CSI.
+/// Task 8's review, I2: what may stand right before a clipped or placeholder-split
+/// token of an unambiguous prefix besides a character that cannot be part of a word: a
+/// written-out escape (`\n`, `\b`, `\uXXXX`, `\u{1b}`, `\x1b`, `\U00000041`, `\033`,
+/// `\e[31m`), a percent encoding, whole or broken (`%3D`, `%2`, `%zz`), or a real escape
+/// sequence (a CSI, an nF escape, an OSC string, and the single-byte CSI U+009B). Each
+/// may end in an alphanumeric character. No list of spellings is ever complete (task
+/// 12's review, I2), so the ambiguous `sk-`, `npm_` and `Bearer` no longer use one:
+/// see [`AMBIGUOUS`] and [`BEARER_RE`]. A whole unambiguous token needs none
+/// ([`UNAMBIGUOUS`]).
 macro_rules! escape_boundary {
     () => {
         concat!(
             r"\\[A-Za-z]|\\u[0-9A-Fa-f]{4}|\\u\{[0-9A-Fa-f]{1,6}\}|\\x[0-9A-Fa-f]{2}",
             r"|\\U[0-9A-Fa-f]{8}|\\[0-7]{1,4}|\\e\[[0-9;]*[A-Za-z]|%[0-9A-Za-z]{0,2}",
-            r"|(?:\[|%5[bB])[0-9;]*[A-Za-z]|\x{9b}[0-?]*[ -/]*[@-~]",
+            r"|\x{9b}[0-?]*[ -/]*[@-~]",
             r"|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[ -/]+[0-~]|\x1b[\]PX^_][^\x07\x1b]*(?:\x07|\x1b\\)?"
         )
     };
 }
 
-/// `Bearer <credential>`, after a non-word character or an escape.
+/// Task 12's review, I2 and M7 (the controller's ruling): `Bearer` and whitespace,
+/// anywhere, with no left boundary; [`bearer`] keeps it only when the credential is at
+/// least [`BEARER_MIN`] characters holding a digit, so `Bearer authentication-required`
+/// is prose and no escape spelling before `Bearer` can hide a credential.
 static BEARER_RE: LazyLock<Regex> = LazyLock::new(|| {
-    re(concat!(
-        r"(?i)(^|[^A-Za-z0-9_]|",
-        escape_boundary!(),
-        r")(bearer[ \t]+[A-Za-z0-9._~+/=-]+)"
+    re(&format!(
+        r"(?i)bearer[ \t]+([A-Za-z0-9._~+/=-]{{{BEARER_MIN},}})"
     ))
 });
 /// Three dot-separated base64url segments, the first two JSON objects (`eyJ`); a clip
@@ -117,17 +129,25 @@ static UNAMBIGUOUS: LazyLock<Regex> = LazyLock::new(|| {
         r"(?:github_pat_|gh[pousr]_|glpat-|sk-ant-|sk-proj-|sk-svcacct-|sk-admin-|xox[abprs]-)[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}[A-Za-z0-9_-]*",
     )
 });
-/// The ambiguous `sk-` and `npm_` (`task-sk-ip`, `npm_config_*`), and every prefix's
-/// clipped or placeholder-split form: a prefix with what stands before it (a
-/// non-alphanumeric character or an escape), and
-/// the token characters after it, where decision 5's placeholders count as token
-/// characters.
+/// Task 12's review, I2 and M7 (the controller's ruling): the ambiguous `sk-` (any
+/// variant: `sk-proj-` and the rest) and `npm_`, anywhere, with no left boundary: no
+/// list of what may stand before a prefix is ever complete (`\33[?25l`, `^[[38:5:196m`,
+/// `\33(B`, `&#27;&#91;`…), and a word glued to it (`tokensk-…`) is no defence either.
+/// The body is judged instead ([`ambiguous`]): at least [`AMBIGUOUS_MIN`] token
+/// characters holding a digit, so `ask-for-help-with-the-thing`, `task-sk-ipped` and
+/// `npm_install_script_name` are words. The residual gap: a secret with no digit, or a
+/// shorter one, a clipped one, or one split by a placeholder.
+static AMBIGUOUS: LazyLock<Regex> =
+    LazyLock::new(|| re(&format!(r"(?:sk-|npm_)[A-Za-z0-9_-]{{{AMBIGUOUS_MIN},}}")));
+/// Every unambiguous prefix's clipped or placeholder-split form: a prefix with what
+/// stands before it (a non-alphanumeric character or an escape), and the token
+/// characters after it, where decision 5's placeholders count as token characters.
 static PREFIXED: LazyLock<Regex> = LazyLock::new(|| {
     re(concat!(
         r"(^|[^A-Za-z0-9]|",
         escape_boundary!(),
         r")",
-        r"(github_pat_|gh[pousr]_|glpat-|sk-ant-|sk-|xox[abprs]-|AKIA|npm_)",
+        r"(github_pat_|gh[pousr]_|glpat-|sk-ant-|sk-proj-|sk-svcacct-|sk-admin-|xox[abprs]-|AKIA)",
         r"((?:[A-Za-z0-9_-]|<(?:sha|id|dur|l|c|tmp|time|tid)>)*)"
     ))
 });
@@ -141,7 +161,7 @@ fn prefixed(text: &str) -> String {
     PREFIXED
         .replace_all(text, |c: &Captures| {
             let (before, prefix, rest) = (&c[1], &c[2], &c[3]);
-            // `sk-` inside a word (`task-sk-ip`) is a word.
+            // A `sk-…` prefix inside a word (`task-sk-ant-ic`) is a word.
             let in_word = prefix.starts_with("sk-") && matches!(before, "-" | "_");
             let end = c.get(0).map_or(0, |m| m.end());
             let token = rest.chars().count() >= TOKEN_MIN
@@ -156,15 +176,32 @@ fn prefixed(text: &str) -> String {
         .into_owned()
 }
 
+/// Whether `body` holds a digit; it is read once (counted in the tests).
+fn has_digit(body: &str) -> bool {
+    #[cfg(test)]
+    BODY_READ.with(|c| c.set(c.get() + body.len() as u64));
+    body.bytes().any(|b| b.is_ascii_digit())
+}
+
+fn ambiguous(text: &str) -> String {
+    AMBIGUOUS
+        .replace_all(text, |c: &Captures| {
+            if has_digit(&c[0]) {
+                TOKEN.to_string()
+            } else {
+                c[0].to_string()
+            }
+        })
+        .into_owned()
+}
+
 fn bearer(text: &str) -> String {
     BEARER_RE
         .replace_all(text, |c: &Captures| {
-            let m = c.get(0).expect("the whole match");
-            let credential = c[2].split_whitespace().nth(1).unwrap_or("");
-            if credential.len() >= BEARER_MIN || at_line_end(text, m.end()) {
-                format!("{}{BEARER}", &c[1])
+            if has_digit(&c[1]) {
+                BEARER.to_string()
             } else {
-                m.as_str().to_string()
+                c[0].to_string()
             }
         })
         .into_owned()
@@ -198,6 +235,7 @@ pub fn redact(text: &str) -> String {
     let text = bearer(&text);
     let text = jwt(&text);
     let text = UNAMBIGUOUS.replace_all(&text, TOKEN);
+    let text = ambiguous(&text);
     prefixed(&text)
 }
 
