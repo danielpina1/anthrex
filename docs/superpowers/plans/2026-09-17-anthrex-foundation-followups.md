@@ -2338,4 +2338,5 @@ Five minors from the merge review of milestone 9.11, none blocking:
 
 ## From milestone 9.15 (2026-10-13, recorded by M9.15.4 and its extra commits), for later
 
+- **The dossier's redaction stops at the brief's scope** (M9.15.8). `lessons::redact` does not replace `Authorization: Basic <base64>` (or `token`/`digest` schemes), credential assignments such as `DATABASE_PASSWORD=…` or `"client_secret": "…"`, or a key body whose BEGIN and END markers were both cut away. Decide whether to widen it, and share it with PR-body redaction (9.2, NA §6).
 - **Daemon starts outside `TestDaemon` and `RunHarness` read no `[lessons]` default** (ruling C3, M9.15.4). `codex_version.rs`, `daemon_stop_stuck.rs`, `daemon_spawn_stderr.rs` and `daemon_start_lock.rs` start daemons through `isolated_command` with no config of their own (some read the user's), and run no goal; if one ever starts a run it should write `support::lessons::LESSONS_OFF` too.
