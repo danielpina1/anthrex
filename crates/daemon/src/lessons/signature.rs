@@ -66,11 +66,32 @@ fn re(pattern: &str) -> Regex {
     Regex::new(pattern).expect("a valid signature pattern")
 }
 
-/// Ruling C10 (a): CSI and OSC sequences, and any other two-character escape. Also
-/// stripped from a dossier before its redaction (task 8's review, I1).
+/// Ruling C10 (a): terminal escape sequences. Also stripped from a dossier before its
+/// redaction (task 8's review, I1). Task 9's review, I1 (the controller's ruling): a
+/// CSI; an OSC, DCS, SOS, PM or APC string up to its BEL or ST; ECMA-48's general form
+/// `ESC <intermediates 0x20-0x2F> <final 0x30-0x7E>` (nF escapes such as `tput sgr0`'s
+/// `ESC ( B`, and `ESC # 8`); and a lone ESC. The general form can take a token's first
+/// character as its final (`ESC g…`), so callers redact before stripping too.
 pub(crate) static ESCAPE: LazyLock<Regex> = LazyLock::new(|| {
-    re(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[@-Z\\-_]?")
+    re(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b[\]PX^_][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[ -/]*[0-~]?")
 });
+
+/// `text` without its escape sequences ([`ESCAPE`]). An ESC right before a redaction's
+/// placeholder (`[redacted …]`, `Bearer [redacted]`, which a redaction before the strip
+/// leaves) goes alone, so the strip cannot eat the placeholder's first characters.
+pub(crate) fn strip_escapes(text: &str) -> String {
+    ESCAPE
+        .replace_all(text, |c: &Captures| {
+            let m = c.get(0).expect("the whole match");
+            let after = &text[m.start() + 1..];
+            if after.starts_with("[redacted") || after.starts_with("Bearer [redacted") {
+                m.as_str()[1..].to_string()
+            } else {
+                String::new()
+            }
+        })
+        .into_owned()
+}
 /// `…/runs/<run id>/<checkout>/` (`model_paths.rs`'s `<wt_dir>/runs/<id>/<task>`).
 static CHECKOUT: LazyLock<Regex> = LazyLock::new(|| re(r"(?:/[^/\s]+)*?/runs/[^/\s]+/[^/\s]+/"));
 /// Ruling C10 (b): `…/target-pool/<dir>/`, 9.14's pool directories.
@@ -135,7 +156,9 @@ fn decisive(line: &str) -> bool {
 /// before its clip. Redaction is a pure function of the line, so the same failure keeps
 /// its `fp` (and one that printed another token of the same shape shares it).
 pub fn of(output: &str) -> Option<Sig> {
-    let text = multi_line(&redact(&ESCAPE.replace_all(output, "")));
+    // Task 9's review, I1: redacted before the escapes go too, so an escape's final
+    // can never take a token's first character and leave the rest unrecognised.
+    let text = multi_line(&redact(&strip_escapes(&redact(output))));
     let lines: Vec<String> = (text.lines().map(|l| redact(&normalise(l))))
         .filter(|l| !skipped(l))
         .collect();

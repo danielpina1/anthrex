@@ -443,6 +443,15 @@ fn ansi_wrapped_tokens_are_replaced() {
             format!("\x1b]8;;https://x\x07{token}\x1b]8;;\x07"),
             token.clone(),
         ),
+        // Task 9's review, I1: nF escapes (`tput sgr0` on xterm is `ESC ( B ESC [ m`,
+        // DEC's `ESC # 8`), a DCS string, and a lone ESC right before a token whose
+        // first character an escape's final could take.
+        (format!("token: \x1b(B\x1b[m{token}"), token.clone()),
+        (format!("x \x1b(B\x1b[m{jwt}"), jwt.clone()),
+        (format!("\x1b#8{token}"), token.clone()),
+        (format!("\x1b%G{sk_ant}"), sk_ant.clone()),
+        (format!("\x1bP1$r0m\x1b\\{token}"), token.clone()),
+        (format!("\x1b{token}"), token.clone()),
     ];
     for (input, secret) in cases {
         let out = super::clean(&input);

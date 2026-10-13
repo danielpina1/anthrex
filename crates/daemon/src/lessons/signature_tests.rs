@@ -206,6 +206,10 @@ fn a_headline_never_carries_a_token() {
             format!("error: auth failed: {pad} {token}\n"),
             format!("error: auth failed for \x1b[1;31m{token}\x1b[0m\n"),
             format!("error: {{\"msg\":\"denied\\n{token}\"}}\n"),
+            // Task 9's review, I1: nF escapes and a lone ESC before the token.
+            format!("error: token: \x1b(B\x1b[m{token}\n"),
+            format!("error: \x1b#8{token}\n"),
+            format!("error: \x1b{token}\n"),
         ];
         for output in outputs {
             let sig = of(&output).expect("a signature");
