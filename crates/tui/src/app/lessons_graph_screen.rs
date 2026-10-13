@@ -224,6 +224,17 @@ impl LessonsGraphScreen {
             .collect()
     }
 
+    /// Selects `id`. Task 15's review, M3: a new selection starts the panel at its
+    /// first row.
+    fn select(&mut self, id: Option<String>) {
+        if id != self.selected
+            && let Some(panel) = &mut self.panel
+        {
+            panel.row = 0;
+        }
+        self.selected = id;
+    }
+
     /// An arrow: the nearest node in its cone, or (nothing selected) the node nearest
     /// the camera's centre.
     fn arrow(&mut self, dir: Dir) {
@@ -241,13 +252,14 @@ impl LessonsGraphScreen {
             }
         };
         if let Some(i) = next {
-            self.selected = Some(points[i].0.to_string());
+            let id = points[i].0.to_string();
+            self.select(Some(id));
         }
     }
 
     /// A new graph: laid out once, the camera kept, the selection kept while its node
-    /// exists (the panel closes with it). Task 15's review, M2: a question about a node no
-    /// longer drawn is dropped.
+    /// exists (the panel closes with it). Task 15's review: a question about a node no
+    /// longer drawn is dropped (M2), and the panel's row is clamped to what is left (M3).
     pub(crate) fn install(&mut self, graph: LessonGraph) {
         self.positions = layout::layout(&graph).positions;
         self.layouts += 1;
@@ -263,6 +275,10 @@ impl LessonsGraphScreen {
         if (self.question.as_ref()).is_some_and(|ask| self.index_of(ask.id()).is_none()) {
             self.question = None;
         }
+        let last = self.panel_last();
+        if let Some(panel) = &mut self.panel {
+            panel.row = panel.row.min(last);
+        }
     }
 
     /// A left click at `(column, row)` on the canvas `view` shows.
@@ -274,7 +290,7 @@ impl LessonsGraphScreen {
         if picked.is_none() {
             self.panel = None;
         }
-        self.selected = picked;
+        self.select(picked);
     }
 
     /// `Enter` in the panel on a module's row: that node is selected.
@@ -298,7 +314,19 @@ impl LessonsGraphScreen {
 
     /// `j`/`k` in the panel.
     fn panel_move(&mut self, down: bool) {
-        let last = match self.selected_node() {
+        let last = self.panel_last();
+        if let Some(panel) = &mut self.panel {
+            panel.row = if down {
+                (panel.row + 1).min(last)
+            } else {
+                panel.row.saturating_sub(1)
+            };
+        }
+    }
+
+    /// The panel's last row: a module's last listed node, or a lesson's last line.
+    fn panel_last(&self) -> usize {
+        match self.selected_node() {
             Some(n) if n.kind != GraphNodeKind::Lesson => {
                 self.module_rows(&n.id.clone()).len().saturating_sub(1)
             }
@@ -314,13 +342,6 @@ impl LessonsGraphScreen {
                 lines.len().saturating_sub(1)
             }),
             None => 0,
-        };
-        if let Some(panel) = &mut self.panel {
-            panel.row = if down {
-                (panel.row + 1).min(last)
-            } else {
-                panel.row.saturating_sub(1)
-            };
         }
     }
 }
@@ -446,7 +467,7 @@ impl App {
                     let lit = search::matches(graph, &s.search.query);
                     let at = s.selected.as_deref();
                     if let Some(id) = search::cycle(graph, &lit, at, c == 'n') {
-                        s.selected = Some(id);
+                        s.select(Some(id));
                     }
                 }
             }

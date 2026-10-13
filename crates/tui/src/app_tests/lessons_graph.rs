@@ -469,3 +469,66 @@ fn pending_graph_under_question(app: &mut App) -> u64 {
     gs_mut(app).question = ask;
     id
 }
+
+/// Task 15's review, M3: the panel's row starts again at 0 when the selection changes,
+/// and a reply that shortens the list clamps it, so the marked row is the one `Enter`
+/// acts on.
+#[test]
+fn the_panel_row_resets_on_a_new_selection_and_clamps_on_a_reply() {
+    let mut app = graph_app();
+    let again = pending_graph(&mut app);
+    select(&mut app, BILLING);
+    tap(&mut app, KeyCode::Enter);
+    tap(&mut app, KeyCode::Tab);
+    tap(&mut app, KeyCode::Char('j'));
+    tap(&mut app, KeyCode::Char('j'));
+    assert_eq!(gs(&app).panel.map(|p| p.row), Some(2));
+    // Billing keeps one lesson: the row is clamped to it, and Enter selects it.
+    graph_reply(&mut app, again, graph_without(&[KNOWN, PROPOSED]));
+    assert_eq!(gs(&app).module_rows(BILLING), [TRIAL]);
+    assert_eq!(gs(&app).panel.map(|p| p.row), Some(0));
+    tap(&mut app, KeyCode::Enter);
+    assert_eq!(gs(&app).selected.as_deref(), Some(TRIAL));
+
+    // An arrow, `n` and a click that move the selection each start the row at 0.
+    let mut app = graph_app();
+    let moved = |app: &mut App, how: &dyn Fn(&mut App)| {
+        select(app, BILLING);
+        tap(app, KeyCode::Enter);
+        gs_mut(app).panel = Some(Panel {
+            focus: false,
+            row: 2,
+        });
+        how(app);
+        assert_ne!(gs(app).selected.as_deref(), Some(BILLING));
+        assert_eq!(gs(app).panel.map(|p| p.row), Some(0));
+    };
+    moved(&mut app, &|app| {
+        let before = gs(app).selected.clone();
+        for code in [KeyCode::Right, KeyCode::Left, KeyCode::Up, KeyCode::Down] {
+            tap(app, code);
+            if gs(app).selected != before {
+                break;
+            }
+        }
+    });
+    moved(&mut app, &|app| {
+        tap(app, KeyCode::Char('/'));
+        for c in "invoice".chars() {
+            tap(app, KeyCode::Char(c));
+        }
+        tap(app, KeyCode::Enter);
+        tap(app, KeyCode::Char('n'));
+        assert_eq!(gs(app).selected.as_deref(), Some(PROPOSED));
+        tap(app, KeyCode::Esc);
+    });
+    moved(&mut app, &|app| {
+        let layout = crate::ui::layout_for(app, ratatui::layout::Rect::new(0, 0, 160, 48));
+        let canvas = layout.lessons_canvas;
+        let s = gs(app);
+        let view = crate::ui::lessons_graph::view(s, canvas);
+        let at = s.index_of(KEPT).unwrap();
+        let (x, y) = view.cell(s.positions[at]).expect("KEPT is on the canvas");
+        app.on_click(x, y, &layout);
+    });
+}
