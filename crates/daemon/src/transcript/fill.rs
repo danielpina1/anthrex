@@ -10,6 +10,9 @@ use serde_json::{Map, Value};
 
 use crate::headless::quota::{QuotaSample, codex_rate_limits};
 
+/// The model Claude writes on the assistant lines it makes up for an API error.
+const SYNTHETIC_MODEL: &str = "<synthetic>";
+
 /// A session's context fill.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Fill {
@@ -23,11 +26,14 @@ pub struct Fill {
 
 /// Claude: the last main-chain assistant line's `input_tokens + cache_read_input_tokens +
 /// cache_creation_input_tokens + output_tokens` (decision 22). A sub-agent's line
-/// (`isSidechain: true`) is skipped; a last main-chain line without all four is no reading.
+/// (`isSidechain: true`) is skipped, and so is an API-error line (model [`SYNTHETIC_MODEL`],
+/// zero usage), which says nothing about the context; a last main-chain line without all
+/// four is no reading.
 pub fn claude_fill(tail: &str) -> Option<Fill> {
     let line = objects(tail).rev().find(|line| {
         line.get("type").and_then(Value::as_str) == Some("assistant")
             && line.get("isSidechain").and_then(Value::as_bool) != Some(true)
+            && line.get("message").and_then(|m| m.get("model")?.as_str()) != Some(SYNTHETIC_MODEL)
     })?;
     let message = line.get("message")?;
     let usage = message.get("usage")?;

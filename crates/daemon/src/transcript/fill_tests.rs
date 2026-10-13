@@ -419,6 +419,34 @@ mod readers {
         }
     }
 
+    /// Claude's API-error lines are assistant lines of model `<synthetic>` with zero usage;
+    /// one after the last real line must not read as an empty context.
+    #[test]
+    fn claude_fill_skips_synthetic_lines() {
+        let lines: Vec<&str> = CLAUDE_278.lines().collect();
+        let mut synthetic: Value = serde_json::from_str(lines[45]).unwrap();
+        synthetic["message"]["model"] = json!("<synthetic>");
+        for field in [
+            "input_tokens",
+            "cache_creation_input_tokens",
+            "cache_read_input_tokens",
+            "output_tokens",
+        ] {
+            synthetic["message"]["usage"][field] = json!(0);
+        }
+        let tail = format!("{CLAUDE_278}{synthetic}\n");
+        assert_eq!(
+            claude_fill(&tail),
+            Some(Fill {
+                tokens: 49_028,
+                window: None,
+                model: Some("claude-opus-5".into()),
+            })
+        );
+        // Only synthetic lines: no reading, never a zero fill.
+        assert_eq!(claude_fill(&format!("{synthetic}\n")), None);
+    }
+
     #[test]
     fn codex_fill_reads_last_token_usage_and_window() {
         // Line 26, not line 22's 23,193 (decision 22): input + output, cached inside input.
