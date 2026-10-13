@@ -1,7 +1,8 @@
 //! Milestone 9.15 decision 22: which of a run's frozen lessons a task's prompts show.
 //! Pure, and in integer per-mille arithmetic so it is exact on every platform:
 //! `score = 450·overlap + 350·usefulness + 200·recency`, each component 0–1000, kept at
-//! [`MIN_SCORE`] or more. Only an active lesson is ever selected (decision 18): a
+//! [`MIN_SCORE`] or more. A lesson with files is shown only to a task whose `owns` touch
+//! one of them ([`relevant`], the review's correction). Only an active lesson is ever selected (decision 18): a
 //! proposed one never is, whatever its score (Review focus 6).
 //!
 //! The items are rendered here (one line each: `one_line`d, marker-broken, clipped to
@@ -56,6 +57,14 @@ pub fn overlap(lesson: &LessonBrief, owns: &[String]) -> u32 {
         .filter(|f| owns.iter().any(|o| intersects(f, o)))
         .count();
     (1000 * hits / lesson.files.len()) as u32
+}
+
+/// Whether a task owning `owns` may be shown `lesson` at all (the review's correction
+/// to decision 22): a lesson with files only when one of them intersects an `owns`
+/// glob, however high its score; a lesson with no files always (its score decides).
+/// A hit counts even when [`overlap`]'s per-mille share rounds down to 0.
+pub fn relevant(lesson: &LessonBrief, owns: &[String]) -> bool {
+    lesson.files.is_empty() || (lesson.files.iter()).any(|f| owns.iter().any(|o| intersects(f, o)))
 }
 
 /// An unmeasured lesson's usefulness: the median of the measured ones' (the mean of
@@ -129,13 +138,13 @@ fn block_len(picked: &Picked) -> usize {
 }
 
 /// Decision 22: the lessons of `items` a task owning `owns` is shown, scored at `now`
-/// (the run's freeze time, ruling C8): selectable and at [`MIN_SCORE`] or more, by
+/// (the run's freeze time, ruling C8): selectable, [`relevant`] and at [`MIN_SCORE`] or more, by
 /// score descending then id, at most `max_items`, and the last dropped first until the
 /// block fits `block_chars`.
 pub fn pick(items: &[LessonBrief], owns: &[String], now: u64, limits: &LessonLimits) -> Picked {
     let fallback = unmeasured(items);
     let mut scored: Vec<(u32, &LessonBrief)> = (items.iter())
-        .filter(|l| selectable(l.status))
+        .filter(|l| selectable(l.status) && relevant(l, owns))
         .map(|l| (score(l, owns, now, fallback), l))
         .filter(|(s, _)| *s >= MIN_SCORE)
         .collect();
