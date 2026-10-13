@@ -47,6 +47,9 @@ mod headless;
 #[path = "../app_tests/runs.rs"]
 mod runs;
 
+#[path = "../app_tests/filter_late_rows.rs"]
+mod filter_late_rows;
+
 #[path = "../app_tests/gate.rs"]
 mod gate;
 
