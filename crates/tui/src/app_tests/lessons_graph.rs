@@ -426,3 +426,46 @@ fn arrows_and_clicks_select() {
     assert_eq!(gs(&app).selected, None);
     assert_eq!(gs(&app).panel, None);
 }
+
+/// A graph request outstanding: approving `TRIAL` asks the graph again.
+fn pending_graph(app: &mut App) -> u64 {
+    select(app, TRIAL);
+    let (act, _) = one(&tap(app, KeyCode::Char('a')));
+    graph_request(&done(app, act, "approved 1"))
+}
+
+/// `fixture::graph()` without the nodes `ids`, their edges and their details.
+fn graph_without(ids: &[&str]) -> LessonGraph {
+    let mut graph = fixture::graph();
+    graph.nodes.retain(|n| !ids.contains(&n.id.as_str()));
+    (graph.edges).retain(|e| !ids.contains(&e.from.as_str()) && !ids.contains(&e.to.as_str()));
+    graph.lessons.retain(|l| !ids.contains(&l.id.as_str()));
+    graph
+}
+
+/// Task 15's review, M2: a graph reply that no longer holds the node a question names
+/// drops the question (quietly), so `y` cannot act on a node that is not drawn; a
+/// reply that still holds it keeps the question.
+#[test]
+fn a_reply_without_the_asked_node_drops_its_question() {
+    let mut app = graph_app();
+    let again = pending_graph(&mut app);
+    select(&mut app, APPROVED);
+    tap(&mut app, KeyCode::Char('d'));
+    assert!(gs(&app).question.is_some());
+    let next = pending_graph_under_question(&mut app);
+    graph_reply(&mut app, again, fixture::graph());
+    assert!(gs(&app).question.is_some(), "its node is still drawn");
+    assert!(graph_reply(&mut app, next, graph_without(&[APPROVED])).is_empty());
+    assert_eq!(gs(&app).question, None);
+    assert!(tagged(&tap(&mut app, KeyCode::Char('y'))).is_empty());
+}
+
+/// A second graph request while a question is open: every key answers a question, so
+/// the question is set aside for the action and put back.
+fn pending_graph_under_question(app: &mut App) -> u64 {
+    let ask = gs_mut(app).question.take();
+    let id = pending_graph(app);
+    gs_mut(app).question = ask;
+    id
+}

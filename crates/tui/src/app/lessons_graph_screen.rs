@@ -57,6 +57,13 @@ impl GraphAsk {
         }
     }
 
+    /// The id it asks about.
+    pub fn id(&self) -> &str {
+        match self {
+            GraphAsk::Forget { id, .. } | GraphAsk::Dismiss { id } | GraphAsk::Reject { id } => id,
+        }
+    }
+
     fn request(&self, dir: PathBuf) -> LessonsRequest {
         match self {
             GraphAsk::Forget { id, .. } | GraphAsk::Dismiss { id } => LessonsRequest::Forget {
@@ -239,7 +246,8 @@ impl LessonsGraphScreen {
     }
 
     /// A new graph: laid out once, the camera kept, the selection kept while its node
-    /// exists (the panel closes with it).
+    /// exists (the panel closes with it). Task 15's review, M2: a question about a node no
+    /// longer drawn is dropped.
     pub(crate) fn install(&mut self, graph: LessonGraph) {
         self.positions = layout::layout(&graph).positions;
         self.layouts += 1;
@@ -251,6 +259,9 @@ impl LessonsGraphScreen {
         {
             self.selected = None;
             self.panel = None;
+        }
+        if (self.question.as_ref()).is_some_and(|ask| self.index_of(ask.id()).is_none()) {
+            self.question = None;
         }
     }
 
