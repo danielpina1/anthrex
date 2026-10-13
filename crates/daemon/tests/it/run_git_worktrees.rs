@@ -437,3 +437,50 @@ fn a_user_branch_named_like_the_run_is_reported_plainly() {
         "branch anthrex/col1 exists, so git cannot create anthrex/col1/integration; rename or delete anthrex/col1"
     );
 }
+
+/// The integration checkout (and the tier-3 `.full` one) is a worktree git lists, not a
+/// standalone checkout, but a check run in it still gets its step directory under the
+/// checkout's task temporary directory (`tier_step::step_base`). Removing the checkout
+/// at the run's end must take that directory too, or every run that ran a check there
+/// leaves an empty `<tmp root>/<hash>` behind for good.
+#[test]
+fn removing_a_listed_checkout_takes_its_task_temporary_directory() {
+    use daemon::run::driver::tier_step::{fresh_dir, remove_dir, step_base};
+    use daemon::run::git::{checkout_repo_dir, remove_checkout};
+    let repo = repo();
+    let base = head(&repo.root);
+    let (_keep, wt) = wt_dir();
+    let keep_data = crate::support::TestDir::new();
+    let data = keep_data.path().canonicalize().unwrap();
+    let path = wt.join("runs/r1/integration");
+    create_run_branch(
+        real_git(),
+        &repo.root,
+        "anthrex/r1/integration",
+        &base,
+        &path,
+        T,
+    )
+    .unwrap();
+    // A check in it, as `tier_step::run_isolated_with` runs one: its step directory is
+    // made under the base and removed after, which leaves the base.
+    let tmp = step_base(&data, &path);
+    let common = repo.root.join(".git");
+    let step = fresh_dir(&common, &tmp, "s1-check").unwrap();
+    assert_eq!(remove_dir(&step), None);
+    assert!(
+        tmp.is_dir(),
+        "the fixture made no base at {}",
+        tmp.display()
+    );
+
+    let repo_dir = checkout_repo_dir(&data, &path);
+    remove_checkout(real_git(), &repo.root, &path, Some(&repo_dir), T).unwrap();
+
+    assert!(!path.exists(), "the checkout is left");
+    assert!(
+        !tmp.exists(),
+        "the checkout's task temporary directory {} is left",
+        tmp.display()
+    );
+}
