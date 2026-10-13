@@ -10,6 +10,9 @@
 //!   `shares_files` (two lessons whose files intersect, once, `from < to`) and
 //!   `from_signature` (a distilled lesson → `kf-<fp>` when its distill entry's `fps`
 //!   held that drawn known failure's `fp`).
+//! - **Edge cap** (M9.15.13's edge-cap ruling, before layout): each lesson keeps at
+//!   most [`SHARES_PER_LESSON`] `shares_files` edges and the graph at most
+//!   [`SHARES_MAX`], the strongest first (see [`strongest`]).
 //! - **Cap**: [`GRAPH_NODES_MAX`] nodes in all; the hubs first, then the lessons in
 //!   decision 21's freeze order (`known`, `approved`, `kept`, `on_trial`, then
 //!   `proposed`; newest `last_seen` first; then the id). The rest are counted in
@@ -31,7 +34,7 @@ use proto::{
 };
 
 use super::fold::{Lesson, Store};
-use crate::run::globs::{any_intersect, literal_prefix};
+use crate::run::globs::{intersects, literal_prefix};
 
 /// The root hub: files in no module, and lessons with no files (decision 42).
 pub const ROOT_ID: &str = "m:(root)";
@@ -39,6 +42,21 @@ pub const ROOT_ID: &str = "m:(root)";
 pub const ROOT_LABEL: &str = "(root)";
 /// The most module hubs drawn, by name (decision 43); the root hub is extra.
 pub const MODULE_HUBS_MAX: usize = 100;
+/// The most `shares_files` edges one lesson keeps (the edge-cap ruling).
+pub const SHARES_PER_LESSON: usize = 8;
+/// The most `shares_files` edges in one graph (the edge-cap ruling). At
+/// [`GRAPH_NODES_MAX`] nodes the per-lesson cap already keeps the total at or below
+/// 299 × 8 / 2 = 1,196, so this is a backstop should either cap grow.
+pub const SHARES_MAX: usize = 2_000;
+
+/// One candidate `shares_files` edge: `from < to`, and `strength` intersecting
+/// `(file, file)` pairs between the two lessons.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Share<'a> {
+    pub(super) from: &'a str,
+    pub(super) to: &'a str,
+    pub(super) strength: u32,
+}
 
 #[cfg(test)]
 thread_local! {
@@ -114,14 +132,24 @@ pub fn build(
             edges.push(edge(&lesson.id, &hub, GraphEdgeKind::Touches));
         }
     }
+    let mut shares: Vec<Share> = Vec::new();
     for (i, a) in shown.iter().enumerate() {
         for b in &shown[i + 1..] {
             count_pair();
-            if any_intersect(&a.files, &b.files) {
+            let strength = shared(&a.files, &b.files);
+            if strength > 0 {
                 let (from, to) = if a.id < b.id { (a, b) } else { (b, a) };
-                edges.push(edge(&from.id, &to.id, GraphEdgeKind::SharesFiles));
+                shares.push(Share {
+                    from: &from.id,
+                    to: &to.id,
+                    strength,
+                });
             }
         }
+    }
+    let keep = strongest(&shares, SHARES_PER_LESSON, SHARES_MAX);
+    for (share, _) in shares.iter().zip(keep).filter(|(_, k)| *k) {
+        edges.push(edge(share.from, share.to, GraphEdgeKind::SharesFiles));
     }
     let known: BTreeSet<&str> = (shown.iter())
         .filter(|l| l.status == LessonStatus::Known)
@@ -199,6 +227,46 @@ fn touched(files: &[String], dirs: &[(String, Vec<&str>)]) -> Vec<String> {
         add(best.map_or(ROOT_ID, |(hub, _)| hub.as_str()));
     }
     hubs
+}
+
+/// The number of `(file, file)` pairs of `a` and `b` that intersect: a pair of
+/// lessons' `shares_files` strength (0 when they share nothing). Symmetric.
+fn shared(a: &[String], b: &[String]) -> u32 {
+    let count: usize = (a.iter())
+        .map(|ga| b.iter().filter(|gb| intersects(ga, gb)).count())
+        .sum();
+    u32::try_from(count).unwrap_or(u32::MAX)
+}
+
+/// Which of `shares` survive the edge cap, as flags in `shares`' order (so the kept
+/// edges keep their pairwise order, and a graph under both caps is unchanged). The
+/// candidates are visited strongest first, ties by `(from, to)` id; one is kept while
+/// both its lessons hold fewer than `per_lesson` kept edges and fewer than `total` are
+/// kept. Deterministic: it depends on ids and strengths only, never on input order.
+pub(super) fn strongest(shares: &[Share], per_lesson: usize, total: usize) -> Vec<bool> {
+    let mut order: Vec<usize> = (0..shares.len()).collect();
+    order.sort_by(|&i, &j| {
+        let (a, b) = (&shares[i], &shares[j]);
+        (Reverse(a.strength), a.from, a.to).cmp(&(Reverse(b.strength), b.from, b.to))
+    });
+    let mut keep = vec![false; shares.len()];
+    let mut degree: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut kept = 0;
+    for i in order {
+        if kept == total {
+            break;
+        }
+        let share = &shares[i];
+        let full = |id: &str| degree.get(id).is_some_and(|d| *d >= per_lesson);
+        if full(share.from) || full(share.to) {
+            continue;
+        }
+        *degree.entry(share.from).or_insert(0) += 1;
+        *degree.entry(share.to).or_insert(0) += 1;
+        keep[i] = true;
+        kept += 1;
+    }
+    keep
 }
 
 /// Decision 43's order: decision 21's freeze ranks, `proposed` after them; `None` for a

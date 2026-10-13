@@ -394,10 +394,168 @@ fn shares_files_compares_drawn_lessons_only() {
     let graph = graph_of(&lessons, &[]);
     let drawn = (GRAPH_NODES_MAX - 1) as u64;
     assert_eq!(PAIRS.with(|c| c.get()), drawn * (drawn - 1) / 2);
-    assert_eq!(
-        edges(&graph, GraphEdgeKind::SharesFiles).len() as u64,
-        drawn * (drawn - 1) / 2
+    // The 44,551 intersecting pairs are capped (M9.15.13's edge-cap ruling).
+    assert!(edges(&graph, GraphEdgeKind::SharesFiles).len() <= SHARES_MAX);
+}
+
+/// Each lesson's `shares_files` degree in `graph`.
+fn share_degrees(graph: &LessonGraph) -> BTreeMap<String, usize> {
+    let mut degrees = BTreeMap::new();
+    for (from, to) in edges(graph, GraphEdgeKind::SharesFiles) {
+        *degrees.entry(from).or_insert(0) += 1;
+        *degrees.entry(to).or_insert(0) += 1;
+    }
+    degrees
+}
+
+#[test]
+fn shares_files_worst_case_is_capped() {
+    // The worst case: every drawn lesson (299, one hub) shares one broad glob, so all
+    // 44,551 pairs intersect.
+    let lessons: Vec<Lesson> = (0..GRAPH_NODES_MAX as u32 - 1)
+        .map(|i| lesson(&format!("l-{i:04}"), LessonStatus::Kept, &["crates/a/**"]))
+        .collect();
+    let graph = graph_of(&lessons, &[]);
+    let shares = edges(&graph, GraphEdgeKind::SharesFiles);
+    assert!(shares.len() <= SHARES_MAX, "{} edges", shares.len());
+    let degrees = share_degrees(&graph);
+    assert!(
+        degrees.values().all(|d| *d <= SHARES_PER_LESSON),
+        "{degrees:?}"
     );
+    // Equal strengths tie by id: the first lesson keeps its eight lowest-id partners.
+    let first: Vec<&str> = (shares.iter())
+        .filter(|(from, _)| from == "l-0000")
+        .map(|(_, to)| to.as_str())
+        .collect();
+    assert_eq!(
+        first,
+        [
+            "l-0001", "l-0002", "l-0003", "l-0004", "l-0005", "l-0006", "l-0007", "l-0008"
+        ]
+    );
+    // Every lesson that shares files keeps at least one edge.
+    assert_eq!(degrees.len(), lessons.len());
+    // The rest of the graph is untouched: one `touches` edge per lesson.
+    assert_eq!(edges(&graph, GraphEdgeKind::Touches).len(), lessons.len());
+}
+
+#[test]
+fn shares_files_cap_keeps_the_strongest() {
+    // `l-a` shares three files with `l-z` and one glob with each of nine `l-c<k>`:
+    // ten candidates, so it keeps `l-z` (the strongest, though its id sorts last) and
+    // the seven lowest-id `l-c<k>`.
+    let mut lessons = vec![
+        lesson(
+            "l-a",
+            LessonStatus::Kept,
+            &[
+                "crates/x/1.rs",
+                "crates/x/2.rs",
+                "crates/x/3.rs",
+                "crates/y/**",
+            ],
+        ),
+        lesson(
+            "l-z",
+            LessonStatus::Kept,
+            &["crates/x/1.rs", "crates/x/2.rs", "crates/x/3.rs"],
+        ),
+    ];
+    for k in 1..=9 {
+        lessons.push(lesson(
+            &format!("l-c{k}"),
+            LessonStatus::Kept,
+            &["crates/y/**"],
+        ));
+    }
+    let graph = graph_of(&lessons, &[]);
+    let of_a: Vec<String> = (edges(&graph, GraphEdgeKind::SharesFiles).into_iter())
+        .filter(|(from, to)| from == "l-a" || to == "l-a")
+        .map(|(from, to)| if from == "l-a" { to } else { from })
+        .collect();
+    let mut want: Vec<String> = (1..=7).map(|k| format!("l-c{k}")).collect();
+    want.push("l-z".to_string());
+    let mut got = of_a.clone();
+    got.sort();
+    assert_eq!(got, want, "{of_a:?}");
+    assert!(
+        share_degrees(&graph)
+            .values()
+            .all(|d| *d <= SHARES_PER_LESSON)
+    );
+}
+
+#[test]
+fn shares_files_cap_is_deterministic() {
+    let mut lessons: Vec<Lesson> = (0..120)
+        .map(|i| {
+            let glob = format!("crates/m{}/**", i % 3);
+            lesson(
+                &format!("l-{i:04}"),
+                LessonStatus::Kept,
+                &[glob.as_str(), "crates/s/**"],
+            )
+        })
+        .collect();
+    let once = graph_of(&lessons, &[]);
+    assert_eq!(graph_of(&lessons, &[]).edges, once.edges);
+    lessons.reverse();
+    lessons.rotate_left(37);
+    assert_eq!(graph_of(&lessons, &[]).edges, once.edges);
+    assert!(
+        share_degrees(&once)
+            .values()
+            .all(|d| *d <= SHARES_PER_LESSON)
+    );
+}
+
+#[test]
+fn shares_files_small_graph_unchanged() {
+    // Nine lessons on one glob: 36 pairs, each lesson at exactly the per-lesson cap.
+    // Nothing is dropped and the edges keep their pairwise order.
+    let lessons: Vec<Lesson> = (0..9)
+        .map(|i| lesson(&format!("l-{i}"), LessonStatus::Kept, &["crates/a/**"]))
+        .collect();
+    let graph = graph_of(&lessons, &[]);
+    let mut want = Vec::new();
+    for i in 0..9 {
+        for j in i + 1..9 {
+            want.push((format!("l-{i}"), format!("l-{j}")));
+        }
+    }
+    assert_eq!(edges(&graph, GraphEdgeKind::SharesFiles), want);
+}
+
+#[test]
+fn shares_total_cap_binds_in_strength_then_id_order() {
+    // At 300 nodes the per-lesson cap already bounds the total (299 × 8 / 2 = 1,196 <
+    // 2,000), so the total cap is a backstop; pin it on the selection itself.
+    let shares = [
+        Share {
+            from: "a",
+            to: "b",
+            strength: 1,
+        },
+        Share {
+            from: "c",
+            to: "d",
+            strength: 2,
+        },
+        Share {
+            from: "a",
+            to: "c",
+            strength: 1,
+        },
+        Share {
+            from: "b",
+            to: "d",
+            strength: 1,
+        },
+    ];
+    assert_eq!(strongest(&shares, 8, 2), [true, true, false, false]);
+    assert_eq!(strongest(&shares, 1, 10), [true, true, false, false]);
+    assert_eq!(strongest(&shares, 8, 10), [true; 4]);
 }
 
 #[test]
