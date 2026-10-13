@@ -197,6 +197,51 @@ fn d_asks_then_sends_forget_on_y() {
     assert_eq!(page(&app).question, None);
 }
 
+/// Task 12's review, I1: `y` sends for the lesson the question names, even when a list
+/// reply reorders the rows while the question is open.
+#[test]
+fn y_acts_on_the_asked_lesson_after_a_reordered_list() {
+    // `a`, then `r` on the next row while the re-list is in flight.
+    let mut app = page_app();
+    let (id, _) = one(&tap(&mut app, KeyCode::Char('a')));
+    let (relist, _) = one(&done(&mut app, id, "approved 1"));
+    tap(&mut app, KeyCode::Char('j'));
+    tap(&mut app, KeyCode::Char('r'));
+    let mut reordered = three();
+    reordered[0].status = LessonStatus::Approved;
+    reordered.swap(1, 2);
+    lessons_reply(&mut app, relist, reordered);
+    assert_eq!(
+        page(&app).selected_lesson().map(|l| l.id.as_str()),
+        Some("kf-cccccc03"),
+        "the row under the selection changed"
+    );
+    let (_, request) = one(&tap(&mut app, KeyCode::Char('y')));
+    assert_eq!(
+        request,
+        LessonsRequest::Decide {
+            dir: dir(),
+            ids: vec!["l-bbbbbb02".into()],
+            approve: false,
+        }
+    );
+    // `t`, then `d` while the `all` list (with a gone lesson first) is in flight.
+    let mut app = page_app();
+    let (all, _) = one(&tap(&mut app, KeyCode::Char('t')));
+    tap(&mut app, KeyCode::Char('d'));
+    let mut with_gone = vec![lesson("l-dddddd04", LessonStatus::Rejected, "gone")];
+    with_gone.extend(three());
+    lessons_reply(&mut app, all, with_gone);
+    let (_, request) = one(&tap(&mut app, KeyCode::Char('y')));
+    assert_eq!(
+        request,
+        LessonsRequest::Forget {
+            dir: dir(),
+            ids: vec!["l-aaaaaa01".into()],
+        }
+    );
+}
+
 #[test]
 fn n_or_esc_cancels_the_question() {
     for cancel in [KeyCode::Char('n'), KeyCode::Esc] {

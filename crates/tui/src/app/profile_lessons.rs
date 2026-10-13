@@ -143,9 +143,12 @@ impl App {
         self.lessons_list()
     }
 
-    /// A `Decide` or `Forget` of the selected lesson.
+    /// A `Decide` or `Forget` of `id`, or of the selected lesson when `None`. A
+    /// question's answer passes the id it asked about: a list reply may have moved the
+    /// rows under the selection meanwhile (task 12's review, I1).
     fn lessons_act(
         &mut self,
+        id: Option<String>,
         make: impl FnOnce(PathBuf, Vec<String>) -> LessonsRequest,
     ) -> Vec<Effect> {
         if !self.connected() {
@@ -156,10 +159,11 @@ impl App {
             return vec![];
         };
         let dir = s.dir.clone();
-        let Some(id) = page_of(s)
-            .and_then(|p| p.selected_lesson())
-            .map(|l| l.id.clone())
-        else {
+        let Some(id) = id.or_else(|| {
+            page_of(s)
+                .and_then(|p| p.selected_lesson())
+                .map(|l| l.id.clone())
+        }) else {
             return vec![];
         };
         vec![self.lessons_send(dir.clone(), false, make(dir, vec![id]))]
@@ -174,7 +178,7 @@ impl App {
             return match key.code {
                 KeyCode::Char('y') => {
                     page.question = None;
-                    self.lessons_act(|dir, ids| match question.verb {
+                    self.lessons_act(Some(question.id), |dir, ids| match question.verb {
                         Verb::Reject => LessonsRequest::Decide {
                             dir,
                             ids,
@@ -211,7 +215,7 @@ impl App {
             KeyCode::Char('r') => ask(page, Verb::Reject),
             KeyCode::Char('d') => ask(page, Verb::Forget),
             KeyCode::Char('a') => {
-                return self.lessons_act(|dir, ids| LessonsRequest::Decide {
+                return self.lessons_act(None, |dir, ids| LessonsRequest::Decide {
                     dir,
                     ids,
                     approve: true,
