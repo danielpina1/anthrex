@@ -213,6 +213,22 @@ fn answer_text_is_cleaned_and_redacted() {
     assert_eq!(clean(&draft.body), draft.body);
 }
 
+/// Task 14's review, M1: `parse` redacts each file glob, so a lowercase directory name
+/// holding an unambiguous prefix (`task-proj-`, `ghs_`, `sk-admin-`) must survive, or
+/// the lesson silently loses its files, its `touches` hub and its `shares_files` edges.
+#[test]
+fn lowercase_globs_keep_their_files() {
+    let files = [
+        "crates/task-proj-tool/**",
+        "src/laughs_count.rs",
+        "crates/desk-admin-panel/src/*.rs",
+    ];
+    let value = json!({"items": [item("semantic", "t", "b", &files)]});
+    let (items, dropped) = distilled(value).unwrap();
+    assert_eq!(dropped, 0);
+    assert_eq!(items[0].files, files.map(String::from).to_vec());
+}
+
 /// Task 10's review, I1: the six rows that kept their secret before `scrub`.
 #[test]
 fn written_out_escapes_never_hide_a_secret() {

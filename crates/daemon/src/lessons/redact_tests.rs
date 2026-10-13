@@ -138,13 +138,15 @@ fn prefixed_tokens_are_replaced() {
 fn fifteen_token_characters_are_not_a_token() {
     // Task 13's review, I1: an unambiguous prefix with four body characters is a token
     // (`ghp_` and `glpat-` moved to the second list); `AKIA`'s body is `[0-9A-Z]`, so
-    // lowercase letters are no body.
-    for prefix in ["sk-", "AKIA", "npm_"] {
+    // lowercase letters are no body. The ruling after that fix: the body must also hold
+    // an uppercase letter or a digit, so fifteen lowercase letters after `ghp_` or
+    // `glpat-` are a word again, and one digit makes them a token.
+    for prefix in ["sk-", "AKIA", "npm_", "ghp_", "glpat-"] {
         let short = format!("{prefix}{} tail", "a".repeat(15));
         assert_eq!(redact(&short), short);
     }
     for prefix in ["ghp_", "glpat-"] {
-        let short = format!("{prefix}{} tail", "a".repeat(15));
+        let short = format!("{prefix}{}1 tail", "a".repeat(14));
         assert_eq!(redact(&short), format!("{TOKEN} tail"));
     }
 }
@@ -177,6 +179,18 @@ fn a_token_cut_at_a_line_end_is_replaced() {
         for body in [4, 6, 8] {
             let keep = prefix_len(&token) + body;
             let cut: String = token.chars().take(keep).collect();
+            // The ruling after task 13's fix: a cut body holds an uppercase letter or a
+            // digit, as a real base62 one does. `sk-ant-fake` (the fake `sk_ant()` cut
+            // to four) is the accepted residual, pinned by
+            // `scrub_tests_unambiguous::an_all_lowercase_clipped_body_is_kept`.
+            let rest = &cut[prefix_len(&token)..];
+            if !rest
+                .bytes()
+                .any(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
+            {
+                assert_eq!(cut, "sk-ant-fake", "only the known residual is skipped");
+                continue;
+            }
             for input in [format!("error: {cut}"), format!("error: {cut}\nnext")] {
                 let out = redact(&input);
                 assert!(

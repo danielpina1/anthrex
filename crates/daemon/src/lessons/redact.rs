@@ -11,8 +11,10 @@
 //! normaliser's placeholders. Task 13's review, I1 (the controller's ruling): an
 //! unambiguous prefix (`ghp_`, `AKIA`, `glpat-`, `xoxb-`, `sk-ant-`…) matches anywhere,
 //! with no left boundary, and is a token from four body characters on, so a clipped or
-//! split one is replaced from its prefix onward whatever stands before it. Wrongly
-//! replacing ordinary text costs the distiller a word. The ambiguous `sk-`, `npm_` and
+//! split one is replaced from its prefix onward whatever stands before it. The ruling
+//! after that fix: the body must also hold an uppercase letter or a digit (real token
+//! bodies are random base62), so `laughs_count` and `task-proj-name` stay words, and a
+//! token clipped to an all-lowercase body is the accepted residual. The ambiguous `sk-`, `npm_` and
 //! `Bearer` are judged by their body alone (a digit and a minimum length, task 12's
 //! review, I2), so a short, clipped or all-letter one is not caught: redaction is
 //! best-effort defence in depth, not a guarantee.
@@ -108,10 +110,12 @@ static JWT: LazyLock<Regex> =
 /// may stand before a token (`\u001b[31m`, `\x1b`, `\b`, `\U…`, `%253D`) is ever
 /// complete. AWS's key id in its full shape (and the token characters after it). Task
 /// 10's review, I1: OpenAI's `sk-proj-`, `sk-svcacct-` and `sk-admin-`. A clipped or
-/// placeholder-split token of these prefixes is [`PREFIXED`]'s.
+/// placeholder-split token of these prefixes is [`PREFIXED`]'s. The controller's
+/// ruling after task 13's fix: a body with no uppercase letter and no digit is a word
+/// ([`unambiguous`]).
 static UNAMBIGUOUS: LazyLock<Regex> = LazyLock::new(|| {
     re(
-        r"(?:github_pat_|gh[pousr]_|glpat-|sk-ant-|sk-proj-|sk-svcacct-|sk-admin-|xox[abprs]-)[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}[A-Za-z0-9_-]*",
+        r"(?:github_pat_|gh[pousr]_|glpat-|sk-ant-|sk-proj-|sk-svcacct-|sk-admin-|xox[abprs]-)([A-Za-z0-9_-]{16,})|AKIA[0-9A-Z]{16}[A-Za-z0-9_-]*",
     )
 });
 /// Task 12's review, I2 and M7 (the controller's ruling): the ambiguous `sk-` (any
@@ -147,24 +151,29 @@ const PLACEHOLDERS: [&str; 8] = [
     "<sha>", "<id>", "<dur>", "<l>", "<c>", "<tmp>", "<time>", "<tid>",
 ];
 
-/// The end of an unambiguous token's body that starts at `start`, and how many body
-/// characters it holds: the prefix's own alphabet (`AKIA`'s is `[0-9A-Z]`, the others'
+/// The end of an unambiguous token's body that starts at `start`, how many body
+/// characters it holds, and whether it holds an uppercase letter, a digit or a
+/// placeholder (the controller's ruling after task 13's fix: real token bodies are
+/// random base62; a placeholder stands for normalised digits or hex): the prefix's own alphabet (`AKIA`'s is `[0-9A-Z]`, the others'
 /// `[A-Za-z0-9_-]`) and decision 5's placeholders count; a real escape sequence (which
 /// [`scrub`] strips) and a hidden format character (which `multi_line` and `one_line`
 /// drop) are read through without counting, so a token they split is replaced whole and
 /// leaves no remainder once they are gone. One pass; each character is read once.
-fn body_end(text: &str, start: usize, aws: bool) -> (usize, usize) {
+fn body_end(text: &str, start: usize, aws: bool) -> (usize, usize, bool) {
     let mut at = start;
     let mut count = 0;
+    let mut strong = false;
     while let Some(c) = text[at..].chars().next() {
         let rest = &text[at..];
         let step = if (aws && (c.is_ascii_uppercase() || c.is_ascii_digit()))
             || (!aws && (c.is_ascii_alphanumeric() || c == '_' || c == '-'))
         {
             count += 1;
+            strong |= c.is_ascii_uppercase() || c.is_ascii_digit();
             1
         } else if let Some(p) = PLACEHOLDERS.iter().find(|p| rest.starts_with(**p)) {
             count += p.len();
+            strong = true;
             p.len()
         } else if c == '\u{1b}' || c == '\u{9b}' {
             ESCAPE_HERE
@@ -179,19 +188,21 @@ fn body_end(text: &str, start: usize, aws: bool) -> (usize, usize) {
     }
     #[cfg(test)]
     BODY_READ.with(|n| n.set(n.get() + (at - start) as u64));
-    (at, count)
+    (at, count, strong)
 }
 
 /// Task 13's review, I1 (the controller's ruling): an unambiguous prefix with at least
-/// [`UNAMBIGUOUS_BODY_MIN`] body characters ([`body_end`]) is a token, replaced from its
-/// prefix onward; a shorter one is kept. Linear: the search resumes after each body.
+/// [`UNAMBIGUOUS_BODY_MIN`] body characters ([`body_end`]), holding an uppercase letter,
+/// a digit or a placeholder (the controller's ruling after that fix), is a token,
+/// replaced from its prefix onward; any other is kept, so `laughs_count` and
+/// `task-proj-name` are words. Linear: the search resumes after each body.
 fn prefixed(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut from = 0;
     while let Some(m) = PREFIXED.find_at(text, from) {
-        let (end, count) = body_end(text, m.end(), m.as_str() == "AKIA");
+        let (end, count, strong) = body_end(text, m.end(), m.as_str() == "AKIA");
         out.push_str(&text[from..m.start()]);
-        if count >= UNAMBIGUOUS_BODY_MIN {
+        if count >= UNAMBIGUOUS_BODY_MIN && strong {
             out.push_str(TOKEN);
         } else {
             out.push_str(&text[m.start()..end]);
@@ -207,6 +218,24 @@ fn has_digit(body: &str) -> bool {
     #[cfg(test)]
     BODY_READ.with(|c| c.set(c.get() + body.len() as u64));
     body.bytes().any(|b| b.is_ascii_digit())
+}
+
+/// A whole unambiguous token ([`UNAMBIGUOUS`]) whose body holds an uppercase letter or
+/// a digit (`AKIA`'s always does); an all-lowercase one is a word.
+fn unambiguous(text: &str) -> String {
+    UNAMBIGUOUS
+        .replace_all(text, |c: &Captures| match c.get(1) {
+            Some(body)
+                if !body
+                    .as_str()
+                    .bytes()
+                    .any(|b| b.is_ascii_uppercase() || b.is_ascii_digit()) =>
+            {
+                c[0].to_string()
+            }
+            _ => TOKEN.to_string(),
+        })
+        .into_owned()
 }
 
 fn ambiguous(text: &str) -> String {
@@ -260,7 +289,7 @@ pub fn redact(text: &str) -> String {
     let text = url_cut(&text);
     let text = bearer(&text);
     let text = jwt(&text);
-    let text = UNAMBIGUOUS.replace_all(&text, TOKEN);
+    let text = unambiguous(&text);
     let text = ambiguous(&text);
     prefixed(&text)
 }

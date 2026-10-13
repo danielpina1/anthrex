@@ -2,7 +2,8 @@
 //! prefixes (`ghp_` and the other `gh?_`, `github_pat_`, `glpat-`, `sk-ant-`,
 //! `sk-proj-`, `sk-svcacct-`, `sk-admin-`, `xox?-`, `AKIA`) are unambiguous by
 //! definition, so they match anywhere, with no left boundary, and a body of at least
-//! four characters of the prefix's own alphabet (a placeholder counts as body) is a
+//! four characters of the prefix's own alphabet (a placeholder counts as body) that
+//! holds an uppercase letter, a digit or a placeholder (the ruling after that fix) is a
 //! token. A token clipped at a check tail's 300 characters, or split by a placeholder,
 //! right after a written-out colour code is therefore still redacted from its prefix
 //! on. Every fake secret is built at run time.
@@ -35,7 +36,10 @@ const PREFIXES: [&str; 12] = [
     "AKIA",
 ];
 
-/// Bodies: full, clipped to 4 to 10 characters, and split by a placeholder.
+/// Bodies: full, clipped to 4 to 10 characters, and split by a placeholder. Every
+/// clipped body holds an uppercase letter or a digit, as a real base62 body does (the
+/// controller's ruling after M9.15.14's fix); [`an_all_lowercase_clipped_body_is_kept`]
+/// pins the residual.
 fn bodies() -> Vec<String> {
     let full = ["FAKE0", "FAKE1", "FAKE2", "FAKE3"].concat();
     let mut all = vec![full.clone()];
@@ -109,16 +113,37 @@ fn unambiguous_prefixes_keep_prose() {
 
 #[test]
 fn the_ruling_costs_these_words() {
-    // With no left boundary, an identifier that holds an unambiguous prefix and four
-    // more token characters reads as a token. The ruling accepts this: it costs the
-    // distiller a word, never a secret. Pinned so the cost stays visible.
-    for (text, want) in [
-        ("the laughs_count field", "the lau[redacted token] field"),
-        ("sighs_total", "si[redacted token]"),
-        ("task-proj-name", "ta[redacted token]"),
-        ("desk-admin-panel", "de[redacted token]"),
+    // The controller's ruling after M9.15.14's redaction fix: a body must also hold an
+    // uppercase letter or a digit (real token bodies are random base62), so an
+    // identifier that holds an unambiguous prefix and four more lowercase characters
+    // is a word again. These were redacted under the first ruling.
+    for text in [
+        "the laughs_count field",
+        "sighs_total",
+        "task-proj-name",
+        "desk-admin-panel",
+        "desk-admin-panel-component-renderer",
+        "ghs_lowercase_only_identifier_name",
     ] {
-        assert_eq!(redact(text), want, "{text:?}");
+        assert_eq!(redact(text), text, "{text:?}");
+        assert_eq!(scrub(text), text, "{text:?}");
+    }
+}
+
+#[test]
+fn an_all_lowercase_clipped_body_is_kept() {
+    // The accepted residual of the same ruling: a token clipped to an all-lowercase
+    // body of four is not caught, behind any spelling. (`AKIA`'s alphabet has no
+    // lowercase, so it never had a body here.)
+    for spelling in spellings() {
+        for prefix in PREFIXES {
+            let kept = format!("{prefix}fake");
+            let input = format!("error: {spelling}{kept}");
+            for (how, out) in [("redact", redact(&input)), ("scrub", scrub(&input))] {
+                assert!(out.ends_with(&kept), "{how} {input:?} -> {out:?}");
+                assert!(!out.contains(TOKEN), "{how} {input:?} -> {out:?}");
+            }
+        }
     }
 }
 
