@@ -277,3 +277,46 @@ async fn a_failed_bind_leaves_nothing_and_replaces_nothing() {
         .collect();
     assert_eq!(names, ["d.sock"], "{error:#}");
 }
+
+/// A directory under `/tmp` and a socket path in it exactly `len` bytes long.
+fn socket_path_of_len(len: usize) -> (tempfile::TempDir, PathBuf) {
+    let dir = tempfile::Builder::new()
+        .prefix("ax-sun-")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let base = dir.path().as_os_str().len() + "/".len() + "/d.sock".len();
+    let pad = "p".repeat(len - base);
+    let parent = dir.path().join(pad);
+    std::fs::create_dir(&parent).unwrap();
+    let sock = parent.join("d.sock");
+    assert_eq!(sock.as_os_str().len(), len);
+    (dir, sock)
+}
+
+/// Review I2: a socket path that fits `sun_path` but whose staging name does not is
+/// bound where it is, as before the staging name existed, and accepts.
+#[tokio::test]
+async fn a_path_that_fits_but_whose_staging_name_does_not_still_binds() {
+    let (_dir, sock) = socket_path_of_len(sun_path_bytes() - 1);
+    let listener = bind_socket(&sock).expect("a path that fits sun_path binds");
+    std::os::unix::net::UnixStream::connect(&sock).expect("the socket accepts");
+    drop(listener);
+    let names: Vec<_> = std::fs::read_dir(sock.parent().unwrap())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(names, ["d.sock"]);
+}
+
+/// Review I2: a socket path too long for `sun_path` fails with an error that names the
+/// path and the limit, not one that names neither.
+#[tokio::test]
+async fn a_path_too_long_for_sun_path_is_named_in_the_error() {
+    let (_dir, sock) = socket_path_of_len(sun_path_bytes());
+    let error = format!("{:#}", bind_socket(&sock).unwrap_err());
+    assert!(error.contains(&sock.display().to_string()), "{error}");
+    assert!(
+        error.contains(&format!("{} bytes", sun_path_bytes())),
+        "{error}"
+    );
+}
