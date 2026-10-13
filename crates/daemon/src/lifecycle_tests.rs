@@ -220,6 +220,7 @@ fn the_socket_appears_only_once_it_listens() {
                 .build()
                 .unwrap();
             let _enter = rt.enter();
+            let _umask = crate::lock(&UMASK_LOCK);
             let listener = bind_socket_with(&sock, |_| {
                 paused_tx.send(()).unwrap();
                 resume_rx.recv().unwrap();
@@ -231,8 +232,13 @@ fn the_socket_appears_only_once_it_listens() {
     paused_rx.recv().expect("the bind reached its pause");
     let seen = sock.exists();
     let early = std::os::unix::net::UnixStream::connect(&sock).map(|_| ());
+    // The bind changes the process's umask, so it runs under `UMASK_LOCK` like every other
+    // bind in this binary (review I1): free here, it could race `bind_restores_the_umask`.
+    let umask_free = UMASK_LOCK.try_lock().is_ok();
     resume_tx.send(()).unwrap();
     let _listener = binder.join().unwrap();
+
+    assert!(!umask_free, "the paused bind does not hold UMASK_LOCK");
 
     assert!(
         !seen,
