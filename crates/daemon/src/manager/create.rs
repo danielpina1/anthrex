@@ -66,6 +66,8 @@ pub(super) struct Spawned {
 /// daemon restarted, with nothing in `list()` to explain why.
 pub(super) struct Reservation<'a> {
     manager: &'a WindowManager,
+    /// The id `admit` spent, whose `Inner::early_events` slot this guard closes.
+    id: u32,
     pub(super) name: String,
     /// The worktree directory this create will make, for a create that asked for one.
     worktree_path: Option<PathBuf>,
@@ -76,11 +78,12 @@ impl Reservation<'_> {
     /// Gives both claims back under a lock the caller already holds, so there is no
     /// instant in which neither the reservation nor an entry holds the name.
     fn release(mut self, inner: &mut Inner) {
-        Self::clear(inner, &self.name, self.worktree_path.as_deref());
+        Self::clear(inner, self.id, &self.name, self.worktree_path.as_deref());
         self.held = false;
     }
 
-    fn clear(inner: &mut Inner, name: &str, worktree_path: Option<&Path>) {
+    fn clear(inner: &mut Inner, id: u32, name: &str, worktree_path: Option<&Path>) {
+        inner.early_events.remove(&id);
         inner.reserved_names.remove(name);
         if let Some(path) = worktree_path {
             inner.reserved_worktrees.remove(path);
@@ -92,7 +95,12 @@ impl Drop for Reservation<'_> {
     fn drop(&mut self) {
         if self.held {
             let mut inner = crate::lock(&self.manager.inner);
-            Self::clear(&mut inner, &self.name, self.worktree_path.as_deref());
+            Self::clear(
+                &mut inner,
+                self.id,
+                &self.name,
+                self.worktree_path.as_deref(),
+            );
         }
     }
 }
@@ -233,6 +241,7 @@ impl WindowManager {
             anyhow::bail!("a worktree at {} is already being created", path.display());
         }
         inner.next_id = next_id;
+        inner.early_events.insert(id, Vec::new());
         inner.reserved_names.insert(name.clone());
         if let Some(path) = &claim {
             inner.reserved_worktrees.insert(path.clone());
@@ -241,6 +250,7 @@ impl WindowManager {
             id,
             Reservation {
                 manager: self,
+                id,
                 name,
                 worktree_path: claim,
                 held: true,
@@ -333,8 +343,16 @@ impl WindowManager {
             "window created"
         );
         inner.entries.insert(id, entry);
+        // What the window sent before it had an entry, in order, before anyone is told
+        // it exists: a client never sees it `Starting` after its exit (`early_events`).
+        let early = inner.early_events.remove(&id).unwrap_or_default();
+        for event in early {
+            self.apply_event(&mut inner, id, event);
+        }
         reservation.release(&mut inner);
         self.publish(&inner);
+        let now = Instant::now();
+        let info = inner.entries.get(&id).map_or(info, |entry| entry.info(now));
         Ok(info)
     }
 }
