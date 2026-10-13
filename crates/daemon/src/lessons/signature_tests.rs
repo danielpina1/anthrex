@@ -186,3 +186,40 @@ fn signature_drops_escapes_and_bidi() {
         assert!(!dressed.headline.contains(bad), "{:?}", dressed.headline);
     }
 }
+
+fn ghp(fill: &str) -> String {
+    format!("ghp_{}", fill.repeat(9))
+}
+
+/// The controller's ruling (task M9.15.9; task 8's review, I3): a headline is redacted
+/// before its clip, so it never carries a token, nor a recognisable piece of one, and
+/// the fingerprint is taken over the redacted lines: the same failure keeps its `fp`,
+/// whatever token it printed.
+#[test]
+fn a_headline_never_carries_a_token() {
+    for token in [ghp("FAKE"), ghp("FALS")] {
+        // The token straddles the 160-character clip; a colour code and a JSON escape
+        // stand right before the others.
+        // "error: auth failed: " is 20 characters: the token starts at 149.
+        let pad = "p".repeat(HEADLINE_MAX - 32);
+        let outputs = [
+            format!("error: auth failed: {pad} {token}\n"),
+            format!("error: auth failed for \x1b[1;31m{token}\x1b[0m\n"),
+            format!("error: {{\"msg\":\"denied\\n{token}\"}}\n"),
+        ];
+        for output in outputs {
+            let sig = of(&output).expect("a signature");
+            for fragment in ["ghp_", "FAKEFAKE", "FALSFALS"] {
+                assert!(!sig.headline.contains(fragment), "{output:?} -> {sig:?}");
+            }
+            assert!(sig.headline.chars().count() <= HEADLINE_MAX);
+        }
+    }
+    // The fingerprint is stable: the same failure twice, and with another token.
+    let at = |token: &str| of(&format!("error: auth failed for {token}\n")).unwrap();
+    let (a, b) = (at(&ghp("FAKE")), at(&ghp("FALS")));
+    assert_eq!(a, at(&ghp("FAKE")));
+    assert_eq!(a.fp, b.fp);
+    assert_eq!(a.headline, "error: auth failed for [redacted token]");
+    assert_eq!(a.fp, fp_of(&["error: auth failed for [redacted token]"]));
+}

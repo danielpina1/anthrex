@@ -8,6 +8,7 @@ use proto::{SigGate, SigRef};
 use regex::{Captures, Regex};
 use sha2::{Digest, Sha256};
 
+use super::redact::redact;
 use crate::run::model::Task;
 
 /// Decision 5: the decisive lines a signature keeps.
@@ -127,9 +128,15 @@ fn decisive(line: &str) -> bool {
 }
 
 /// Decision 5: `output`'s signature, or `None` when no line is left to keep.
+///
+/// The controller's ruling at task M9.15.9 (task 8's review, I3): every line is
+/// redacted (`lessons::redact`) before and after it is normalised, so neither the
+/// stored headline nor the fingerprint holds a secret, and the headline is redacted
+/// before its clip. Redaction is a pure function of the line, so the same failure keeps
+/// its `fp` (and one that printed another token of the same shape shares it).
 pub fn of(output: &str) -> Option<Sig> {
-    let text = multi_line(&ESCAPE.replace_all(output, ""));
-    let lines: Vec<String> = (text.lines().map(normalise))
+    let text = multi_line(&redact(&ESCAPE.replace_all(output, "")));
+    let lines: Vec<String> = (text.lines().map(|l| redact(&normalise(l))))
         .filter(|l| !skipped(l))
         .collect();
     let mut kept: Vec<&String> = lines

@@ -109,3 +109,26 @@ fn a_task_keeps_at_most_eight_signatures() {
     );
     assert_eq!(record.signatures[0].headline, "error: failure number x");
 }
+
+/// The controller's ruling (task M9.15.9): a failing check whose output carries a token
+/// is stored in the task record redacted, and the same failure keeps its fingerprint.
+#[test]
+fn a_stored_signature_headline_is_redacted() {
+    let token = format!("ghp_{}", "FAKE".repeat(9));
+    let record_of = |tail: String| {
+        let mut run = run_of(&["t1"]);
+        run.tasks[0].checks = vec![failed(&tail)];
+        let task = run.tasks[0].clone();
+        task_record(&run, &task, TaskOutcome::Merged, 2_000)
+    };
+    let tail = format!("error: push rejected for token {token}\n");
+    let record = record_of(tail.clone());
+    let json = serde_json::to_string(&record).unwrap();
+    assert!(!json.contains("ghp_"), "{json}");
+    assert!(!json.contains("FAKEFAKE"), "{json}");
+    assert_eq!(
+        record.signatures[0].headline,
+        "error: push rejected for token [redacted token]"
+    );
+    assert_eq!(record_of(tail).signatures, record.signatures);
+}
