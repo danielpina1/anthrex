@@ -349,7 +349,7 @@ fn witness(dir: &Path, run_id: &str) -> PathBuf {
         mark.display(),
         mark.display()
     );
-    testexec::write_executable(dir.join("decider.sh"), text)
+    testexec::write_warm_executable(dir.join("decider.sh"), text)
 }
 
 /// Review M-2: a run-bound decider starts only once its record is saved. The run's

@@ -96,7 +96,7 @@ async fn shutdown_waits_for_a_worktree_removal_under_way() {
     let bin = base.join("bin");
     std::fs::create_dir(&bin).unwrap();
     let started = base.join("started");
-    let stand_in = testexec::write_executable(
+    let stand_in = testexec::write_warm_executable(
         bin.join("git"),
         format!(
             "#!/bin/sh\ncase \" $* \" in *\" worktree remove \"*) : > '{}'; sleep {} ;; esac\nexec '{}' \"$@\"\n",

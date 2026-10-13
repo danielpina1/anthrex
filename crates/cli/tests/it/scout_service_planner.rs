@@ -114,7 +114,7 @@ async fn a_planner_session_runs_on_the_scout_machine_and_is_accepted() {
     let repo = dir.path().join("repo");
     init_repo(&repo, &[("Cargo.toml", "[workspace]\n")]);
     let wrapper = dir.path().join("claude.sh");
-    testexec::write_executable(
+    testexec::write_warm_executable(
         &wrapper,
         format!(
             "#!/bin/sh\nexport FAKE_AGENT_ARGS_FILE='{}'\nexport FAKE_AGENT_STDIN_FILE='{}'\nexec '{}' \"$@\"\n",

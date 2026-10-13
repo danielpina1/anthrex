@@ -155,6 +155,8 @@ impl WindowManager {
         })
         .await
         .map_err(|error| anyhow::anyhow!("window creation failed: {error}"))??;
+        #[cfg(test)]
+        self.wait_run_window_hold().await;
         self.insert(id, name, roots.project, None, spawned, reservation)
     }
 
@@ -238,6 +240,23 @@ impl WindowManager {
         entry.run = Some(role_record(role));
         self.publish(&inner);
         Ok(())
+    }
+
+    /// Tests only: holds the next `create_run_window` between phase B and phase C until
+    /// the returned sender sends or is dropped.
+    #[cfg(test)]
+    pub(crate) fn hold_next_run_window(&self) -> tokio::sync::oneshot::Sender<()> {
+        let (release, hold) = tokio::sync::oneshot::channel();
+        *crate::lock(&self.run_window_hold) = Some(hold);
+        release
+    }
+
+    #[cfg(test)]
+    async fn wait_run_window_hold(&self) {
+        let hold = crate::lock(&self.run_window_hold).take();
+        if let Some(hold) = hold {
+            let _ = hold.await;
+        }
     }
 
     /// Tests only: holds (or releases) `id`'s `restarting` flag as a restart in flight

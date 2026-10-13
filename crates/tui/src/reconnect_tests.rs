@@ -23,6 +23,64 @@ use std::time::Instant;
 /// to complete.
 #[tokio::test]
 async fn reconnect_now_supersedes_an_in_flight_automatic_attempt() {
+    supersedes_an_in_flight_attempt(Duration::ZERO).await;
+}
+
+/// How long the press's attempt may take to reach the stand-in's first line: a
+/// `spawn_blocking` hop, a claim, a fork and a warm exec, tens of milliseconds idle. A
+/// fresh file's first exec is not in it: macOS assesses it, ~0.44 s alone and serialised
+/// to seconds across concurrent first execs (`docs/timing-budgets.md`, "First exec of a
+/// freshly written executable"), so [`stand_in`] pays it before the press.
+const MARKER_WAIT: Duration = Duration::from_secs(3);
+
+/// The full-suite flake (the marker never came within [`MARKER_WAIT`], "daemon_exe was
+/// lost"): the stand-in's first exec stalls past the wait, as macOS's first-exec
+/// assessment did under a loaded run. Paid before the press, it costs the wait nothing.
+#[tokio::test]
+async fn a_slow_first_exec_of_the_stand_in_is_paid_before_the_press() {
+    supersedes_an_in_flight_attempt(MARKER_WAIT + Duration::from_secs(1)).await;
+}
+
+/// Set only on [`stand_in`]'s warm-up run: the script exits before recording anything.
+const WARM_UP_VAR: &str = "ANTHREX_TEST_WARM_UP";
+
+/// Stands in for the real `anthrex` binary: records that it was launched as
+/// `daemon start --foreground` in `marker`, which is the one observable proof that a
+/// press's `daemon_exe` reached a real attempt, then exits without binding the socket.
+/// The script is run once before this returns, so the fresh file's first-exec
+/// assessment is paid here, never inside [`MARKER_WAIT`]. `first_exec_stall` injects
+/// that cost: the script's first exec sleeps it.
+fn stand_in(
+    dir: &std::path::Path,
+    marker: &std::path::Path,
+    first_exec_stall: Duration,
+) -> PathBuf {
+    let script = dir.join("fake_daemon.sh");
+    let stall = if first_exec_stall.is_zero() {
+        String::new()
+    } else {
+        format!(
+            "mkdir {:?} 2>/dev/null && sleep {}\n",
+            dir.join("first-exec"),
+            first_exec_stall.as_secs_f64()
+        )
+    };
+    testexec::write_executable(
+        &script,
+        format!(
+            "#!/bin/sh\n{stall}[ -n \"${WARM_UP_VAR}\" ] && exit 0\necho invoked >> {marker:?}\nexit 0\n"
+        ),
+    );
+    let warm = std::process::Command::new(&script)
+        .env(WARM_UP_VAR, "1")
+        .output()
+        .expect("the stand-in's warm-up");
+    assert!(warm.status.success(), "the stand-in's warm-up: {warm:?}");
+    assert!(!marker.exists(), "the warm-up recorded an invocation");
+    script
+}
+
+async fn supersedes_an_in_flight_attempt(first_exec_stall: Duration) {
     let _env_guard = crate::ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let data_dir = dir.path().join("data");
@@ -35,17 +93,11 @@ async fn reconnect_now_supersedes_an_in_flight_automatic_attempt() {
     // variable concurrently.
     unsafe { std::env::set_var("ANTHREX_DATA_DIR", &data_dir) };
 
-    // Stands in for the real `anthrex` binary: records that it was launched as
-    // `daemon start --foreground`, which is the one observable proof that this
-    // press's `daemon_exe` reached a real attempt, then exits without binding the
-    // socket (so `ensure_daemon`'s own poll just runs out its `ENSURE_DAEMON_SOCKET_WAIT`
-    // budget harmlessly: 10s since milestone 9.11's decision 31, 3s before).
+    // The stand-in never binds the socket, so `ensure_daemon`'s own poll just runs out
+    // its `ENSURE_DAEMON_SOCKET_WAIT` budget harmlessly (10 s since milestone 9.11's
+    // decision 31, 3 s before).
     let marker = dir.path().join("started.log");
-    let script = dir.path().join("fake_daemon.sh");
-    testexec::write_executable(
-        &script,
-        format!("#!/bin/sh\necho invoked >> {:?}\nexit 0\n", marker),
-    );
+    let script = stand_in(dir.path(), &marker, first_exec_stall);
 
     let mut driver = ConnectionDriver::new();
 
@@ -82,7 +134,7 @@ async fn reconnect_now_supersedes_an_in_flight_automatic_attempt() {
     // The fresh attempt this press spawned must actually try to start the daemon —
     // wait for its spawned child to prove it, not just for `reconnect_now` to return
     // (which only spawns the attempt task; it does not wait for it).
-    let marker_deadline = Instant::now() + Duration::from_secs(3);
+    let marker_deadline = Instant::now() + MARKER_WAIT;
     loop {
         if marker.exists() {
             break;

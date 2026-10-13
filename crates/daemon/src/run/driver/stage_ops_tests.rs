@@ -63,7 +63,7 @@ impl Rig {
         let tmp = crate::run::git::TestDir::new();
         let top = tmp.path().canonicalize().unwrap();
         if let Some(script) = wrapper(&top) {
-            testexec::write_executable(top.join("git-wrapper.sh"), script);
+            testexec::write_warm_executable(top.join("git-wrapper.sh"), script);
         }
         let root = top.join("repo");
         std::fs::create_dir_all(&root).unwrap();

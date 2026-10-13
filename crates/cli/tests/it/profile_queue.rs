@@ -327,7 +327,7 @@ fn e2e_the_queue_survives_a_daemon_restart() {
 fn the_restart_waits_for_the_first_scout_to_claim_its_script() {
     let stall = tempfile::tempdir().unwrap();
     let wrapper = stall.path().join("claude");
-    testexec::write_executable(
+    testexec::write_warm_executable(
         &wrapper,
         format!(
             "#!/bin/sh\ncase \"$*\" in *scout*) mkdir '{first}' 2>/dev/null && sleep {secs} ;; esac\nexec '{fake}' \"$@\"\n",

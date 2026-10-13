@@ -539,7 +539,7 @@ pub async fn claude_window(d: &TestDaemon, name: &str) -> u32 {
 pub fn recording_git(dir: &std::path::Path) -> PathBuf {
     let log = dir.join("git.log");
     let script = dir.join("recording-git");
-    testexec::write_executable(
+    testexec::write_warm_executable(
         &script,
         format!(
             "#!/bin/sh\n\

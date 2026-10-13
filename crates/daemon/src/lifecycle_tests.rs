@@ -201,3 +201,122 @@ fn bind_socket_serializes_concurrent_umask_use() {
         "16 concurrent bind_socket calls left the ambient umask changed: {ending:o} != {starting:o}"
     );
 }
+
+/// The cli `Connection refused` flake (`claude_status`, `claude_subagents`, os error 61
+/// at a test daemon's first connect): the socket file existed from `bind`, before
+/// `listen`, and a client that saw it in that instant was refused. Held between the two,
+/// the socket must not be there yet; released, it is there and accepts.
+#[test]
+fn the_socket_appears_only_once_it_listens() {
+    let dir = tempfile::tempdir().unwrap();
+    let sock = dir.path().join("d.sock");
+    let (paused_tx, paused_rx) = std::sync::mpsc::channel();
+    let (resume_tx, resume_rx) = std::sync::mpsc::channel::<()>();
+    let binder = std::thread::spawn({
+        let sock = sock.clone();
+        move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let _enter = rt.enter();
+            let _umask = crate::lock(&UMASK_LOCK);
+            let listener = bind_socket_with(&sock, |_| {
+                paused_tx.send(()).unwrap();
+                resume_rx.recv().unwrap();
+            })
+            .unwrap();
+            listener.into_std().unwrap()
+        }
+    });
+    paused_rx.recv().expect("the bind reached its pause");
+    let seen = sock.exists();
+    let early = std::os::unix::net::UnixStream::connect(&sock).map(|_| ());
+    // The bind changes the process's umask, so it runs under `UMASK_LOCK` like every other
+    // bind in this binary (review I1): free here, it could race `bind_restores_the_umask`.
+    let umask_free = UMASK_LOCK.try_lock().is_ok();
+    resume_tx.send(()).unwrap();
+    let _listener = binder.join().unwrap();
+
+    assert!(!umask_free, "the paused bind does not hold UMASK_LOCK");
+
+    assert!(
+        !seen,
+        "the socket existed before it listened; a connect then gave {early:?}"
+    );
+    std::os::unix::net::UnixStream::connect(&sock).expect("the socket accepts once bound");
+    let mode = std::fs::metadata(&sock).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+    let names: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(
+        names,
+        ["d.sock"],
+        "only the socket is left in its directory"
+    );
+}
+
+/// A bind that fails after its staging name exists (here: the socket path is already
+/// taken) leaves nothing behind, and never replaces what holds the path.
+#[tokio::test]
+async fn a_failed_bind_leaves_nothing_and_replaces_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let sock = dir.path().join("d.sock");
+    std::fs::write(&sock, "not ours").unwrap();
+    let error = bind_socket(&sock).unwrap_err();
+    assert_eq!(
+        std::fs::read_to_string(&sock).unwrap(),
+        "not ours",
+        "{error:#}"
+    );
+    let names: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(names, ["d.sock"], "{error:#}");
+}
+
+/// A directory under `/tmp` and a socket path in it exactly `len` bytes long.
+fn socket_path_of_len(len: usize) -> (tempfile::TempDir, PathBuf) {
+    let dir = tempfile::Builder::new()
+        .prefix("ax-sun-")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let base = dir.path().as_os_str().len() + "/".len() + "/d.sock".len();
+    let pad = "p".repeat(len - base);
+    let parent = dir.path().join(pad);
+    std::fs::create_dir(&parent).unwrap();
+    let sock = parent.join("d.sock");
+    assert_eq!(sock.as_os_str().len(), len);
+    (dir, sock)
+}
+
+/// Review I2: a socket path that fits `sun_path` but whose staging name does not is
+/// bound where it is, as before the staging name existed, and accepts.
+#[tokio::test]
+async fn a_path_that_fits_but_whose_staging_name_does_not_still_binds() {
+    let (_dir, sock) = socket_path_of_len(sun_path_bytes() - 1);
+    let listener = bind_socket(&sock).expect("a path that fits sun_path binds");
+    std::os::unix::net::UnixStream::connect(&sock).expect("the socket accepts");
+    drop(listener);
+    let names: Vec<_> = std::fs::read_dir(sock.parent().unwrap())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(names, ["d.sock"]);
+}
+
+/// Review I2: a socket path too long for `sun_path` fails with an error that names the
+/// path and the limit, not one that names neither.
+#[tokio::test]
+async fn a_path_too_long_for_sun_path_is_named_in_the_error() {
+    let (_dir, sock) = socket_path_of_len(sun_path_bytes());
+    let error = format!("{:#}", bind_socket(&sock).unwrap_err());
+    assert!(error.contains(&sock.display().to_string()), "{error}");
+    assert!(
+        error.contains(&format!("{} bytes", sun_path_bytes())),
+        "{error}"
+    );
+}

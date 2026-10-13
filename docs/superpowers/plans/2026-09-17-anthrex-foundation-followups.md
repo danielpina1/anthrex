@@ -2336,6 +2336,15 @@ Five minors from the merge review of milestone 9.11, none blocking:
 - **The design e2e harness now restarts the daemon once per test** to arm the read-back hold (PR #62 review). This costs time, not correctness. A per-run seam would avoid it.
 - **The e2e waits depend on `requirements_stored`, a key the digest shows only during planning** (PR #62 review). A digest change that drops or renames it breaks the fixtures' waits.
 
+### From the PR #63 reviews (2026-10-13), for later
+
+- **A predictable staging name in a shared sticky directory** (Master). Another user can pre-create `.<name>.<pid>.bind` beside a socket in a shared sticky directory such as `/tmp`, which denies the start, just as a pre-created socket does today. Proposed: give the staging name a random suffix, or bind it in a private directory on the same filesystem.
+- **A daemon killed between bind and link leaves its `.<name>.<pid>.bind` file** (Master; own review M3). Only a later daemon with the same pid removes it. Sweeping other daemons' staging names needs a liveness check first.
+- **Hard links are now required in the socket directory** (Master; own review M4). A filesystem without them fails the bind with an error that names the path.
+- **The staging name is a second name for the live socket for a few microseconds** (own review M2). The macOS sandbox's literal-path deny rule doesn't cover it.
+- **`crates/daemon/src/lifecycle.rs` is at 598 lines.** The next change there should split the socket code out first.
+- The long-path failure (a custom `ANTHREX_SOCKET` within about 14 bytes of `sun_path`'s limit) is **fixed in b5ca735b**: such a path binds directly at the real path.
+
 ## From milestone 9.15 (2026-10-13, recorded by M9.15.4 and its extra commits), for later
 
 - **The dossier's redaction stops at the brief's scope** (M9.15.8). `lessons::redact` does not replace `Authorization: Basic <base64>` (or `token`/`digest` schemes), credential assignments such as `DATABASE_PASSWORD=…` or `"client_secret": "…"`, or a key body whose BEGIN and END markers were both cut away. Decide whether to widen it, and share it with PR-body redaction (9.2, NA §6).

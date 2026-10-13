@@ -15,7 +15,7 @@ use support::run_git::{T, commit_file, head, out, real_git, repo, write, wt_dir}
 
 fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
     let path = dir.join(name);
-    testexec::write_executable(&path, format!("#!/bin/sh\n{body}\n"));
+    testexec::write_warm_executable(&path, format!("#!/bin/sh\n{body}\n"));
     path
 }
 
