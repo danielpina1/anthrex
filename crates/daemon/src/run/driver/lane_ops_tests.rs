@@ -109,6 +109,8 @@ impl Rig {
             check_timeout: T,
             confine: None,
             pinned: Default::default(),
+            pool: None,
+            pool_grant: None,
         };
         Rig {
             _tmp: tmp,

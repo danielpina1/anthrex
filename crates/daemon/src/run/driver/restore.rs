@@ -153,6 +153,10 @@ impl RunService {
             replay.extend(answers);
             runs.push(run);
         }
+        // Milestone 9.14 decision 13 (C25): the pool's start-up upkeep, after the runs
+        // are loaded, so a lease of a run this daemon does not know is freed.
+        let known: BTreeSet<String> = runs.iter().map(|r| r.id.clone()).collect();
+        self.pool.restore(&self.ctx.data_dir, &known).await;
         if runs.is_empty() {
             // Final review B-4: windows of runs that are gone go all the same.
             self.remove_stale_windows(&BTreeSet::new());

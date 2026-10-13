@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use serde_json::Value;
@@ -9,12 +10,20 @@ pub struct Runtime {
     notify: Option<Vec<String>>,
 }
 
-/// One matcher group of an event (M8b decision 37): its matcher and its commands, in
+/// One matcher group of an event (M8b decision 37): its matcher and its hooks, in
 /// order. A Codex hook is one group with an empty matcher.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Group {
     pub matcher: String,
-    pub commands: Vec<String>,
+    pub hooks: Vec<Hook>,
+}
+
+/// One hook entry: its command and, when the settings give one, its `timeout` in seconds
+/// (milestone 9.14: it replaces `STEP_TIMEOUT` for that hook).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Hook {
+    pub command: String,
+    pub timeout: Option<Duration>,
 }
 
 impl Group {
@@ -33,7 +42,7 @@ impl Runtime {
     /// The first group's first command, as milestone 3's `hook` step has always run.
     pub fn hook(&self, event: &str) -> Option<&str> {
         let group = self.hooks.get(event)?.first()?;
-        group.commands.first().map(String::as_str)
+        group.hooks.first().map(|hook| hook.command.as_str())
     }
 
     /// Every matcher group of `event`, in the order the settings list them.
@@ -149,14 +158,20 @@ fn claude(settings: &str) -> Result<Runtime> {
                     .and_then(Value::as_str)
                     .unwrap_or_default()
                     .to_owned(),
-                commands: entry
+                hooks: entry
                     .get("hooks")
                     .and_then(Value::as_array)
                     .map(Vec::as_slice)
                     .unwrap_or_default()
                     .iter()
-                    .filter_map(|hook| hook.get("command").and_then(Value::as_str))
-                    .map(str::to_owned)
+                    .filter_map(|hook| {
+                        let command = hook.get("command").and_then(Value::as_str)?;
+                        let timeout = hook.get("timeout").and_then(Value::as_u64);
+                        Some(Hook {
+                            command: command.to_owned(),
+                            timeout: timeout.map(Duration::from_secs),
+                        })
+                    })
                     .collect(),
             })
             .collect();
@@ -204,7 +219,10 @@ fn parse_codex_hook(config: &str, runtime: &mut Runtime) -> Result<()> {
         .context("invalid Codex hook command string")?;
     let group = Group {
         matcher: String::new(),
-        commands: vec![command],
+        hooks: vec![Hook {
+            command,
+            timeout: None,
+        }],
     };
     runtime.hooks.insert(event.to_owned(), vec![group]);
     Ok(())
@@ -261,7 +279,9 @@ mod tests {
 
         assert_eq!(runtime.hook("PreToolUse"), Some("a"));
         let groups = runtime.groups("PreToolUse");
-        let commands: Vec<&[String]> = groups.iter().map(|g| g.commands.as_slice()).collect();
+        let commands: Vec<Vec<String>> = (groups.iter())
+            .map(|g| g.hooks.iter().map(|h| h.command.clone()).collect())
+            .collect();
         assert_eq!(
             commands,
             [strings(&["a", "b"]), strings(&["c"]), strings(&["d"])]

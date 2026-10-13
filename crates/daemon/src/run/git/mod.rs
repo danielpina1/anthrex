@@ -69,7 +69,10 @@ pub use signals::{
 };
 pub use signals_pair::pair_signals;
 pub use summary::{resolve_target, task_summary, task_summary_excluding};
-pub use tiers::{changed_paths, checkout_tree, show_stat, sync_read, tree_of, tree_patch};
+pub use tiers::{
+    TreeEntry, changed_paths, checkout_tree, show_stat, sync_read, tree_entries, tree_of,
+    tree_patch,
+};
 
 /// Reads reconcile (M8a.21) shares with the ops it checks.
 pub(crate) use handback::{finish_clean, interrupted_conflict};

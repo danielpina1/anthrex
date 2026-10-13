@@ -34,7 +34,8 @@ type MakeBin = fn(&Path, &str) -> PathBuf;
 /// it fails with a clear message instead of hanging to nextest's 600 s limit. Its legal
 /// worst case: `RunService::stop`'s acknowledgement wait (`STOP_WAIT`), then
 /// `WindowManager::shutdown`'s kill grace and its cleanup's deadline, plus 30 s for the
-/// last saves and the joins on a loaded machine (`docs/timing-budgets.md`).
+/// last saves, the joins and the ops still running (a few git commands on the rig's
+/// local repository) on a loaded machine (`docs/timing-budgets.md`).
 const STOP_BOUND: Duration = Duration::from_secs(30)
     .saturating_add(crate::run::driver::STOP_WAIT)
     .saturating_add(crate::process::KILL_GRACE)
@@ -128,8 +129,9 @@ impl Rig {
     }
 
     /// Stops the rig as the daemon stops (`lifecycle.rs`): the run service (its last
-    /// `run.json` written), its loop, then the windows; then removes the task temporary
-    /// directories of the checkouts under the rig's directory.
+    /// `run.json` written), its loop, then the windows; then waits for every op still
+    /// running, and removes the task temporary directories of the checkouts under the
+    /// rig's directory.
     async fn stop(&self) {
         self.shutdown.cancel();
         let stopping = async {
@@ -139,12 +141,21 @@ impl Rig {
                 let _ = run_loop.await;
             }
             self.manager.shutdown().await;
+            // M9.14.11 (9.12's follow-up): an op the loop started runs on its own task,
+            // which neither the loop nor this stop awaits; one still running when the
+            // directory goes can make it again. No op starts now that the loop is gone.
+            self.runs.wait_for_ops().await;
         };
         if tokio::time::timeout(STOP_BOUND, stopping).await.is_err() {
             panic!(
-                "the rig did not stop within {STOP_BOUND:?}: does the test still hold the engine's lock (`runs.state`) across `stop()`?"
+                "the rig did not stop within {STOP_BOUND:?}: does the test still hold the engine's lock (`runs.state`) across `stop()`, or is an op of the run stuck?"
             );
         }
+        assert_eq!(
+            self.runs.ops_in_flight(),
+            0,
+            "an op still runs after `stop()`"
+        );
         crate::run::git::remove_task_tmps_beneath(self.dir.path()).unwrap();
         self.stopped
             .store(true, std::sync::atomic::Ordering::SeqCst);

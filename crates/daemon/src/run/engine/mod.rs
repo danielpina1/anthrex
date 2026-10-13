@@ -250,6 +250,12 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
             kind,
             action,
         } => design_gate::request(&mut state, reply, (&run_id, kind, action), now, &mut fx),
+        // Milestone 9.14 decision 7: the pool's note, in the run log.
+        EventKind::PoolNote { run_id, text } => {
+            if let Some(run) = state.runs.get_mut(&run_id) {
+                requests::log(run, now, text);
+            }
+        }
         EventKind::DesignChecked { run_id, checked } => {
             if let Some(run) = state.runs.get_mut(&run_id) {
                 design::checked(run, checked, now);

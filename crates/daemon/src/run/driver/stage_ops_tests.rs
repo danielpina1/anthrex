@@ -109,6 +109,8 @@ impl Rig {
             check_timeout: Duration::from_secs(30),
             confine: None,
             pinned: Default::default(),
+            pool: None,
+            pool_grant: None,
         };
         // M9.12.13: the repository directories the daemon names these checkouts' task
         // temporary directories from: the integration worktree's, never made, and the

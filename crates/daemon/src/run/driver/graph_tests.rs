@@ -442,6 +442,7 @@ fn spec() -> ConfineSpec {
         unix_sockets: Vec::new(),
         localhost_ports: Vec::new(),
         daemon_socket: PathBuf::from("/tmp/ax-sock"),
+        target_dir: None,
     }
 }
 

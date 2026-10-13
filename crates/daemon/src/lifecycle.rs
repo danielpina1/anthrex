@@ -273,6 +273,9 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
         ManagerConfig::from_env(opts.socket_path.clone(), shell, &loaded_config.runtimes)?;
     config.worktrees_root = opts.data_dir.join("worktrees");
     config.conversation = loaded_config.conversation.clone();
+    // Milestone 9.14 decision 17 (C7): the interactive opt-in, read once at start.
+    config.admit_interactive = loaded_config.testing.admit_interactive;
+    config.admit_wait_secs = loaded_config.testing.admit_wait_secs;
     // Fix wave 4, item 1: `codex_bin` is cloned out here, before `WindowManager::new`
     // consumes `config`, so the probe itself can run later — immediately before
     // `server::serve`, not here. Only decision 12's state-file load needs to precede the

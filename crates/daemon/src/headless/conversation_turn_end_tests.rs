@@ -507,14 +507,17 @@ fn a_continuation_after_a_blocking_stop_hook_still_ends_when_interrupted() {
             (Role::Assistant, TurnState::Complete)
         );
     }
-    // The same through a `PostToolUse` alone (its `PreToolUse` came before the `Stop`).
-    let mut w = claude_turn_with_open_call(StreamCursor::fed(), true);
-    w.real_hook(json!({"hook_event_name": "Stop", "session_id": SESSION}));
-    w.real_hook(json!({
-        "hook_event_name": "PostToolUse", "session_id": SESSION, "tool_name": "Bash",
-        "tool_use_id": "toolu_slow", "tool_response": {"stdout": "x"}
-    }));
-    assert_eq!(w.claude_line(INTERRUPTED), [stop()]);
+    // The same through a `PostToolUse` alone (its `PreToolUse` came before the `Stop`),
+    // or a failed call's `PostToolUseFailure` (milestone 9.14, F4; task 9 review Minor 1).
+    for event in ["PostToolUse", "PostToolUseFailure"] {
+        let mut w = claude_turn_with_open_call(StreamCursor::fed(), true);
+        w.real_hook(json!({"hook_event_name": "Stop", "session_id": SESSION}));
+        w.real_hook(json!({
+            "hook_event_name": event, "session_id": SESSION, "tool_name": "Bash",
+            "tool_use_id": "toolu_slow", "tool_response": {"stdout": "x"}
+        }));
+        assert_eq!(w.claude_line(INTERRUPTED), [stop()], "{event}");
+    }
 }
 
 /// M8c.11 review m1: a `Stop` hook that comes after its turn's `result` (its ack missed

@@ -29,8 +29,9 @@ POLL = 0.5
 # prefix of `daemon/tests/it/run_git_worktrees.rs`'s `ax run ...` and `ax wt ...`.
 PREFIXES = ("ax-", "ax ", "anthrex-")
 # Shared roots, not a test's own directory: their children are compared, never the
-# roots themselves. `anthrex-worktrees` is the test default worktree root
-# (`daemon/src/manager/config.rs`); `ax-<uid>` is the daemon's task-temporary root
+# roots themselves. `anthrex-worktrees` is `ManagerConfig::new`'s default worktree
+# root (`daemon/src/manager/config.rs`; since M9.14.11 `for_tests` names a sentinel
+# that panics instead, so a test reaching it is a leak this gate still sees); `ax-<uid>` is the daemon's task-temporary root
 # (`daemon/src/run/git/tmp.rs`); `anthrex-<uid>` is the default socket directory
 # (`proto/src/paths.rs`), the live daemon's.
 SHARED_ROOTS = ("anthrex-worktrees", f"ax-{os.getuid()}", f"anthrex-{os.getuid()}")

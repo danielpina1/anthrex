@@ -209,6 +209,7 @@ fn affected_docs_only_change_is_empty_and_plans_build_only() {
             command: "sh build.sh".into(),
             exclusive: false,
             affected_key: "-".into(),
+            per_module: false,
         }]
     );
     // An ignored path next to a module path leaves only the module.
@@ -250,6 +251,7 @@ fn unknown_graph_is_full_and_plans_check() {
             command: "sh check.sh".into(),
             exclusive: false,
             affected_key: "full:module graph unknown: module graph: x is not a module".into(),
+            per_module: false,
         }]
     );
 }

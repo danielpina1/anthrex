@@ -558,6 +558,8 @@ fn spawn_for_restart(
             resume: info.session_id.as_deref(),
             caps: &config.cli_caps,
             role: info.role.as_ref(),
+            admit_interactive: config.admit_interactive,
+            admit_wait_secs: config.admit_wait_secs,
         },
     );
     Window::spawn(id, &plan, info.cols.max(1), info.rows.max(1), events)

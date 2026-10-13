@@ -18,7 +18,8 @@ use tokio::sync::Notify;
 use super::engine::EventKind;
 
 pub use book::{
-    LOAD_VAR, Priority, SLOT_VARS, SlotBook, SlotRequest, Ticket, Want, slot_vars, worker_caps,
+    LOAD_VAR, Priority, SLOT_VARS, SlotBook, SlotRequest, Ticket, Want, slot_vars, worker_cap,
+    worker_caps,
 };
 
 /// The daemon's scheduler: `[testing] test_slots`, else [`default_slots`].
@@ -153,6 +154,11 @@ pub struct SlotGrant {
 impl SlotGrant {
     pub fn slots(&self) -> u32 {
         self.slots
+    }
+
+    /// The share of the daemon's slots held right after this grant (decision 26).
+    pub fn load(&self) -> &str {
+        &self.load
     }
 
     /// Decision 26: [`SLOT_VARS`] at the granted slots, and [`LOAD_VAR`], the share of

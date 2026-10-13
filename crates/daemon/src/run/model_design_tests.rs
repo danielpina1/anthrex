@@ -54,6 +54,7 @@ fn an_old_run_json_loads_with_design_off() {
     // lists are no longer part of the run; the rest is written back as 9.5 wrote it.
     let mut captured = captured;
     crate::run::test_support::without_pre_9_8_keys(&mut captured);
+    crate::run::test_support::take_written_admit_wait(&mut again);
     assert_eq!(again, captured);
 }
 

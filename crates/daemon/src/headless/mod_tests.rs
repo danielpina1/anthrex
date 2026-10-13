@@ -135,6 +135,7 @@ fn a_headless_spec_round_trips_through_json() {
         run_ref: None,
         codex_config_guard: None,
         output_filter: None,
+        admit: None,
     };
     let json = serde_json::to_value(&spec).unwrap();
     assert_eq!(json["claude_auth"], "api_key");
@@ -241,6 +242,7 @@ fn only_a_claude_api_key_session_keeps_the_api_credentials() {
         run_ref: None,
         codex_config_guard: None,
         output_filter: None,
+        admit: None,
     };
     let scrub = |runtime, auth| {
         let spec = HeadlessSpec {
@@ -329,6 +331,7 @@ fn only_a_design_agents_session_is_never_resumed() {
         run_ref: None,
         codex_config_guard: None,
         output_filter: None,
+        admit: None,
     };
     for runtime in [Runtime::Claude, Runtime::Codex] {
         for role in [AgentRole::Worker, AgentRole::Reviewer] {

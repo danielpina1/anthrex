@@ -63,6 +63,7 @@ pub(super) enum Stop {
 impl ProfileService {
     /// `<wt>/runs/<name>` and its repository `<repo_dir>/tasks/<name>`.
     pub(super) fn checkout(&self, project: &Path, name: &str) -> (PathBuf, PathBuf) {
+        crate::manager::refuse_test_worktrees_root(&self.ctx.worktrees_root);
         let path = repo_worktrees_dir(&self.ctx.worktrees_root, project)
             .join("runs")
             .join(name);

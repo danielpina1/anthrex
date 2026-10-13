@@ -433,6 +433,20 @@ pub(crate) fn without_pre_9_8_keys(stored: &mut serde_json::Value) {
     without_strength(stored);
 }
 
+/// Milestone 9.14 decision 24: a save writes `limits.testing.admit_wait_secs`, which a
+/// pre-9.14 `run.json` lacks; it reads the 300 s default. Asserts that and removes it, so
+/// the rest of the written run compares with the stored one.
+pub(crate) fn take_written_admit_wait(written: &mut serde_json::Value) {
+    let testing = written["limits"]["testing"]
+        .as_object_mut()
+        .expect("the written run's testing limits");
+    assert_eq!(
+        testing.remove("admit_wait_secs"),
+        Some(serde_json::json!(300)),
+        "a pre-9.14 run reads the default admission wait"
+    );
+}
+
 /// Every `strength` key in `value`, at any depth, removed.
 pub(crate) fn without_strength(value: &mut serde_json::Value) {
     match value {

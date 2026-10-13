@@ -47,6 +47,11 @@ pub struct LaunchContext<'a> {
     pub caps: &'a CliCaps,
     /// Milestone 9 decisions 7–10: the orchestrator's role; `None` for every other window.
     pub role: Option<&'a role::RoleLaunch>,
+    /// Milestone 9.14 decision 17 (C7): `[testing] admit_interactive` and
+    /// `admit_wait_secs`, from `ManagerConfig`. A user's Claude window gets the admission
+    /// group only when the first is true and the second above 0; the orchestrator never.
+    pub admit_interactive: bool,
+    pub admit_wait_secs: u64,
 }
 
 pub fn shell_quote(s: &str) -> String {
@@ -83,8 +88,17 @@ pub fn plan(spec: &WindowSpec, ctx: &LaunchContext<'_>) -> LaunchPlan {
     let (program, args) = match spec.runtime {
         Runtime::Shell => (ctx.shell.to_string(), vec!["-l".to_string()]),
         Runtime::Claude => {
-            let settings = serde_json::to_string(&claude::settings(ctx.exe, ctx.window_id))
-                .expect("Claude hook settings are serializable");
+            let mut settings = claude::settings(ctx.exe, ctx.window_id);
+            if ctx.role.is_none() && ctx.admit_interactive && ctx.admit_wait_secs > 0 {
+                let hook = crate::admit::AdmitHook {
+                    wait_secs: ctx.admit_wait_secs.min(::config::ADMIT_WAIT_MAX_SECS),
+                    slots: None,
+                    prefixes: Vec::new(),
+                };
+                crate::admit::add_hook(&mut settings, ctx.exe, ctx.window_id, Some(&hook));
+            }
+            let settings =
+                serde_json::to_string(&settings).expect("Claude hook settings are serializable");
             let mut args = vec![
                 "--name".to_string(),
                 ctx.name.to_string(),
@@ -158,6 +172,8 @@ mod tests {
             resume: None,
             caps: &crate::headless::argv::CLI_CAPS,
             role: None,
+            admit_interactive: false,
+            admit_wait_secs: 0,
         }
     }
 

@@ -217,6 +217,12 @@ mod tuning {
     /// an executable that is never run, and the repository's data directory holding
     /// `refit.jsonl` as its history.
     fn rig(tmp: &Path) -> (PathBuf, PathBuf, Arc<RunService>) {
+        rig_rooted(tmp, true)
+    }
+
+    /// [`rig`], its worktrees root under `tmp` when `own_root`, else left at
+    /// [`ManagerConfig::for_tests`]'s sentinel (M9.14.11).
+    fn rig_rooted(tmp: &Path, own_root: bool) -> (PathBuf, PathBuf, Arc<RunService>) {
         let work = tmp.join("work");
         std::fs::create_dir_all(work.join("crates/a/src")).unwrap();
         git(&work, &["init", "-q", "-b", "main"]);
@@ -231,7 +237,9 @@ mod tuning {
         config.claude_bin = "/usr/bin/false".into();
         config.codex_bin = "/usr/bin/false".into();
         config.cli_caps = crate::headless::argv::CLI_CAPS;
-        config.worktrees_root = data.join("worktrees");
+        if own_root {
+            config.worktrees_root = data.join("worktrees");
+        }
         let (manager, _events) = WindowManager::new(config);
         let service = RunService::for_manager(&manager, data.clone(), Arc::new(NoRoots));
         let project = work.canonicalize().unwrap();
@@ -287,6 +295,19 @@ mod tuning {
 
     fn log(run: &Run) -> Vec<&str> {
         run.log.iter().map(|e| e.text.as_str()).collect()
+    }
+
+    /// M9.14.11 (ruling C29): a rig that never gives its run a worktrees root of its own
+    /// fails its first run with the sentinel's message, instead of leaving a checkout in
+    /// the shared `<temp>/anthrex-worktrees` on a slow machine.
+    #[tokio::test]
+    #[should_panic(
+        expected = "a test rig left worktrees_root at ManagerConfig::for_tests's sentinel; give it a directory under the test's own temporary directory"
+    )]
+    async fn a_rig_left_on_the_sentinel_root_fails_its_first_run() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (work, _repo_dir, service) = rig_rooted(tmp.path(), false);
+        start(&service, &work, false, planned(true)).await;
     }
 
     /// Decision 12 at a planned (goal) start: the run log opens with the refit-write

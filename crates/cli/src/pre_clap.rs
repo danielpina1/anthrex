@@ -1,5 +1,5 @@
-//! The subcommands dispatched before clap parses anything: `hook`, `filter-run` and
-//! `filter-hook`. Each is started by an agent's CLI, not by hand, so none is in
+//! The subcommands dispatched before clap parses anything: `hook`, `filter-run`,
+//! `filter-hook` and `admit`. Each is started by an agent's CLI, not by hand, so none is in
 //! `anthrex --help`, and none may print clap's errors or start a runtime it does not
 //! need.
 
@@ -19,6 +19,9 @@ pub fn dispatch(started: Instant) {
         crate::filter_run::main(args.collect())
     } else if first == OsStr::new("filter-hook") {
         crate::filter_hook::run(args.collect(), started);
+        0
+    } else if first == OsStr::new("admit") {
+        crate::admit::run(args.collect(), started);
         0
     } else {
         return;

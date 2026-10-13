@@ -64,6 +64,7 @@ pub(super) fn worker(runtime: Runtime) -> HeadlessSpec {
         }),
         codex_config_guard: None,
         output_filter: None,
+        admit: None,
     }
 }
 

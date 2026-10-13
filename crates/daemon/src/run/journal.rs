@@ -42,8 +42,10 @@ pub const RUN_TMP: &str = "run.json.tmp";
 /// Milestone 9.11 decision 36 (A13): the newest `run.json` format this build reads and
 /// writes; a run without the field (written before it) reads as format 0. Format 2
 /// (milestone 9.13, pre-flight ruling C3): `OpKind::CountCommits.{owns, protected}` in
-/// `pending_ops`, and the milestone's other new `Run` fields.
-pub const RUN_FORMAT: u32 = 2;
+/// `pending_ops`, and the milestone's other new `Run` fields. Format 3 (milestone 9.14,
+/// pre-flight ruling C3): `TestingLimits.admit_wait_secs`, and the milestone's other new
+/// `Run` fields (`HeadlessSpec.admit` in a pending `CreateWindow`).
+pub const RUN_FORMAT: u32 = 3;
 pub const JOURNAL_FILE: &str = "journal.jsonl";
 const JOURNAL_TMP: &str = "journal.jsonl.tmp";
 

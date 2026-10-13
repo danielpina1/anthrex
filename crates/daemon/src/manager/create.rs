@@ -465,6 +465,8 @@ pub(super) fn spawn_window(
             resume: None,
             caps: &config.cli_caps,
             role: role.as_ref(),
+            admit_interactive: config.admit_interactive,
+            admit_wait_secs: config.admit_wait_secs,
         },
     );
 

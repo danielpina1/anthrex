@@ -200,3 +200,68 @@ fn claude_sessions_deny_writes_to_protected_agent_config() {
     run.limits.worker_sandbox = false;
     assert!(worker_spec(&run, &task).claude_sandbox.is_none());
 }
+
+/// Milestone 9.14 decisions 17, 20 and 21: a Claude worker asks its cap,
+/// `max(1, test_slots / max_writers)`, waits `W = min(admit_wait_secs,
+/// stall_after_secs / 2)`, and counts the run's filter prefixes as heavy.
+#[test]
+fn a_claude_worker_gets_the_admit_hook() {
+    use crate::admit::AdmitHook;
+    let mut run = run_ok(&plan_with(
+        PROFILE,
+        &[task_toml("t1", "S", "[\"crates/a/**\"]", "")],
+    ));
+    run.filter_prefixes = vec!["./slow-test".into()];
+    let mut task = run.tasks[0].clone();
+    task.route.runtime = Runtime::Claude;
+    for (test_slots, max_writers, cap) in [(8, 2, 4), (7, 2, 3), (1, 4, 1), (0, 1, 1)] {
+        run.test_slots = test_slots;
+        run.limits.max_writers = max_writers;
+        assert_eq!(
+            worker_spec(&run, &task).admit,
+            Some(AdmitHook {
+                wait_secs: 300,
+                slots: Some(cap),
+                prefixes: vec!["./slow-test".into()],
+            }),
+            "{test_slots} slots, {max_writers} writers"
+        );
+    }
+    // The defaults: `admit_wait_secs` 300 and `stall_after_secs` 600.
+    assert_eq!(run.limits.testing.admit_wait_secs, 300);
+    assert_eq!(run.limits.stall_after_secs, 600);
+    run.limits.stall_after_secs = 200;
+    assert_eq!(worker_spec(&run, &task).admit.unwrap().wait_secs, 100);
+}
+
+#[test]
+fn a_codex_worker_and_a_reviewer_get_none() {
+    let run = run_ok(&plan_with(
+        PROFILE,
+        &[task_toml("t1", "S", "[\"crates/a/**\"]", "")],
+    ));
+    let mut task = run.tasks[0].clone();
+    task.route.runtime = Runtime::Codex;
+    assert_eq!(worker_spec(&run, &task).admit, None);
+    for runtime in [Runtime::Claude, Runtime::Codex] {
+        let route = Route {
+            runtime,
+            model: "m".into(),
+            effort: Effort::MEDIUM,
+        };
+        assert_eq!(reviewer_spec(&run, &task, &route).admit, None);
+    }
+}
+
+#[test]
+fn admission_is_off_when_admit_wait_secs_is_zero() {
+    let mut run = run_ok(&plan_with(
+        PROFILE,
+        &[task_toml("t1", "S", "[\"crates/a/**\"]", "")],
+    ));
+    let mut task = run.tasks[0].clone();
+    task.route.runtime = Runtime::Claude;
+    assert!(worker_spec(&run, &task).admit.is_some());
+    run.limits.testing.admit_wait_secs = 0;
+    assert_eq!(worker_spec(&run, &task).admit, None);
+}

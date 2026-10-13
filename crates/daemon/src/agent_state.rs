@@ -64,7 +64,9 @@ impl AgentState {
         }
         let tool = match hook.kind {
             HookKind::PreToolUse if hook.agent_id.is_none() => Some(hook.tool_name.clone()),
-            HookKind::PostToolUse if hook.agent_id.is_none() => Some(None),
+            HookKind::PostToolUse | HookKind::PostToolUseFailure if hook.agent_id.is_none() => {
+                Some(None)
+            }
             HookKind::Stop | HookKind::StopFailure if hook.agent_id.is_none() => Some(None),
             _ => None,
         };
@@ -265,6 +267,24 @@ mod tests {
         assert!(state.signals_seen);
         let again = state.on_hook(Runtime::Codex, &quiet, Instant::now());
         assert!(!again.changed);
+    }
+
+    /// Milestone 9.14 fact F4: a failed tool use (`PostToolUseFailure`) ends it as
+    /// `PostToolUse` does, so the window stops showing the tool.
+    #[test]
+    fn a_failed_tool_use_clears_the_tool() {
+        let mut state = AgentState::default();
+        let mut pre = hook(HookSource::Claude, HookKind::PreToolUse, "s", None);
+        pre.tool_name = Some("Bash".into());
+        state.on_hook(Runtime::Claude, &pre, Instant::now());
+        assert_eq!(state.tool.as_deref(), Some("Bash"));
+        let failed = hook(HookSource::Claude, HookKind::PostToolUseFailure, "s", None);
+        assert!(
+            state
+                .on_hook(Runtime::Claude, &failed, Instant::now())
+                .changed
+        );
+        assert_eq!(state.tool, None);
     }
 
     #[test]

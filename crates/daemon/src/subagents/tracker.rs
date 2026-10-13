@@ -127,7 +127,7 @@ impl SubagentTracker {
                 entry.needs_permission = false;
                 changed || entry_changed
             }
-            HookKind::PostToolUse => {
+            HookKind::PostToolUse | HookKind::PostToolUseFailure => {
                 let Some(entry) = self.entry_mut(hook.agent_id.as_deref()) else {
                     return changed;
                 };

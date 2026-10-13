@@ -165,6 +165,8 @@ impl App {
                 reason,
             } => self.on_conversation_gone(window_id, agent_id, reason),
             DaemonMsg::Run(reply) => self.on_run_reply(reply),
+            // Milestone 9.14: answers to `anthrex admit`, never sent to the TUI.
+            DaemonMsg::Admitted { .. } | DaemonMsg::AdmitTimedOut => vec![],
         }
     }
 }

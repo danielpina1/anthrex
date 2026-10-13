@@ -170,6 +170,7 @@ pub fn headless_spec_on(scout: &ScoutSpec, ctx: &ScoutContext, route: &Route) ->
         }),
         // Ruling R-T8-1: a scout never gets the output filter.
         output_filter: None,
+        admit: None,
     }
 }
 
