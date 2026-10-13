@@ -2311,6 +2311,19 @@ Five minors from the merge review of milestone 9.11, none blocking:
 - **`fake-agent` fires `PostToolUse` for a failed `bash` step too** (M9.14.10). The Interfaces define one `PostToolUse` per `bash` step, with its `exit_code`; the real CLI fires `PostToolUseFailure` instead for a failed `Bash` (F4). Both release a hold, so no test depends on it; a test of the failure path through `fake-agent` would want the real CLI's choice.
 - **Brief follow-ups not yet taken** (the brief's "Follow-ups handled"): Codex admission once fact F6 is known; a TUI line for the pool's leases and for admission holds; aging of agent asks if starvation shows up.
 
+### From the PR #61 review (2026-10-12, Master), for later
+
+- **More heavy-matcher misses** (fail open). `timeout N cargo test` is the cheapest fix: add `timeout` to `COMMAND_WRAPPERS` and skip its duration argument. Also missed: `stdbuf`, `sudo`, `xargs cargo …`, the cargo plugins `llvm-cov`, `miri test`, `insta test` and `hack check`, `make test`, and `bash -c '…'`.
+- **C11 gap: planted registry artifacts survive two release paths.** A task merged earlier in a run that is later discarded, and a cancelled task of an accepted run, both release with `clean = true`. A registry artifact planted in their directory survives.
+- **Unconfined checks (Linux): `cargo clean -p` follows planted symlinks.** A symlinked `debug/deps`, `build` or `.fingerprint` points the clean out of the pool directory.
+- **The `cargo metadata > holder/metadata.json` redirect follows a link.** The holder name is pid + sequence, so a race can plant a link there first.
+- **First-lease race on a Dirty directory.** A `wipe_first: false` re-lease can take the directory mutex before the wiping lease. No engine path does this today.
+- **A crash mid-release leaves the lease until the hourly sweep.** A `RemoveWorktree` replayed through `reconcile/mod.rs:211` has no pool release.
+- **An unreadable or other-version `leases.json`** marks every directory Dirty with no owners, while a persisted worker spec still names its old `task-k`.
+- **`CARGO_TARGET_TMPDIR`, `target/nextest` and similar persist across owners** of a pool directory.
+- **A `spelled()` blocking failure falls back to the unresolved path**, which gives one pool two books. This happens only at shutdown.
+- **A pool directory named like `llvm-cov-target/debug` is taken for a target-triple directory** and wiped on every release.
+
 ## From milestone 9.15 (2026-10-13, recorded by M9.15.4 and its extra commits), for later
 
 - **The `AppendHistory` reconcile row still trusts a torn line** (what is left of task 3's review I1 after `history_io::append_once` was fixed in M9.15.5's follow-up commit). `reconcile/mod.rs`'s row asks `contains_record`, which matches the `"record_id":"<id>"` needle on any line, a torn one included, so a pending `AppendHistory` whose only line was torn by a crash is reported written and its record is lost. It could decide from lines that parse as `append_once` now does; `contains_record` itself must stay format-neutral, because M9.15.9's `QueueDistill` row reads `lessons.jsonl` with it. One lost tally row, not a retry loop.
