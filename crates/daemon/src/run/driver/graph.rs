@@ -466,6 +466,12 @@ pub(super) fn cache_get(cache: &Path, key: &str) -> Option<ModuleGraph> {
         .map(|entry| entry.graph)
 }
 
+/// The newest cached graph (the last entry, which [`cache_put`] pushes): the lessons
+/// graph's modules (milestone 9.15 ruling C17). Read only; nothing is run.
+pub(super) fn cache_newest(cache: &Path) -> Option<ModuleGraph> {
+    cache_entries(cache).pop().map(|entry| entry.graph)
+}
+
 /// Stores `graph` under `key` as the newest entry, dropping the oldest past
 /// [`GRAPH_CACHE_MAX`]. A failed write is logged and ignored: the cache is advisory.
 pub(super) fn cache_put(cache: &Path, key: &str, graph: &ModuleGraph) {

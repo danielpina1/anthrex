@@ -7,8 +7,14 @@
 //! and the history again under it and re-derive the request (milestone 9.5 decision
 //! 11's shape): an id that is unknown, or a lesson in a state the request does not
 //! apply to, refuses the whole request and writes nothing. Nothing here takes the
-//! manager lock or the engine lock. `List` does not detect reverts: credit is as of the
-//! last `run start` or `run stats` detection (C20).
+//! manager lock or the engine lock. `List` and `Graph` do not detect reverts: credit is
+//! as of the last `run start` or `run stats` detection (C20).
+//!
+//! `Graph` (task M9.15.13, decision 41) reads the store, the history and the module
+//! source on `spawn_blocking`, off every lock, and builds the graph purely
+//! (`lessons::graph::build`). Its modules are the newest entry of `module-graph.json`,
+//! else the stored profile's `modules` matched in the checkout, else none; `cargo` is
+//! never run for it.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -16,8 +22,8 @@ use std::time::Duration;
 
 use proto::run_wire::request;
 use proto::{
-    DismissedLine, HistoryLine, LESSONS_VERSION, LessonInfo, LessonLine, LessonOrigin,
-    LessonStatus, LessonsRequest, RetiredLine, RunReply, VerdictLine,
+    DismissedLine, HistoryLine, LESSONS_VERSION, LessonGraph, LessonInfo, LessonLine, LessonOrigin,
+    LessonStatus, LessonsRequest, ModuleSource, RetiredLine, RunReply, VerdictLine,
 };
 
 use super::adapt::checkout_of;
@@ -25,12 +31,11 @@ use super::{RunService, unix_now};
 use crate::lessons::LESSONS_FILE;
 use crate::lessons::consolidate::consolidate;
 use crate::lessons::fold::{Lesson, fold};
+use crate::lessons::graph::build;
 use crate::lessons::store::{LessonLocks, read_store};
 use crate::run::engine::HISTORY_FILE;
 use crate::run::history_io::{append_json, read_history};
 
-/// `Graph`'s refusal until task M9.15.13 builds the graph.
-pub const GRAPH_NOT_YET: &str = "the lessons graph is not available yet";
 /// The reason a forgotten distilled lesson is retired with (decision 19).
 pub const FORGOTTEN: &str = "forgotten by the user";
 /// The shortest id prefix a request may name a lesson by (decision 19).
@@ -60,29 +65,40 @@ impl RunService {
     }
 }
 
-/// Answers `req` at `now`: `List` with `RunReply::Lessons`, `Decide` and `Forget` with
-/// `Done` (`approved <n>`, `rejected <n>`, `forgot <n>`), every refusal with `Refused`
-/// under `request::LESSONS`.
+/// Answers `req` at `now`: `List` with `RunReply::Lessons`, `Graph` with
+/// `RunReply::LessonsGraph`, `Decide` and `Forget` with `Done` (`approved <n>`,
+/// `rejected <n>`, `forgot <n>`), every refusal with `Refused` under `request::LESSONS`.
 pub async fn answer(locks: &LessonLocks, at: LessonsAt, req: LessonsRequest, now: u64) -> RunReply {
     let refused = |message: String| RunReply::refused(request::LESSONS, message);
     let dir = match &req {
-        LessonsRequest::Graph { .. } => return refused(GRAPH_NOT_YET.to_string()),
         LessonsRequest::List { dir, .. }
         | LessonsRequest::Decide { dir, .. }
-        | LessonsRequest::Forget { dir, .. } => dir.clone(),
+        | LessonsRequest::Forget { dir, .. }
+        | LessonsRequest::Graph { dir } => dir.clone(),
     };
     let (git, data_dir, timeout) = (at.git.clone(), at.data_dir.clone(), at.git_timeout);
-    let repo_dir = match blocking(move || {
-        let (_, project) = checkout_of(&git, &dir, timeout)?;
-        Ok(crate::profile::repo_dir(&data_dir, &project))
+    let (checkout, project, repo_dir) = match blocking(move || {
+        let (checkout, project) = checkout_of(&git, &dir, timeout)?;
+        let repo_dir = crate::profile::repo_dir(&data_dir, &project);
+        Ok((checkout, project, repo_dir))
     })
     .await
     {
-        Ok(repo_dir) => repo_dir,
+        Ok(found) => found,
         Err(message) => return refused(message),
     };
     let cfg = at.cfg;
     let result = match req {
+        LessonsRequest::Graph { .. } => {
+            let work = move || Ok(graph_at(&repo_dir, &checkout, project, now, &cfg));
+            return match blocking(work).await {
+                Ok(graph) => RunReply::LessonsGraph {
+                    graph: Box::new(graph),
+                    request_id: None,
+                },
+                Err(message) => refused(message),
+            };
+        }
         LessonsRequest::List { all, .. } => {
             return match blocking(move || Ok(list_at(&repo_dir, all, now, &cfg))).await {
                 Ok(lessons) => RunReply::Lessons {
@@ -97,7 +113,6 @@ pub async fn answer(locks: &LessonLocks, at: LessonsAt, req: LessonsRequest, now
             decide(locks, &repo_dir, ids, approve, now, cfg).await
         }
         LessonsRequest::Forget { ids, .. } => forget(locks, &repo_dir, ids, now, cfg).await,
-        LessonsRequest::Graph { .. } => unreachable!("refused above"),
     };
     match result {
         Ok(message) => RunReply::done(request::LESSONS, message),
@@ -139,6 +154,61 @@ pub fn list_at(repo_dir: &Path, all: bool, now: u64, cfg: &config::Lessons) -> V
         .filter(|l| all || !matches!(l.status, LessonStatus::Rejected | LessonStatus::Retired))
         .map(Lesson::info)
         .collect()
+}
+
+/// `Graph`'s blocking core (decision 41): the store and the history of `repo_dir`,
+/// consolidated at `now`, drawn over [`modules_at`]'s modules, for `project`.
+pub fn graph_at(
+    repo_dir: &Path,
+    checkout: &Path,
+    project: PathBuf,
+    now: u64,
+    cfg: &config::Lessons,
+) -> LessonGraph {
+    let (lines, _) = read_store(&repo_dir.join(LESSONS_FILE));
+    let store = fold(&lines);
+    let (history, _): (Vec<HistoryLine>, _) = read_history(&repo_dir.join(HISTORY_FILE));
+    let lessons = consolidate(&store, &history, now, cfg);
+    let (modules, source) = modules_at(repo_dir, checkout);
+    LessonGraph {
+        project,
+        ..build(&store, &lessons, &modules, source)
+    }
+}
+
+/// Decision 41's modules, as `(name, directory)`: the newest entry of `repo_dir`'s
+/// module graph cache (ruling C17), else the stored profile's `modules` patterns
+/// matched in `checkout` (each named by its last component, or by its whole directory
+/// when two share one), else none. Nothing is run. Blocking.
+pub fn modules_at(
+    repo_dir: &Path,
+    checkout: &Path,
+) -> (Vec<(String, Option<String>)>, ModuleSource) {
+    if let Some(graph) = super::graph::cache_newest(&repo_dir.join(super::graph::GRAPH_CACHE_FILE))
+    {
+        let modules = (graph.modules.into_iter())
+            .map(|(name, info)| (name, info.dir))
+            .collect();
+        return (modules, ModuleSource::CargoCache);
+    }
+    let crate::profile::store::Stored::Found { profile, .. } =
+        crate::profile::store::load(repo_dir)
+    else {
+        return (Vec::new(), ModuleSource::None);
+    };
+    if profile.modules.is_empty() {
+        return (Vec::new(), ModuleSource::None);
+    }
+    let dirs = crate::profile::verify_tiers::module_dirs(checkout, &profile.modules);
+    let last = |dir: &str| dir.rsplit('/').next().unwrap_or(dir).to_string();
+    let modules = (dirs.iter())
+        .map(|dir| {
+            let shared = dirs.iter().filter(|d| last(d) == last(dir)).count() > 1;
+            let name = if shared { dir.clone() } else { last(dir) };
+            (name, Some(dir.clone()))
+        })
+        .collect();
+    (modules, ModuleSource::Profile)
 }
 
 /// `Decide`'s blocking core; the caller holds `repo_dir`'s lock.

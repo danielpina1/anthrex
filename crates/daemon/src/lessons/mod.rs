@@ -7,6 +7,7 @@
 pub mod consolidate;
 pub mod dossier;
 pub mod fold;
+pub mod graph;
 pub mod redact;
 pub mod select;
 pub mod service;

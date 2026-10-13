@@ -1,10 +1,10 @@
 //! Task M9.15.5: decision 19's requests over real temporary data directories.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use proto::{
     DistillCause, DistilledLine, LESSONS_VERSION, LessonDraft, LessonLayer, LessonLine,
-    LessonStatus, LessonsRequest, QueuedLine, RunReply, VerdictLine,
+    LessonStatus, LessonsRequest, ModuleSource, QueuedLine, RunReply, VerdictLine,
 };
 
 use super::*;
@@ -316,18 +316,179 @@ async fn decide_rederives_under_the_lock() {
     assert_eq!(verdicts, 1, "one verdict written");
 }
 
+/// A git repository at `<tmp>/repo` with `crates/a` and `crates/b`, and its data
+/// directory under `<tmp>/data`: `(tmp, checkout, project, repo_dir)`.
+fn git_repo() -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf) {
+    let tmp = tempfile::Builder::new()
+        .prefix("ax-lessons-graph")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let checkout = tmp.path().join("repo");
+    for module in ["a", "b"] {
+        std::fs::create_dir_all(checkout.join("crates").join(module)).unwrap();
+    }
+    // AGENTS.md rule 11's scrubbed environment.
+    let init = std::process::Command::new("git")
+        .args(["--no-optional-locks", "init", "-q"])
+        .current_dir(&checkout)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_PREFIX")
+        .env_remove("GIT_OBJECT_DIRECTORY")
+        .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
+        .env_remove("GIT_LITERAL_PATHSPECS")
+        .env_remove("GIT_GLOB_PATHSPECS")
+        .env_remove("GIT_NOGLOB_PATHSPECS")
+        .env_remove("GIT_ICASE_PATHSPECS")
+        .status()
+        .unwrap();
+    assert!(init.success());
+    let (root, project) = checkout_of(std::ffi::OsStr::new("git"), &checkout, T).unwrap();
+    let repo_dir = crate::profile::repo_dir(&tmp.path().join("data"), &project);
+    std::fs::create_dir_all(&repo_dir).unwrap();
+    (tmp, root, project, repo_dir)
+}
+
+const T: Duration = Duration::from_secs(30);
+
+fn write_profile(repo_dir: &Path, modules: &[&str]) {
+    let profile = proto::RepoProfile {
+        modules: modules.iter().map(|m| m.to_string()).collect(),
+        ..proto::RepoProfile::default()
+    };
+    let text = toml::to_string(&profile).unwrap();
+    let path = repo_dir.join(crate::profile::store::PROFILE_FILE);
+    crate::profile::store::write_atomic(&path, text.as_bytes()).unwrap();
+}
+
+fn module_graph(modules: &[(&str, Option<&str>)]) -> crate::run::tiers::ModuleGraph {
+    let mut graph = crate::run::tiers::ModuleGraph::default();
+    for (name, dir) in modules {
+        graph.modules.insert(
+            name.to_string(),
+            crate::run::tiers::ModuleInfo {
+                dir: dir.map(str::to_string),
+                deps: Default::default(),
+            },
+        );
+    }
+    graph
+}
+
+#[test]
+fn module_source_prefers_cache_then_profile_then_none() {
+    let (_tmp, checkout, _, repo_dir) = git_repo();
+    let owned = |pairs: &[(&str, Option<&str>)]| -> Vec<(String, Option<String>)> {
+        (pairs.iter())
+            .map(|(n, d)| (n.to_string(), d.map(str::to_string)))
+            .collect()
+    };
+    // Nothing: no modules.
+    assert_eq!(
+        modules_at(&repo_dir, &checkout),
+        (Vec::new(), ModuleSource::None)
+    );
+    // A profile with no modules is still none.
+    write_profile(&repo_dir, &[]);
+    assert_eq!(
+        modules_at(&repo_dir, &checkout),
+        (Vec::new(), ModuleSource::None)
+    );
+    // The profile's patterns, matched in the checkout (no `cargo` is run).
+    write_profile(&repo_dir, &["crates/*"]);
+    assert_eq!(
+        modules_at(&repo_dir, &checkout),
+        (
+            owned(&[("a", Some("crates/a")), ("b", Some("crates/b"))]),
+            ModuleSource::Profile
+        )
+    );
+    // The cache wins, and of its two entries the newest (the last `cache_put`).
+    let cache = repo_dir.join(super::super::graph::GRAPH_CACHE_FILE);
+    super::super::graph::cache_put(
+        &cache,
+        "0000000000000001",
+        &module_graph(&[("old", Some("old"))]),
+    );
+    super::super::graph::cache_put(
+        &cache,
+        "0000000000000002",
+        &module_graph(&[("anthrex-tui", Some("crates/tui")), ("gen", None)]),
+    );
+    assert_eq!(
+        modules_at(&repo_dir, &checkout),
+        (
+            owned(&[("anthrex-tui", Some("crates/tui")), ("gen", None)]),
+            ModuleSource::CargoCache
+        )
+    );
+    // A corrupt cache reads as no cache.
+    std::fs::write(&cache, b"{not json").unwrap();
+    assert_eq!(modules_at(&repo_dir, &checkout).1, ModuleSource::Profile);
+}
+
 #[tokio::test]
-async fn graph_is_refused_until_m9_15_13() {
-    let dir = tempfile::tempdir().unwrap();
+async fn graph_is_answered() {
+    let (tmp, checkout, project, repo_dir) = git_repo();
+    let seeded = repo();
+    for file in [LESSONS_FILE, HISTORY_FILE] {
+        std::fs::copy(seeded.path().join(file), repo_dir.join(file)).unwrap();
+    }
+    write_profile(&repo_dir, &["crates/*"]);
     let at = LessonsAt {
         git: "git".into(),
-        data_dir: dir.path().to_path_buf(),
-        git_timeout: Duration::from_secs(5),
+        data_dir: tmp.path().join("data"),
+        git_timeout: T,
         cfg: cfg(),
     };
     let req = LessonsRequest::Graph {
-        dir: dir.path().to_path_buf(),
+        dir: checkout.join("crates"),
+    };
+    let reply = answer(&LessonLocks::default(), at.clone(), req, NOW).await;
+    let RunReply::LessonsGraph { graph, request_id } = reply else {
+        panic!("not a graph: {reply:?}");
+    };
+    assert_eq!(request_id, None);
+    assert_eq!(graph.project, project);
+    assert_eq!(graph.module_source, ModuleSource::Profile);
+    let ids: Vec<&str> = graph.nodes.iter().map(|n| n.id.as_str()).collect();
+    let (kf, alpha, beta) = (format!("kf-{FP}"), id(ALPHA), id(BETA));
+    assert_eq!(
+        ids,
+        [
+            "m:(root)",
+            "m:a",
+            "m:b",
+            kf.as_str(),
+            alpha.as_str(),
+            beta.as_str()
+        ],
+        "the rejected lesson is not drawn"
+    );
+    let drawn: Vec<&str> = graph.lessons.iter().map(|l| l.id.as_str()).collect();
+    assert_eq!(drawn, [kf.as_str(), alpha.as_str(), beta.as_str()]);
+    let touches = (graph.edges.iter())
+        .filter(|e| e.kind == proto::GraphEdgeKind::Touches && e.to == "m:a")
+        .count();
+    assert_eq!(touches, 3, "every lesson owns crates/a/**");
+    assert_eq!(graph.omitted, 0);
+
+    // Outside a repository: refused as `run stats` refuses it.
+    let outside = tmp.path().join("plain");
+    std::fs::create_dir_all(&outside).unwrap();
+    let req = LessonsRequest::Graph {
+        dir: outside.clone(),
     };
     let reply = answer(&LessonLocks::default(), at, req, NOW).await;
-    assert_eq!(reply, RunReply::refused(request::LESSONS, GRAPH_NOT_YET));
+    assert_eq!(
+        reply,
+        RunReply::refused(
+            request::LESSONS,
+            format!("not a git repository: {}", outside.display())
+        )
+    );
 }
