@@ -327,6 +327,15 @@ wrote a fresh `#!/bin/sh` stand-in and let a product budget time its first exec.
 | `output_over_the_cap_is_truncated_and_stale`, `a_stale_probe_still_reports_the_operation`, `a_timeout_marks_the_state_stale`, `the_probe_passes_no_optional_locks` | `crates/daemon/tests/it/git_probe.rs` (`write_script`) | `PROBE_TIMEOUT` (5 s), or 2 s plus a 2 s pid-file wait | The same first exec inside the probe's timeout. 12 parallel copies of the binary: 0 of 36 passed. | **Fixed** the same way, with a guard and a warm-up in `write_script`: 36 of 36 passed. |
 | `restart_resumes_claude_and_codex_sessions` | `crates/daemon/tests/lifecycle_resume.rs` (`argv.sh`, also the startup probe's `codex`) | `CODEX_PROBE_TIMEOUT / 2` (2.5 s) for each restart's ack | Each restart waits on the launch gate, which waits on the probe's first exec of `argv.sh`. 12 parallel copies: 10 of 24 passed, and every failure was the "waited behind the startup Codex probe" assertion. | **Fixed**: the test runs `argv.sh --version` once before the daemon starts: 36 of 36 passed. |
 
+### Fixed, from the replayed-accept flake (2026-10-13)
+
+The same first-exec cost once more, with no wall-clock assertion in sight: the stand-in
+was every `git` of a restarted daemon, so a reconcile read paid it.
+
+| Test | Site | Bound (as found) | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| `e2e_a_replayed_accept_reports_its_clean_up` | `crates/cli/tests/it/run_e2e_finish.rs` (`slow_worktree_removal` writes a `git` stand-in and puts it first on the third daemon's `PATH`) | Each reconcile read's own git timeout (4 s, from the harness's `git_timeout_secs = 5`); the test then waits `RUN_WAIT` (300 s) for `Accepted` | Reconcile's `rev-parse` of the base is the stand-in's first exec. Past the read's timeout reconcile notes `could not check it after the restart … treated as not started`, the accept is dropped, nothing re-issues it, and the run stays `Complete` with nothing in the daemon log after its start: the 300 s wait then fails. Seen once in a full workspace run; 5/5 alone. A temporary seam that held the stand-in's first exec 6 s reproduced it every time, with that note in the run's log. | **Fixed**: `slow_worktree_removal` runs the stand-in once (`git --version`, bounded by `WARM_UP_WAIT`, 30 s, a hang guard) before the restart, so the assessment is paid outside every daemon budget. With the 6 s seam kept in, the test then passed. |
+
 ### Recorded, from M9.0.6 (2026-10-01)
 
 | Test | Site | Bound | The code's own legal worst case | Status |
