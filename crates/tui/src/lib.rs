@@ -11,6 +11,7 @@ pub mod doc_note;
 pub mod graph;
 pub mod inspector;
 pub mod keymap;
+pub mod lessons_graph;
 mod mouse;
 pub mod profile_view;
 pub mod profile_words;
