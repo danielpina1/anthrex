@@ -100,6 +100,7 @@ mod run_reverts;
 mod run_stats_tuning;
 mod scout_service;
 mod scout_service_planner;
+mod socket_ready;
 mod tree;
 mod tui_connection;
 mod tui_contract;

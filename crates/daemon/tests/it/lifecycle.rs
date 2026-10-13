@@ -27,7 +27,7 @@ async fn run_starts_serves_and_stops_cleanly() {
     let socket = dir.path().join("d.sock");
     let data_dir = dir.path().join("data");
     let handle = tokio::spawn(run(opts(socket.clone(), data_dir.clone())));
-    wait_for_path(&socket, Duration::from_secs(5)).await;
+    wait_accepting(&socket, Duration::from_secs(5)).await;
 
     let (mut c, welcome) = Client::connect(&socket).await;
     match welcome {
@@ -72,7 +72,7 @@ async fn second_daemon_with_the_same_data_dir_is_refused() {
     let socket2 = dir.path().join("d2.sock");
     let data_dir = dir.path().join("data");
     let handle1 = tokio::spawn(run(opts(socket1.clone(), data_dir.clone())));
-    wait_for_path(&socket1, Duration::from_secs(5)).await;
+    wait_accepting(&socket1, Duration::from_secs(5)).await;
 
     let err = run(opts(socket2.clone(), data_dir.clone()))
         .await
@@ -126,7 +126,7 @@ async fn a_racing_second_start_is_refused_and_does_not_become_a_phantom_daemon()
     let data_dir = dir.path().join("data");
 
     let handle_a = tokio::spawn(run(opts(socket.clone(), data_dir.clone())));
-    wait_for_path(&socket, Duration::from_secs(5)).await;
+    wait_accepting(&socket, Duration::from_secs(5)).await;
 
     // B races in against the same socket and data dir while A is fully up and serving
     // — exactly the reported scenario, and exactly decision 24's manual check 10. Its
@@ -189,7 +189,7 @@ async fn a_stopping_daemon_leaves_a_replacement_socket_alone() {
     let socket = dir.path().join("d.sock");
     let data_dir = dir.path().join("data");
     let handle = tokio::spawn(run(opts(socket.clone(), data_dir.clone())));
-    wait_for_path(&socket, Duration::from_secs(5)).await;
+    wait_accepting(&socket, Duration::from_secs(5)).await;
 
     // Open the connection that will carry `Shutdown` *before* the swap below, exactly as
     // decision 26 describes: an already-open connection outlives the path it was opened
@@ -253,7 +253,7 @@ async fn a_failed_final_flush_leaves_the_socket_in_place() {
     std::fs::create_dir(data_dir.join("state.json")).unwrap();
 
     let handle = tokio::spawn(run(opts(socket.clone(), data_dir.clone())));
-    wait_for_path(&socket, Duration::from_secs(5)).await;
+    wait_accepting(&socket, Duration::from_secs(5)).await;
 
     let (mut c, _welcome) = Client::connect(&socket).await;
     c.send(ClientMsg::Shutdown).await;
