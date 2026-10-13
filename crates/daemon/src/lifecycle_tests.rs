@@ -201,3 +201,73 @@ fn bind_socket_serializes_concurrent_umask_use() {
         "16 concurrent bind_socket calls left the ambient umask changed: {ending:o} != {starting:o}"
     );
 }
+
+/// The cli `Connection refused` flake (`claude_status`, `claude_subagents`, os error 61
+/// at a test daemon's first connect): the socket file existed from `bind`, before
+/// `listen`, and a client that saw it in that instant was refused. Held between the two,
+/// the socket must not be there yet; released, it is there and accepts.
+#[test]
+fn the_socket_appears_only_once_it_listens() {
+    let dir = tempfile::tempdir().unwrap();
+    let sock = dir.path().join("d.sock");
+    let (paused_tx, paused_rx) = std::sync::mpsc::channel();
+    let (resume_tx, resume_rx) = std::sync::mpsc::channel::<()>();
+    let binder = std::thread::spawn({
+        let sock = sock.clone();
+        move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let _enter = rt.enter();
+            let listener = bind_socket_with(&sock, |_| {
+                paused_tx.send(()).unwrap();
+                resume_rx.recv().unwrap();
+            })
+            .unwrap();
+            listener.into_std().unwrap()
+        }
+    });
+    paused_rx.recv().expect("the bind reached its pause");
+    let seen = sock.exists();
+    let early = std::os::unix::net::UnixStream::connect(&sock).map(|_| ());
+    resume_tx.send(()).unwrap();
+    let _listener = binder.join().unwrap();
+
+    assert!(
+        !seen,
+        "the socket existed before it listened; a connect then gave {early:?}"
+    );
+    std::os::unix::net::UnixStream::connect(&sock).expect("the socket accepts once bound");
+    let mode = std::fs::metadata(&sock).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+    let names: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(
+        names,
+        ["d.sock"],
+        "only the socket is left in its directory"
+    );
+}
+
+/// A bind that fails after its staging name exists (here: the socket path is already
+/// taken) leaves nothing behind, and never replaces what holds the path.
+#[tokio::test]
+async fn a_failed_bind_leaves_nothing_and_replaces_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let sock = dir.path().join("d.sock");
+    std::fs::write(&sock, "not ours").unwrap();
+    let error = bind_socket(&sock).unwrap_err();
+    assert_eq!(
+        std::fs::read_to_string(&sock).unwrap(),
+        "not ours",
+        "{error:#}"
+    );
+    let names: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(names, ["d.sock"], "{error:#}");
+}

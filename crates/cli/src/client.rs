@@ -22,8 +22,8 @@ const CREATE_REPLY_ALLOWANCE: Duration = Duration::from_secs(2);
 ///
 /// It applies to every reply budget below that wraps a request the daemon answers by
 /// launching a process — `CreateWindow` and `Restart`, and no others — because
-/// `spawn::ensure_daemon` returns as soon as the socket *file* exists, which
-/// `lifecycle::run` creates before the probe starts. A CLI invocation that starts the
+/// `spawn::ensure_daemon` returns as soon as the socket accepts a connection, which
+/// `lifecycle::run` makes possible before the probe starts. A CLI invocation that starts the
 /// daemon itself is therefore the *likely* case for paying this, not an exotic one.
 const LAUNCH_GATE_WAIT: Duration = daemon::lifecycle::CODEX_PROBE_TIMEOUT;
 
