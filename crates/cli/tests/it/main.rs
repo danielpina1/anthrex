@@ -67,6 +67,7 @@ mod run_e2e_finish;
 mod run_e2e_gate_pins;
 mod run_e2e_gates;
 mod run_e2e_large;
+mod run_e2e_lessons;
 mod run_e2e_merge;
 mod run_e2e_model_roles;
 mod run_e2e_orch;

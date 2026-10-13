@@ -32,7 +32,9 @@ pub(super) fn lost(run: &mut Run, pending: PendingOp, now: u64, fx: &mut Vec<Eff
             // commit when the lost one landed.
             | OpKind::CommitDesignDocs(_)
             | OpKind::MeasureDiff { .. }
-            | OpKind::AppendHistory { .. },
+            | OpKind::AppendHistory { .. }
+            // Milestone 9.15 decision 10: its executor writes the line once.
+            | OpKind::QueueDistill { .. },
             _,
         ) => {
             let again = next_op(run);

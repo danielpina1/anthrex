@@ -68,6 +68,24 @@ impl RunService {
             Err(error) => failed(format!("a blocking step did not finish: {error}")),
         }
     }
+
+    /// `OpKind::QueueDistill` (milestone 9.15 decision 10): `line` written once to the
+    /// store at `path` (`<repo_dir>/lessons.jsonl`) under the daemon's lessons lock,
+    /// on `spawn_blocking`, never under the manager lock. The distill worker is woken
+    /// here once it exists (task M9.15.10); until then the entry waits in the file.
+    pub(in crate::run::driver) async fn queue_distill(
+        &self,
+        path: PathBuf,
+        line: proto::LessonLine,
+    ) -> OpResult {
+        let Some(repo_dir) = path.parent().map(Path::to_path_buf) else {
+            return failed(format!("{} has no directory", path.display()));
+        };
+        match crate::lessons::store::append_once(&self.lessons, &repo_dir, line).await {
+            Ok(_) => OpResult::DistillQueued,
+            Err(error) => failed(format!("could not append to {}: {error}", path.display())),
+        }
+    }
 }
 
 /// The checkout `dir` is in and its project (main checkout), without preflight's

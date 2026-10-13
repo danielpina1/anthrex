@@ -530,6 +530,8 @@ pub(super) async fn run(
         kind @ (OpKind::MeasureDiff { .. } | OpKind::AppendHistory { .. }) => {
             service.history_op(ctx, kind).await
         }
+        // Milestone 9.15 decision 10.
+        OpKind::QueueDistill { path, line, .. } => service.queue_distill(path, *line).await,
         // Milestone 9 (task M9.13).
         kind @ (OpKind::CreateOrchestrator { .. }
         | OpKind::RestartOrchestrator { .. }

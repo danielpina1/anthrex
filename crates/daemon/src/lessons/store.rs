@@ -76,18 +76,25 @@ pub async fn append_once(
     let path = repo_dir.join(LESSONS_FILE);
     let _guard = locks.lock(repo_dir).await;
     blocking(move || {
-        let text = match std::fs::read(&path) {
-            Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
-            Err(error) => return Err(error),
-        };
-        let (lines, _) = fold::parse(&text, "");
-        if lines.iter().any(|l| l.record_id() == line.record_id()) {
+        if holds_record(&path, line.record_id())? {
             return Ok(false);
         }
         history_io::append_json(&path, &line).map(|()| true)
     })
     .await
+}
+
+/// Whether the store at `path` holds a line of `record_id` that parses, by the fold's
+/// own parse: [`append_once`]'s test, and the `QueueDistill` reconcile row's (a torn
+/// line is no record). No file holds nothing; an unreadable one is an error. Blocking.
+pub fn holds_record(path: &Path, record_id: &str) -> io::Result<bool> {
+    let text = match std::fs::read(path) {
+        Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    let (lines, _) = fold::parse(&text, "");
+    Ok(lines.iter().any(|l| l.record_id() == record_id))
 }
 
 /// `work` on `spawn_blocking`; a panicked task is an error.

@@ -278,6 +278,16 @@ fn check(
                 false => Reconciled::NotStarted,
             })
             .map_err(|error| error.to_string()),
+        // Milestone 9.15 decision 10: so is a distill entry, by a line of the store
+        // that parses.
+        OpKind::QueueDistill {
+            path, record_id, ..
+        } => crate::lessons::store::holds_record(path, record_id)
+            .map(|found| match found {
+                true => Reconciled::Replay(OpResult::DistillQueued),
+                false => Reconciled::NotStarted,
+            })
+            .map_err(|error| error.to_string()),
     };
     checked.unwrap_or_else(|err| {
         notes.push(format!(

@@ -81,6 +81,7 @@ mod integration;
 mod kinds;
 pub(crate) mod ladder;
 mod ladder_budget;
+mod lessons_queue;
 mod merge;
 mod op_result;
 mod ops;
