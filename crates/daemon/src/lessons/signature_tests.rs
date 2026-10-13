@@ -234,3 +234,31 @@ fn a_headline_never_carries_a_token() {
     assert_eq!(a.headline, "error: auth failed for [redacted token]");
     assert_eq!(a.fp, fp_of(&["error: auth failed for [redacted token]"]));
 }
+
+/// Task 10's review, I2: `of` is built on `redact::scrub`. The same failure keeps its
+/// fingerprint after a scrub, plain, coloured, or with its colours written out (a log
+/// that quoted them), and whatever token of one shape it printed.
+#[test]
+fn the_same_failure_keeps_its_fp_through_scrub() {
+    use crate::lessons::redact::scrub;
+    let plain = failure(
+        "/w/runs/r-1a2b/t1/src/a.rs",
+        ":3:5",
+        "2.1s",
+        "abc1234",
+        "mismatched",
+    );
+    let coloured = plain.replace("error[E0308]", "\u{1b}[1;31merror[E0308]\u{1b}[0m");
+    let written = plain.replace("error[E0308]", r"\u001b[1;31merror[E0308]\u001b[0m");
+    let token = |fill: &str| format!("{plain}\nerror: key sk-proj-{} rejected", fill.repeat(20));
+    let fp = |text: &str| of(text).expect("a signature").fp;
+    let base = fp(&plain);
+    for text in [plain.clone(), coloured, written] {
+        assert_eq!(fp(&text), base, "{text:?}");
+        assert_eq!(fp(&scrub(&text)), base, "{text:?}");
+    }
+    let (a, b) = (token("a"), token("b"));
+    assert_eq!(fp(&a), fp(&b));
+    assert_eq!(fp(&scrub(&a)), fp(&a));
+    assert!(!of(&a).unwrap().headline.contains("aaaa"));
+}

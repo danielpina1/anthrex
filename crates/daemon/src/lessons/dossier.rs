@@ -7,8 +7,8 @@ use proto::safe_text::{multi_line, one_line};
 use proto::{DistillCause, Severity, SigRef};
 use serde::Serialize;
 
-use super::redact::redact;
-use super::signature::{strip_escapes, task_signatures};
+use super::redact::{redact, scrub};
+use super::signature::task_signatures;
 use crate::run::contract::finding_line;
 use crate::run::history::outcome as task_outcome;
 use crate::run::model::{LessonLimits, Run, Task};
@@ -64,10 +64,10 @@ impl Block {
 /// C10 a), so neither a colour code before a token nor one inside it hides it.
 ///
 /// Task 9's review, I1: the text is also redacted before its escapes are stripped,
-/// since an escape's final can take a token's first character.
+/// since an escape's final can take a token's first character. Task 10's review, I2:
+/// both through [`scrub`], the one safe entry point.
 pub fn clean(text: &str) -> String {
-    let text = strip_escapes(&redact(text));
-    break_markers(&redact(&multi_line(&redact(&text))))
+    break_markers(&redact(&multi_line(&scrub(text))))
 }
 
 fn clip(text: &str, max: usize, keep: Keep) -> String {

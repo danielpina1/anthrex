@@ -213,6 +213,28 @@ fn answer_text_is_cleaned_and_redacted() {
     assert_eq!(clean(&draft.body), draft.body);
 }
 
+/// Task 10's review, I1: the six rows that kept their secret before `scrub`.
+#[test]
+fn written_out_escapes_never_hide_a_secret() {
+    let proj = format!("sk-proj-{}", "FAKE0fake1".repeat(4));
+    let bare = format!("sk-{}", "FAKE0fake1".repeat(4));
+    let npm = format!("npm_{}", "FAKE0fake1".repeat(4));
+    let cred = "zFAKEcred".repeat(4);
+    let rows = [
+        (format!("{{\"msg\":\"\\u001b[31m{proj}"), &proj),
+        (format!("\"\\u{{1b}}[31m{proj}"), &proj),
+        (format!("\"\\u001b[31m{bare}"), &bare),
+        (format!("\"\\033[1m{npm}"), &npm),
+        (format!("key%253D{proj}"), &proj),
+        (format!("\"\\u001b[31mBearer {cred}"), &cred),
+    ];
+    for (text, secret) in rows {
+        for out in [clean(&text), crate::lessons::dossier::clean(&text)] {
+            assert!(!out.contains(&secret[4..]), "{text:?} -> {out:?}");
+        }
+    }
+}
+
 #[test]
 fn fallback_is_no_items() {
     let empty = DeciderAnswer::Distill {

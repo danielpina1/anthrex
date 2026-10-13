@@ -10,6 +10,12 @@
 //! bearer credential or a user's password cut at a line's end or split by one of the
 //! normaliser's placeholders. Wrongly replacing ordinary text costs the distiller a
 //! word; letting a piece of a secret through is not allowed.
+//!
+//! [`scrub`] is the one safe entry point for text that may carry terminal escapes,
+//! written out or real (task 10's review, I1 and I2; the controller's ruling at
+//! M9.15.11): it decodes text-escaped control characters, redacts, strips the escapes
+//! and redacts again. The escape stripper is private to this file, so no caller can
+//! strip before it redacts (an escape's final can take a token's first character).
 
 use std::sync::LazyLock;
 
@@ -66,11 +72,18 @@ static URL_USERINFO: LazyLock<Regex> =
 static URL_CUT: LazyLock<Regex> =
     LazyLock::new(|| re(r"(?m)([A-Za-z][A-Za-z0-9+.-]*://)[^\s/?#@:]*:([^\s/?#@]*)$"));
 /// Task 8's review, I2: what may stand right before a token besides a character that
-/// cannot be part of a word: a JSON escape (`\n`, `\r`, `\t`, `\uXXXX`) or a percent
-/// encoding (`%3D`, `%20`), each of which ends in an alphanumeric character.
+/// cannot be part of a word: a written-out escape (`\n`, `\b`, `\uXXXX`, `\u{1b}`,
+/// `\x1b`, `\U00000041`, `\033`, `\e[31m`), a percent encoding, whole or broken (`%3D`,
+/// `%2`, `%zz`), or a real escape sequence (a CSI, an nF escape, an OSC string). Each
+/// may end in an alphanumeric character. Task 10's review, I1: the ambiguous `sk-`,
+/// `npm_` and `bearer` keep a boundary, and this is it.
 macro_rules! escape_boundary {
     () => {
-        r"\\[nrt]|\\u[0-9A-Fa-f]{4}|%[0-9A-Fa-f]{2}"
+        concat!(
+            r"\\[A-Za-z]|\\u[0-9A-Fa-f]{4}|\\u\{[0-9A-Fa-f]{1,6}\}|\\x[0-9A-Fa-f]{2}",
+            r"|\\U[0-9A-Fa-f]{8}|\\[0-7]{1,4}|\\e\[[0-9;]*[A-Za-z]|%[0-9A-Za-z]{0,2}",
+            r"|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[ -/]+[0-~]|\x1b[\]PX^_][^\x07\x1b]*(?:\x07|\x1b\\)?"
+        )
     };
 }
 
@@ -91,11 +104,12 @@ static JWT: LazyLock<Regex> =
 /// Task 9's review, I2 (the controller's ruling): the unambiguous prefixes, whole
 /// tokens of at least [`TOKEN_MIN`] characters, with no left boundary: no list of what
 /// may stand before a token (`\u001b[31m`, `\x1b`, `\b`, `\U…`, `%253D`) is ever
-/// complete. AWS's key id in its full shape (and the token characters after it). A clipped or placeholder-split token of
-/// these prefixes still needs [`PREFIXED`]'s boundary.
+/// complete. AWS's key id in its full shape (and the token characters after it). Task
+/// 10's review, I1: OpenAI's `sk-proj-`, `sk-svcacct-` and `sk-admin-`. A clipped or
+/// placeholder-split token of these prefixes still needs [`PREFIXED`]'s boundary.
 static UNAMBIGUOUS: LazyLock<Regex> = LazyLock::new(|| {
     re(
-        r"(?:github_pat_|gh[pousr]_|glpat-|sk-ant-|xox[abprs]-)[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}[A-Za-z0-9_-]*",
+        r"(?:github_pat_|gh[pousr]_|glpat-|sk-ant-|sk-proj-|sk-svcacct-|sk-admin-|xox[abprs]-)[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}[A-Za-z0-9_-]*",
     )
 });
 /// The ambiguous `sk-` and `npm_` (`task-sk-ip`, `npm_config_*`), and every prefix's
@@ -182,6 +196,91 @@ pub fn redact(text: &str) -> String {
     prefixed(&text)
 }
 
+/// Text-escaped characters: a JSON surrogate pair (kept whole), JSON's `\uXXXX`,
+/// Rust's `\u{…}`, `\xNN`, octal `\0NN`/`\NNN`, and percent encoding.
+static TEXT_ESCAPE: LazyLock<Regex> = LazyLock::new(|| {
+    re(concat!(
+        r"\\u[dD][89abAB][0-9a-fA-F]{2}\\u[dD][c-fC-F][0-9a-fA-F]{2}",
+        r"|\\u([0-9a-fA-F]{4})|\\u\{([0-9a-fA-F]{1,6})\}|\\x([0-9a-fA-F]{2})",
+        r"|\\(0?[0-7]{3})|%([0-9a-fA-F]{2})"
+    ))
+});
+
+/// Decoding rounds at most (`%25253D` takes three).
+const DECODE_ROUNDS: usize = 3;
+
+/// `text` with every text-escaped control character (an ESC, written `\u001b`,
+/// `\u{1b}`, `\x1b`, `\033` or `%1B`) decoded, and `%25` decoded to `%`, until stable
+/// or [`DECODE_ROUNDS`]. Anything else written out is kept as it is, so `%20`, `\u00e9`
+/// and a path's `\x` stay, and a redaction's placeholder (letters, brackets, `*`) is
+/// never touched. Each round is one linear pass.
+fn decode(text: &str) -> String {
+    let mut text = text.to_string();
+    for _ in 0..DECODE_ROUNDS {
+        let next = TEXT_ESCAPE
+            .replace_all(&text, |c: &Captures| {
+                let whole = &c[0];
+                let value = [(1, 16), (2, 16), (3, 16), (4, 8), (5, 16)]
+                    .iter()
+                    .find_map(|&(group, radix)| {
+                        let digits = c.get(group)?.as_str();
+                        Some((group, u32::from_str_radix(digits, radix).ok()?))
+                    });
+                match value.and_then(|(group, v)| Some((group, char::from_u32(v)?))) {
+                    Some((_, ch)) if ch.is_control() => ch.to_string(),
+                    Some((5, '%')) => "%".to_string(),
+                    _ => whole.to_string(),
+                }
+            })
+            .into_owned();
+        if next == text {
+            break;
+        }
+        text = next;
+    }
+    text
+}
+
+/// Ruling C10 (a): terminal escape sequences. Task 9's review, I1 (the controller's
+/// ruling): a CSI; an OSC, DCS, SOS, PM or APC string up to its BEL or ST; ECMA-48's
+/// general form `ESC <intermediates 0x20-0x2F> <final 0x30-0x7E>` (nF escapes such as
+/// `tput sgr0`'s `ESC ( B`, and `ESC # 8`); and a lone ESC. The general form can take a
+/// token's first character as its final (`ESC g…`), so it is private: only [`scrub`]
+/// strips, after it redacts.
+static ESCAPE: LazyLock<Regex> = LazyLock::new(|| {
+    re(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b[\]PX^_][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[ -/]*[0-~]?")
+});
+
+/// `text` without its escape sequences ([`ESCAPE`]). An ESC right before a redaction's
+/// placeholder (`[redacted …]`, `Bearer [redacted]`, which a redaction before the strip
+/// leaves) goes alone, so the strip cannot eat the placeholder's first characters.
+fn strip_escapes(text: &str) -> String {
+    ESCAPE
+        .replace_all(text, |c: &Captures| {
+            let m = c.get(0).expect("the whole match");
+            let after = &text[m.start() + 1..];
+            if after.starts_with("[redacted") || after.starts_with("Bearer [redacted") {
+                m.as_str()[1..].to_string()
+            } else {
+                String::new()
+            }
+        })
+        .into_owned()
+}
+
+/// The one safe entry point (task 10's review, I1 and I2): text-escaped control
+/// characters decoded, then redacted, escapes stripped, and redacted again. A caller
+/// that needs one line or marker breaking applies them to its result, and redacts once
+/// more after `multi_line`/`one_line`, which drop hidden characters that could split a
+/// token. Idempotent on what it returns, pure, and linear in the text.
+pub fn scrub(text: &str) -> String {
+    redact(&strip_escapes(&redact(&decode(text))))
+}
+
 #[cfg(test)]
 #[path = "redact_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "scrub_tests.rs"]
+mod scrub_tests;

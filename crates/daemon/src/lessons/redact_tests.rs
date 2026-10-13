@@ -421,7 +421,9 @@ fn prose_and_shas_are_not_over_redacted() {
         "task-sk-ipaaaaaaaaaaaaaaaaaaaaaa xnpm_config_cache_directory_x".to_string(),
         "the laughs_count and sighs_total fields; AKIAno; eyJ alone; glpat".to_string(),
         "use rustfmt; it laughs_at nothing.\nnext".to_string(),
-        r"\x1bsk-short and \bnpm_ok".to_string(),
+        // Task 10's review, I1: `\b` is now a boundary, so a short `npm_` at the text's
+        // end reads as a clipped token; mid-line it is a word.
+        r"\x1bsk-short and \bnpm_ok here".to_string(),
     ] {
         assert_eq!(redact(&text), text, "{text:?}");
     }

@@ -15,8 +15,7 @@ use serde_json::Value;
 use super::DeciderAnswer;
 use super::parse::{array, object, one_of, string};
 use crate::lessons::dossier::break_markers;
-use crate::lessons::redact::redact;
-use crate::lessons::signature::strip_escapes;
+use crate::lessons::redact::{redact, scrub};
 
 /// The most items an answer may hold (decision 13).
 pub const DISTILL_ITEMS_MAX: usize = 5;
@@ -131,8 +130,7 @@ fn draft(value: &Value, path: &str) -> Result<Option<LessonDraft>, String> {
 /// (which drops hidden format characters that could split a token), marker runs
 /// broken, trimmed.
 pub fn clean(text: &str) -> String {
-    let text = strip_escapes(&redact(text));
-    let text = redact(&one_line(&redact(&text)));
+    let text = redact(&one_line(&scrub(text)));
     break_markers(&text).trim().to_string()
 }
 
