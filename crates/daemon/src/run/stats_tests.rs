@@ -73,6 +73,8 @@ fn task(
         race_adopted: false,
         writer_failures: 0,
         round: 0,
+        signatures: Vec::new(),
+        owns: Vec::new(),
     }
 }
 

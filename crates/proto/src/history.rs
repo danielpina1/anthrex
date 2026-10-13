@@ -260,6 +260,15 @@ pub struct TaskRecord {
     /// round 1.
     #[serde(default)]
     pub round: u32,
+    // Milestone 9.15 (no history version bump: both fields default, and are skipped
+    // while empty).
+    /// Decision 6: the task's failure signatures, deduplicated by `fp`, at most
+    /// `SIGS_PER_TASK`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub signatures: Vec<crate::lessons_store::SigRef>,
+    /// Decision 6: the task's `spec.owns`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub owns: Vec<String>,
 }
 
 /// One finished run.

@@ -44,8 +44,10 @@ pub const RUN_TMP: &str = "run.json.tmp";
 /// (milestone 9.13, pre-flight ruling C3): `OpKind::CountCommits.{owns, protected}` in
 /// `pending_ops`, and the milestone's other new `Run` fields. Format 3 (milestone 9.14,
 /// pre-flight ruling C3): `TestingLimits.admit_wait_secs`, and the milestone's other new
-/// `Run` fields (`HeadlessSpec.admit` in a pending `CreateWindow`).
-pub const RUN_FORMAT: u32 = 3;
+/// `Run` fields (`HeadlessSpec.admit` in a pending `CreateWindow`). Format 4 (milestone
+/// 9.15, pre-flight ruling C1): `TaskRecord.{signatures, owns}` in a pending
+/// `AppendHistory`, and the milestone's other new `Run` fields and ops.
+pub const RUN_FORMAT: u32 = 4;
 pub const JOURNAL_FILE: &str = "journal.jsonl";
 const JOURNAL_TMP: &str = "journal.jsonl.tmp";
 

@@ -247,6 +247,8 @@ pub fn task_record(run: &Run, task: &Task, outcome: TaskOutcome, now: u64) -> Ta
         race_adopted: race.is_some_and(|r| r.adopted),
         writer_failures: writer_failures(task),
         round: task.round,
+        signatures: crate::lessons::signature::task_signatures(task),
+        owns: task.spec.owns.clone(),
     }
 }
 

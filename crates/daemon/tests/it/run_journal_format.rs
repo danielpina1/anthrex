@@ -32,9 +32,9 @@ fn run_file(data: &Path) -> std::path::PathBuf {
 #[test]
 fn a_saved_run_records_its_format() {
     let data = tempfile::tempdir().unwrap();
-    assert_eq!(RUN_FORMAT, 3);
+    assert_eq!(RUN_FORMAT, 4);
     let json = saved_json(data.path());
-    assert_eq!(json["format"], serde_json::json!(3), "{json}");
+    assert_eq!(json["format"], serde_json::json!(4), "{json}");
 }
 
 /// Pinning (milestone 9.13, decision 36's bump to 2): a `run.json` a 9.11 or 9.12
@@ -67,6 +67,72 @@ fn a_format_2_run_loads() {
     assert!(problems.is_empty(), "{problems:?}");
     assert_eq!(runs.len(), 1);
     assert_eq!(runs[0].0.id, RUN_ID);
+}
+
+/// Pinning (milestone 9.15, pre-flight ruling C1's bump to 4): the `run.json` a 9.14
+/// daemon wrote (task M9.15.1's capture, stamped format 3) still loads.
+#[test]
+fn a_format_3_run_loads() {
+    let text = include_str!("../fixtures/run/m914-run.json");
+    let json: serde_json::Value = serde_json::from_str(text).unwrap();
+    assert_eq!(json["format"], serde_json::json!(3));
+    let id = json["id"].as_str().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let dir = data.path().join("runs").join(id);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(RUN_FILE), text).unwrap();
+    let (runs, problems) = load_all(data.path());
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].0.id, id);
+}
+
+/// Milestone 9.15 (ruling C1): a task record's signatures and `owns` reach `run.json`
+/// inside a pending `AppendHistory`, which a 9.14 daemon would drop: the run is saved as
+/// format 4, and both survive a load.
+#[test]
+fn a_pending_task_record_keeps_its_signatures() {
+    let data = tempfile::tempdir().unwrap();
+    let mut run = plain_run(data.path());
+    let task_line = include_str!("../../../proto/src/m914_history.jsonl")
+        .lines()
+        .find(|l| l.contains("\"type\":\"task\""))
+        .expect("the fixture's task line");
+    let proto::HistoryLine::Task(mut record) = serde_json::from_str(task_line).unwrap() else {
+        panic!("{task_line}");
+    };
+    record.signatures = vec![proto::SigRef {
+        gate: proto::SigGate::Tier2,
+        fp: "0123456789abcdef".into(),
+        headline: "error: it failed".into(),
+    }];
+    record.owns = vec!["crates/a/**".into()];
+    let line = proto::HistoryLine::Task(record.clone());
+    let kind = OpKind::AppendHistory {
+        path: data.path().join("history.jsonl"),
+        record_id: record.record_id.clone(),
+        line: Box::new(line.clone()),
+    };
+    fixture::pend(&mut run, 4, Some("t1"), kind);
+    save_run(&run).unwrap();
+    let json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(run_file(data.path())).unwrap()).unwrap();
+    assert_eq!(json["format"], serde_json::json!(4));
+    let saved = json["pending_ops"]
+        .as_object()
+        .unwrap()
+        .values()
+        .find_map(|op| op["kind"]["AppendHistory"]["line"].as_object())
+        .expect("the pending AppendHistory");
+    assert_eq!(saved["signatures"][0]["gate"], "tier2", "{saved:?}");
+    assert_eq!(saved["owns"], serde_json::json!(["crates/a/**"]));
+    let (runs, problems) = load_all(data.path());
+    assert!(problems.is_empty(), "{problems:?}");
+    let pending: Vec<_> = runs[0].0.pending_ops.values().collect();
+    let OpKind::AppendHistory { line: loaded, .. } = &pending[0].kind else {
+        panic!("{pending:?}");
+    };
+    assert_eq!(**loaded, line);
 }
 
 /// Milestone 9.14 (M9.14.8): a 9.13 `run.json`, stamped format 2, whose pending
@@ -130,7 +196,7 @@ async fn a_run_from_a_newer_anthrex_is_left_alone() {
     let data = dir.path().join("data");
     let mut json = saved_json(&data);
     let object = json.as_object_mut().unwrap();
-    object.insert("format".into(), serde_json::json!(4));
+    object.insert("format".into(), serde_json::json!(5));
     object.insert(
         "a_field_from_the_future".into(),
         serde_json::json!({"kept": true}),
@@ -147,7 +213,7 @@ async fn a_run_from_a_newer_anthrex_is_left_alone() {
     assert_eq!(
         problems,
         [format!(
-            "run {RUN_ID} skipped: written by a newer anthrex (run format 4; this one reads up to 3); left as it is"
+            "run {RUN_ID} skipped: written by a newer anthrex (run format 5; this one reads up to 4); left as it is"
         )]
     );
     assert!(
@@ -205,7 +271,7 @@ fn a_run_whose_format_is_not_a_whole_number_is_left_alone() {
         assert_eq!(
             problems,
             [format!(
-                "run {RUN_ID} skipped: written by a newer anthrex (run format {format}; this one reads up to 3); left as it is"
+                "run {RUN_ID} skipped: written by a newer anthrex (run format {format}; this one reads up to 4); left as it is"
             )],
             "{format}"
         );

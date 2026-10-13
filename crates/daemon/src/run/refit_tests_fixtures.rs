@@ -87,6 +87,8 @@ pub(crate) fn record(
         race_adopted: false,
         writer_failures: 0,
         round: 1,
+        signatures: Vec::new(),
+        owns: Vec::new(),
     }
 }
 

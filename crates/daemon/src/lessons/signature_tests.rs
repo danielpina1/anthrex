@@ -1,0 +1,144 @@
+//! Task M9.15.2: decision 5's signatures.
+
+use sha2::{Digest, Sha256};
+
+use super::{HEADLINE_MAX, SIG_LINES, of};
+
+/// Decision 5 step 4's fingerprint of `lines`, as the test expects it.
+fn fp_of(lines: &[&str]) -> String {
+    let digest = Sha256::digest(lines.join("\n").as_bytes());
+    digest
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>()[..16]
+        .to_string()
+}
+
+fn failure(path: &str, at: &str, took: &str, commit: &str, message: &str) -> String {
+    format!(
+        "   Compiling app v0.1.0 ({path})\n\
+         error[E0308]: {message} at {path}{at}\n  --> {path}{at}\n\
+         assertion failed at commit {commit}\n\
+         test x::y ... FAILED in {took}\n"
+    )
+}
+
+#[test]
+fn signature_strips_worktree_ids_linecol_durations() {
+    let a = failure(
+        "/tmp/a/runs/fix-login-3f2a/t3/src/x.rs",
+        ":12:7",
+        "0.42s",
+        &"3f2a9c01".repeat(5),
+        "mismatched types",
+    );
+    let b = failure(
+        "/Users/b/.anthrex/worktrees/app/runs/add-cache-9c01/t12/src/x.rs",
+        ":40:2",
+        "13ms",
+        &"e1d0b7a4".repeat(5),
+        "mismatched types",
+    );
+    let c = failure(
+        "/tmp/a/runs/fix-login-3f2a/t3/src/x.rs",
+        ":12:7",
+        "0.42s",
+        &"3f2a9c01".repeat(5),
+        "cannot find value `y` in this scope",
+    );
+    let (a, b, c) = (of(&a).unwrap(), of(&b).unwrap(), of(&c).unwrap());
+    assert_eq!(a.fp, b.fp, "{a:?} {b:?}");
+    assert_ne!(a.fp, c.fp);
+    assert_eq!(a.fp.len(), 16);
+    assert!(a.fp.chars().all(|ch| ch.is_ascii_hexdigit()), "{}", a.fp);
+    assert_eq!(
+        a.headline,
+        "error[E0308]: mismatched types at <worktree>/src/x.rs:<l>:<c>"
+    );
+    // Only the commit, the duration and the checkout differ between them.
+    assert_eq!(
+        a.fp,
+        fp_of(&[
+            "error[E0308]: mismatched types at <worktree>/src/x.rs:<l>:<c>",
+            "assertion failed at commit <sha>",
+            "test x::y ... FAILED in <dur>",
+        ])
+    );
+}
+
+/// Ruling C10 (b): a 9.14 pool directory varies per lease.
+#[test]
+fn signature_strips_target_pool_directories() {
+    let a = "error: could not write /d/repos/app-1/target-pool/a3/debug/deps/x.rmeta";
+    let b = "error: could not write /e/repos/app-2/target-pool/c9/debug/deps/x.rmeta";
+    let (a, b) = (of(a).unwrap(), of(b).unwrap());
+    assert_eq!(a, b);
+    assert_eq!(
+        a.headline,
+        "error: could not write <target>/debug/deps/x.rmeta"
+    );
+}
+
+#[test]
+fn signature_keeps_three_decisive_lines() {
+    let long = format!("error: {}", "word ".repeat(60));
+    let mut lines = vec![
+        "   Compiling app v0.1.0 (/src/app)".to_string(),
+        "    Finished `test` profile [unoptimized] target(s)".into(),
+        "     Running unittests src/lib.rs (target/debug/deps/app)".into(),
+        "running 4 tests".into(),
+        "test a::one ... ok".into(),
+        "test a::two ... ok".into(),
+        long.clone(),
+        "test a::three ... FAILED".into(),
+        "thread 'a::four' panicked at src/lib.rs".into(),
+        "error: test failed, to rerun pass `--lib`".into(),
+        "caused an error in the end".into(),
+        "test result: FAILED. 2 passed; 2 failed".into(),
+    ];
+    while lines.len() < 30 {
+        lines.push(format!("stdout line {}", lines.len()));
+    }
+    let output = lines.join("\n");
+    let sig = of(&output).unwrap();
+    let want = [
+        long.trim_end(),
+        "test a::three ... FAILED",
+        "thread 'a::four' panicked at src/lib.rs",
+    ];
+    assert_eq!(want.len(), SIG_LINES);
+    assert_eq!(sig.fp, fp_of(&want));
+    assert_eq!(sig.headline.chars().count(), HEADLINE_MAX);
+    assert!(long.starts_with(&sig.headline), "{}", sig.headline);
+}
+
+#[test]
+fn signature_falls_back_to_last_three_lines() {
+    let output = "   Compiling app v0.1.0\nalpha\nbeta\ngamma\ndelta\n    Finished dev\n";
+    let sig = of(output).unwrap();
+    assert_eq!(sig.fp, fp_of(&["beta", "gamma", "delta"]));
+    assert_eq!(sig.headline, "beta");
+}
+
+#[test]
+fn signature_none_for_empty_or_boilerplate_output() {
+    for output in [
+        "",
+        "  \n\t\n   ",
+        "   Compiling app v0.1.0 (/src/app)\n    Finished `dev` profile in 3.2s\n",
+    ] {
+        assert_eq!(of(output), None, "{output:?}");
+    }
+}
+
+#[test]
+fn signature_drops_escapes_and_bidi() {
+    let plain = "error: the build failed\nsee the log";
+    let dressed =
+        "\x1b[1m\x1b[31merror\x1b[0m: the \u{202E}build failed\x1b]8;;http://x\x07\nsee the log";
+    let (plain, dressed) = (of(plain).unwrap(), of(dressed).unwrap());
+    assert_eq!(plain, dressed);
+    for bad in ['\x1b', '\u{202E}', '['] {
+        assert!(!dressed.headline.contains(bad), "{:?}", dressed.headline);
+    }
+}

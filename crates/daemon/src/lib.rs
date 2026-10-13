@@ -23,6 +23,7 @@ pub mod headless;
 pub mod hooks;
 pub mod host;
 pub mod launch;
+pub mod lessons;
 pub mod lifecycle;
 pub mod live_config;
 pub mod manager;

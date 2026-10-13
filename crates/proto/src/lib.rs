@@ -182,6 +182,7 @@ pub mod delivery;
 pub mod design;
 pub mod effort;
 pub mod history;
+pub mod lessons_store;
 pub mod messages;
 pub mod models;
 pub mod orch;
@@ -226,6 +227,7 @@ pub use history::{
     RoutingDecision, RoutingInput, RunRecord, SeverityTally, StageLine, StatsRow, TaskOutcome,
     TaskRecord, TierRunRecord,
 };
+pub use lessons_store::{SigGate, SigRef};
 pub use messages::{ClientMsg, DaemonMsg, HookSource};
 // `models::Role` stays under `models::`: the crate root's `Role` is the conversation's.
 pub use models::{
