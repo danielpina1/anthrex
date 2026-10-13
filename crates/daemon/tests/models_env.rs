@@ -28,7 +28,7 @@ fn a_probe_sees_neither_claudecode_nor_the_window_identity() {
     // A stand-in `claude` (never the real one): it records the two variables, answers
     // `initialize`, and reads stdin to its end.
     let program = dir.path().join("claude");
-    testexec::write_executable(
+    testexec::write_warm_executable(
         &program,
         format!(
             "#!/bin/sh\nread -r line\necho \"CLAUDECODE=${{CLAUDECODE-unset}} ANTHREX_WINDOW_ID=${{ANTHREX_WINDOW_ID-unset}}\" > '{}'\necho '{REPLY}'\ncat > /dev/null\n",

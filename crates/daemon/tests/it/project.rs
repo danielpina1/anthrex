@@ -53,7 +53,7 @@ fn hanging_git(dir: &Path) -> PathBuf {
 /// distinct from a missing binary, which fails to spawn at all.
 fn failing_git(dir: &Path) -> PathBuf {
     let script = dir.join("failing-git");
-    testexec::write_executable(&script, "#!/bin/sh\nexit 1\n");
+    testexec::write_warm_executable(&script, "#!/bin/sh\nexit 1\n");
     script
 }
 
@@ -247,7 +247,7 @@ fn inherited_stdout_does_not_outlive_the_detection_deadline() {
     let pid_file = scripts.path().join("helper.pid");
     let root = repo.path().canonicalize().unwrap();
     let cwd = root.clone();
-    testexec::write_executable(
+    testexec::write_warm_executable(
         &script,
         format!(
             "#!/bin/sh\nsleep 30 &\nprintf '%s\\n' \"$!\" > '{}'\nprintf '%s\\n%s\\n' '{}'/'.git' '{}'\nexit 0\n",
@@ -437,7 +437,7 @@ fn malformed_output_is_a_detection_failure_not_a_negative_answer() {
     let repo = init_repo();
     let scripts = tempdir().unwrap();
     let script = scripts.path().join("malformed-git");
-    testexec::write_executable(&script, "#!/bin/sh\nprintf 'one\\ntwo\\nthree\\n'\n");
+    testexec::write_warm_executable(&script, "#!/bin/sh\nprintf 'one\\ntwo\\nthree\\n'\n");
 
     let roots = detect_roots_with(script.as_os_str(), repo.path(), DETECT_TIMEOUT);
 
@@ -461,7 +461,7 @@ fn detection_passes_no_optional_locks() {
     let scripts = tempdir().unwrap();
     let argv_log = scripts.path().join("argv.log");
     let script = scripts.path().join("argv-recording-git");
-    testexec::write_executable(
+    testexec::write_warm_executable(
         &script,
         format!(
             "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nprintf '%s\\n%s\\n' '{}'/'.git' '{}'\n",

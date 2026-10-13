@@ -117,7 +117,7 @@ fn e2e_restart_resumes_the_orchestrator_with_its_role_flags() {
 /// another name and renamed, so [`env_of`] never reads it half-written.
 fn env_recorder(dir: &Path) -> PathBuf {
     let wrapper = dir.join("agent-env.sh");
-    testexec::write_executable(
+    testexec::write_warm_executable(
         &wrapper,
         format!(
             "#!/bin/sh\nif [ -n \"$ANTHREX_WINDOW_ID\" ]; then out='{}/env-'\"$ANTHREX_WINDOW_ID\"; env > \"$out.tmp\" && mv \"$out.tmp\" \"$out.txt\"; fi\nexec '{}' \"$@\"\n",

@@ -59,7 +59,7 @@ pub fn spec(runtime: Runtime, cwd: &Path) -> HeadlessSpec {
 /// An executable `/bin/sh` script at `dir/name`.
 pub fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
     let path = dir.join(name);
-    testexec::write_executable(&path, format!("#!/bin/sh\n{body}\n"));
+    testexec::write_warm_executable(&path, format!("#!/bin/sh\n{body}\n"));
     path
 }
 

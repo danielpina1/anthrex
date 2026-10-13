@@ -73,7 +73,7 @@ fn open_pr_returns_an_existing_pr_for_the_head() {
 
 /// A stand-in `gh` that prints `log` `times` times (the only process this file starts).
 fn stand_in_gh(dir: &Path, log: &Path, times: usize) -> PathBuf {
-    testexec::write_executable(
+    testexec::write_warm_executable(
         dir.join("gh"),
         format!(
             "#!/bin/sh\ni=0\nwhile [ \"$i\" -lt {times} ]; do cat '{}'; i=$((i + 1)); done\n",

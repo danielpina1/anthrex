@@ -104,7 +104,7 @@ fn running_command_finishes_when_a_descendant_keeps_output_handles_open() {
 fn probe(script: &str) -> (String, Duration, tempfile::TempDir) {
     let dir = tempdir();
     let bin = dir.path().join("codex");
-    testexec::write_executable_mode(&bin, format!("#!/bin/sh\n{script}\n"), 0o700);
+    testexec::write_warm_executable_mode(&bin, format!("#!/bin/sh\n{script}\n"), 0o700);
     let started = Instant::now();
     let mut command = isolated_command(dir.path(), &["daemon", "start", "--foreground"]);
     command

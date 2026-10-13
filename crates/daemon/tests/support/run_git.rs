@@ -97,7 +97,7 @@ pub fn wrapper_git(dir: &Path, before: &str) -> PathBuf {
     let real = String::from_utf8(which.stdout).unwrap().trim().to_string();
     assert!(!real.is_empty(), "no git on PATH");
     let script = dir.join("wrapper-git");
-    testexec::write_executable(
+    testexec::write_warm_executable(
         &script,
         format!("#!/bin/sh\nREAL='{real}'\n{before}\nexec \"$REAL\" \"$@\"\n"),
     );

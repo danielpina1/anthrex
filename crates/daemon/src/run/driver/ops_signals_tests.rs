@@ -86,7 +86,7 @@ impl Rig {
         let top = tmp.path().canonicalize().unwrap();
         let log = top.join("git.log");
         let wrapper = top.join("git-wrapper.sh");
-        testexec::write_executable(
+        testexec::write_warm_executable(
             &wrapper,
             format!(
                 "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\n{extra}\nexec '{}' \"$@\"\n",

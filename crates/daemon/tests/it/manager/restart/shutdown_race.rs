@@ -97,7 +97,7 @@ async fn restart_admitted_before_shutdown_is_refused_and_leaves_no_process_behin
     let dir = tempfile::tempdir().unwrap();
     let pid_log = dir.path().join("pids.log");
     let shell = dir.path().join("stubborn-shell.sh");
-    testexec::write_executable(
+    testexec::write_warm_executable(
         &shell,
         format!(
             "#!/bin/sh\ntrap '' HUP TERM\nprintf '%s\\n' \"$$\" >> '{}'\nwhile :; do :; done\n",
@@ -281,7 +281,7 @@ async fn kill_after_a_timed_out_restart_still_signals_the_window() {
     let log = dir.path().join("signals.log");
     let ready = dir.path().join("ready");
     let shell = dir.path().join("logging-shell.sh");
-    testexec::write_executable(
+    testexec::write_warm_executable(
         &shell,
         format!(
             "#!/bin/sh\ntrap 'echo hup >> \"{}\"' HUP\ntrap 'echo term >> \"{}\"' TERM\n\

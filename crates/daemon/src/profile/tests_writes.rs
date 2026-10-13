@@ -43,7 +43,7 @@ fn stalling_git(dir: &Path, a: &Path) -> (PathBuf, PathBuf, PathBuf) {
         started = started.display(),
         release = release.display(),
     );
-    let git = testexec::write_executable(dir.join("git-stall"), script);
+    let git = testexec::write_warm_executable(dir.join("git-stall"), script);
     (git, started, release)
 }
 
