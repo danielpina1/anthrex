@@ -297,8 +297,9 @@ impl TestDaemon {
         // bound, `ENSURE_DAEMON_SOCKET_WAIT` (`LOCK_WAIT` + `PRE_BIND_ALLOWANCE`), covers
         // both. A daemon that exits early is seen at once in the loop, so only a hung
         // start waits this out. Ready means the socket accepts (task 4's review, I2),
-        // not that its file exists: `listen(2)` follows `bind(2)` inside the same
-        // `UnixListener::bind` call, so the bound needs no term of its own.
+        // not that its file exists: the daemon puts its socket in place only once it
+        // listens (`lifecycle::bind_socket`), and this checks that property itself as a
+        // second guard; the step is microseconds, so the bound needs no term of its own.
         let deadline = Instant::now() + tui::spawn::ENSURE_DAEMON_SOCKET_WAIT;
         while !socket_ready::accepts(&daemon.socket()) {
             assert!(
