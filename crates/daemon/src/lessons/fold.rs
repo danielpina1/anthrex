@@ -3,8 +3,9 @@
 //! `type`, or one that fails to parse, is skipped and counted in [`Store::problems`];
 //! a `verdict` or `retired` naming no lesson is ignored.
 //!
-//! The fold keeps only what the log says. `kept`, a trial's end and known failures are
-//! derived on read by consolidation (decisions 7, 8 and 17), never stored.
+//! The fold keeps only what the log says. `kept`, a trial's end, credit and known
+//! failures are derived on read by consolidation (decisions 7, 8, 17 and 25), never
+//! stored.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -52,6 +53,11 @@ pub struct Lesson {
     /// The `queued` record id it was first distilled from (the graph's
     /// `from_signature` edges).
     pub queued: Option<String>,
+    /// Decision 25's credit, filled by consolidation (zero as the fold leaves it).
+    pub green: u32,
+    pub outcomes: u32,
+    /// A known failure's signature headlines, at most 3 (empty for a distilled one).
+    pub headlines: Vec<String>,
 }
 
 /// One distill entry.
@@ -234,6 +240,9 @@ fn distil(store: &mut Store, item: &proto::LessonDraft, at: u64, queued: &str, r
             reconfirmed: 0,
             retired_reason: None,
             queued: Some(queued.to_string()),
+            green: 0,
+            outcomes: 0,
+            headlines: Vec::new(),
         },
     );
 }

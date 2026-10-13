@@ -269,6 +269,11 @@ pub struct TaskRecord {
     /// Decision 6: the task's `spec.owns`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub owns: Vec<String>,
+    /// Decision 24: the lesson ids the task's workers were shown (a set, first seen
+    /// first); consolidation credits them (decision 25). Task M9.15.4 adds the field
+    /// (credit reads it), task M9.15.6 fills it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lessons_shown: Vec<String>,
 }
 
 /// One finished run.

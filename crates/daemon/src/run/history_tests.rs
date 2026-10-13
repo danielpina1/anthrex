@@ -264,6 +264,8 @@ fn task_record_from_a_merged_task() {
         // Task M9.15.2: its one failed check has an empty tail, so no signature.
         signatures: Vec::new(),
         owns: vec!["crates/t1/**".into()],
+        // Task M9.15.4 adds the field; task M9.15.6 fills it.
+        lessons_shown: Vec::new(),
     };
     assert_eq!(record, want);
     assert_eq!(task_record_id(&run.id, "t1"), want.record_id);

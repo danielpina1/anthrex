@@ -249,6 +249,8 @@ pub fn task_record(run: &Run, task: &Task, outcome: TaskOutcome, now: u64) -> Ta
         round: task.round,
         signatures: crate::lessons::signature::task_signatures(task),
         owns: task.spec.owns.clone(),
+        // Decision 24: filled by task M9.15.6 (`Task.lessons_shown`).
+        lessons_shown: Vec::new(),
     }
 }
 
