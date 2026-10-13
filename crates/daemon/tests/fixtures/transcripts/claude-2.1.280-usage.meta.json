@@ -1,0 +1,14 @@
+{
+  "runtime": "claude",
+  "cli_version": "2.1.280",
+  "captured": "2026-10-13",
+  "redactions": [
+    "home",
+    "cwd (replaced by /repo)",
+    "ids (session, thread, turn, uuid, msg_/req_/resp_ replaced by synthetic values)",
+    "non-conversation-payloads"
+  ],
+  "note": "M9.16.1 capture 2, made by the controller. The session transcript Claude wrote for a two-turn session (turn 2 via claude -p --resume; not reached through an interactive SessionStart transcript_path, but it is the same file Claude writes). Assistant lines 22 and 39 carry message.usage with input_tokens, cache_creation_input_tokens, cache_read_input_tokens and output_tokens, message.model claude-opus-5-5 (no [1m] tag), isSidechain false. No sub-agent lines were captured. The cost-state lines key modelUsage claude-opus-5-5[1m]. Attachment payloads are blanked to their type as in claude-2.1.278.jsonl; message.usage and message.model are byte-exact.",
+  "command": "claude -p \"reply ok\" --model 'opus[1m]', then claude -p \"reply ok again\" --resume <session>; file copied from ~/.claude/projects/<dir>/<session>.jsonl",
+  "observed": true
+}

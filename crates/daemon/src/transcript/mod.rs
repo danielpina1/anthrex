@@ -143,3 +143,6 @@ fn object(line: &str) -> Option<serde_json::Map<String, serde_json::Value>> {
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod fill_tests;

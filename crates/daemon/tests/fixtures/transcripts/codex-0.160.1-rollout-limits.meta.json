@@ -1,0 +1,16 @@
+{
+  "runtime": "codex",
+  "cli_version": "0.160.1",
+  "captured": "2026-10-13",
+  "redactions": [
+    "home",
+    "cwd (replaced by /repo)",
+    "ids (session, thread, turn, uuid, msg_/req_/resp_ replaced by synthetic values)",
+    "non-conversation-payloads"
+  ],
+  "note": "M9.16.1 capture 3, made by the controller. The rollout of a codex exec run. Line 14 is the only token_count: info.last_token_usage (with cache_write_input_tokens, also present in 0.155.0), info.model_context_window 475000, rate_limits.primary {used_percent 0.0, window_minutes 10080}, secondary null; rate_limits keys (the same set as 0.155.0) limit_id, limit_name, credits, individual_limit, spend_control_reached, plan_type, rate_limit_reached_type. No 300-minute window. codex exec --json itself carries no rate limits. The rollout file name carries LOCAL time (22-48-57 while UTC was 21:48); the date directory equals both the local and the UTC date here, so only the file name decides. rollout_path_relative_to_codex_home shows the shape with the thread id replaced by the fixture's synthetic id. Redacted as codex-0.155.0.jsonl: base_instructions, developer and environment messages emptied, world_state and turn_context strings blanked, creator ids, plan_type and credits.balance blanked. limit_id (\"codex\") is kept. info and rate_limits.primary/secondary are byte-exact.",
+  "command": "codex exec --json \"reply ok\"",
+  "observed": true,
+  "rollout_path_relative_to_codex_home": "sessions/2026/10/13/rollout-2026-10-13T22-48-57-00000000-0000-4000-8000-000000000001.jsonl",
+  "thread_id_in_fixture": "00000000-0000-4000-8000-000000000001"
+}

@@ -1,0 +1,14 @@
+{
+  "runtime": "claude",
+  "cli_version": "2.1.280",
+  "captured": "2026-10-13",
+  "redactions": [
+    "home",
+    "cwd (replaced by /repo)",
+    "ids (session, thread, turn, uuid, msg_/req_/resp_ replaced by synthetic values)",
+    "non-conversation-payloads"
+  ],
+  "note": "M9.16.1 capture 1, made by the controller with the real CLI in a scratch directory, ANTHREX_* unset. One rate_limit_event: status allowed, rateLimitType five_hour, keys status/resetsAt/rateLimitType/overageStatus/overageDisabledReason/isUsingOverage/unifiedWindows (five_hour 0.16, seven_day 0.36). The account was under the warning threshold, so no allowed_warning appears; the 2.1.280 scout fixtures stay the warning case. result.modelUsage is keyed claude-opus-5-5[1m] with contextWindow 1000000 and canonicalModel claude-opus-5-5; system/init.model is claude-opus-5-5[1m], but the assistant line's message.model is claude-opus-5-5. Redacted as the 2.1.280 scout fixture: hook_response output/stdout/stderr replaced by \"[redacted]\"; system/init mcp__ tools, mcp_servers, slash_commands, terminal_slash_commands, agents, skills and plugins removed or emptied; memory_paths.auto and messaging_socket_path replaced by \"[redacted]\"; scratchpad_path dropped. Every field the milestone reads (rate_limit_info, unifiedWindows, modelUsage, message.usage) is byte-exact.",
+  "command": "claude -p \"reply ok\" --output-format stream-json --verbose --model 'opus[1m]'",
+  "observed": true
+}
