@@ -8,7 +8,7 @@ const WALL_CLOCK_SLACK: Duration = Duration::from_secs(2);
 
 fn script(dir: &std::path::Path, name: &str, body: &str) -> String {
     let path = dir.join(name);
-    testexec::write_executable(&path, format!("#!/bin/sh\n{body}\n"));
+    testexec::write_warm_executable(&path, format!("#!/bin/sh\n{body}\n"));
     path.to_str().unwrap().to_string()
 }
 

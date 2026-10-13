@@ -12,7 +12,7 @@ use crate::run::engine::{OpKind, OpResult};
 /// A `git` stand-in that logs each call's arguments and `GIT_` variables, then runs
 /// the real git.
 pub(super) fn recording(dir: &Path) -> PathBuf {
-    testexec::write_executable(
+    testexec::write_warm_executable(
         dir.join("recording-git"),
         format!(
             "#!/bin/sh\n\

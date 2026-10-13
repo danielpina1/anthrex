@@ -92,17 +92,75 @@ pub fn bind_socket(path: &Path) -> anyhow::Result<UnixListener> {
 }
 
 fn bind_socket_locked(path: &Path) -> anyhow::Result<UnixListener> {
+    bind_socket_with(path, |_| {})
+}
+
+/// [`bind_socket_locked`], calling `before_listen` with the bound path between `bind`
+/// and `listen`.
+///
+/// The socket must only appear at `path` once it listens. `bind` creates the file, and
+/// until `listen` every connect to it is refused (`ECONNREFUSED`), so a client that took
+/// the file's existence for "the daemon is up" was refused in that instant (the cli
+/// `Connection refused` flake). The socket is bound under a staging name in the same
+/// directory, listens there, and is then hard-linked to `path` and the staging name
+/// removed: the link is atomic, so whoever sees `path` can connect. A link, not a
+/// rename: it fails when `path` exists, as `bind` on `path` did, so a socket another
+/// daemon put there after `prepare_socket` is never replaced. The staging name is removed
+/// on every path out of here.
+fn bind_socket_with(
+    path: &Path,
+    before_listen: impl FnOnce(&Path),
+) -> anyhow::Result<UnixListener> {
+    use socket2::{Domain, SockAddr, Socket, Type};
+    let staged = Staged(staging_name(path)?);
+    // A staging name a crashed daemon of this pid left behind.
+    let _ = std::fs::remove_file(&staged.0);
+    let socket = Socket::new(Domain::UNIX, Type::STREAM, None)?;
+    let address = SockAddr::unix(&staged.0)?;
     // SAFETY: `umask` has no preconditions and cannot fail; it only ever changes this
     // process's file-creation mask, which we restore immediately below on every path.
     // Callers serialize through `UMASK_LOCK`.
     let previous_umask = unsafe { libc::umask(0o077) };
-    let bound = UnixListener::bind(path);
+    let bound = socket.bind(&address);
     // SAFETY: see above. Restored before `?` so a bind failure never leaves the tighter
     // mask in place.
     unsafe { libc::umask(previous_umask) };
-    let listener = bound?;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
-    Ok(listener)
+    bound?;
+    std::fs::set_permissions(&staged.0, std::fs::Permissions::from_mode(0o600))?;
+    before_listen(&staged.0);
+    socket.listen(libc::SOMAXCONN)?;
+    std::fs::hard_link(&staged.0, path).map_err(|error| {
+        anyhow::anyhow!(
+            "cannot put the daemon's socket at {}: {error}",
+            path.display()
+        )
+    })?;
+    drop(staged);
+    let listener = std::os::unix::net::UnixListener::from(socket);
+    listener.set_nonblocking(true)?;
+    Ok(UnixListener::from_std(listener)?)
+}
+
+/// Where [`bind_socket_with`] binds before the socket is put at `path`: a hidden name in
+/// the same directory (a link cannot cross filesystems), unique to this process.
+fn staging_name(path: &Path) -> anyhow::Result<PathBuf> {
+    let name = path
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("the socket path {} has no file name", path.display()))?;
+    Ok(path.with_file_name(format!(
+        ".{}.{}.bind",
+        name.to_string_lossy(),
+        std::process::id()
+    )))
+}
+
+/// A staging socket name, removed when dropped.
+struct Staged(PathBuf);
+
+impl Drop for Staged {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
 }
 
 /// `try_init` rather than `init`: production only ever calls this once, but a test

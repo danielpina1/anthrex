@@ -118,7 +118,7 @@ fn slow_git_wrapper_multi(bin_dir: &Path, delays: &[(&str, &str, u64)]) {
     }
     body.push_str(&format!("exec \"{}\" \"$@\"\n", real_git().display()));
     let script = bin_dir.join("git");
-    testexec::write_executable(&script, body);
+    testexec::write_warm_executable(&script, body);
 }
 
 /// Writes a `git` into `bin_dir` that sleeps `delay_secs` only when invoked as `git -C
@@ -131,7 +131,7 @@ fn slow_git_wrapper_multi(bin_dir: &Path, delays: &[(&str, &str, u64)]) {
 fn slow_git_wrapper(bin_dir: &Path, action: &str, delay_secs: u64) {
     std::fs::create_dir_all(bin_dir).unwrap();
     let script = bin_dir.join("git");
-    testexec::write_executable(
+    testexec::write_warm_executable(
         &script,
         format!(
             "#!/bin/sh\nif [ \"$4\" = worktree ] && [ \"$5\" = {action} ]; then\n  sleep {delay_secs}\nfi\nexec \"{}\" \"$@\"\n",

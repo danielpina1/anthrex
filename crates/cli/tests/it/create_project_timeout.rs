@@ -88,7 +88,7 @@ fn new_outlives_project_detection_timeout_without_duplicate_or_leak() {
     fs::create_dir_all(&bin).unwrap();
     let cwd = cwd.canonicalize().unwrap();
     let git = bin.join("git");
-    testexec::write_executable(
+    testexec::write_warm_executable(
         &git,
         format!(
             "#!/bin/sh\nprintf '%s\\n' \"$$\" > '{}'\nexec /bin/sleep 30\n",

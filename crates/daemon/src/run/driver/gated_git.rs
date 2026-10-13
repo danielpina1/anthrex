@@ -40,7 +40,7 @@ impl GatedGit {
              : > \"$d/exited\"\n\
              exit 1\n"
         );
-        testexec::write_executable(&program, body);
+        testexec::write_warm_executable(&program, body);
         GatedGit {
             dir: dir.to_path_buf(),
             program,

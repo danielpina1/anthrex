@@ -36,7 +36,7 @@ fn project_detection_runs_git_without_the_inherited_git_variables() {
     // detection falls back to the directory itself.
     let git = tmp.path().join("git");
     let script = format!("#!/bin/sh\nenv > '{}'\nexit 1\n", seen.display());
-    testexec::write_executable(&git, script);
+    testexec::write_warm_executable(&git, script);
     // SAFETY: the only test in this binary, so no other thread reads the environment.
     unsafe {
         for key in SCRUBBED {

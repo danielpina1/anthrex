@@ -35,7 +35,7 @@ use tempfile::tempdir;
 
 fn write_script(dir: &Path, name: &str, body: &str) -> PathBuf {
     let script = dir.join(name);
-    testexec::write_executable(&script, body);
+    testexec::write_warm_executable(&script, body);
     script
 }
 

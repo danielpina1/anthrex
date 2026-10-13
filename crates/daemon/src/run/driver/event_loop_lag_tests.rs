@@ -117,7 +117,7 @@ async fn lagged(capacity: usize, a_texts: usize, b_texts: usize) -> Lagged {
     std::fs::write(&a_turn, claude_turn("sess-a", a_texts)).unwrap();
     let b_turn = dir.path().join("b.jsonl");
     std::fs::write(&b_turn, claude_turn("sess-b", b_texts)).unwrap();
-    let claude = testexec::write_executable(
+    let claude = testexec::write_warm_executable(
         dir.path().join("claude"),
         format!(
             "#!/bin/sh\ncase \"$STAND_IN_ROLE\" in\n  a) cat '{}' ;;\n  b) cat '{}'; exec sleep 30 ;;\nesac\nexit 0\n",

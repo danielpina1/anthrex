@@ -96,7 +96,7 @@ fn accept_whose_merge_landed_before_its_deadline_is_merged() {
     let real = String::from_utf8(which.stdout).unwrap().trim().to_string();
     // The merge itself completes; then something it started keeps stdout open.
     let script = tools.path().join("slow-after-merge-git");
-    testexec::write_executable(
+    testexec::write_warm_executable(
         &script,
         format!(
             "#!/bin/sh\n\"{real}\" \"$@\"\nrc=$?\nfor a in \"$@\"; do [ \"$a\" = \"--no-ff\" ] && sleep 30; done\nexit $rc\n"

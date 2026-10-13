@@ -296,7 +296,7 @@ fn a_manual_restart_after_a_daemon_restart_names_the_receiver_that_is_up_now() {
     let first = otlp_addr(&h);
     let seen = h.data().join("orch-endpoints.txt");
     let wrapper = h.data().join("claude-wrapper.sh");
-    testexec::write_executable(
+    testexec::write_warm_executable(
         &wrapper,
         format!(
             "#!/bin/sh\n: >> '{seen}'\nsleep 1\nprintf '%s\\n' \"$OTEL_EXPORTER_OTLP_ENDPOINT\" >> '{seen}'\nexec '{}' \"$@\"\n",

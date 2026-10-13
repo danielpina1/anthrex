@@ -108,3 +108,71 @@ async fn rebind_moves_the_live_flag_to_the_new_run() {
         format!("no window with id {}", id + 1000)
     );
 }
+
+/// The `a_waiting_wake_logs_why_once` flake (Ubuntu CI on 323d2564, `(Starting, false)`
+/// after 5 s): a run window's stand-in printed its one line before phase C inserted the
+/// entry, `handle_event` dropped that `Output`, and the window stayed `Starting` for good.
+/// `create` had the fix (b8050c87) and tests that build its phases by hand
+/// (`early_events_tests`); this drives `create_run_window` itself, held between phase B
+/// and phase C while the test hands every event up to the first `Output` to
+/// `handle_event`. No timing luck: the `Output` is handled before `insert` every time.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_run_windows_output_before_insert_is_applied_at_insert() {
+    use crate::window::WindowEvent;
+    use proto::Status;
+    let dir = tempfile::Builder::new()
+        .prefix("anthrex-early-run-")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let claude = dir.path().join("claude");
+    testexec::write_executable(&claude, "#!/bin/sh\necho starting\nexec sleep 300\n");
+    let mut config = ManagerConfig::for_tests(dir.path().join("d.sock"), "/bin/sh".into());
+    config.claude_bin = claude.to_str().unwrap().into();
+    config.worktrees_root = dir.path().join("worktrees");
+    config.launch_gate = LaunchGate::open_already();
+    let (manager, mut events) = WindowManager::new(config);
+    let spec = WindowSpec {
+        name: Some("r1/orchestrator".into()),
+        runtime: Runtime::Claude,
+        cwd: dir.path().to_path_buf(),
+        worktree_branch: None,
+        model: None,
+        initial_prompt: None,
+    };
+    let release = manager.hold_next_run_window();
+    let creating = tokio::spawn({
+        let manager = manager.clone();
+        let project = dir.path().to_path_buf();
+        async move { manager.create_run_window(spec, project, role("r1")).await }
+    });
+    let mut seen = Vec::new();
+    loop {
+        let (id, event) =
+            tokio::time::timeout(super::super::early_events_tests::EVENT_WAIT, events.recv())
+                .await
+                .unwrap_or_else(|_| panic!("the stand-in never printed; saw {seen:?}"))
+                .expect("the event channel stays open while the manager lives");
+        let output = matches!(event, WindowEvent::Output);
+        seen.push(format!("{event:?}"));
+        manager.handle_event(id, event);
+        if output {
+            break;
+        }
+    }
+    let listed_before_insert = manager.list().len();
+    release.send(()).unwrap();
+    let info = creating.await.unwrap().expect("the stand-in's window");
+    let window = manager
+        .list()
+        .into_iter()
+        .find(|w| w.id == info.id)
+        .unwrap();
+    let _ = manager.kill(info.id);
+
+    assert_eq!(
+        listed_before_insert, 0,
+        "inserted before its output: {seen:?}"
+    );
+    assert_eq!(window.status, Status::Working, "{window:?}; saw {seen:?}");
+    assert_eq!(info.status, Status::Working, "{info:?}");
+}

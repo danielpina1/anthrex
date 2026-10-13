@@ -29,6 +29,7 @@ toml = "1"
 bytes = "1"
 dirs = "6"
 libc = "0.2"
+socket2 = "0.6"
 notify = "8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

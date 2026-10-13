@@ -16,8 +16,10 @@
 //! a descriptor the test process never had.
 
 mod reexec;
+mod warm;
 
 pub use reexec::{assert_one_test_ran, libtest_name};
+pub use warm::{WARM_UP_VAR, write_warm_executable, write_warm_executable_mode};
 
 use std::io::Write;
 use std::path::{Path, PathBuf};

@@ -166,7 +166,7 @@ async fn restart_resumes_claude_and_codex_sessions() {
     daemon::state::save(&data_dir.join("state.json"), &state).unwrap();
 
     let handle = tokio::spawn(run(opts));
-    wait_for_path(&socket, Duration::from_secs(5)).await;
+    wait_accepting(&socket, Duration::from_secs(5)).await;
 
     let (mut c, welcome) = Client::connect(&socket).await;
     match welcome {
