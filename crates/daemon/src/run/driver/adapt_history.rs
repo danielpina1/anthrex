@@ -81,6 +81,10 @@ impl RunService {
         let Some(repo_dir) = path.parent().map(Path::to_path_buf) else {
             return failed(format!("{} has no directory", path.display()));
         };
+        // Debug builds only: a test's hold on the write (`effects::DoneHolds`).
+        if let Some(hold) = self.done_holds.distill {
+            tokio::time::sleep(hold).await;
+        }
         match crate::lessons::store::append_once(&self.lessons, &repo_dir, line).await {
             Ok(_) => OpResult::DistillQueued,
             Err(error) => failed(format!("could not append to {}: {error}", path.display())),

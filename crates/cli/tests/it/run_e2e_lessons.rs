@@ -12,6 +12,12 @@ use support::run_plans::*;
 const CHECK_SH: &str =
     "if [ -e broken ]; then echo 'error: broken is present'; exit 1; fi\necho check ok\n";
 
+/// The debug builds' hold on the `QueueDistill` write (`driver/effects.rs`). Task 9's
+/// review, I3, held that a read made when the run is complete could miss the entry;
+/// the engine's completion waits for every pending op (`complete_pass`), and with this
+/// hold the run's completion moves back by it. The test waits for the store anyway.
+const DISTILL_DELAY_MS: &str = "3000";
+
 const LESSONS_ON: &str = "[lessons]\nenabled = true\ndistill = true\nrisk_note = false\n";
 
 /// Every `queued` line of the repository's `lessons.jsonl`, as the store reads it.
@@ -27,9 +33,31 @@ fn queued_lines(h: &RunHarness) -> Vec<proto::QueuedLine> {
         .collect()
 }
 
+/// Task 9's review, I3: the `queued` lines once there is at least one, waiting with a
+/// deadline loop (as `run_cli.rs` waits for a file the daemon writes) rather than
+/// reading the store once. `within` is the caller's run wait: the write is one op of
+/// the run, bounded by it.
+fn wait_queued(h: &RunHarness, within: std::time::Duration) -> Vec<proto::QueuedLine> {
+    let deadline = std::time::Instant::now() + within;
+    loop {
+        let lines = queued_lines(h);
+        if !lines.is_empty() {
+            return lines;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no distill entry within {within:?}\n{}",
+            h.log_tail()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
 #[test]
 fn a_recovered_task_queues_one_distill_entry() {
-    let mut h = RunHarness::with_repo_and_config("", &[], &[("check.sh", CHECK_SH)], LESSONS_ON);
+    // Task 9's review, I3: the store's write is held back; the test waits for it.
+    let env = [("ANTHREX_TEST_DELAY_DISTILL_MS", DISTILL_DELAY_MS)];
+    let mut h = RunHarness::with_repo_and_config("", &env, &[("check.sh", CHECK_SH)], LESSONS_ON);
     h.script(
         "worker-t1-1",
         &[
@@ -52,7 +80,7 @@ fn a_recovered_task_queues_one_distill_entry() {
     assert_eq!(t1.state, TaskState::Merged);
     assert_eq!(t1.bounces.check, 1, "{:?}", t1.bounces);
 
-    let lines = queued_lines(&h);
+    let lines = wait_queued(&h, RUN_WAIT);
     assert_eq!(lines.len(), 1, "{lines:#?}");
     let line = &lines[0];
     assert_eq!(line.record_id, format!("{id}/t1/distill"));
