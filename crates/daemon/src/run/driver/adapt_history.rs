@@ -72,7 +72,7 @@ impl RunService {
 
 /// The checkout `dir` is in and its project (main checkout), without preflight's
 /// clean-tree rules: `run stats` works in a dirty checkout. Blocking.
-fn checkout_of(
+pub(in crate::run::driver) fn checkout_of(
     git: &std::ffi::OsStr,
     dir: &Path,
     timeout: Duration,

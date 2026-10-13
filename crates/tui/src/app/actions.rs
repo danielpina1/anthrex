@@ -388,6 +388,7 @@ impl App {
                         run_id: flow.run_id.clone(),
                         action: FinishAction::Accept,
                         confirm: Some(moved_base_confirm(&flow.run_id, &page.moved)),
+                        reason: None,
                     };
                     let info = page.info.clone();
                     if let Some(effects) = self.send_action(&flow, &info, request) {

@@ -69,6 +69,7 @@ fn detail(task_id: &str, brief: &str) -> Box<TaskDetailInfo> {
         acceptance: vec!["it passes".into()],
         worker_summary: None,
         summary_source: None,
+        risk_note: None,
     })
 }
 

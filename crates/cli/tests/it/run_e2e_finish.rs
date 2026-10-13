@@ -13,6 +13,7 @@ fn accept(h: &RunHarness, id: &str, confirm: Option<String>) -> RunReply {
         run_id: id.to_string(),
         action: FinishAction::Accept,
         confirm,
+        reason: None,
     })
 }
 
@@ -80,6 +81,7 @@ fn e2e_a_replayed_accept_reports_its_clean_up() {
         run_id: id.clone(),
         action: FinishAction::Accept,
         confirm: Some(id.clone()),
+        reason: None,
     });
     assert!(reply.is_none(), "the daemon answered: {reply:?}");
     h.forget_dead_daemon();

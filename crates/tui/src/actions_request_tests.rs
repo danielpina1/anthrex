@@ -142,6 +142,7 @@ fn accept_and_discard_confirm_with_the_run_id() {
                 run_id: ID.into(),
                 action,
                 confirm: Some(ID.into()),
+                reason: None,
             })
         );
     }

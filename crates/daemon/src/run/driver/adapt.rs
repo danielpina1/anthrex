@@ -53,6 +53,7 @@ pub(super) use goal::{BuildError, CONTINUE_NEEDS_PROFILE, GoalNotReady, GoalRead
 // and revert detection (decisions 34, 35).
 #[path = "adapt_history.rs"]
 mod history;
+pub(super) use history::checkout_of;
 
 /// What decision 6 chose, for the run `build_run` makes.
 pub(super) struct ProfileChoice {

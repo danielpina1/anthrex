@@ -39,6 +39,7 @@ pub(crate) mod gate_files;
 mod graph;
 mod guard;
 mod host_ops;
+pub mod lessons_requests;
 mod merge;
 mod observe;
 mod ops;
@@ -159,6 +160,8 @@ pub struct RunService {
     /// Milestone 9.0.6 decision 28: held by one Settings save at a time (`settings.rs`).
     settings_write: Arc<tokio::sync::Mutex<()>>,
     tuning: tuning::TuningLocks,
+    /// Milestone 9.15 (C9): the one lessons store lock map of the daemon.
+    lessons: crate::lessons::store::LessonLocks,
     /// Milestone 9.8: the discovered models (`crate::models`), and what cancels their
     /// probes when the service stops.
     models: Arc<crate::models::ModelService>,
@@ -273,6 +276,7 @@ impl RunService {
             test_cache: TestCache::new(test_cache_days),
             settings_write: Arc::default(),
             tuning: Default::default(),
+            lessons: Default::default(),
             models,
             models_cancel,
             pool,

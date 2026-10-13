@@ -48,6 +48,7 @@ fn t2_with_brief(brief_lines: usize) -> crate::app::App {
             acceptance: Vec::new(),
             worker_summary: None,
             summary_source: None,
+            risk_note: None,
         })),
     });
     app

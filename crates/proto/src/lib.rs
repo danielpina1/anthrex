@@ -160,7 +160,14 @@
 /// `DaemonMsg::AdmitTimedOut`, appended last in their enums (`Admit.slots` defaulted),
 /// so every older variant keeps its index. Derivation: 22 at `lib.rs:158` before this
 /// change (milestone 9.13); 22 + 1 = 23.
-pub const PROTO_VERSION: u32 = 23;
+///
+/// Milestone 9.15 task M9.15.5 bumps this to 24: `RunRequest::Lessons` with
+/// `LessonsRequest`, `RunReply::{Lessons, LessonsGraph}` and the lesson wire types
+/// (`proto::lessons`), `HelperKind::{Distill, RiskNote}`, `InputKind::DiscardReason`,
+/// all appended last, plus `RunRequest::Finish.reason` and `TaskDetailInfo.risk_note`,
+/// defaulted and left out while `None`. Derivation: 23 at `lib.rs:163` before this
+/// change (milestone 9.14); 23 + 1 = 24.
+pub const PROTO_VERSION: u32 = 24;
 
 /// `skip_serializing_if` for a `u32` count that is left out while zero.
 pub(crate) fn is_zero_u32(n: &u32) -> bool {
@@ -341,8 +348,8 @@ mod lessons_tests;
 #[cfg(test)]
 mod tests {
     #[test]
-    fn proto_version_is_twenty_three() {
-        assert_eq!(super::PROTO_VERSION, 23);
+    fn proto_version_is_twenty_four() {
+        assert_eq!(super::PROTO_VERSION, 24);
     }
 
     #[test]

@@ -13,6 +13,7 @@ fn finish_requests_outwait_the_accept_merge() {
             run_id: "r".into(),
             action,
             confirm: None,
+            reason: None,
         };
         assert!(
             request_timeout(&finish) >= ACCEPT_MERGE_TIMEOUT + Duration::from_secs(60),
@@ -23,6 +24,12 @@ fn finish_requests_outwait_the_accept_merge() {
     assert_eq!(request_timeout(&RunRequest::List), RUN_REQUEST_TIMEOUT);
     let approve = RunRequest::Approve { run_id: "r".into() };
     assert_eq!(request_timeout(&approve), RUN_REQUEST_TIMEOUT);
+    // Milestone 9.15: `anthrex lessons`' requests.
+    let lessons = RunRequest::Lessons(proto::LessonsRequest::List {
+        dir: "/r".into(),
+        all: false,
+    });
+    assert_eq!(request_timeout(&lessons), RUN_REQUEST_TIMEOUT);
 }
 
 /// Ruling T23-I2: `--base` takes the listed head or any hex prefix of it of at least

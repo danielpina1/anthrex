@@ -1,7 +1,6 @@
 //! Milestone 9.15 (decision 32): what a lesson looks like on the wire, the requests on
-//! a repository's lessons, and the knowledge graph's data. The `RunRequest::Lessons`
-//! and `RunReply::Lessons*` variants that carry them come with protocol 24 (task
-//! M9.15.5).
+//! a repository's lessons, and the knowledge graph's data, carried by protocol 24's
+//! `RunRequest::Lessons` and `RunReply::{Lessons, LessonsGraph}` (task M9.15.5).
 
 use std::path::PathBuf;
 
@@ -19,6 +18,17 @@ pub enum LessonLayer {
     Procedural,
 }
 
+impl LessonLayer {
+    /// Its wire name: `episodic`, `semantic`, `procedural`.
+    pub fn name(self) -> &'static str {
+        match self {
+            LessonLayer::Episodic => "episodic",
+            LessonLayer::Semantic => "semantic",
+            LessonLayer::Procedural => "procedural",
+        }
+    }
+}
+
 /// A lesson's status (decision 18). Active (selectable and drawn): `on_trial`, `kept`,
 /// `approved`, `known`. `proposed` is drawn and listed but never selected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -31,6 +41,22 @@ pub enum LessonStatus {
     Rejected,
     Retired,
     Known,
+}
+
+impl LessonStatus {
+    /// Its wire name: `on_trial`, `kept`, `proposed`, `approved`, `rejected`,
+    /// `retired`, `known` (`anthrex lessons list` and the request refusals).
+    pub fn name(self) -> &'static str {
+        match self {
+            LessonStatus::OnTrial => "on_trial",
+            LessonStatus::Kept => "kept",
+            LessonStatus::Proposed => "proposed",
+            LessonStatus::Approved => "approved",
+            LessonStatus::Rejected => "rejected",
+            LessonStatus::Retired => "retired",
+            LessonStatus::Known => "known",
+        }
+    }
 }
 
 /// Where a lesson came from: a distiller's answer, or a recurring failure signature.

@@ -57,6 +57,8 @@ fn request_timeout(request: &RunRequest) -> Duration {
             ..
         } => adapt::CONTINUE_REQUEST_TIMEOUT,
         RunRequest::StartGoal { .. } => adapt::GOAL_REQUEST_TIMEOUT,
+        // Milestone 9.15: one git resolution, then reads and appends of two files.
+        RunRequest::Lessons(_) => RUN_REQUEST_TIMEOUT,
         _ => RUN_REQUEST_TIMEOUT,
     }
 }
@@ -562,6 +564,7 @@ impl Runs {
             run_id: run_id.to_string(),
             action,
             confirm,
+            reason: None,
         })
         .await
     }

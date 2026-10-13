@@ -101,11 +101,14 @@ impl RunService {
             RunRequest::Resume { run_id, rebaseline } => {
                 answer(request::RESUME, self.resume(run_id, rebaseline).await)
             }
+            // Milestone 9.15 decision 26: `reason` is read from task M9.15.7.
             RunRequest::Finish {
                 run_id,
                 action,
                 confirm,
+                reason: _,
             } => self.finish(run_id, action, confirm).await,
+            RunRequest::Lessons(req) => self.lessons(req).await,
             RunRequest::List => RunReply::Snapshot(self.current()),
             RunRequest::Tool(call) => self.tool(call).await,
             // Milestone 8b: `run start --goal` (decision 22), `run promote` (25), `run

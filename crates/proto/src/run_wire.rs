@@ -95,6 +95,10 @@ pub enum RunRequest {
         run_id: String,
         action: FinishAction,
         confirm: Option<String>,
+        /// Milestone 9.15 decision 26: why a run is discarded (ignored for an accept,
+        /// and passed but ignored until task M9.15.7). Left out while `None`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
     },
     List,
     Subscribe,
@@ -210,6 +214,10 @@ pub enum RunRequest {
         #[serde(default)]
         choice: Option<u32>,
     },
+    /// Milestone 9.15 decision 19 (appended last): a request on a repository's
+    /// lessons. Answered with `RunReply::Lessons`, `RunReply::LessonsGraph`, `Done`
+    /// or `Refused` under `request::LESSONS`.
+    Lessons(crate::lessons::LessonsRequest),
 }
 
 /// `anthrex profile …`, carried inside `RunRequest::Profile` (milestone 8b decision 10).
@@ -352,6 +360,22 @@ pub enum RunReply {
         #[serde(default)]
         request_id: Option<u64>,
     },
+    /// Milestone 9.15 decision 32 (appended last): a repository's lessons
+    /// (`LessonsRequest::List`).
+    Lessons {
+        lessons: Vec<crate::lessons::LessonInfo>,
+        #[serde(default)]
+        message: Option<String>,
+        #[serde(default)]
+        request_id: Option<u64>,
+    },
+    /// Its knowledge graph (`LessonsRequest::Graph`). Boxed for the same reason as
+    /// `Profile`.
+    LessonsGraph {
+        graph: Box<crate::lessons::LessonGraph>,
+        #[serde(default)]
+        request_id: Option<u64>,
+    },
 }
 
 impl RunReply {
@@ -413,6 +437,8 @@ impl RunReply {
             | RunReply::TaskDetail { request_id, .. }
             | RunReply::Settings { request_id, .. }
             | RunReply::Queued { request_id, .. }
+            | RunReply::Lessons { request_id, .. }
+            | RunReply::LessonsGraph { request_id, .. }
             | RunReply::Doc { request_id, .. } => *request_id = id,
             RunReply::Snapshot(_) => {}
         }
@@ -433,6 +459,8 @@ impl RunReply {
             | RunReply::TaskDetail { request_id, .. }
             | RunReply::Settings { request_id, .. }
             | RunReply::Queued { request_id, .. }
+            | RunReply::Lessons { request_id, .. }
+            | RunReply::LessonsGraph { request_id, .. }
             | RunReply::Doc { request_id, .. } => *request_id,
             RunReply::Snapshot(_) => None,
         }
@@ -497,4 +525,6 @@ pub mod request {
     pub const SHOW_DOC: &str = "run show";
     /// Milestone 9.9 (OFA §4.3).
     pub const ANSWER_ASK: &str = "run answer-ask";
+    /// Milestone 9.15 decision 32.
+    pub const LESSONS: &str = "lessons";
 }

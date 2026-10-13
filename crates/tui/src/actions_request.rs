@@ -169,6 +169,7 @@ fn finish(run_id: &str, action: FinishAction) -> RunRequest {
         run_id: run_id.to_string(),
         action,
         confirm: Some(run_id.to_string()),
+        reason: None,
     }
 }
 

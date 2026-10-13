@@ -252,6 +252,11 @@ impl App {
                     _ => return None,
                 }
             }
+            // Milestone 9.15 decision 32: the Lessons page (task M9.15.12) and the graph
+            // page (M9.15.13) take these by id; until then each is dropped.
+            RunReply::Lessons { request_id, .. } | RunReply::LessonsGraph { request_id, .. } => {
+                self.replies.take(*request_id);
+            }
             _ => return None,
         }
         Some(vec![])
