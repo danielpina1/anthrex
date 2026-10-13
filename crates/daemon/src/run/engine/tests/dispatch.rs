@@ -246,6 +246,7 @@ fn reject_discards() {
         root,
         worktrees,
         branch_prefix,
+        ..
     } = &discards[0].1
     else {
         unreachable!()

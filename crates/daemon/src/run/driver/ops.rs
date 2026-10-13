@@ -524,6 +524,7 @@ pub(super) async fn run(
             root,
             worktrees,
             branch_prefix,
+            ..
         } => cleanup::discard(service, ctx, root, worktrees, branch_prefix).await,
         OpKind::Decide { request, .. } => service.decide(ctx, request).await,
         kind @ (OpKind::MeasureDiff { .. } | OpKind::AppendHistory { .. }) => {

@@ -301,6 +301,11 @@ pub enum OpKind {
         root: PathBuf,
         worktrees: Vec<(PathBuf, String)>,
         branch_prefix: String,
+        /// Milestone 9.15 decision 26 (review I1 of M9.15.7): `run discard`'s cleaned
+        /// reason, set on the run only when the discard succeeds. Left out while
+        /// `None`, so a pending discard from before it decodes.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
     },
     /// M8b decision 18: one decider call, holding a reader slot while it runs.
     /// **Executor contract:** `decider::call::decide` with the adaptation's

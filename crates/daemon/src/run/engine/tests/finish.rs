@@ -81,3 +81,70 @@ fn discard_reason_reaches_run_record() {
     assert_eq!(fx.run().discard_reason, None);
     assert_eq!(record.discard_reason, None);
 }
+
+/// Review I1 of task M9.15.7: the reason waits with the `Discard` op and reaches the run
+/// only when the discard succeeds, so a failed discard followed by an accept records an
+/// accept with no reason.
+#[test]
+fn a_failed_discard_leaves_no_reason_for_a_later_accept() {
+    let mut fx = complete();
+    let reply = fx.reply();
+    fx.next(EventKind::Finish {
+        reply,
+        run_id: RUN_ID.into(),
+        action: FinishAction::Discard,
+        reason: Some("abandoned".into()),
+    });
+    let (op, _) = fx.op("Discard");
+    fx.done(
+        op,
+        OpResult::Failed {
+            message: "git: cannot remove the worktree".into(),
+        },
+    );
+    assert_eq!(fx.run().state, RunState::Complete);
+    assert_eq!(fx.run().discard_reason, None);
+
+    let reply = fx.reply();
+    fx.next(EventKind::Finish {
+        reply,
+        run_id: RUN_ID.into(),
+        action: FinishAction::Accept,
+        reason: None,
+    });
+    let (op, _) = fx.op("Accept");
+    let effects = fx.done(
+        op,
+        OpResult::Finished {
+            outcome: "done".into(),
+            kept_branches: Vec::new(),
+        },
+    );
+    let added = appends(&effects);
+    assert_eq!(added.len(), 1, "{effects:#?}");
+    let HistoryLine::Run(record) = added[0].2.clone() else {
+        panic!("a run line");
+    };
+    assert_eq!(record.outcome, "accepted");
+    assert_eq!(record.discard_reason, None);
+    assert_eq!(fx.run().discard_reason, None);
+}
+
+/// The journaled `Discard` op carries its reason, and leaves the key out while `None`,
+/// so a pending discard from before it decodes (ruling C2's rule).
+#[test]
+fn a_discard_op_journals_its_reason() {
+    use crate::run::engine::OpKind;
+    let op = |reason: Option<&str>| OpKind::Discard {
+        root: "/r".into(),
+        worktrees: Vec::new(),
+        branch_prefix: "anthrex/x/".into(),
+        reason: reason.map(str::to_string),
+    };
+    let json = serde_json::to_value(op(None)).unwrap();
+    assert!(!json.to_string().contains("reason"), "{json}");
+    assert_eq!(serde_json::from_value::<OpKind>(json).unwrap(), op(None));
+    let with = op(Some("too big"));
+    let back: OpKind = serde_json::from_str(&serde_json::to_string(&with).unwrap()).unwrap();
+    assert_eq!(back, with);
+}

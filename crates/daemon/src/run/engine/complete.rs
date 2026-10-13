@@ -441,14 +441,13 @@ pub(super) fn finish(
             worktrees,
             branch_prefix,
         },
-        FinishAction::Discard => {
-            run.discard_reason = proto::discard_reason(reason.as_deref());
-            OpKind::Discard {
-                root,
-                worktrees,
-                branch_prefix,
-            }
-        }
+        // Review I1 of M9.15.7: the reason waits with the op (see `finished`).
+        FinishAction::Discard => OpKind::Discard {
+            root,
+            worktrees,
+            branch_prefix,
+            reason: proto::discard_reason(reason.as_deref()),
+        },
     };
     let op = next_op(run);
     emit_op(run, op, None, kind, fx);
@@ -495,6 +494,10 @@ pub(super) fn finished(
                 (RunState::Discarded, "discarded")
             };
             run.state = state;
+            // Decision 26: a discard's reason reaches the run once the discard is done.
+            if let OpKind::Discard { reason, .. } = kind {
+                run.discard_reason = reason.clone();
+            }
             log(run, now, format!("{done}: {outcome}"));
             run.outcome = Some(outcome.clone());
             let mut windows: Vec<u32> = run
