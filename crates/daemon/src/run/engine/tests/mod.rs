@@ -202,6 +202,7 @@ mod race_pair_plan;
 mod race_restore;
 mod race_slots;
 mod refresh;
+mod risk_note;
 mod role_history;
 mod role_history_ends;
 mod rounds_limits;

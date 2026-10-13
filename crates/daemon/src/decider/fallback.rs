@@ -19,7 +19,8 @@ pub const BLOCKED_FALLBACK_REASON: &str = "an unclassified block is a question";
 /// - blocked reason: `question`;
 /// - CI summary: the log's last 40 lines, no test names, `unknown` (9.2 decision 18);
 /// - run name: no title and no slug, so the run keeps its id from the goal;
-/// - distill: no items (milestone 9.15 decision 13).
+/// - distill: no items (milestone 9.15 decision 13);
+/// - risk note: the empty note (milestone 9.15 decision 27).
 pub fn fallback(request: &DeciderRequest) -> DeciderAnswer {
     match request {
         DeciderRequest::Triage(_) => DeciderAnswer::Triage(TriageAnswer {
@@ -52,6 +53,7 @@ pub fn fallback(request: &DeciderRequest) -> DeciderAnswer {
         DeciderRequest::CiSummary(input) => super::ci::fallback(input),
         DeciderRequest::RunName(_) => super::run_name::fallback(),
         DeciderRequest::Distill(_) => super::distill::fallback(),
+        DeciderRequest::RiskNote(_) => super::risk_note::fallback(),
     }
 }
 

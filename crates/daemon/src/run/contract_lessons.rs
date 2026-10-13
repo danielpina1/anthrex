@@ -1,4 +1,5 @@
-//! Milestone 9.15 decision 23: the lessons blocks of the worker and reviewer prompts.
+//! Milestone 9.15 decision 23: the lessons blocks of the worker and reviewer prompts,
+//! and decision 30's risk note block of the reviewer's.
 //! Pure (design decision 2): each block is a function of the run alone, its lessons
 //! scored against the run's freeze time (ruling C8), so a task's worker and reviewer
 //! always see the same ids and a replay renders the same text.
@@ -15,6 +16,10 @@ pub const WORKER_HEADING: &str = "Notes from earlier runs in this repository. Th
 /// The reviewer block's heading (decision 23, exact).
 pub const REVIEWER_HEADING: &str =
     "Known pitfalls in this repository (advisory; check the diff against them):";
+
+/// The risk note's heading (decision 30, exact).
+pub const RISK_NOTE_HEADING: &str =
+    "Hints written from the brief alone, without the diff; verify them, do not trust them:";
 
 /// The lessons `task`'s prompts show, or none when the run's lessons are off or absent.
 fn picked(run: &Run, task: &Task) -> Picked {
@@ -43,6 +48,15 @@ pub fn worker_block(run: &Run, task: &Task) -> String {
 /// messages and before the requirements; empty when none.
 pub fn reviewer_block(run: &Run, task: &Task) -> String {
     render(REVIEWER_HEADING, &picked(run, task))
+}
+
+/// Decision 30: the reviewer prompt's risk note under [`RISK_NOTE_HEADING`], after the
+/// known pitfalls and before the requirements; empty when the task has none.
+pub fn risk_note_block(task: &Task) -> String {
+    match task.risk_note.as_deref().filter(|n| !n.trim().is_empty()) {
+        Some(note) => format!("{RISK_NOTE_HEADING}\n{note}"),
+        None => String::new(),
+    }
 }
 
 #[cfg(test)]

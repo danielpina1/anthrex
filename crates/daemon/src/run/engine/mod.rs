@@ -108,6 +108,7 @@ mod restore_lost;
 mod results;
 mod review;
 mod review_session;
+mod risk_note;
 mod rounds;
 mod run_scouts;
 pub(crate) mod schedule;

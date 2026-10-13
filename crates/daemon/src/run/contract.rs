@@ -286,6 +286,8 @@ pub fn reviewer_prompt(
     }
     let lessons = super::contract_lessons::reviewer_block(run, task); // 9.15 decision 23
     lines.extend((!lessons.is_empty()).then_some(lessons));
+    let note = super::contract_lessons::risk_note_block(task); // 9.15 decision 30
+    lines.extend((!note.is_empty()).then_some(note));
     if let Some(block) = requirements_block(run, task) {
         lines.extend([block, JUDGE_LINE.to_string()]);
     }

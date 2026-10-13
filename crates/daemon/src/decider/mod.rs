@@ -14,12 +14,14 @@ pub mod distill;
 pub mod fallback;
 pub mod parse;
 pub mod prompt;
+pub mod risk_note;
 pub mod run_name;
 pub mod schema;
 
 pub use argv::{AnswerSource, DECIDER_CAPS, DeciderCaps, caps};
 pub use ci::{CI_SUMMARY_INPUT_BYTES, CiSummaryInput};
 pub use distill::DistillInput;
+pub use risk_note::RiskNoteInput;
 pub use run_name::RunNameInput;
 
 use crate::headless::argv::CliCaps;
@@ -38,7 +40,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 /// The decider kinds (decision 17; milestone 9.2 decision 18 appends `CiSummary`, and
-/// the run title change `RunName`, milestone 9.15 decision 13 `Distill`).
+/// the run title change `RunName`, milestone 9.15 decisions 13 and 27 `Distill` and
+/// `RiskNote`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeciderKind {
@@ -49,11 +52,12 @@ pub enum DeciderKind {
     CiSummary,
     RunName,
     Distill,
+    RiskNote,
 }
 
 impl DeciderKind {
     /// Every kind, in the order the briefs list them.
-    pub const ALL: [DeciderKind; 7] = [
+    pub const ALL: [DeciderKind; 8] = [
         DeciderKind::Triage,
         DeciderKind::SizeCheck,
         DeciderKind::CheckSummary,
@@ -61,6 +65,7 @@ impl DeciderKind {
         DeciderKind::CiSummary,
         DeciderKind::RunName,
         DeciderKind::Distill,
+        DeciderKind::RiskNote,
     ];
 
     /// The kind's name in prompts, schema file names and `fake-agent`'s scripts.
@@ -73,6 +78,7 @@ impl DeciderKind {
             DeciderKind::CiSummary => "ci_summary",
             DeciderKind::RunName => "run_name",
             DeciderKind::Distill => "distill",
+            DeciderKind::RiskNote => "risk_note",
         }
     }
 
@@ -86,6 +92,7 @@ impl DeciderKind {
             DeciderKind::CiSummary => HelperKind::CiSummary,
             DeciderKind::RunName => HelperKind::RunName,
             DeciderKind::Distill => HelperKind::Distill,
+            DeciderKind::RiskNote => HelperKind::RiskNote,
         }
     }
 }
@@ -178,6 +185,7 @@ pub enum DeciderRequest {
     CiSummary(CiSummaryInput),
     RunName(RunNameInput),
     Distill(DistillInput),
+    RiskNote(RiskNoteInput),
 }
 
 impl DeciderRequest {
@@ -190,6 +198,7 @@ impl DeciderRequest {
             DeciderRequest::CiSummary(_) => DeciderKind::CiSummary,
             DeciderRequest::RunName(_) => DeciderKind::RunName,
             DeciderRequest::Distill(_) => DeciderKind::Distill,
+            DeciderRequest::RiskNote(_) => DeciderKind::RiskNote,
         }
     }
 }
@@ -261,6 +270,11 @@ pub enum DeciderAnswer {
     Distill {
         items: Vec<proto::LessonDraft>,
         dropped: u32,
+    },
+    /// Milestone 9.15 decision 27: the cleaned note; empty when nothing stands out, and
+    /// the fallback (`risk_note::fallback`).
+    RiskNote {
+        note: String,
     },
 }
 
@@ -384,6 +398,8 @@ mod tests_context;
 mod tests_distill;
 #[cfg(test)]
 mod tests_prompt;
+#[cfg(test)]
+mod tests_risk_note;
 #[cfg(test)]
 mod tests_route;
 #[cfg(test)]

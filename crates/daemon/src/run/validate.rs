@@ -513,6 +513,8 @@ fn new_task(
         lane_unclassified: false,
         salvage_seq: 0,
         lessons_shown: Vec::new(),
+        risk_note: None,
+        risk_note_asked: false,
     }
 }
 

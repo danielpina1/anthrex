@@ -248,6 +248,13 @@ pub struct Task {
     /// first seen first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lessons_shown: Vec<String>,
+    /// Milestone 9.15 decision 30: the risk note its reviewers get, cleaned and clipped;
+    /// `None` until a non-empty one lands (ruling C2: left out while `None`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub risk_note: Option<String>,
+    /// Decision 28: its risk note was asked (once per task; left out while false).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub risk_note_asked: bool,
 }
 
 impl Task {

@@ -30,7 +30,7 @@ fn distilled(value: Value) -> Result<(Vec<LessonDraft>, u32), String> {
 
 #[test]
 fn the_kind_is_appended_as_distill_on_its_helper_row() {
-    assert_eq!(DeciderKind::ALL.len(), 7);
+    assert_eq!(DeciderKind::ALL.len(), 8);
     assert_eq!(DeciderKind::ALL[6], DeciderKind::Distill);
     assert_eq!(DeciderKind::Distill.label(), "distill");
     assert_eq!(

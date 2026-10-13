@@ -7,7 +7,7 @@ use serde_json::Value;
 
 /// The schemas, keyed by the kind's label (M8b's "Decider schemas (exact)", 9.2's
 /// `ci_summary` from its Interfaces, the run title change's `run_name`, and milestone
-/// 9.15 decision 13's `distill`).
+/// 9.15 decisions 13 and 27's `distill` and `risk_note`).
 const SCHEMAS: &str = r#"{"triage":{"type":"object","additionalProperties":false,"required":["kinds","scale","reason","task"],"properties":{
   "kinds":{"type":"array","minItems":1,"maxItems":4,"items":{"enum":["code","docs","research","review"]}},
   "scale":{"enum":["single","plan","large"]},
@@ -45,7 +45,9 @@ const SCHEMAS: &str = r#"{"triage":{"type":"object","additionalProperties":false
       "layer":{"enum":["episodic","semantic","procedural"]},
       "title":{"type":"string","minLength":1,"maxLength":120},
       "body":{"type":"string","minLength":1,"maxLength":600},
-      "files":{"type":"array","maxItems":8,"items":{"type":"string","minLength":1,"maxLength":300}}}}}}}}"#;
+      "files":{"type":"array","maxItems":8,"items":{"type":"string","minLength":1,"maxLength":300}}}}}}},
+ "risk_note":{"type":"object","additionalProperties":false,"required":["note"],"properties":{
+  "note":{"type":"string","maxLength":1200}}}}"#;
 
 /// The schema of `kind`'s answer.
 pub fn schema(kind: DeciderKind) -> Value {
