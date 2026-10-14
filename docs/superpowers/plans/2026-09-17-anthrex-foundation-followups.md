@@ -2344,3 +2344,8 @@ Five minors from the merge review of milestone 9.11, none blocking:
 - **The staging name is a second name for the live socket for a few microseconds** (own review M2). The macOS sandbox's literal-path deny rule doesn't cover it.
 - **`crates/daemon/src/lifecycle.rs` is at 598 lines.** The next change there should split the socket code out first.
 - The long-path failure (a custom `ANTHREX_SOCKET` within about 14 bytes of `sun_path`'s limit) is **fixed in b5ca735b**: such a path binds directly at the real path.
+
+### From the main-CI flakes on 0e87e0f1 (2026-10-13), for later
+
+- **Other headless stand-ins may answer without reading stdin.** The lag rig's stand-in printed its turn and exited without reading its message, so a reap that beat the first send refused it (fixed in f24d5243). The stand-ins in `crates/daemon/tests/support/headless.rs` and the other headless rigs were not audited for the same defect.
+- **No permanent seam keeps `daemon.log`'s non-blocking writer slow.** A future test that reads `daemon.log` once, right after an event, would pass locally and flake on CI. `RunHarness::wait_daemon_log` is the pattern; a source-rules check, or a debug-build seam on the appender, would catch a new one-shot read.

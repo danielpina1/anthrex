@@ -360,10 +360,9 @@ fn e2e_a_session_that_exits_before_its_window_is_known_still_escalates() {
     let id = h.start(&plan("", &[task("t1", &["a.txt"], "")]), true);
     // Session 1's path, then session 2's (k = 2).
     let run = h.wait_run(&id, complete, 2 * RUN_WAIT);
-    let log = std::fs::read_to_string(h.data().join("daemon.log")).unwrap_or_default();
-    assert!(
-        log.contains("ANTHREX_TEST_DELAY_WINDOW_MS: holding op done lines"),
-        "the window hold was not armed:\n{log}"
+    h.wait_daemon_log(
+        "the window hold was not armed",
+        "ANTHREX_TEST_DELAY_WINDOW_MS: holding op done lines",
     );
     // Session 1's exit came before its window was known, and still reached its round.
     let first = task_json(&run, "t1")["rounds"]
