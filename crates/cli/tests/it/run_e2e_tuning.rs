@@ -150,6 +150,7 @@ fn e2e_a_rate_limit_halves_writers_for_that_runtime() {
         "worker-t1-1",
         &[
             json!({"api_retry": {"error": "rate_limit", "delay_ms": 100, "times": 1}}),
+            h.wait_release("t1"),
             commit("a.txt", "a\n"),
             done("added a"),
         ],
@@ -173,10 +174,20 @@ fn e2e_a_rate_limit_halves_writers_for_that_runtime() {
     ];
     let id = h.start(&format!("max_writers = 2\n{}", plan_of(&tasks)), true);
 
-    // t1's rate limit halves Claude's writers.
+    // t1's rate limit halves Claude's writers, and t1 waits after it until t2 works:
+    // nothing else orders t2's launch before t1's merge, and on Ubuntu CI t1 merged
+    // while t2 was still `Preparing`.
     let capped = BTreeMap::from([("claude".to_string(), 1u8)]);
-    h.wait_run(&id, |r| r.writer_caps == capped, RUN_WAIT);
+    let working = |r: &RunInfo| r.writer_caps == capped && t(r, "t2").state == TaskState::Working;
+    let run = h.wait_run(&id, working, RUN_WAIT);
+    assert_eq!(
+        t(&run, "t3").state,
+        TaskState::Queued,
+        "{:?}",
+        t(&run, "t3")
+    );
     // t1 merges while t2 holds Claude's one writer: t3 waits.
+    h.release("t1");
     let run = h.wait_run(&id, |r| t(r, "t1").state == TaskState::Merged, RUN_WAIT);
     assert_eq!(
         t(&run, "t3").state,
@@ -193,7 +204,8 @@ fn e2e_a_rate_limit_halves_writers_for_that_runtime() {
     }
     assert_eq!(run.rate_limits.get("claude"), Some(&1));
 
-    // Every snapshot from t1's merge until t2 was past its check had t3 queued.
+    // Every snapshot from t1's merge until t2 was past its check had t3 queued, and the
+    // window holds t2 working: the writer t3 waited for.
     // One read of the watcher: it keeps receiving snapshots after the run completes, so
     // three separate reads (one per task) could see lists of different lengths.
     let snapshots: Vec<(TaskInfo, TaskInfo, TaskInfo)> = (watcher.snapshots().into_iter())
@@ -204,15 +216,15 @@ fn e2e_a_rate_limit_halves_writers_for_that_runtime() {
             Some((find("t1")?, find("t2")?, find("t3")?))
         })
         .collect();
-    let window: Vec<&TaskInfo> = (snapshots.iter())
+    let window: Vec<(&TaskInfo, &TaskInfo)> = (snapshots.iter())
         .filter(|(t1, t2, _)| t1.state == TaskState::Merged && !past_check(t2))
-        .map(|(_, _, t3)| t3)
+        .map(|(_, t2, t3)| (t2, t3))
         .collect();
     assert!(
-        !window.is_empty(),
-        "no snapshot between t1's merge and t2's check"
+        window.iter().any(|(t2, _)| t2.state == TaskState::Working),
+        "no snapshot with t1 merged and t2 working"
     );
-    for t3 in window {
+    for (_, t3) in window {
         assert_eq!(t3.state, TaskState::Queued, "{t3:?}");
     }
     report_with(&run, "rate limit on claude: writers 2 → 1");

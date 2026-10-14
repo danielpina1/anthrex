@@ -2335,6 +2335,7 @@ Five minors from the merge review of milestone 9.11, none blocking:
 - **A refused submit or spawn may bump the run's revision**, which costs one extra `run.json` write (PR #62 review).
 - **The design e2e harness now restarts the daemon once per test** to arm the read-back hold (PR #62 review). This costs time, not correctness. A per-run seam would avoid it.
 - **The e2e waits depend on `requirements_stored`, a key the digest shows only during planning** (PR #62 review). A digest change that drops or renames it breaks the fixtures' waits.
+- **A profile `setup` (or check) still running when its daemon stops outlives the daemon** (the rate-limit ordering flake, 2026-10-14). `scheduled::run` runs the command through `exec::run_isolated` on a blocking thread, which kills the group on its own timeout; when the daemon exits first, that thread is gone and nothing ends the group. Seen with a temporary `setup` that polled for a release file: after each failed test's daemon stop, its `/bin/sh` was reparented to pid 1 and ran on past the 10 s `check_timeout_secs`, until its own poll cap. A setup or check that hangs would stay forever. Proposed: track live step groups in the service and end them in the daemon's shutdown, as windows are.
 
 ### From the PR #63 reviews (2026-10-13), for later
 
