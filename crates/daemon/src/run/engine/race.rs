@@ -30,7 +30,10 @@ pub(super) enum Start {
 /// is latched (`Task.race_decision`), so a fallback to one worker is noted and logged
 /// once, and a task decided single stays single for this dispatch. A task with its own
 /// checkout never races (the final fix wave's A-I2).
-pub(super) fn start(run: &mut Run, i: usize, now: u64) -> Start {
+///
+/// Milestone 9.16 ruling C5: a peer on a runtime `gate` refuses counts as no room, so
+/// the race waits for its slot and then runs single.
+pub(super) fn start(run: &mut Run, i: usize, now: u64, gate: &super::brakes::Gate) -> Start {
     let task = &run.tasks[i];
     if !task.spec.race || task.race.is_some() || task.race_decision.is_some() {
         return Start::Single;
@@ -65,13 +68,16 @@ pub(super) fn start(run: &mut Run, i: usize, now: u64) -> Start {
     let free = usize::from(run.limits.max_writers).saturating_sub(schedule::writers_busy(run));
     let runtime = task.route.runtime;
     // Both lanes on one runtime (no row fallback) take two slots under its cap.
-    let room = match peer.runtime == runtime {
-        true => {
-            let busy = concurrency::writers_busy_on(run, runtime);
-            concurrency::cap(run, runtime).saturating_sub(busy) >= 2
-        }
-        false => concurrency::has_room(run, runtime) && concurrency::has_room(run, peer.runtime),
-    };
+    let room = gate.allows(peer.runtime)
+        && match peer.runtime == runtime {
+            true => {
+                let busy = concurrency::writers_busy_on(run, runtime);
+                concurrency::cap(run, runtime).saturating_sub(busy) >= 2
+            }
+            false => {
+                concurrency::has_room(run, runtime) && concurrency::has_room(run, peer.runtime)
+            }
+        };
     if free >= 2 && room {
         run.tasks[i].race_decision = Some(RaceDecision::Race);
         return Start::Race(peer);

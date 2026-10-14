@@ -12,7 +12,8 @@
 
 use proto::{RunPath, RunState};
 
-use super::orch::{refuse, settle_quiet};
+use super::brakes::Gate;
+use super::orch::{Pass, refuse, settle_quiet};
 use super::requests::log;
 use super::{
     Effect, OpKind, OpResult, ReplyId, emit_op, gate_holds, history, next_op, run_scouts, wake,
@@ -54,21 +55,22 @@ pub(crate) fn readers(run: &Run) -> usize {
 /// scheduler's running pass dispatches first): sub-planners, oldest epic first, then
 /// run scouts, in the order they were asked for. Research and review tasks follow
 /// (task M9.9). Planners and scouts start while the run is being planned, at the gate
-/// and while it runs; nothing starts in any other state.
-pub(super) fn dispatch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
+/// and while it runs; nothing starts in any other state. Milestone 9.16 decision 11 and
+/// ruling C6: a candidate whose runtime `gate` refuses stays queued and the next is
+/// tried; the loop ends when no candidate is admitted.
+pub(super) fn dispatch(run: &mut Run, now: u64, gate: &mut Gate, fx: &mut Vec<Effect>) {
     if !super::design::readers_start(run.state) {
         return;
     }
     while super::schedule::readers_busy(run) < usize::from(run.limits.max_readers) {
-        if let Some(k) = run
-            .orch
-            .epics
-            .iter()
-            .position(|e| e.phase == PlannerPhase::Queued)
+        if let Some(k) = (run.orch.epics.iter())
+            .position(|e| e.phase == PlannerPhase::Queued && gate.allows(e.route.runtime))
         {
+            let runtime = run.orch.epics[k].route.runtime;
+            gate.started(run, runtime, now);
             start(run, k, now, fx);
-        } else if !super::design_agents::start_next(run, now, fx)
-            && !run_scouts::start_next(run, now, fx)
+        } else if !super::design_agents::start_next(run, now, gate, fx)
+            && !run_scouts::start_next(run, now, gate, fx)
         {
             break;
         }
@@ -250,7 +252,7 @@ pub(super) fn spawn_subplanner(
     run: &mut Run,
     reply: ReplyId,
     mut spec: EpicRecord,
-    (now, base): (u64, &mut Option<Run>),
+    (now, pass): (u64, &mut Pass<'_>),
     fx: &mut Vec<Effect>,
 ) {
     let epic = spec.epic.clone();
@@ -306,7 +308,7 @@ pub(super) fn spawn_subplanner(
             "planning again: a sub-planner was started at the gate",
         );
     }
-    settle_quiet(run, base, now, fx);
+    settle_quiet(run, pass, now, fx);
     let state = match run.orch.epics.iter().find(|e| e.epic == epic) {
         Some(e) if e.phase == PlannerPhase::Planning => "planning",
         _ => "queued",

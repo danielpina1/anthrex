@@ -151,11 +151,21 @@ fn asked(run: &Run) -> bool {
 }
 
 /// A queued reviewer starts in a free reader slot while its review is asked.
-pub(super) fn start_next(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> bool {
+pub(super) fn start_next(
+    run: &mut Run,
+    now: u64,
+    gate: &mut crate::run::engine::brakes::Gate,
+    fx: &mut Vec<Effect>,
+) -> bool {
     let queued = (run.orch.design.as_ref())
         .and_then(|d| d.reviewer.as_ref())
-        .is_some_and(|a| a.state == DesignAgentState::Queued);
-    if !queued || !asked(run) {
+        .filter(|a| a.state == DesignAgentState::Queued)
+        .map(|a| a.route.runtime);
+    let Some(runtime) = queued.filter(|_| asked(run)) else {
+        return false;
+    };
+    // Milestone 9.16 decision 11: a refused runtime leaves it queued.
+    if !crate::run::engine::brakes::admits(gate, run, runtime, now) {
         return false;
     }
     let op = next_op(run);

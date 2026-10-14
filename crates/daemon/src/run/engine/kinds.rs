@@ -38,8 +38,15 @@ pub(super) fn is_integration(task: &Task) -> bool {
 /// Decision 31's reader-slot order: integration reviews go with the reviewers
 /// (`integration`), research and review tasks after the sub-planners and run scouts.
 /// Runs only while the run runs, as every task dispatch does, and not beside a hub
-/// task holding its writer slot.
-pub(super) fn dispatch(run: &mut Run, now: u64, integration: bool, fx: &mut Vec<Effect>) {
+/// task holding its writer slot. Milestone 9.16 decision 11: a queued one whose
+/// runtime `gate` refuses stays queued; one resolving its target again is in flight.
+pub(super) fn dispatch(
+    run: &mut Run,
+    now: u64,
+    integration: bool,
+    gate: &mut super::brakes::Gate,
+    fx: &mut Vec<Effect>,
+) {
     if run.state != RunState::Running || hub_holds_slot(run) {
         return;
     }
@@ -62,7 +69,11 @@ pub(super) fn dispatch(run: &mut Run, now: u64, integration: bool, fx: &mut Vec<
         if !runnable && !unresolved {
             continue;
         }
-        match task.spec.kind {
+        let (kind, runtime) = (task.spec.kind, task.route.runtime);
+        if !unresolved && !super::brakes::admits(gate, run, runtime, now) {
+            continue;
+        }
+        match kind {
             TaskKind::Research => super::research::launch(run, i, now, fx),
             _ => resolve(run, i, now, fx),
         }

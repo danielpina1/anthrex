@@ -10,6 +10,7 @@ use proto::TaskState;
 
 use super::history;
 use super::session::launch_worker;
+use crate::run::engine::brakes::Gate;
 use crate::run::engine::race::Start;
 use crate::run::engine::schedule::{
     dispatch_order, held_hub_waits_for, hub_started, is_reader_task, may_return_to_working,
@@ -88,7 +89,8 @@ pub(super) fn prewarm(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
 }
 
 /// Writer dispatch in critical-path order while writer slots are free (decision 41).
-pub(super) fn dispatch_writers(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
+/// Milestone 9.16 decision 11: a task whose runtime `gate` refuses stays `Queued`.
+pub(super) fn dispatch_writers(run: &mut Run, now: u64, gate: &mut Gate, fx: &mut Vec<Effect>) {
     // F3 review N1: a held hub task lets only what it waits for start.
     let only = held_hub_waits_for(run);
     // Milestone 9.5 decision 18: a race waiting for its second slot at the head of the
@@ -112,12 +114,20 @@ pub(super) fn dispatch_writers(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         if busy >= usize::from(run.limits.max_writers) || hub_started(run) {
             break;
         }
+        // Milestone 9.16 ruling C5: before the race is decided, so a refused task
+        // latches no `race_decision`.
+        let runtime = pair::dispatch_runtime(run, i);
+        if !gate.allows(runtime) {
+            continue;
+        }
         let head_of_line = std::mem::replace(&mut first, false);
-        match super::super::race::start(run, i, now) {
+        match super::super::race::start(run, i, now, gate) {
             Start::Single => {}
             Start::Wait if head_of_line => break,
             Start::Wait => continue,
             Start::Race(peer) => {
+                gate.started(run, runtime, now);
+                gate.started(run, peer.runtime, now);
                 history(run, i, now, "dispatched");
                 super::super::race::dispatch_race(run, i, peer, now, fx, prepare);
                 continue;
@@ -133,6 +143,7 @@ pub(super) fn dispatch_writers(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         {
             continue;
         }
+        gate.started(run, runtime, now);
         set_state(&mut run.tasks[i], TaskState::Preparing, now);
         // Milestone 9.5 decision 25: a paired task starts with its test writer.
         pair::begin(run, i);
@@ -157,11 +168,17 @@ pub(super) fn dispatch_writers(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
 
 /// Ruling T14-I2: a task whose worktree was prepared while the run was not running is
 /// launched now, from that commit when it is still the run head, else re-pointed.
-pub(super) fn launch_ready(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
+/// Milestone 9.16 decision 11: on a runtime `gate` refuses it keeps its `ready_from`.
+pub(super) fn launch_ready(run: &mut Run, now: u64, gate: &mut Gate, fx: &mut Vec<Effect>) {
     for i in 0..run.tasks.len() {
         if run.tasks[i].state != TaskState::Preparing || prepare_in_flight(run, i) {
             continue;
         }
+        let runtime = pair::dispatch_runtime(run, i);
+        if run.tasks[i].ready_from.is_none() || !gate.allows(runtime) {
+            continue;
+        }
+        gate.started(run, runtime, now);
         let Some(from) = run.tasks[i].ready_from.take() else {
             continue;
         };

@@ -12,6 +12,7 @@ use proto::{AgentRole, FindingAnswer, MessageTarget, PlanEdit, RunState, Runtime
 use serde_json::json;
 
 use super::batch::{Applied, Refused, apply_batch, record_rejected};
+use super::brakes::Gate;
 use super::requests::log;
 use super::{Effect, EngineState, ReplyId, gate_holds, goal_rounds, kinds, planners, run_scouts};
 use crate::run::edits_orch::{MessageOutcome, one_edit_rule};
@@ -49,8 +50,15 @@ pub(super) fn tool(
     fx: &mut Vec<Effect>,
 ) {
     let EngineState {
-        runs, quiet_base, ..
+        runs,
+        quiet_base,
+        gate,
+        ..
     } = state;
+    let pass = &mut Pass {
+        base: quiet_base,
+        gate,
+    };
     // Milestone 9.6 ruling T8-2: the pack's previous spec, frozen at the brainstorm's start.
     let earlier = (call.tool == "start_brainstorm")
         .then(|| crate::run::design::pack::previous_spec(runs.values(), &call.run_id))
@@ -95,7 +103,7 @@ pub(super) fn tool(
         if let Some(text) = ending.filter(|_| call.tool == "submit_epic") {
             return refuse(fx, reply, text);
         }
-        return planners::tool(run, reply, call, refusals, now, fx);
+        return planners::tool(run, reply, call, (refusals, pass.gate), now, fx);
     }
     // Milestone 9.6: a design agent's write (task M9.6.8).
     if matches!(call.role, Brainstormer | DocReviewer) {
@@ -138,7 +146,7 @@ pub(super) fn tool(
             responses,
         } => {
             let alone = edits.is_empty() && !submit && summary.is_none() && responses.is_empty();
-            goal_rounds::edit(run, reply, (&goal, alone), (now, quiet_base), fx)
+            goal_rounds::edit(run, reply, (&goal, alone), (now, pass), fx)
         }
         OrchCall::EditPlan {
             edits,
@@ -148,7 +156,7 @@ pub(super) fn tool(
             responses,
         } => {
             let call = (&edits[..], submit, summary, &responses[..]);
-            edit_plan(run, reply, call, refusals, (now, quiet_base), fx)
+            edit_plan(run, reply, call, refusals, (now, pass), fx)
         }
         // Milestone 9.9 ruling R9: a complete run may still ask (decision 15).
         OrchCall::AskUser {
@@ -170,7 +178,7 @@ pub(super) fn tool(
         } => {
             let spec = EpicRecord::requested(&epic, &title, area, &brief, scout_refs);
             let spec = EpicRecord { covers, ..spec };
-            planners::spawn_subplanner(run, reply, spec, (now, quiet_base), fx)
+            planners::spawn_subplanner(run, reply, spec, (now, pass), fx)
         }
         OrchCall::SpawnScout {
             id,
@@ -179,7 +187,7 @@ pub(super) fn tool(
             web,
         } => {
             let args = (&id[..], question, area, web);
-            run_scouts::spawn(run, reply, args, (now, quiet_base), fx)
+            run_scouts::spawn(run, reply, args, (now, pass), fx)
         }
         // The reads are answered by the driver (M9.11).
         _ => refuse(
@@ -197,7 +205,7 @@ fn edit_plan(
     reply: ReplyId,
     (edits, submit, summary, responses): (&[PlanEdit], bool, Option<String>, &[FindingAnswer]),
     refusals: &[(Runtime, String)],
-    (now, base): (u64, &mut Option<Run>),
+    (now, pass): (u64, &mut Pass<'_>),
     fx: &mut Vec<Effect>,
 ) {
     if run.state == RunState::Complete {
@@ -206,11 +214,11 @@ fn edit_plan(
             return refuse(fx, reply, text);
         };
         write_summary(run, summary, now, fx);
-        return accepted(run, reply, (Vec::new(), None, None), (now, base), fx);
+        return accepted(run, reply, (Vec::new(), None, None), (now, pass), fx);
     }
     // Milestone 9.9 decision 11: an op is alone in its call and answered there.
     let others = summary.is_some() || !responses.is_empty();
-    if super::orch_ops::intercept(run, reply, (edits, submit, others), (now, base), fx) {
+    if super::orch_ops::intercept(run, reply, (edits, submit, others), (now, pass), fx) {
         return;
     }
     // Decision 42: a `message` or `refresh` is alone in its call, before any effect.
@@ -286,7 +294,7 @@ fn edit_plan(
         super::wake::unnote(run, super::design::review::STORED_SUBMIT);
     }
     fx.extend(effects);
-    accepted(run, reply, (notes, held, message), (now, base), fx)
+    accepted(run, reply, (notes, held, message), (now, pass), fx)
 }
 
 /// Decision 19's rejected batch: `{"accepted": false, "errors": [...]}`.
@@ -305,10 +313,10 @@ pub(super) fn accepted(
     run: &mut Run,
     reply: ReplyId,
     (notes, held, message): (Vec<String>, Option<String>, Option<MessageOutcome>),
-    (now, base): (u64, &mut Option<Run>),
+    (now, pass): (u64, &mut Pass<'_>),
     fx: &mut Vec<Effect>,
 ) {
-    settle_quiet(run, base, now, fx);
+    settle_quiet(run, pass, now, fx);
     let hold_awaits = held.as_ref().is_some_and(|id| {
         run.orch
             .gate_holds
@@ -343,12 +351,20 @@ pub(super) fn accepted(
     });
 }
 
+/// What an orchestrator tool's handler takes from the step for its own scheduler pass:
+/// the quiet base (M9.9 second review, M-b) and the step's gate (milestone 9.16
+/// ruling C4).
+pub(super) struct Pass<'a> {
+    pub base: &'a mut Option<Run>,
+    pub gate: &'a mut Gate,
+}
+
 /// M9.9 second review, M-b: the orchestrator's own call keeps the run as its edit left
 /// it, before this pass, in `base`: `engine::step` quiets only the blocks up to there,
 /// so a stall this pass finds is still noted.
-pub(super) fn settle_quiet(run: &mut Run, base: &mut Option<Run>, now: u64, fx: &mut Vec<Effect>) {
-    *base = Some(run.clone());
-    settle(run, now, fx);
+pub(super) fn settle_quiet(run: &mut Run, pass: &mut Pass<'_>, now: u64, fx: &mut Vec<Effect>) {
+    *pass.base = Some(run.clone());
+    settle(run, now, pass.gate, fx);
 }
 
 /// W1 fix round 2: while a round is being cancelled, the orchestrator still answers
@@ -382,9 +398,10 @@ pub(super) fn ending(run: &Run) -> Option<String> {
     }
 }
 
-/// The scheduler's pass, then the digest's revision (decision 16).
-pub(super) fn settle(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
-    super::dispatch::schedule(run, now, fx);
+/// The scheduler's pass under the step's `gate` (milestone 9.16 ruling C4), then the
+/// digest's revision (decision 16).
+pub(super) fn settle(run: &mut Run, now: u64, gate: &mut Gate, fx: &mut Vec<Effect>) {
+    super::dispatch::schedule(run, now, gate, fx);
     digest::note_change(run);
 }
 

@@ -963,6 +963,12 @@ Smoke stage 11n (`scripts/pty_smoke_lessons.py`), its daemon its own child under
 | The Lessons page's rows and the graph page's hubs and dots (`PAGE_WAIT`) | `scripts/pty_smoke_lessons.py` | 45 s | One tagged request each (`List`, `Graph`), answered on `spawn_blocking`; the client gives up at `REPLY_TIMEOUT` (30 s), plus 15 s, as stage 11l's `CARD_WAIT`. The graph's layout runs once in the reply's update (about 60 ms in release, 360 ms in debug). | **Recorded.** |
 | Each other screen (`SCREEN_WAIT`) and the detach (`DETACH_WAIT`) | `scripts/pty_smoke_lessons.py` | 10 s; 5 s | Stage 11t's: a badge or frame drawn on the client's 100 ms tick; the detach is local. | **Recorded.** |
 
+### Recorded, from M9.16.5 (the engine gate, 2026-10-14)
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| `a_refused_first_candidate_does_not_spin`, the two tool calls' steps (`STEP_WAIT`) | `crates/daemon/src/run/engine/tests/brakes_readers.rs` | `10s`, the receive ending as soon as the thread sends | Two pure reducer steps on one thread: milliseconds, no I/O, no lock, no clock (the same work `a_panicking_step_keeps_the_state_and_the_loop` bounds at 10 s). | **Recorded.** A hang guard (ruling C6): before the fix the reader loop re-picked the refused sub-planner forever, and the test failed at 10 s with `Timeout`. |
+
 ### Fixed, from the environment-block flake on macOS CI (2026-10-12)
 
 | Test | Site | Bound | The code's own legal worst case | Status |

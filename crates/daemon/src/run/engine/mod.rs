@@ -44,6 +44,8 @@ mod asks;
 pub use actor::Actor;
 mod batch;
 mod bisect;
+// Milestone 9.16 decisions 8, 11–14, 18, 21: the brakes' gate.
+pub(crate) mod brakes;
 mod chains;
 mod clock;
 mod complete;
@@ -163,6 +165,11 @@ pub struct EngineState {
     pub quiet_base: Option<Run>,
     /// Milestone 9.3 decision 19: the chains, derived from `Run.chain` (`chains.rs`).
     pub chains: BTreeMap<String, crate::run::chain::Chain>,
+    /// Milestone 9.16: the hold, the quota brake's config and book (`brakes.rs`).
+    pub brakes: brakes::Brakes,
+    /// Milestone 9.16 ruling C4: this step's gate, which every scheduler pass takes
+    /// (`orch::settle`'s too). In memory only; recomputed by each step.
+    pub gate: brakes::Gate,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -187,6 +194,8 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
     let quiet = matches!(&event.kind, EventKind::Orch(OrchEvent::Tool { call, .. })
         if call.role == proto::AgentRole::Orchestrator);
     let mut fx = Vec::new();
+    // Ruling C4: the gate the handler's own scheduler passes take.
+    state.gate = brakes::gate(&mut state.brakes, now);
     match event.kind {
         EventKind::Start { reply, run } => requests::start(&mut state, reply, *run, now, &mut fx),
         EventKind::Approve { reply, run_id } => {
@@ -321,6 +330,16 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
         EventKind::Restore { runs, replay, held } => {
             restore::restore(&mut state, runs, (replay, held), now, &mut fx)
         }
+        // Milestone 9.16 decisions 6, 10 and 17: a reading, the config, the hold.
+        EventKind::Quota { runtime, sample } => {
+            let cfg = state.brakes.config;
+            state.brakes.book.record(runtime, &sample, now, &cfg);
+        }
+        EventKind::BrakesConfig(cfg) => {
+            state.brakes.config = cfg;
+            state.brakes.book.reconfigure(&cfg);
+        }
+        EventKind::Hold { reply, hold } => brakes::hold(&mut state.brakes, reply, hold, &mut fx),
         EventKind::Stop => {
             state.stopped = true;
             return (state, fx);
@@ -351,10 +370,14 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
         }
         runs
     });
+    // Ruling C4: the handler's announcements kept, then the gate again, after the
+    // event (a reading, the config or the hold may have changed it).
+    brakes::merge(&mut state.brakes, &mut state.gate);
+    state.gate = brakes::gate(&mut state.brakes, now);
     for (id, run) in state.runs.iter_mut() {
         // Milestone 9.6 task M9.6.11: a design run's plan at its gate.
         design::plan::pass(run, now, &mut fx);
-        dispatch::schedule(run, now, &mut fx);
+        dispatch::schedule(run, now, &mut state.gate, &mut fx);
         // Milestone 9.3 decision 17: a round whose run completed ends.
         goal_rounds_end::pass(run, now, &mut fx);
         orch_window::ended(run);
@@ -373,10 +396,15 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
     // Held events whose launches are over, or that waited too long (`early.rs`).
     early::sweep(&mut state, now, &mut fx);
     let chains_moved = state.chains != chains_before;
+    // Milestone 9.16 decision 14: a trip, a release, a reading or the hold republishes.
+    brakes::merge(&mut state.brakes, &mut state.gate);
+    let shown = brakes::info(&state.brakes, now);
+    let brakes_moved = shown != state.brakes.shown;
+    state.brakes.shown = shown;
     finish(
         &mut state,
         &before,
-        (before_revision, chains_moved),
+        (before_revision, chains_moved || brakes_moved),
         now,
         fx,
     )
@@ -386,7 +414,8 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
 /// a run new to the state keeps the revision it arrived with. A change to counters alone
 /// (`AgentRound::clear_counters`) is persisted lazily and published as a counter update
 /// (decisions 43, 47); any other is urgent and structural, and so is a change of the
-/// chain table alone (milestone 9.3: the snapshot's idle orchestrators). `Persist` first,
+/// chain table alone (milestone 9.3: the snapshot's idle orchestrators) or of the
+/// snapshot's brakes (milestone 9.16 decision 14). `Persist` first,
 /// `Publish` last. Milestone 9.5 decision 15: a run that changed records the step's
 /// time, and its pause accounting.
 fn finish(

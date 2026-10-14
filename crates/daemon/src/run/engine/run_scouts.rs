@@ -6,7 +6,8 @@
 
 use proto::{AgentRole, RoleOutcome};
 
-use super::orch::{refuse, settle_quiet};
+use super::brakes::Gate;
+use super::orch::{Pass, refuse, settle_quiet};
 use super::requests::log;
 use super::wake;
 use super::{Effect, OpKind, OpResult, ReplyId, ScoutEnd, emit_op, history, next_op};
@@ -31,7 +32,7 @@ pub(super) fn spawn(
     run: &mut Run,
     reply: ReplyId,
     (id, question, area, web): (&str, String, Vec<String>, bool),
-    (now, base): (u64, &mut Option<Run>),
+    (now, pass): (u64, &mut Pass<'_>),
     fx: &mut Vec<Effect>,
 ) {
     let full = format!("{}-{id}", run.short());
@@ -72,7 +73,7 @@ pub(super) fn spawn(
         window_id: None,
     });
     log(run, now, format!("scout {full} queued"));
-    settle_quiet(run, base, now, fx);
+    settle_quiet(run, pass, now, fx);
     let state = match run.orch.run_scouts.iter().find(|s| s.id == full) {
         Some(s) if s.state == RunScoutState::Running => "starting",
         _ => "queued",
@@ -84,8 +85,9 @@ pub(super) fn spawn(
     });
 }
 
-/// Starts the oldest queued run scout; false when none is queued.
-pub(super) fn start_next(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> bool {
+/// Starts the oldest queued run scout; false when none is queued, or when `gate`
+/// refuses the `research` row's runtime (milestone 9.16 decision 11, ruling C6).
+pub(super) fn start_next(run: &mut Run, now: u64, gate: &mut Gate, fx: &mut Vec<Effect>) -> bool {
     let Some(k) = run
         .orch
         .run_scouts
@@ -94,6 +96,10 @@ pub(super) fn start_next(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> bool 
     else {
         return false;
     };
+    let runtime = crate::run::orch::launch::scout_route(run).runtime;
+    if !super::brakes::admits(gate, run, runtime, now) {
+        return false;
+    }
     let spec = scout_spec(run, &run.orch.run_scouts[k], &run.root, &run.project);
     let scout = &mut run.orch.run_scouts[k];
     scout.state = RunScoutState::Running;

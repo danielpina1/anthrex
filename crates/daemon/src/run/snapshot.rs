@@ -98,7 +98,7 @@ pub fn snapshot(state: &EngineState, now: u64) -> RunsSnapshot {
             finished += usize::from(terminal);
             !terminal || finished <= TERMINAL_RUNS_SHOWN
         })
-        .map(|r| run_info(r, now))
+        .map(|r| run_info(r, &state.brakes, now))
         .collect();
     RunsSnapshot {
         revision: state.revision,
@@ -107,11 +107,12 @@ pub fn snapshot(state: &EngineState, now: u64) -> RunsSnapshot {
         proposals: Vec::new(),
         idle_orchestrators: super::chain::idle_list(&state.chains, &state.runs),
         queued_goals: Vec::new(),
-        brakes: Default::default(),
+        // Milestone 9.16 decision 13.
+        brakes: super::engine::brakes::info(&state.brakes, now),
     }
 }
 
-fn run_info(run: &Run, now: u64) -> RunInfo {
+fn run_info(run: &Run, brakes: &super::engine::brakes::Brakes, now: u64) -> RunInfo {
     let path: Vec<usize> = critical_path(run);
     // Milestone 9.5 decision 14: the round's estimate and bound ratio.
     let estimate = super::estimate::estimate(run, now);
@@ -139,6 +140,7 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
         .collect();
     let (design, doc_gate, docs) = super::snapshot_design::design_fields(run);
     let (round_design, halted_phase) = super::snapshot_design::round_fields(run);
+    let brake_lines = super::engine::brakes::attention(brakes, run, now);
     RunInfo {
         actions: available(run, &ActionNode::Run),
         run_id: run.id.clone(),
@@ -175,7 +177,8 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
         critical_path: path.iter().map(|&i| run.tasks[i].spec.id.clone()).collect(),
         // Decision 42i: the run view's list also names the last discoveries and risks,
         // which the digest carries as `task_notes`.
-        attention: [attention(run, now), noted_lines(run)].concat(),
+        // Milestone 9.16 ruling C22: the brake lines last.
+        attention: [attention(run, now), noted_lines(run), brake_lines].concat(),
         report_path: run.report_path(),
         outcome: run.outcome.clone(),
         created_at: run.created_at,

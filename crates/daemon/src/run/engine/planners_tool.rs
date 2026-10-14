@@ -6,6 +6,7 @@
 use proto::{PlanEdit, RunState, Runtime, TaskState, ToolCall};
 
 use super::batch::{Applied, Refused, apply_batch, record_rejected};
+use super::brakes::Gate;
 use super::orch::{refuse, rejected, settle};
 use super::planners::{EPIC_RECORDED, fail};
 use super::requests::log;
@@ -24,7 +25,7 @@ pub(super) fn tool(
     run: &mut Run,
     reply: ReplyId,
     call: &ToolCall,
-    refusals: &[(Runtime, String)],
+    (refusals, gate): (&[(Runtime, String)], &mut Gate),
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
@@ -58,7 +59,7 @@ pub(super) fn tool(
             reply,
             (k, call.window_id),
             (&edits, note),
-            refusals,
+            (refusals, gate),
             now,
             fx,
         ),
@@ -147,7 +148,7 @@ fn submit_epic(
     reply: ReplyId,
     (k, window): (usize, u32),
     (edits, note): (&[PlanEdit], Option<String>),
-    refusals: &[(Runtime, String)],
+    (refusals, gate): (&[(Runtime, String)], &mut Gate),
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
@@ -224,7 +225,7 @@ fn submit_epic(
     );
     *run = edited;
     fx.extend(effects);
-    settle(run, now, fx);
+    settle(run, now, gate, fx);
     fx.push(Effect::Reply {
         reply,
         result: Ok(EPIC_RECORDED.to_string()),

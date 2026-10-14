@@ -4,6 +4,7 @@
 //! PTY (decision 10).
 
 pub mod bounds;
+pub mod brakes_text;
 pub mod branch;
 pub mod labels;
 pub mod lifecycle;

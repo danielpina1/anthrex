@@ -142,6 +142,19 @@ pub enum EventKind {
         run_id: String,
         text: String,
     },
+    /// Milestone 9.16 decision 6: a runtime's quota reading.
+    Quota {
+        runtime: proto::Runtime,
+        sample: crate::headless::quota::QuotaSample,
+    },
+    /// Milestone 9.16 decision 10: `[orchestrator.brakes]`, after every config load and
+    /// settings save.
+    BrakesConfig(super::quota_book::BrakeConfig),
+    /// Milestone 9.16 decision 17: the hold set (`Some`) or released (`None`).
+    Hold {
+        reply: ReplyId,
+        hold: Option<proto::brakes::DispatchHold>,
+    },
 }
 
 /// The driver's translation of a window's session events (decision 27).
