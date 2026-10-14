@@ -21,6 +21,12 @@ const LAUNCH_WAIT: Duration = WALL_CLOCK_SLACK;
 /// The forwarder's catch-up is one pass over the old receiver and the records: memory
 /// only, so the bound only has to exceed a scheduler's delay.
 const FORWARD_WAIT: Duration = WALL_CLOCK_SLACK;
+/// The gap between a session's spawn and its first message's write, widened
+/// (`ManagerConfig::headless_install_pause`) so a stand-in that ends before the daemon
+/// has written its message ends there on every run, not once in a while. A real Claude
+/// reads its message before it says anything (`--input-format stream-json`), so each
+/// stand-in reads its line first and the gap costs only the wait.
+const SEND_GAP: Duration = Duration::from_millis(300);
 
 struct NoRoots;
 impl GitRoots for NoRoots {
@@ -96,8 +102,9 @@ impl Drop for Windows {
     }
 }
 
-/// The rig: a feed of `capacity`; window `a` ends one turn of `a_texts` lines and exits;
-/// then window `b` ends one turn of `b_texts` lines and stays. The forwarder's receiver
+/// The rig: a feed of `capacity`; window `a` reads its message, ends one turn of
+/// `a_texts` lines and exits; then window `b` reads its message, ends one turn of
+/// `b_texts` lines and stays. The forwarder's receiver
 /// is taken before `a` starts and is handed back unread, with the engine's queue: the
 /// forwarder is spawned on it only after both windows are settled, so its first receive
 /// is `Lagged` whenever more than `capacity` signals were sent (the injected lag).
@@ -120,7 +127,7 @@ async fn lagged(capacity: usize, a_texts: usize, b_texts: usize) -> Lagged {
     let claude = testexec::write_warm_executable(
         dir.path().join("claude"),
         format!(
-            "#!/bin/sh\ncase \"$STAND_IN_ROLE\" in\n  a) cat '{}' ;;\n  b) cat '{}'; exec sleep 30 ;;\nesac\nexit 0\n",
+            "#!/bin/sh\ncase \"$STAND_IN_ROLE\" in\n  a) read -r message; cat '{}' ;;\n  b) read -r message; cat '{}'; exec sleep 30 ;;\nesac\nexit 0\n",
             a_turn.display(),
             b_turn.display()
         ),
@@ -137,6 +144,7 @@ async fn lagged(capacity: usize, a_texts: usize, b_texts: usize) -> Lagged {
     config.codex_bin = "/nonexistent/anthrex-test/codex".into();
     config.decider_bin = Some("/nonexistent/anthrex-test/decider".into());
     config.signal_capacity = capacity;
+    config.headless_install_pause = SEND_GAP;
     let (manager, mut events) = WindowManager::new(config);
     let pump = manager.clone();
     tokio::spawn(async move {

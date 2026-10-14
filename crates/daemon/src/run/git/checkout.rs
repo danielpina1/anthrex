@@ -359,19 +359,74 @@ pub(crate) fn remove(path: &Path, repo: &Repo) -> Result<(), String> {
         std::fs::remove_dir_all(path)
             .map_err(|err| format!("cannot remove {}: {err}", path.display()))?;
     }
+    removal_step("checkout");
+    // The temporary directory goes before the repository: it is named only from the
+    // repository's path ([`super::tmp::task_tmp`]), so while the repository is there a
+    // test's teardown or the next daemon's reconcile can still find it if the daemon
+    // stops between the two. The other order leaves it in the shared root for good.
+    super::tmp::remove(&repo.dir)?;
+    removal_step("temporary directory");
     if repo.dir.exists() {
         restore_owner_access(&repo.dir)?;
         std::fs::remove_dir_all(&repo.dir)
             .map_err(|err| format!("cannot remove {}: {err}", repo.dir.display()))?;
     }
-    super::tmp::remove(&repo.dir)?;
+    removal_step("repository");
     pinned::unpin(path);
     Ok(())
 }
 
 #[cfg(test)]
+thread_local! {
+    /// The step of [`remove`] after which a test makes the daemon "stop".
+    static STOP_AFTER: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
+}
+
+/// A point in [`remove`] at which the daemon's process may end (`anthrex daemon stop`,
+/// a crash, a kill): its ops end with it, wherever they are. A test ends it there.
+fn removal_step(_step: &'static str) {
+    #[cfg(test)]
+    if STOP_AFTER.get() == Some(_step) {
+        panic!("the daemon stopped after removing the {_step}");
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use std::path::Path;
+
+    /// A daemon that stops in the middle of a checkout's removal leaves nothing in the
+    /// shared temporary root that no directory names any more. The task temporary
+    /// directory is named only from its repository's path (`tmp::task_tmp`), so a test's
+    /// teardown, a smoke's and a restarted daemon's reconcile can find it only while
+    /// that repository is still there: the CI-only `/tmp/ax-<uid>/<hash>` leak of PRs
+    /// #61 and #65, a test daemon stopped between the two removals.
+    #[test]
+    fn a_stop_at_any_step_of_a_removal_leaves_a_findable_temporary_directory() {
+        for step in ["checkout", "temporary directory", "repository"] {
+            let base = super::super::tmp::TestDir::new();
+            let dir = base.path().join("data/runs/r1/tasks/t1");
+            std::fs::create_dir_all(dir.join("engine")).unwrap();
+            let tmp = super::super::tmp::task_tmp(&dir);
+            super::super::tmp::ensure_root().unwrap();
+            std::fs::create_dir_all(tmp.join("s1-check")).unwrap();
+            let checkout = base.path().join("wt/runs/r1/t1");
+
+            super::STOP_AFTER.set(Some(step));
+            let stopped =
+                std::panic::catch_unwind(|| super::remove(&checkout, &super::Repo::at(&dir)));
+            super::STOP_AFTER.set(None);
+            assert!(stopped.is_err(), "the removal never reached the {step}");
+
+            // What a test's teardown (or the next daemon) can still find and remove.
+            super::super::tmp::remove_task_tmps_beneath(base.path()).unwrap();
+            assert!(
+                !tmp.exists(),
+                "stopped after the {step}: {} is left, and nothing names it",
+                tmp.display()
+            );
+        }
+    }
 
     /// Fix round 2 (n6): the frozen 0.1.x text, pinned to the literal bytes anthrex
     /// 0.1.0 to 0.1.2 wrote, for both object formats.
