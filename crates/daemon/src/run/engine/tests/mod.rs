@@ -190,6 +190,7 @@ mod promote_installed;
 mod propagate;
 mod propagate_c21;
 mod propagate_c22;
+mod quota_book;
 mod race;
 mod race_crown;
 mod race_end;

@@ -97,6 +97,8 @@ mod planners;
 mod promote;
 mod propagate;
 mod protected_grants;
+/// Milestone 9.16 decisions 6–8: the quota brake's book (in `EngineState` from M9.16.5).
+pub mod quota_book;
 mod race;
 mod race_end;
 mod race_salvage;
