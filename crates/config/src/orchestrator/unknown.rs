@@ -5,8 +5,10 @@ use super::adapt::{
     KNOWN_DECIDERS_KEYS, KNOWN_METERING_KEYS, KNOWN_ONBOARDING_KEYS, KNOWN_SCOUTS_KEYS,
 };
 use super::agent::{KNOWN_AGENT_KEYS, KNOWN_PLANNERS_KEYS};
+use super::brakes::KNOWN_BRAKES_KEYS;
 use super::budget::KNOWN_BUDGET_KEYS;
 use super::design::report_unknown_design;
+use super::handoff::KNOWN_HANDOFF_KEYS;
 use super::report_unknown_profile;
 use super::tuning::{KNOWN_TUNING_KEYS, report_unknown_routes};
 use crate::{Problem, report_unknown_nested, unknown_key_problem};
@@ -50,6 +52,7 @@ pub(crate) fn report_unknown(value: &toml::Value, problems: &mut Vec<Problem>) {
             | "wake_quiet_secs"
             | "message_max_per_turn"
             | "note_max_per_task" => {}
+            k if KNOWN_HANDOFF_KEYS.contains(&k) => {}
             "models" => report_unknown_model_keys(sub, problems),
             "review" => {
                 report_unknown_nested(sub, "orchestrator.review", KNOWN_REVIEW_KEYS, problems)
@@ -83,6 +86,9 @@ pub(crate) fn report_unknown(value: &toml::Value, problems: &mut Vec<Problem>) {
             }
             "routes" => report_unknown_routes(sub, problems),
             "design" => report_unknown_design(sub, problems),
+            "brakes" => {
+                report_unknown_nested(sub, "orchestrator.brakes", KNOWN_BRAKES_KEYS, problems)
+            }
             other => problems.push(unknown_key_problem(&format!("orchestrator.{other}"))),
         }
     }

@@ -36,13 +36,21 @@ const BUDGET_L: [(&str, &str); 2] = [
     ("orchestrator.budget.l", "tool_calls"),
     ("orchestrator.budget.l", "minutes"),
 ];
+/// Milestone 9.16 decision 10: `[orchestrator.brakes]`'s four keys.
+const BRAKES: [(&str, &str); 4] = [
+    ("orchestrator.brakes", "quota_brake"),
+    ("orchestrator.brakes", "quota_pause_5h_percent"),
+    ("orchestrator.brakes", "quota_pause_7d_percent"),
+    ("orchestrator.brakes", "quota_fresh_secs"),
+];
 /// Tables only the writer may shape.
-const CONTAINERS: [&str; 5] = [
+const CONTAINERS: [&str; 6] = [
     "orchestrator",
     "orchestrator.budget",
     "orchestrator.budget.s",
     "orchestrator.budget.m",
     "orchestrator.budget.l",
+    "orchestrator.brakes",
 ];
 
 /// Pure: `text` with every owned key set as `doc` says (decision 30). Refuses with
@@ -60,7 +68,7 @@ pub(crate) fn edit_text(text: &str, doc: &SettingsDoc) -> Result<String, Vec<Str
 }
 
 fn scalars() -> impl Iterator<Item = (&'static str, &'static str)> {
-    SCALARS.into_iter().chain(BUDGET_L)
+    SCALARS.into_iter().chain(BUDGET_L).chain(BRAKES)
 }
 
 fn is_scalar(path: &[String]) -> bool {
@@ -79,6 +87,7 @@ fn home(path: &[String]) -> String {
     match (seg(1), seg(2)) {
         (Some("budget"), Some(r @ ("s" | "m" | "l"))) => format!("orchestrator.budget.{r}"),
         (Some("budget"), _) => "orchestrator.budget.<s|m|l>".to_string(),
+        (Some("brakes"), _) => "orchestrator.brakes".to_string(),
         // Fix round 1 (M8): an old key's own table (`orchestrator.agent.model`).
         _ if path.len() > 2 => path[..path.len() - 1].join("."),
         _ => "orchestrator".to_string(),
@@ -207,8 +216,25 @@ fn edit(scan: &Scan, table: &toml::Table, doc: &SettingsDoc) -> String {
 /// Each owned scalar's wanted value.
 fn wanted(doc: &SettingsDoc) -> BTreeMap<&'static str, toml::Value> {
     let l = &doc.limits;
+    let b = &doc.brakes;
     let int = |n: u64| toml::Value::Integer(n as i64);
     BTreeMap::from([
+        (
+            "orchestrator.brakes.quota_brake",
+            toml::Value::Boolean(b.quota_brake),
+        ),
+        (
+            "orchestrator.brakes.quota_pause_5h_percent",
+            int(b.quota_pause_5h_percent.into()),
+        ),
+        (
+            "orchestrator.brakes.quota_pause_7d_percent",
+            int(b.quota_pause_7d_percent.into()),
+        ),
+        (
+            "orchestrator.brakes.quota_fresh_secs",
+            int(b.quota_fresh_secs),
+        ),
         ("orchestrator.max_writers", int(l.max_writers.into())),
         ("orchestrator.max_readers", int(l.max_readers.into())),
         ("orchestrator.max_bounces", int(l.max_bounces.into())),

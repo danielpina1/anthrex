@@ -22,8 +22,10 @@ use super::*;
 
 mod adapt;
 mod agent;
+mod brakes;
 mod budget;
 mod design;
+mod handoff;
 mod profile;
 mod roster;
 mod tuning;
@@ -33,6 +35,7 @@ pub(crate) use tuning::{RouteList, RouteLists};
 
 pub use adapt::{Deciders, Metering, Onboarding, Scouts};
 pub use agent::AgentConfig;
+pub use brakes::{BrakeKeys, QUOTA_FRESH_SECS_RANGE, QUOTA_PAUSE_PERCENT_RANGE};
 pub use design::{DesignBudget, DesignConfig};
 
 use budget::read_budgets;
@@ -116,6 +119,13 @@ pub struct Orchestrator {
     /// Milestone 9.8: the global role table (decision 19) and the migration's notes.
     pub roles: crate::ModelTable,
     pub roles_notes: Vec<String>,
+    /// Milestone 9.16 decision 10: `[orchestrator.brakes]`, settings-owned.
+    pub brakes: BrakeKeys,
+    /// Milestone 9.16 decisions 23-24 (`orchestrator/handoff.rs`): 0 = automatic window,
+    /// the handoff at 80 % or 300,000 tokens, each 0 disabling its own criterion.
+    pub context_window_tokens: u64,
+    pub handoff_at_percent: u8,
+    pub handoff_at_tokens: u64,
 }
 
 /// `[orchestrator.claude] auth`, decision 50: whether a headless Claude session reads
@@ -189,6 +199,10 @@ impl Default for Orchestrator {
             design: DesignConfig::default(),
             roles: crate::ModelTable::default(),
             roles_notes: Vec::new(),
+            brakes: BrakeKeys::default(),
+            context_window_tokens: 0,
+            handoff_at_percent: handoff::DEFAULT_HANDOFF_AT_PERCENT,
+            handoff_at_tokens: handoff::DEFAULT_HANDOFF_AT_TOKENS,
         }
     }
 }
@@ -317,6 +331,8 @@ pub(crate) fn read(table: &toml::Table, problems: &mut Vec<Problem>) -> Orchestr
     o.agent = agent::read(t, problems);
     o.tuning = tuning::read_tuning(t, &o.models, problems);
     o.design = design::read(t, problems);
+    o.brakes = brakes::read(t, problems);
+    handoff::read(t, &mut o, problems);
 
     o
 }

@@ -349,3 +349,51 @@ fn a_dangling_config_link_stays_a_link() {
     assert!(real.contains("max_writers = 5"), "{real}");
     assert_eq!(entries(dir.path()), ["config.toml", "real.toml"]);
 }
+
+/// Task 2's review M2: a Settings save that changes a brake key writes it, reads it back
+/// (`read_back`, `unowned`, `differing`) and reports it as `File`; the next save edits it
+/// in place.
+#[test]
+fn a_brake_key_saves_and_reads_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    let text = "# mine\n[orchestrator]\ngit_timeout_secs = 9\n\n[orchestrator.brakes]\nquota_brake = true # on\n";
+    std::fs::write(&path, text).unwrap();
+    let mut doc = doc_of(&crate::load(&path).0.orchestrator);
+    doc.brakes.quota_pause_5h_percent = 85;
+    let saved = save(&path, &doc, &AtomicBool::new(false)).unwrap();
+    assert_eq!(doc_of(&saved.orchestrator), doc);
+    assert_eq!(
+        saved.origin[proto::settings::key::QUOTA_PAUSE_5H_PERCENT],
+        proto::Origin::File
+    );
+    assert_eq!(
+        saved.origin[proto::settings::key::QUOTA_FRESH_SECS],
+        proto::Origin::Default
+    );
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "# mine\n[orchestrator]\ngit_timeout_secs = 9\n\n[orchestrator.brakes]\nquota_brake = true # on\nquota_pause_5h_percent = 85\n"
+    );
+
+    doc.brakes.quota_pause_5h_percent = 80;
+    doc.brakes.quota_brake = false;
+    let saved = save(&path, &doc, &AtomicBool::new(false)).unwrap();
+    assert_eq!(doc_of(&saved.orchestrator), doc);
+    let (config, problems) = crate::load(&path);
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(doc_of(&config.orchestrator), doc);
+    assert_eq!(config.orchestrator.git_timeout_secs, 9);
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "# mine\n[orchestrator]\ngit_timeout_secs = 9\n\n[orchestrator.brakes]\nquota_brake = false # on\nquota_pause_5h_percent = 80\n"
+    );
+    assert_eq!(entries(dir.path()), ["config.toml"]);
+
+    // An out-of-range brake key is refused before anything is written.
+    doc.brakes.quota_fresh_secs = 59;
+    assert_eq!(
+        save(&path, &doc, &AtomicBool::new(false)).unwrap_err(),
+        ["orchestrator.brakes.quota_fresh_secs: must be between 60 and 86400"]
+    );
+}
