@@ -507,3 +507,50 @@ fn a_failing_over_writer_never_lands_on_its_reviewers_model() {
     assert_eq!(t3.review_route, Some(route(OPUS)));
     assert_eq!(failover_lines(&fx), [failover_line("t3", SOL)]);
 }
+
+/// Task 6's review M1: `launch_ready`'s failover. A `Preparing` task whose worktree came
+/// back while its run was paused (`ready_from`) finds Claude braked when it is resumed:
+/// it waits, keeping `ready_from`, while Codex has no room (decision 37 (h)), then
+/// launches on its row's Codex fallback from the commit it kept.
+#[test]
+fn a_ready_task_fails_over_at_launch() {
+    let mut fx = fixture(&[task("t3", "M", "a", "")], rows(&[]));
+    fx.ready(true);
+    let (prepare, _) = fx.op("PrepareWorktree");
+    restart(
+        &mut fx,
+        vec![(prepare, OpResult::Worktree { head: BASE.into() })],
+    );
+    assert_eq!(fx.task("t3").ready_from.as_deref(), Some(BASE));
+    assert_eq!(fx.task("t3").route, route(SONNET));
+    let run = fx.run_mut();
+    run.limits.adaptive_concurrency = true;
+    let mut codex = crate::run::model::RuntimeConcurrency::new(run.limits.max_writers);
+    codex.cap = 0;
+    run.concurrency.insert("codex".into(), codex);
+    trip_claude(&mut fx);
+    let effects = resume(&mut fx);
+    assert!(ops_in(&effects, "CreateWindow").is_empty(), "{effects:#?}");
+    let t3 = fx.task("t3");
+    assert_eq!(t3.state, TaskState::Preparing);
+    assert_eq!(t3.ready_from.as_deref(), Some(BASE));
+    assert_eq!(t3.route, route(SONNET));
+    assert!(failover_lines(&fx).is_empty());
+    // A Codex slot frees: it launches on the fallback from the commit it kept.
+    fx.run_mut().concurrency.get_mut("codex").unwrap().cap = 1;
+    let effects = fx.tick();
+    let (_, kind) = only_op(&effects, "CreateWindow");
+    let OpKind::CreateWindow { spec, .. } = kind else {
+        unreachable!()
+    };
+    assert_eq!(
+        (spec.runtime, spec.model.as_str()),
+        (Runtime::Codex, "gpt-6-sol")
+    );
+    let t3 = fx.task("t3");
+    assert_eq!(
+        (t3.route.clone(), t3.ready_from.clone()),
+        (route(SOL), None)
+    );
+    assert_eq!(failover_lines(&fx), [failover_line("t3", SOL)]);
+}
