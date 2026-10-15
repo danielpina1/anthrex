@@ -12,10 +12,11 @@
 //!   decision 5; a sub-agent's is `None`), and top-level text is `Said`, cut at
 //!   `WORKER_SUMMARY_MAX` and never throttled: a worker's last message usually lands
 //!   within a second of its previous event.
-//! - A sub-agent's text, tool results, compaction, quota readings, learned context windows
-//!   (milestone 9.16; task M9.16.7 reads them) and the other recognised lines are
-//!   `Activity`, at most one per window per [`ACTIVITY_EVERY`]: activity only resets the
-//!   stall clock, and a session can print many lines a second.
+//! - A sub-agent's text, tool results, compaction, quota readings (milestone 9.16;
+//!   `driver/quota.rs` reads them first) and the other recognised lines are `Activity`, at
+//!   most one per window per [`ACTIVITY_EVERY`]: activity only resets the stall clock, and
+//!   a session can print many lines a second. A learned context window is not (task
+//!   M9.16.7): it follows its line's `TurnEnded`, and says nothing of progress.
 //! - Stderr lines, unparsed lines and diagnostics are not activity (the M8a.17 carry's
 //!   open question): Claude writes hook-progress lines constantly, and a session that
 //!   only complains on stderr is not making progress. Nor is a failed API turn's own
@@ -120,14 +121,15 @@ pub fn translate(
         SessionEvent::StderrLine { .. }
         | SessionEvent::Unknown { .. }
         | SessionEvent::Diagnostic { .. }
-        | SessionEvent::ApiErrorText { .. } => return None,
+        | SessionEvent::ApiErrorText { .. }
+        // M9.16.7: bookkeeping of a turn already ended (`driver/quota.rs` keeps it).
+        | SessionEvent::ContextWindow { .. } => return None,
         SessionEvent::UserText { .. }
         | SessionEvent::AssistantText { .. }
         | SessionEvent::ToolResult { .. }
         | SessionEvent::Compacted
         | SessionEvent::StructuredOutput { .. }
         | SessionEvent::Quota(_)
-        | SessionEvent::ContextWindow { .. }
         | SessionEvent::Other { .. } => return activity(signal.window_id, last_activity, now),
     })
 }
@@ -534,24 +536,22 @@ mod tests {
         assert_eq!(one(tool_result(true, text)), Some(AgentSignal::Activity));
     }
 
-    /// Milestone 9.16: a quota reading and a learned context window are throttled
-    /// activity, as the `Other` line they replace was (M9.16.7 reads them elsewhere).
+    /// Milestone 9.16: a quota reading is throttled activity, as the `Other` line it
+    /// replaces was (`driver/quota.rs` reads it before translation). A learned context
+    /// window is not activity (M9.16.7): it rides the `result` line whose `TurnEnded`
+    /// came just before it, so it says nothing of progress, and as activity it would
+    /// cost an engine step per Claude turn that only moves the clock `TurnEnded` set.
     #[test]
-    fn a_quota_reading_and_a_context_window_are_activity() {
+    fn a_quota_reading_is_activity_and_a_context_window_is_not() {
         let quota = SessionEvent::Quota(crate::headless::quota::QuotaSample {
             windows: Vec::new(),
             rejected: None,
         });
+        assert_eq!(one(session(3, 7, quota)), Some(AgentSignal::Activity));
         let window = SessionEvent::ContextWindow {
             model: "m".into(),
             tokens: 1,
         };
-        for event in [quota, window] {
-            assert_eq!(
-                one(session(3, 7, event.clone())),
-                Some(AgentSignal::Activity),
-                "{event:?}"
-            );
-        }
+        assert_eq!(one(session(3, 7, window)), None);
     }
 }

@@ -46,6 +46,7 @@ mod observe;
 mod ops;
 mod orch;
 mod orch_ops;
+mod quota;
 mod refresh;
 mod requests;
 mod restore;
@@ -170,6 +171,8 @@ pub struct RunService {
     /// Milestone 9.14: the daemon's one target pool, and its sweep task (C27).
     pool: Arc<crate::run::target_pool::TargetPool>,
     pool_sweep: Mutex<Option<(CancellationToken, tokio::task::JoinHandle<()>)>>,
+    /// Milestone 9.16: the quota and context readings `forward` feeds (`driver/quota.rs`).
+    quota: quota::Quota,
     /// Tests only (M9.11.8): run on each effect `execute` takes, before it is carried out.
     #[cfg(test)]
     execute_hook: Mutex<Option<effects::ExecuteHook>>,
@@ -235,10 +238,12 @@ impl RunService {
             &ctx.target_pool,
             max_writers,
         ));
+        let quota = quota::for_service(&manager, ctx.codex_sessions.clone(), &tx);
+        let state = quota::configured_state(&ctx.settings.current().orchestrator);
         Arc::new(RunService {
             manager,
             ctx,
-            state: Mutex::new(EngineState::default()),
+            state: Mutex::new(state),
             tx,
             rx: Mutex::new(Some(rx)),
             signals: Mutex::new(Some(signals)),
@@ -282,6 +287,7 @@ impl RunService {
             models_cancel,
             pool,
             pool_sweep: Mutex::new(None),
+            quota,
             #[cfg(test)]
             execute_hook: Mutex::new(None),
             #[cfg(test)]

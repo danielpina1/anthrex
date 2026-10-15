@@ -82,7 +82,10 @@ pub fn isolated_command(dir: &Path, args: &[&str]) -> Command {
     command
         .args(args)
         .env("ANTHREX_SOCKET", dir.join("daemon.sock"))
-        .env("ANTHREX_DATA_DIR", dir.join("data"));
+        .env("ANTHREX_DATA_DIR", dir.join("data"))
+        // Milestone 9.16 decision 9: the daemon reads Codex rollouts under
+        // `$CODEX_HOME/sessions`; never the developer's `~/.codex`.
+        .env("CODEX_HOME", dir.join("codex-home"));
     pin_agents(&mut command);
     command
 }

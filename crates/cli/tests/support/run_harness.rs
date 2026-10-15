@@ -212,6 +212,9 @@ impl RunHarness {
             ),
             ("GIT_CONFIG_GLOBAL".into(), "/dev/null".into()),
             ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
+            // Milestone 9.16 decision 9: the daemon reads Codex rollouts under
+            // `$CODEX_HOME/sessions`; never the developer's `~/.codex`.
+            ("CODEX_HOME".into(), path(&dir.path().join("codex-home"))),
         ];
         if git_off {
             all.push(("ANTHREX_GIT".into(), "off".into()));

@@ -154,6 +154,7 @@ impl RunService {
                 Err(broadcast::error::RecvError::Closed) => return,
             };
             for signal in caught_up {
+                self.quota.observe(&signal);
                 if let Some(agent) = translate(&signal, &mut last_activity, Instant::now()) {
                     self.send(EventKind::Signal {
                         window_id: signal.window_id,

@@ -53,6 +53,11 @@ pub struct RunContext {
     pub target_pool: config::TargetPool,
     /// Milestone 9.15 (C9): the daemon's `[lessons]` table, read once at start.
     pub lessons: config::Lessons,
+    /// Milestone 9.16 decision 9: where Codex saves its sessions' rollouts
+    /// (`$CODEX_HOME/sessions`, else `~/.codex/sessions`), resolved once from the
+    /// daemon's environment by [`RunContext::from_config`]; `None` (`new`, every test
+    /// that does not set it) reads no rollout, so no test reaches the user's `~/.codex`.
+    pub codex_sessions: Option<PathBuf>,
 }
 
 /// One git read's budget: a deadline for all its calls, and a cap on each call's own
@@ -102,6 +107,7 @@ impl RunContext {
             continue_cap: None,
             target_pool: config::TargetPool::default(),
             lessons: config::Lessons::default(),
+            codex_sessions: None,
         }
     }
 
@@ -125,6 +131,15 @@ impl RunContext {
             .with_delivery(config.delivery.clone())
             .with_target_pool(config.target_pool.clone())
             .with_lessons(config.lessons.clone())
+            .with_codex_sessions(crate::transcript::rollout::codex_sessions_dir(|k| {
+                std::env::var_os(k)
+            }))
+    }
+
+    /// This context reading Codex rollouts under `sessions` (decision 9).
+    pub fn with_codex_sessions(mut self, sessions: Option<PathBuf>) -> Self {
+        self.codex_sessions = sessions;
+        self
     }
 
     /// This context with the daemon's `[lessons]` table (the defaults otherwise).
