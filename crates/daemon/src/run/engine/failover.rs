@@ -108,7 +108,16 @@ pub fn admit(gate: &Gate, run: &Run, starter: Starter<'_>, role: Role, current: 
     };
     // (g) decision 40: never an author's model for a reviewer.
     let author = role == Role::Reviewer && authors(run).iter().any(|a| models.same_model(a, &to));
-    match allowed && !failed && !overlap && !author {
+    // Task 6's review, the writer ruling (U17 read symmetrically): a test writer never
+    // lands on its task's reviewer's model. A worker's reviewer is chosen again against
+    // the fallback in `record` (decision 41), so it never is that model.
+    let reviewer = match starter {
+        Starter::TestWriter(i) => {
+            (run.tasks[i].review_route.as_ref()).is_some_and(|r| models.same_model(r, &to))
+        }
+        _ => false,
+    };
+    match allowed && !failed && !overlap && !author && !reviewer {
         true => Admit::FailOver(Failover {
             from: current.clone(),
             to,

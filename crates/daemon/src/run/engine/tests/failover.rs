@@ -471,3 +471,39 @@ fn codex_braked_claude_fallback_mirrors() {
     assert_eq!(logged(&fx, &blind), 1);
     assert!(attention(&fx).contains(&"codex braked: t3 started on claude (fallback)".to_string()));
 }
+
+/// Task 6's review, the writer ruling (U17 read symmetrically): a writer that fails over
+/// never lands on the model its reviewer will use. A test writer whose fallback is the
+/// task's reviewer's model waits; a worker's reviewer is chosen again against the
+/// fallback it moves to (decision 41), so it never is that model.
+#[test]
+fn a_failing_over_writer_never_lands_on_its_reviewers_model() {
+    // The test writer: its fallback is the reviewer row's model, the task's reviewer.
+    let config = rows(&[
+        (Role::TestWriter, SONNET, Some(SOL)),
+        (Role::ImplementerMedium, SONNET, None),
+        (Role::Reviewer, SOL, Some(OPUS)),
+    ]);
+    let mut fx = fixture(&[task("t1", "M", "a", PAIRED)], config);
+    let until = trip_claude(&mut fx);
+    fx.ready(true);
+    let t1 = fx.task("t1");
+    assert_eq!(t1.review_route, Some(route(SOL)));
+    assert_eq!(t1.state, TaskState::Queued);
+    assert!(
+        t1.pair
+            .as_ref()
+            .is_none_or(|p| p.writer_route != route(SOL))
+    );
+    assert!(failover_lines(&fx).is_empty(), "{:?}", failover_lines(&fx));
+    assert!(fx.run().failovers.is_empty());
+    assert!(attention(&fx).contains(&claude_held(until)));
+
+    // The worker: it fails over, and its reviewer moves off the fallback.
+    let config = rows(&[(Role::Reviewer, SOL, Some(OPUS))]);
+    let (fx, _) = tripped_t3(config);
+    let t3 = fx.task("t3");
+    assert_eq!(t3.route, route(SOL));
+    assert_eq!(t3.review_route, Some(route(OPUS)));
+    assert_eq!(failover_lines(&fx), [failover_line("t3", SOL)]);
+}
