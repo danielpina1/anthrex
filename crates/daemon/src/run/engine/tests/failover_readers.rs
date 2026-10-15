@@ -53,8 +53,10 @@ fn readers_planners_and_scouts_fail_over() {
     assert_eq!(spec.runtime, Runtime::Codex);
     assert_eq!(failover_lines(&fx), [failover_line("r1", SOL)]);
 
-    // A sub-planner on the `planner` row and a run scout on the `research` row.
+    // A sub-planner on the `planner` row and a run scout on the `research` row. The
+    // orchestrator runs on Codex, so the run's start vetted Codex (task 6 review I1).
     let mut fx = super::orch::launched(false);
+    (fx.run_mut().orch.orchestrator.as_mut().unwrap()).route = route(SOL);
     set_row(fx.run_mut(), Role::Planner, OPUS, Some(SOL));
     set_row(fx.run_mut(), Role::Research, HAIKU, Some(SOL));
     trip_claude(&mut fx);
@@ -229,5 +231,59 @@ fn orchestrator_never_fails_over() {
     );
     assert_eq!(fx.run().orch.orchestrator.as_ref().unwrap().route, own);
     assert!(fx.run().failovers.is_empty());
+    assert!(failover_lines(&fx).is_empty());
+}
+
+/// `run`'s frozen role table on Claude alone, no row falling back anywhere, the
+/// `brainstorm` pair included.
+fn claude_only(run: &mut Run) {
+    let roles: Vec<Role> = (run.limits.models.as_ref().expect("frozen").rows.keys())
+        .copied()
+        .collect();
+    for role in roles {
+        set_row(run, role, OPUS, None);
+    }
+    let models = run.limits.models.as_mut().expect("frozen at start");
+    models.brainstorm.first = proto::models::ModelRef::parse(OPUS).expect("a model");
+    models.brainstorm.second = proto::models::ModelRef::parse(HAIKU).expect("a model");
+}
+
+/// Task 6 review I1: a fallback on a runtime the run's start never vetted (decisions 50
+/// and 53 check only `reach::reachable_runtimes`) is not taken. In a Claude-only run with
+/// Claude braked, a sub-planner, a run scout and a document reviewer whose rows fall back
+/// to Codex wait.
+#[test]
+fn a_fallback_the_start_never_vetted_waits() {
+    let mut fx = super::orch::launched(false);
+    claude_only(fx.run_mut());
+    set_row(fx.run_mut(), Role::Planner, OPUS, Some(SOL));
+    set_row(fx.run_mut(), Role::Research, HAIKU, Some(SOL));
+    let reach = crate::run::reach::reachable_runtimes(fx.run());
+    assert_eq!(reach, [Runtime::Claude]);
+    trip_claude(&mut fx);
+    assert_eq!(spawn(&mut fx, "mail")["state"], "queued");
+    assert_eq!(fx.run().orch.epics[0].route, route(OPUS));
+    let (ok, value) = answer(&scout(&mut fx, "s1"));
+    assert!(ok, "{value}");
+    assert_ne!(value["state"], "starting", "{value}");
+    assert!(ops_in(&fx.log, "StartPlanner").is_empty());
+    assert!(ops_in(&fx.log, "StartScout").is_empty());
+    assert!(fx.run().failovers.is_empty());
+    assert!(failover_lines(&fx).is_empty());
+
+    let mut fx = specifying();
+    claude_only(fx.run_mut());
+    set_row(fx.run_mut(), Role::Reviewer, SONNET, Some(SOL));
+    let reach = crate::run::reach::reachable_runtimes(fx.run());
+    assert_eq!(reach, [Runtime::Claude]);
+    trip_claude(&mut fx);
+    let before = launches(&fx).len();
+    outcome(&submit_spec(&mut fx, false, Value::Null)).unwrap();
+    let agent = design(&fx).reviewer.clone().expect("queued");
+    assert_eq!(
+        (agent.state, agent.route),
+        (DesignAgentState::Queued, route(SONNET))
+    );
+    assert_eq!(launches(&fx).len(), before);
     assert!(failover_lines(&fx).is_empty());
 }

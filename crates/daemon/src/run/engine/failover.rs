@@ -120,14 +120,20 @@ pub fn admit(gate: &Gate, run: &Run, starter: Starter<'_>, role: Role, current: 
 
 /// Decision 37 (a), (b), (d): `role`'s row's fallback at its default effort, from the
 /// run's frozen table, when `current` is the row's own model, the fallback is on another
-/// runtime, and that runtime is installed for the run.
+/// runtime, and that runtime is installed for the run. Task 6 review I1: and the run's
+/// start vetted that runtime (`reach::reachable_runtimes`, the set decisions 50 and 53
+/// check), so a failover never starts a CLI whose API key and project settings were
+/// never checked. `reach` does not count the `planner` and `research` rows' fallbacks
+/// nor the document reviewer's, so in a run that reaches one runtime those wait.
 pub fn candidate(run: &Run, role: Role, current: &Route) -> Option<Route> {
     let models = run.limits.models();
     if !models.same_model(current, &models.route(role)) {
         return None;
     }
     let fallback = models.choice(role).fallback.as_ref()?;
-    let ok = fallback.runtime != current.runtime && !missing(&run.orch.installed, fallback.runtime);
+    let ok = fallback.runtime != current.runtime
+        && !missing(&run.orch.installed, fallback.runtime)
+        && crate::run::reach::reachable_runtimes(run).contains(&fallback.runtime);
     ok.then(|| RunModels::route_of(fallback, None))
 }
 
