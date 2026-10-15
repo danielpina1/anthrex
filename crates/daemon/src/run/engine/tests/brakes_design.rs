@@ -73,6 +73,19 @@ fn specifying_codex_reviewer() -> Fixture {
     fx
 }
 
+/// `steps` on `fx` on a thread of its own, within [`STEP_WAIT`] (the hang guard): a
+/// reader loop that spins never returns, and the test fails instead of hanging.
+fn guarded(fx: Fixture, steps: impl FnOnce(&mut Fixture) + Send + 'static) -> Fixture {
+    let (send, recv) = mpsc::channel();
+    let mut fx = fx;
+    std::thread::spawn(move || {
+        steps(&mut fx);
+        let _ = send.send(fx);
+    });
+    recv.recv_timeout(STEP_WAIT)
+        .expect("the step returned: the reader loop does not spin")
+}
+
 fn reviewer_state(fx: &Fixture) -> Option<DesignAgentState> {
     let design = fx.run().orch.design.as_ref()?;
     design.reviewer.as_ref().map(|a| a.state.clone())
@@ -82,7 +95,10 @@ fn reviewer_state(fx: &Fixture) -> Option<DesignAgentState> {
 fn a_braked_brainstormer_waits_and_the_other_one_starts() {
     let mut fx = design_launched(false);
     let until = trip_claude(&mut fx);
-    start_brainstorm(&mut fx);
+    // Task 6's review M2: a refused brainstormer that re-picked itself would spin.
+    let mut fx = guarded(fx, |fx| {
+        start_brainstorm(fx);
+    });
     // The Claude brainstormer is first in line; refused, the Codex one is tried.
     assert_eq!(launched(&fx), ["codex"]);
     assert_eq!(
@@ -101,8 +117,11 @@ fn a_braked_brainstormer_waits_and_the_other_one_starts() {
 fn the_hold_keeps_both_brainstormers_queued() {
     let mut fx = design_launched(false);
     hold(&mut fx, true);
-    start_brainstorm(&mut fx);
-    fx.tick();
+    // Task 6's review M2: both refused; a loop that re-picked one would never return.
+    let mut fx = guarded(fx, |fx| {
+        start_brainstorm(fx);
+        fx.tick();
+    });
     assert!(launched(&fx).is_empty(), "{:?}", launched(&fx));
     assert_eq!(
         brainstormer_states(&fx),
