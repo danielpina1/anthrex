@@ -334,6 +334,27 @@ impl RunHarness {
         tail(&self.data().join("daemon.log"))
     }
 
+    /// Waits, at most [`REQUEST_WAIT`] (a hang guard the loop ends early), until
+    /// `daemon.log` has `line`. The daemon logs through tracing_appender's non-blocking
+    /// writer, whose thread writes each line some time after the daemon logged it, so a
+    /// line logged before the socket was bound can still be missing when the first
+    /// client connects: one read is a race (`docs/timing-budgets.md`).
+    pub fn wait_daemon_log(&self, what: &str, line: &str) {
+        let deadline = Instant::now() + REQUEST_WAIT;
+        loop {
+            let log = std::fs::read_to_string(self.data().join("daemon.log")).unwrap_or_default();
+            if log.contains(line) {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "{what}: no {line:?} in the daemon log within {REQUEST_WAIT:?}:\n{}",
+                self.log_tail()
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
     /// The last lines of the daemon's own stdout and stderr (`start_daemon`'s
     /// `daemon.out`), where a panic lands.
     pub fn out_tail(&self) -> String {

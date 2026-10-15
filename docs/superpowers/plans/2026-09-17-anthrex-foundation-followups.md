@@ -2335,6 +2335,7 @@ Five minors from the merge review of milestone 9.11, none blocking:
 - **A refused submit or spawn may bump the run's revision**, which costs one extra `run.json` write (PR #62 review).
 - **The design e2e harness now restarts the daemon once per test** to arm the read-back hold (PR #62 review). This costs time, not correctness. A per-run seam would avoid it.
 - **The e2e waits depend on `requirements_stored`, a key the digest shows only during planning** (PR #62 review). A digest change that drops or renames it breaks the fixtures' waits.
+- **A profile `setup` (or check) still running when its daemon stops outlives the daemon** (the rate-limit ordering flake, 2026-10-14). `scheduled::run` runs the command through `exec::run_isolated` on a blocking thread, which kills the group on its own timeout; when the daemon exits first, that thread is gone and nothing ends the group. Seen with a temporary `setup` that polled for a release file: after each failed test's daemon stop, its `/bin/sh` was reparented to pid 1 and ran on past the 10 s `check_timeout_secs`, until its own poll cap. A setup or check that hangs would stay forever. Proposed: track live step groups in the service and end them in the daemon's shutdown, as windows are.
 
 ### From the PR #63 reviews (2026-10-13), for later
 
@@ -2359,12 +2360,31 @@ Five minors from the merge review of milestone 9.11, none blocking:
 - **The graph layout runs in the update function** (task 15's concern 1). Decision 44 places it in the `LessonsGraph` reply's update: about 60 ms in release (53–71 ms measured on the 300-node test graph, 359 ms in debug), once per graph reply, and decision 48 asks for the graph again after every action, so each action freezes input for that long once. Accepted for 9.15 (pinned to once per reply by `the_layout_runs_once_per_graph_reply`); a candidate to move to a worker thread whose result returns as an event.
 - **Graph labels overlap on a dense canvas** (task 15's concern 2). The selected node is drawn last so its label stays whole, but hub and lesson labels can overwrite each other; a label-placement pass is not done.
 - **The graph's render tests are property checks, not golden frames** (task 15's concern 3, a recorded deviation). A golden 80×24 and 160×48 frame would catch a regression the properties allow.
-- **A fresh unmeasured lesson clears `MIN_SCORE` with no file overlap.** `select::pick` scores `450·overlap + 350·usefulness + 200·recency`; an unmeasured lesson's usefulness is at least 500 and a new one's recency 1000, so `0 + 175 000 + 200 000 = 375 000 ≥ 350 000`: every lesson younger than about 11 days is shown to every task while it is unmeasured, whatever its files. Seen in the smoke stage, where task t3 (`mods/beta/**`) was shown both `mods/alpha` lessons. Decide whether overlap should gate selection for lessons that have files.
+- **A fresh unmeasured lesson cleared `MIN_SCORE` with no file overlap** — *fixed* by the review's correction to decision 22 (M9.15 brief, "Review corrections"). A lesson with files is now selected only when one of its files intersects the task's `owns`; a lesson without files keeps decision 22's rule. Stage 11n now asserts that task t3 (`mods/beta/**`) is shown neither `mods/alpha` lesson.
 - **A discarded run's merged tasks count green.** Decision 25 counts a `merged` task record green unless its merge was reverted; a task merged inside a run you then discarded never reached the base branch, yet it credits the lessons it was shown (the smoke stage's discarded run took both lessons to `2/2`). Decide whether a discarded run's task records count.
 - **Entries queued while the deciders are off are never distilled** (ruling C29). The worker closes such an entry `gave_up` (`deciders are off`) at once, permanently, so turning the deciders on later does not revisit it. For 9.16 or later.
 - **`run.json` holds up to 50 frozen lesson briefs** (ruling C30): about 50 KB in every save of a run with a full store. Not changed.
 - **The graph panel's scroll bound is measured at the side panel's width** (task 15's review, M4). `panel_move` measures a lesson's lines with `ui::lessons_graph_panel::lesson_lines(…, PANEL_WIDTH − 2, PLAIN)` from app state: pure, but app state now depends on `ui`, and in the wider lower-half panel (80×24) the lesson has fewer lines, so `j` can push the row past the last drawn line; the render clamps it and the next few `k` presses seem to do nothing. Measure at the panel's drawn width (kept in state by the render's layout) or clamp on the drawn line count.
 - **No linearity test exercises redaction's kept-body path** (task 15's review, M6). `the_unambiguous_body_check_is_linear` has no all-lowercase kept unit (`ghs_abcd `, or `ghs_` plus 20 lowercase letters), and `BODY_READ` does not count the scan in `unambiguous()`'s closure. The reviewer's timing probe found it linear (×4 input, ×3.7–×4.1 time); no test pins it.
+
+### Recorded by the milestone 9.15 review (2026-10-13), for later
+
+- **A redistilled lesson that a trial retired comes back `on_trial`** (task 3's review, M2). When a later distill call produces again a lesson that its trial retired, it comes back as `on_trial` instead of staying retired, so a lesson the evidence rejected returns to prompts for another trial. Decide whether a retired lesson's id (or content key) blocks its return, or needs the user's approval to come back.
+- **Redaction residuals the review found** (in addition to the known gaps above; `lessons::redact::scrub` leaves each of these in place):
+  - a JSON-escaped URL credential, `https:\/\/user:pass@host` (the `\/` spelling hides the `://`);
+  - a percent-encoded URL, `https%3A%2F%2Fuser%3Atok%40host`;
+  - clipped tokens whose surviving body is all lowercase or has no digit;
+  - Stripe secret keys, `sk_live_…`: the `sk-` rules match a dash, not an underscore;
+  - AWS secret access keys (40 characters of base64 with no prefix; only the `AKIA` access key id is matched);
+  - `Authorization: Basic <base64>` credentials.
+  Decide which to cover, and share the result with PR-body redaction (9.2, NA §6).
+- **`lessons.jsonl` has no compaction.** Every `queued`, `attempt`, `distilled`, `gave_up`, outcome and status line is appended forever, and the start's read and fold grow with it. Once reading it takes longer than `LESSONS_START_BOUND` (5 s), every run starts with `lessons: none (the lessons store could not be read in time)`, silently. A compaction (fold, then rewrite the live state under the store's lock) or a rotation is needed before stores get that large.
+- **The graph's profile fallback walks `module_dirs` with no time bound.** `run/driver/lessons_requests.rs`'s module source, with no module-graph cache, calls `profile::verify_tiers::module_dirs(checkout, &profile.modules)`, which lists the checkout's directories for the profile's module globs; it runs on the blocking pool but has no deadline, so a huge or slow (network) checkout holds the Graph request's reply. Bound it as the other filesystem walks are, falling back to `ModuleSource::None`.
+
+### From the main-CI flakes on 0e87e0f1 (2026-10-13), for later
+
+- **Other headless stand-ins may answer without reading stdin.** The lag rig's stand-in printed its turn and exited without reading its message, so a reap that beat the first send refused it (fixed in f24d5243). The stand-ins in `crates/daemon/tests/support/headless.rs` and the other headless rigs were not audited for the same defect.
+- **No permanent seam keeps `daemon.log`'s non-blocking writer slow.** A future test that reads `daemon.log` once, right after an event, would pass locally and flake on CI. `RunHarness::wait_daemon_log` is the pattern; a source-rules check, or a debug-build seam on the appender, would catch a new one-shot read.
 
 ## From milestone 9.16 (2026-10-15, recorded by M9.16.6), for later
 

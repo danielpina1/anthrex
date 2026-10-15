@@ -36,13 +36,14 @@ fn limits() -> LessonLimits {
 
 #[test]
 fn overlap_ranks_matching_files_first() {
-    // `l-a` would win the tie on id; it matches no owned file, so it ranks second.
+    // `l-a` would win the tie on id; it matches one of its two files, so it ranks
+    // second (a lesson matching none is not shown at all: the next tests).
     let items = [
         brief(
             "l-a",
             LessonLayer::Semantic,
             LessonStatus::Approved,
-            &["crates/z/**"],
+            &["crates/z/**", "crates/a/src/x.rs"],
         ),
         brief(
             "l-b",
@@ -117,6 +118,77 @@ fn min_score_excludes() {
         ..old("l-mid", 0)
     };
     assert_eq!(score(&mid, &[], NOW, 500), 200 * 500);
+}
+
+/// A fresh lesson: last seen now, unmeasured, so it scores 175 000 + 200 000 = 375 000
+/// before any overlap.
+fn fresh(id: &str, layer: LessonLayer, files: &[&str]) -> LessonBrief {
+    brief(id, layer, LessonStatus::OnTrial, files)
+}
+
+#[test]
+fn a_lesson_with_files_and_no_overlap_is_never_picked() {
+    // The review's correction to decision 22: a lesson that has files is shown only to
+    // a task whose `owns` touch at least one of them, whatever its score.
+    let beta = owns(&["mods/beta/**"]);
+    let alpha = fresh("l-alpha", LessonLayer::Procedural, &["mods/alpha/**"]);
+    assert_eq!(overlap(&alpha, &beta), 0);
+    assert!(score(&alpha, &beta, NOW, 500) >= MIN_SCORE);
+    let perfect = LessonBrief {
+        usefulness: Some(1000),
+        status: LessonStatus::Known,
+        ..fresh("l-perfect", LessonLayer::Episodic, &["mods/alpha/broken"])
+    };
+    assert_eq!(score(&perfect, &beta, NOW, 500), 550_000);
+    assert_eq!(
+        pick(&[alpha, perfect], &beta, NOW, &limits()),
+        Picked::default()
+    );
+}
+
+#[test]
+fn a_lesson_with_files_and_some_overlap_is_picked() {
+    let alpha = fresh("l-alpha", LessonLayer::Procedural, &["mods/alpha/**"]);
+    let picked = pick(
+        std::slice::from_ref(&alpha),
+        &owns(&["mods/alpha/src.rs"]),
+        NOW,
+        &limits(),
+    );
+    assert_eq!(picked.ids, ["l-alpha"]);
+    // One file of many is enough, even when the per-mille share rounds down to 0.
+    let mut files: Vec<String> = (0..1500).map(|n| format!("mods/z{n}/x.rs")).collect();
+    files.push("mods/beta/x.rs".into());
+    let wide = LessonBrief {
+        files,
+        ..fresh("l-wide", LessonLayer::Semantic, &[])
+    };
+    let beta = owns(&["mods/beta/**"]);
+    assert_eq!(overlap(&wide, &beta), 0);
+    assert_eq!(pick(&[wide], &beta, NOW, &limits()).ids, ["l-wide"]);
+}
+
+#[test]
+fn a_lesson_without_files_keeps_its_rule() {
+    // Decision 22 unchanged: no files is overlap 300 (semantic, procedural) or 0
+    // (episodic), and the score alone decides.
+    let o = owns(&["mods/beta/**"]);
+    let items = [
+        fresh("l-episodic", LessonLayer::Episodic, &[]),
+        fresh("l-procedural", LessonLayer::Procedural, &[]),
+        fresh("l-semantic", LessonLayer::Semantic, &[]),
+    ];
+    assert_eq!(score(&items[0], &o, NOW, 500), 375_000);
+    assert_eq!(score(&items[1], &o, NOW, 500), 510_000);
+    let picked = pick(&items, &o, NOW, &limits());
+    assert_eq!(picked.ids, ["l-procedural", "l-semantic", "l-episodic"]);
+    // Below MIN_SCORE a file-less lesson still drops out (`min_score_excludes`).
+    let stale = LessonBrief {
+        usefulness: Some(999),
+        last_seen: NOW - 90 * DAY,
+        ..fresh("l-stale", LessonLayer::Episodic, &[])
+    };
+    assert!(pick(&[stale], &o, NOW, &limits()).ids.is_empty());
 }
 
 #[test]

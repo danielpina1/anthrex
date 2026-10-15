@@ -4,7 +4,11 @@
 //!
 //! It wakes on [`LessonService::wake`] (the `QueueDistill` executor's), and at start
 //! scans `<data_dir>/repos/*/lessons.jsonl` for entries left open (a `queued` line with
-//! no `distilled` and no `gave_up`). Per repository, oldest entry first:
+//! no `distilled` and no `gave_up`). With `[lessons] enabled = false` or
+//! `distill = false` in the daemon's config (the review's config gate), neither the scan
+//! nor a wake serves anything: open entries are kept as they are, neither called for
+//! nor closed, so a daemon started later with distillation on distills them. Otherwise,
+//! per repository, oldest entry first:
 //! - with the deciders off, the entry is closed `gave_up { reason: "deciders are off" }`
 //!   at once, with no attempt (ruling C29: it is never distilled later);
 //! - an entry whose last attempt failed waits [`DISTILL_RETRY_SECS`] (attempts 2 and 3),
@@ -222,8 +226,17 @@ impl Worker {
         (self.timing.now)()
     }
 
-    /// Decision 12's start scan: every repository data directory with a store.
+    /// Whether the daemon's `[lessons]` table lets the worker distill at all.
+    fn distilling(&self) -> bool {
+        self.parts.config.enabled && self.parts.config.distill
+    }
+
+    /// Decision 12's start scan: every repository data directory with a store; none
+    /// when distillation is off.
     async fn scan(&self) -> BTreeSet<PathBuf> {
+        if !self.distilling() {
+            return BTreeSet::new();
+        }
         let repos = self.parts.data_dir.join("repos");
         let found = tokio::task::spawn_blocking(move || {
             let Ok(entries) = std::fs::read_dir(&repos) else {
@@ -238,11 +251,15 @@ impl Worker {
         found.unwrap_or_default()
     }
 
-    /// Serves `repo`'s due entries, one call at a time, until none is due.
+    /// Serves `repo`'s due entries, one call at a time, until none is due. With
+    /// distillation off, nothing: the entries stay open, untouched.
     async fn serve(&self, repo: &Path) -> Served {
         loop {
             if self.cancel.is_cancelled() {
                 return Served::Stopped;
+            }
+            if !self.distilling() {
+                return Served::Done;
             }
             let lines = read(repo).await;
             let now = self.now();

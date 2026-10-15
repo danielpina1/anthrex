@@ -20,7 +20,8 @@ runs it alone).
 3. Run 2: task t2's worker's first turn (read from `fake-agent`'s stdin log,
    `FAKE_AGENT_STDIN_FILE`, ruling C22) carries the worker block's heading and both
    lessons.
-4. Run 3 is discarded with `--reason "smoke reason"`; its run record carries it.
+4. Run 3's t3 (`mods/beta/**`) is shown neither `mods/alpha` lesson; the run is
+   discarded with `--reason "smoke reason"`; its run record carries it.
 5. The TUI: `C-b P`, `l` lists the two lessons; `g` draws the graph, its three hubs
    and two lesson dots.
 """
@@ -379,6 +380,15 @@ def lessons_stage(pty_proc, bin_path, run_cmd, fail, base_env):
 
         # 4. A discard's reason reaches the run record.
         run3, _ = run_to_complete("t3", "mods/beta/**")
+        # Both lessons have `mods/alpha` files, so t3 (`mods/beta/**`) is shown neither
+        # (the review's correction to decision 22: no file overlap, no lesson).
+        prompt3 = _first_turn(os.path.join(io, "worker-t3-1.stdin"))
+        if prompt3 is None:
+            fail(f"run {run3}'s worker logged no first turn in {io}: {sorted(os.listdir(io))}")
+        shown = [w for w in wanted if w in prompt3]
+        if shown:
+            fail(f"run {run3}'s t3 owns mods/beta/** but its worker prompt carries {shown}:\n{prompt3}")
+        print(f"ok: run {run3}'s t3 (mods/beta/**) was shown neither mods/alpha lesson")
         cmd(["run", "discard", run3, "--reason", "smoke reason", "--confirm", run3], timeout=ACCEPT_CMD_TIMEOUT)
         history = os.path.join(repo_dir, "history.jsonl")
 

@@ -29,10 +29,9 @@ fn e2e_a_session_that_finishes_before_its_window_is_known_still_completes() {
     // One task path (`k = 1`). Before the fix this wait ran out: the worker's claim was
     // refused and its turn end lost.
     let run = h.wait_run(&id, complete, RUN_WAIT);
-    let log = std::fs::read_to_string(h.data().join("daemon.log")).unwrap_or_default();
-    assert!(
-        log.contains("ANTHREX_TEST_DELAY_WINDOW_MS: holding op done lines"),
-        "the window hold was not armed:\n{log}"
+    h.wait_daemon_log(
+        "the window hold was not armed",
+        "ANTHREX_TEST_DELAY_WINDOW_MS: holding op done lines",
     );
     assert_eq!(t(&run, "t1").state, TaskState::Merged);
 }

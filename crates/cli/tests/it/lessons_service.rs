@@ -63,19 +63,20 @@ fn queue(repo: &Path) {
 
 /// A worker on `fx`'s decider context in `mode`, its retries `retry` apart.
 fn start(fx: &Fixture, mode: DeciderMode, retry: Duration) -> Arc<LessonService> {
-    start_with(fx, mode, retry, Arc::new(LessonLocks::default()))
+    let locks = Arc::new(LessonLocks::default());
+    start_with(fx, mode, retry, (locks, config::Lessons::default()))
 }
 
 fn start_with(
     fx: &Fixture,
     mode: DeciderMode,
     retry: Duration,
-    locks: Arc<LessonLocks>,
+    (locks, config): (Arc<LessonLocks>, config::Lessons),
 ) -> Arc<LessonService> {
     let parts = ServiceParts {
         deciders: fx.context(mode),
         data_dir: fx.root().join("data"),
-        config: config::Lessons::default(),
+        config,
         locks,
     };
     let timing = ServiceTiming {
@@ -267,6 +268,94 @@ fn deciders_off_gives_up_at_once() {
     assert!(fx.calls().is_empty(), "{:#?}", fx.calls());
 }
 
+/// The review's config gate: an entry queued before `[lessons] distill = false` (or
+/// `enabled = false`) is neither called for nor closed by a worker started with that
+/// config, at its start scan or on a wake, with the deciders on or off; it stays
+/// queued, and a later worker with distillation back on distills it.
+#[test]
+fn a_disabled_config_keeps_queued_entries_uncalled() {
+    let off = [
+        (
+            "distill = false",
+            config::Lessons {
+                distill: false,
+                ..config::Lessons::default()
+            },
+        ),
+        (
+            "enabled = false",
+            config::Lessons {
+                enabled: false,
+                ..config::Lessons::default()
+            },
+        ),
+    ];
+    for (name, lessons) in off {
+        for mode in [DeciderMode::Claude, DeciderMode::Off] {
+            let fx = Fixture::new();
+            fx.script("distill", 1, two_items());
+            let repo = repo_dir(&fx);
+            // Queued before the restart: the start scan finds it.
+            queue(&repo);
+            runtime().block_on(async {
+                let locks = Arc::new(LessonLocks::default());
+                let service = start_with(&fx, mode, Duration::ZERO, (locks, lessons.clone()));
+                // The start scan's pass, then a wake's: both leave the entry alone.
+                let deadline = Instant::now() + call_wait();
+                while service.passes() < 1 {
+                    assert!(Instant::now() < deadline, "{name}: no first pass");
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+                service.wake(repo.clone());
+                while service.passes() < 2 {
+                    assert!(Instant::now() < deadline, "{name}: no pass after the wake");
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+                service.stop();
+            });
+            let all = lines(&repo);
+            assert!(
+                distill_calls(&fx).is_empty(),
+                "{name}, {mode:?}: {:#?}",
+                fx.calls()
+            );
+            assert_eq!(
+                all.len(),
+                1,
+                "{name}, {mode:?}: the entry was touched: {all:#?}"
+            );
+            assert!(matches!(all[0], LessonLine::Queued(_)), "{all:#?}");
+        }
+        // Kept, not dropped: back on, the next worker distills it.
+        let fx = Fixture::new();
+        fx.script("distill", 1, two_items());
+        let repo = repo_dir(&fx);
+        queue(&repo);
+        runtime().block_on(async {
+            let locks = Arc::new(LessonLocks::default());
+            let service = start_with(&fx, DeciderMode::Claude, Duration::ZERO, (locks, lessons));
+            let deadline = Instant::now() + call_wait();
+            while service.passes() < 1 {
+                assert!(Instant::now() < deadline, "{name}: no first pass");
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            service.stop();
+        });
+        assert!(!closed(&repo), "{name}: {:#?}", lines(&repo));
+        runtime().block_on(async {
+            let service = start(&fx, DeciderMode::Claude, Duration::ZERO);
+            wait_closed(&repo, call_wait()).await;
+            service.stop();
+        });
+        assert!(
+            (lines(&repo).iter()).any(|l| l.record_id() == format!("{QUEUED}/distilled")),
+            "{name}: {:#?}",
+            lines(&repo)
+        );
+        assert_eq!(distill_calls(&fx).len(), 1, "{name}");
+    }
+}
+
 #[test]
 fn distill_route_is_recorded() {
     let fx = Fixture::new();
@@ -321,7 +410,8 @@ fn distill_runs_off_lock() {
         let shutdown = tokio_util::sync::CancellationToken::new();
         runs.spawn(shutdown.clone());
         let locks = runs.lesson_locks();
-        let service = start_with(&fx, DeciderMode::Claude, Duration::ZERO, locks.clone());
+        let parts = (locks.clone(), config::Lessons::default());
+        let service = start_with(&fx, DeciderMode::Claude, Duration::ZERO, parts);
         // The decider's process is up (a deadline loop that yields to the worker).
         let deadline = Instant::now() + call_wait();
         while running(&marker) == 0 {
