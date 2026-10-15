@@ -505,14 +505,25 @@ pub fn wire(
         weak.upgrade()
             .map_or_else(Vec::new, |runs| runs.live_runs_in(project))
     }));
+    let deciders = crate::decider::DeciderContext::new(
+        runs.live_settings().clone(),
+        manager.config(),
+        data_dir,
+    );
+    // Milestone 9.15 decision 12 (ruling C9): the distill worker, with the run
+    // service's lessons lock map and `[lessons]` table.
+    let lessons =
+        crate::lessons::service::LessonService::start(crate::lessons::service::ServiceParts {
+            deciders: deciders.clone(),
+            data_dir: data_dir.to_path_buf(),
+            config: runs.lessons_config(),
+            locks: runs.lesson_locks(),
+        });
     runs.set_adaptation(crate::run::driver::Adaptation {
         profiles: profiles.clone(),
         scouts,
-        deciders: crate::decider::DeciderContext::new(
-            runs.live_settings().clone(),
-            manager.config(),
-            data_dir,
-        ),
+        deciders,
+        lessons: Some(lessons),
     });
     profiles
 }

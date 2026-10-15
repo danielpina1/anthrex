@@ -244,7 +244,8 @@ fn c_b_p_opens_on_the_selected_project_and_asks_three_things() {
             },
         ]
     );
-    assert_eq!(tagged(&effects).len(), 3, "every request is tagged");
+    // Milestone 9.15 decision 36: and one lessons `List`, for the hint line's count.
+    assert_eq!(tagged(&effects).len(), 4, "every request is tagged");
     let s = screen(&app);
     assert_eq!(s.dir, dir());
     assert!(app.keymap.screen_mode());
@@ -256,6 +257,11 @@ fn c_b_p_opens_on_the_selected_project_and_asks_three_things() {
     reply(&mut app, ids[0], status(None));
     reply(&mut app, ids[1], no("no stored profile for /p/shop"));
     reply(&mut app, ids[2], no("no proposal for /p/shop"));
+    app.on_daemon(DaemonMsg::Run(RunReply::Lessons {
+        lessons: vec![],
+        message: None,
+        request_id: Some(ids[3]),
+    }));
     assert!(matches!(screen(&app).stored, Side::Absent(_)));
     assert!(matches!(screen(&app).proposal, Side::Absent(_)));
     assert_eq!(app.toast_text(), None);
@@ -574,3 +580,6 @@ pub(super) fn verification_of(command: &str) -> proto::ProfileVerification {
         toolchain_id: None,
     }
 }
+
+#[path = "profile_lessons.rs"]
+mod profile_lessons;

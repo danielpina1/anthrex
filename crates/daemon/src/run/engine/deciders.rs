@@ -77,8 +77,15 @@ pub(crate) fn dispatch(run: &mut Run, now: u64) -> Vec<Effect> {
     if run.state != RunState::Running {
         return fx;
     }
-    while !run.decider_queue.is_empty() && readers_busy(run) < usize::from(run.limits.max_readers) {
-        let q = run.decider_queue.remove(0);
+    // Milestone 9.15 decision 29 (ruling C12): a risk note never takes a slot a
+    // reviewer waits for; it stays queued and those behind it still start.
+    let mut k = 0;
+    while k < run.decider_queue.len() && readers_busy(run) < usize::from(run.limits.max_readers) {
+        if super::risk_note::passed_over(run, &run.decider_queue[k]) {
+            k += 1;
+            continue;
+        }
+        let q = run.decider_queue.remove(k);
         let op = next_op(run);
         let task = q.task_ids.first().cloned();
         let kind = OpKind::Decide {
@@ -176,6 +183,8 @@ fn answers(answer: &DeciderAnswer, request: &DeciderRequest) -> bool {
                 DeciderRequest::CiSummary(_)
             )
             | (DeciderAnswer::RunName { .. }, DeciderRequest::RunName(_))
+            | (DeciderAnswer::Distill { .. }, DeciderRequest::Distill(_))
+            | (DeciderAnswer::RiskNote { .. }, DeciderRequest::RiskNote(_))
     )
 }
 
@@ -191,6 +200,13 @@ pub(crate) fn drop_queued(queue: &mut Vec<QueuedDecider>, id: &str) {
         }
     }
     queue.retain(|q| q.task_ids.first().is_some_and(|first| first != id));
+}
+
+/// Decision 29: drops task `id`'s queued risk note, its reviewer emitted. One in flight
+/// runs to its end, and its note is kept for later rounds.
+pub(crate) fn drop_risk_note(queue: &mut Vec<QueuedDecider>, id: &str) {
+    let note = |q: &QueuedDecider| matches!(q.request, DeciderRequest::RiskNote(_));
+    queue.retain(|q| !(note(q) && q.task_ids.first().is_some_and(|first| first == id)));
 }
 
 /// `Decide`'s result. A `Failed` (the driver always answers `Decided`) is the
@@ -352,6 +368,9 @@ fn apply(
                 now,
                 fx,
             );
+        }
+        (DeciderAnswer::RiskNote { note }, DeciderRequest::RiskNote(_)) => {
+            super::risk_note::noted(run, i, note, decision.source)
         }
         // `on_decided` made the kinds match; the size check is applied above, and
         // triage by its own caller (M8b.14).

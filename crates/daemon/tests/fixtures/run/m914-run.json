@@ -1,0 +1,1391 @@
+{
+  "format": 3,
+  "id": "add-a-ff9f",
+  "goal": "Add a",
+  "root": "/tmp/anthrex-fixture/repo",
+  "project": "/tmp/anthrex-fixture/repo",
+  "git_common_dir": "/tmp/anthrex-fixture/repo/.git",
+  "wt_dir": "/tmp/anthrex-fixture/data/worktrees/repo-fdbd7897",
+  "data_dir": "/tmp/anthrex-fixture/data/runs/add-a-ff9f",
+  "base_branch": "main",
+  "base_sha": "7528f8093ceb1739055d3aa27a73cd99d6bf924b",
+  "run_head": "d3dd3bed9909adee7f529ad42ae72e6c79c07a19",
+  "last_green_candidate": "d3dd3bed9909adee7f529ad42ae72e6c79c07a19",
+  "base_moved": null,
+  "state": "complete",
+  "paused_from": null,
+  "halted_reason": null,
+  "approved_by": "--yes",
+  "profile": {
+    "modules": [
+      "mods/*"
+    ],
+    "hub": [],
+    "source": [
+      "mods/**"
+    ],
+    "check": "sh check.sh {filter:--filter %}",
+    "check_timeout_secs": 10,
+    "single_test": "sh test.sh --one {test}",
+    "test_passed": "PASS {test}",
+    "setup": null,
+    "generated": [],
+    "protected": [
+      ".claude/**",
+      ".mcp.json",
+      ".codex/**",
+      "**/CLAUDE.md",
+      "**/AGENTS.md",
+      "**/AGENTS.override.md",
+      "**/CLAUDE.local.md",
+      ".agents/**",
+      ".github/workflows/**",
+      ".github/actions/**",
+      ".gitlab-ci.yml",
+      ".circleci/**",
+      ".buildkite/**",
+      "Jenkinsfile",
+      "azure-pipelines.yml",
+      ".githooks/**",
+      ".husky/**",
+      ".pre-commit-config.yaml",
+      "**/.cargo/**",
+      "**/rust-toolchain",
+      "**/rust-toolchain.toml",
+      "build.sh",
+      "check.sh",
+      "graph.sh",
+      "test.sh"
+    ],
+    "env": {
+      "TIER_LOG": "/tmp/anthrex-fixture/cache/tier-log.jsonl"
+    },
+    "cache_dirs": [
+      "/tmp/anthrex-fixture/cache"
+    ],
+    "confined_network": false,
+    "confined_unix_sockets": [],
+    "confined_localhost_ports": [],
+    "tiers": {
+      "build_check": "sh build.sh",
+      "module_test": "sh test.sh {module} {filter:--filter %}",
+      "module_tests": null,
+      "module_graph": {
+        "command": "sh graph.sh"
+      },
+      "module_names": "dir",
+      "full_triggers": [],
+      "slow_tests": null,
+      "timing_tests": null,
+      "skip_markers": [],
+      "test_paths": [],
+      "full_shards": 1,
+      "toolchain_id": null
+    },
+    "manifests": []
+  },
+  "limits": {
+    "max_writers": 3,
+    "max_readers": 3,
+    "max_bounces": 2,
+    "max_tasks": 50,
+    "max_windows": 60,
+    "default_runtime": "claude",
+    "review_small": true,
+    "budget_s": {
+      "tool_calls": 40,
+      "minutes": 15,
+      "tokens": null
+    },
+    "budget_m": {
+      "tool_calls": 150,
+      "minutes": 60,
+      "tokens": null
+    },
+    "budget_l": {
+      "tool_calls": 300,
+      "minutes": 120,
+      "tokens": null
+    },
+    "stall_after_secs": 600,
+    "rate_limit_retry_secs": 300,
+    "denials_before_block": 3,
+    "git_timeout_secs": 5,
+    "worker_permission_mode": "acceptEdits",
+    "worker_allowed_tools": [
+      "Bash",
+      "Edit",
+      "Write",
+      "Read",
+      "Glob",
+      "Grep",
+      "Agent",
+      "TodoWrite"
+    ],
+    "worker_codex_sandbox": "workspace-write",
+    "worker_sandbox": true,
+    "unconfined_checks": false,
+    "claude_auth": "login",
+    "api_key_helper": null,
+    "decider_mode": "off",
+    "decider_slot_wait_secs": 30,
+    "orch": {
+      "planner_task_cap": 12,
+      "max_scouts": 12,
+      "wake_orchestrator": true,
+      "wake_quiet_secs": 5,
+      "message_max_per_turn": 3,
+      "note_max_per_task": 10,
+      "planners": {
+        "runtime": null,
+        "effort": "high",
+        "max_tool_calls": 200,
+        "timeout_secs": 2400,
+        "max_rejections": 5
+      },
+      "agent": {
+        "runtime": null,
+        "model": "",
+        "effort": "high"
+      }
+    },
+    "testing": {
+      "full_idle_secs": 120,
+      "bisect_fix_max": 2,
+      "flaky_quarantine_after": 3,
+      "flaky_window_days": 14,
+      "admit_wait_secs": 300
+    },
+    "adaptive_concurrency": true,
+    "recover_after_secs": 600,
+    "halve_hold_secs": 60,
+    "race_slot_wait_secs": 120,
+    "models": {
+      "rows": {
+        "orchestrator": {
+          "model": "claude:claude-opus-5-5",
+          "effort": "high"
+        },
+        "planner": {
+          "model": "claude:claude-opus-5-5",
+          "effort": "high"
+        },
+        "implementer.small": {
+          "model": "claude:claude-sonnet-5",
+          "effort": "low"
+        },
+        "implementer.medium": {
+          "model": "claude:claude-sonnet-5",
+          "effort": "medium"
+        },
+        "implementer.hub": {
+          "model": "claude:claude-opus-5-5",
+          "effort": "high"
+        },
+        "test_writer": {
+          "model": "codex:default",
+          "effort": "medium"
+        },
+        "reviewer": {
+          "model": "codex:default",
+          "effort": "high",
+          "fallback": "claude:claude-opus-5-5"
+        },
+        "research": {
+          "model": "claude:claude-haiku-4-5"
+        },
+        "helpers": {
+          "model": "claude:claude-haiku-4-5"
+        },
+        "helpers.run_name": {
+          "model": "claude:claude-haiku-4-5"
+        },
+        "helpers.triage": {
+          "model": "claude:claude-haiku-4-5"
+        },
+        "helpers.size_check": {
+          "model": "claude:claude-haiku-4-5"
+        },
+        "helpers.check_summary": {
+          "model": "claude:claude-haiku-4-5"
+        },
+        "helpers.blocked_reason": {
+          "model": "claude:claude-haiku-4-5"
+        },
+        "helpers.ci_summary": {
+          "model": "claude:claude-haiku-4-5"
+        }
+      },
+      "brainstorm": {
+        "first": "claude:claude-opus-5-5",
+        "second": "codex:default",
+        "effort": "high"
+      },
+      "efforts": {
+        "claude:claude-haiku-4-5": {},
+        "claude:claude-opus-5-5": {
+          "efforts": [
+            "low",
+            "medium",
+            "high"
+          ]
+        },
+        "claude:claude-sonnet-5": {
+          "efforts": [
+            "low",
+            "medium",
+            "high"
+          ]
+        },
+        "codex:default": {
+          "efforts": [
+            "low",
+            "medium",
+            "high"
+          ]
+        }
+      },
+      "canonical": {
+        "claude:claude-haiku-4-5": "claude-haiku-4-5",
+        "claude:claude-opus-5-5": "claude-opus-5-5",
+        "claude:claude-sonnet-5": "claude-sonnet-5",
+        "codex:default": "default"
+      }
+    }
+  },
+  "tasks": [
+    {
+      "spec": {
+        "id": "t1",
+        "title": "Task t1",
+        "epic": null,
+        "kind": "code",
+        "size": "S",
+        "interface_change": false,
+        "test_mode": "check",
+        "test_mode_reason": "smoke",
+        "owns": [
+          "mods/a/**",
+          "mods/b/**"
+        ],
+        "deps": [],
+        "priority": 0,
+        "brief": "Do t1",
+        "acceptance": [
+          "t1 is done"
+        ],
+        "test_to_write": null,
+        "scout_refs": [],
+        "route": {
+          "runtime": null,
+          "model": null,
+          "effort": null
+        },
+        "budget": null,
+        "review_target": null,
+        "stage": 1,
+        "atomic": false,
+        "atomic_reason": null
+      },
+      "size": "M",
+      "hub": false,
+      "test_mode": "check",
+      "notes": [
+        "size raised from S to M: owns spans 2 modules (rule 7.2.1)"
+      ],
+      "review_level": "frontier",
+      "route": {
+        "runtime": "claude",
+        "model": "claude-sonnet-5",
+        "effort": "high"
+      },
+      "review_route": {
+        "runtime": "codex",
+        "model": "",
+        "effort": "high"
+      },
+      "budget": {
+        "tool_calls": 150,
+        "minutes": 60,
+        "tokens": null
+      },
+      "implicit_deps": [],
+      "state": "merged",
+      "block": null,
+      "rung": 2,
+      "raised_size": null,
+      "failures": 2,
+      "bounces": {
+        "done": 0,
+        "proof": 0,
+        "check": 1,
+        "review": 1,
+        "merge": 0
+      },
+      "stalls": 0,
+      "budget_exceeded": 0,
+      "conflicts": 0,
+      "session": 2,
+      "spent_total": {
+        "tool_calls": 3,
+        "secs": 0,
+        "tokens": 60
+      },
+      "branch": "anthrex/add-a-ff9f/t1",
+      "worktree": "/tmp/anthrex-fixture/data/worktrees/repo-fdbd7897/runs/add-a-ff9f/t1",
+      "prewarmed": false,
+      "worktree_live": false,
+      "awaiting_deps": false,
+      "held_answered": false,
+      "gate_op": null,
+      "review_misses": 0,
+      "merge_op": null,
+      "cancel_deferred": false,
+      "ready_from": null,
+      "resolving": false,
+      "handback_due": false,
+      "gates_after_handback": false,
+      "resolution": null,
+      "override_count": null,
+      "clock": {
+        "stopped": null,
+        "restarted": 1791890201
+      },
+      "epoch": null,
+      "start_commit": "7528f8093ceb1739055d3aa27a73cd99d6bf924b",
+      "head": "afa408823bb64694fea32f22da81a2548e46b863",
+      "done": {
+        "summary": "",
+        "test": null,
+        "red": null,
+        "signal": "turn_end_fallback",
+        "session": 2
+      },
+      "claim": null,
+      "fresh_session": null,
+      "rounds": [
+        {
+          "role": "worker",
+          "session": 1,
+          "round": 1,
+          "window_id": 1,
+          "route": {
+            "runtime": "claude",
+            "model": "claude-sonnet-5",
+            "effort": "medium"
+          },
+          "launch_op": 3,
+          "session_id": "b4db4c24-9cae-4e41-a4ac-cffb3f4b92c1",
+          "pid": null,
+          "ended": true,
+          "started_at": 1791890197,
+          "ended_at": 1791890201,
+          "turn_open": false,
+          "turns": 2,
+          "turn_had_task_done": false,
+          "last_event": 1791890199,
+          "tool_calls": 3,
+          "rate_limited_until": null,
+          "in_retry_streak": false,
+          "open_subagents": [],
+          "denials": 0,
+          "usage": {
+            "input": 20,
+            "output": 10,
+            "cache_read": 0,
+            "cache_write": 0
+          },
+          "deaths": 0,
+          "fallback": "None",
+          "stall": "Watching",
+          "failed_turn": "None",
+          "review_nudged": false,
+          "wrap_up_sent": false,
+          "retiring": true,
+          "delivery_failures": 0,
+          "delivery_retry_at": null,
+          "turn_denied": [],
+          "excused_secs": 3,
+          "last_denial": null,
+          "fallback_waiting": false,
+          "carried": [],
+          "failed_error": null,
+          "resume_op": null,
+          "count_op": null,
+          "count_failures": 0,
+          "count_retry_at": null,
+          "count_turn": 0,
+          "interrupted": false,
+          "relaunch": null,
+          "closed_pid": 30513,
+          "exited_pid": 30513,
+          "rate_limited_since": null,
+          "sent_back_at": [
+            1791890199
+          ],
+          "activity": "task_done",
+          "last_text": null
+        },
+        {
+          "role": "reviewer",
+          "session": 1,
+          "round": 1,
+          "window_id": 2,
+          "route": {
+            "runtime": "codex",
+            "model": "",
+            "effort": "high"
+          },
+          "launch_op": 12,
+          "session_id": "00007be5-12a5-4080-8000-12a5080c8878",
+          "pid": null,
+          "ended": true,
+          "started_at": 1791890201,
+          "ended_at": 1791890201,
+          "turn_open": false,
+          "turns": 1,
+          "turn_had_task_done": false,
+          "last_event": 1791890201,
+          "tool_calls": 1,
+          "rate_limited_until": null,
+          "in_retry_streak": false,
+          "open_subagents": [],
+          "denials": 0,
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cache_read": 0,
+            "cache_write": 0
+          },
+          "deaths": 0,
+          "fallback": "None",
+          "stall": "Watching",
+          "failed_turn": "None",
+          "review_nudged": false,
+          "wrap_up_sent": false,
+          "retiring": true,
+          "delivery_failures": 0,
+          "delivery_retry_at": null,
+          "turn_denied": [],
+          "excused_secs": 0,
+          "last_denial": null,
+          "fallback_waiting": false,
+          "carried": [],
+          "failed_error": null,
+          "resume_op": null,
+          "count_op": null,
+          "count_failures": 0,
+          "count_retry_at": null,
+          "count_turn": 0,
+          "interrupted": false,
+          "relaunch": null,
+          "closed_pid": null,
+          "exited_pid": 31717,
+          "rate_limited_since": null,
+          "sent_back_at": [],
+          "activity": "submit_review",
+          "last_text": null
+        },
+        {
+          "role": "worker",
+          "session": 2,
+          "round": 2,
+          "window_id": 3,
+          "route": {
+            "runtime": "claude",
+            "model": "claude-sonnet-5",
+            "effort": "high"
+          },
+          "launch_op": 14,
+          "session_id": "95efacf8-83b6-41e2-8a4a-15f566e3661e",
+          "pid": null,
+          "ended": true,
+          "started_at": 1791890201,
+          "ended_at": 1791890203,
+          "turn_open": false,
+          "turns": 2,
+          "turn_had_task_done": true,
+          "last_event": 1791890202,
+          "tool_calls": 0,
+          "rate_limited_until": null,
+          "in_retry_streak": false,
+          "open_subagents": [],
+          "denials": 0,
+          "usage": {
+            "input": 20,
+            "output": 10,
+            "cache_read": 0,
+            "cache_write": 0
+          },
+          "deaths": 0,
+          "fallback": "None",
+          "stall": "Watching",
+          "failed_turn": "None",
+          "review_nudged": false,
+          "wrap_up_sent": false,
+          "retiring": true,
+          "delivery_failures": 0,
+          "delivery_retry_at": null,
+          "turn_denied": [],
+          "excused_secs": 0,
+          "last_denial": null,
+          "fallback_waiting": false,
+          "carried": [],
+          "failed_error": null,
+          "resume_op": null,
+          "count_op": null,
+          "count_failures": 0,
+          "count_retry_at": null,
+          "count_turn": 1,
+          "interrupted": false,
+          "relaunch": null,
+          "closed_pid": 31793,
+          "exited_pid": 31793,
+          "rate_limited_since": null,
+          "sent_back_at": [],
+          "activity": null,
+          "last_text": null
+        },
+        {
+          "role": "reviewer",
+          "session": 2,
+          "round": 2,
+          "window_id": 4,
+          "route": {
+            "runtime": "codex",
+            "model": "",
+            "effort": "high"
+          },
+          "launch_op": 20,
+          "session_id": "00007d8d-12a5-4633-8000-12a563383198",
+          "pid": null,
+          "ended": true,
+          "started_at": 1791890202,
+          "ended_at": 1791890203,
+          "turn_open": false,
+          "turns": 1,
+          "turn_had_task_done": false,
+          "last_event": 1791890203,
+          "tool_calls": 1,
+          "rate_limited_until": null,
+          "in_retry_streak": false,
+          "open_subagents": [],
+          "denials": 0,
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cache_read": 0,
+            "cache_write": 0
+          },
+          "deaths": 0,
+          "fallback": "None",
+          "stall": "Watching",
+          "failed_turn": "None",
+          "review_nudged": false,
+          "wrap_up_sent": false,
+          "retiring": true,
+          "delivery_failures": 0,
+          "delivery_retry_at": null,
+          "turn_denied": [],
+          "excused_secs": 0,
+          "last_denial": null,
+          "fallback_waiting": false,
+          "carried": [],
+          "failed_error": null,
+          "resume_op": null,
+          "count_op": null,
+          "count_failures": 0,
+          "count_retry_at": null,
+          "count_turn": 0,
+          "interrupted": false,
+          "relaunch": null,
+          "closed_pid": null,
+          "exited_pid": 32141,
+          "rate_limited_since": null,
+          "sent_back_at": [],
+          "activity": "submit_review",
+          "last_text": null
+        }
+      ],
+      "reviews": [
+        {
+          "round": 1,
+          "route": {
+            "runtime": "codex",
+            "model": "",
+            "effort": "high"
+          },
+          "base": "7528f8093ceb1739055d3aa27a73cd99d6bf924b",
+          "head": "afa408823bb64694fea32f22da81a2548e46b863",
+          "verdict": "changes",
+          "summary": "needs work",
+          "findings": [
+            {
+              "severity": "important",
+              "file": "mods/a/src.txt",
+              "line": 1,
+              "input": null,
+              "text": "a must read a2"
+            }
+          ]
+        },
+        {
+          "round": 2,
+          "route": {
+            "runtime": "codex",
+            "model": "",
+            "effort": "high"
+          },
+          "base": "7528f8093ceb1739055d3aa27a73cd99d6bf924b",
+          "head": "afa408823bb64694fea32f22da81a2548e46b863",
+          "verdict": "approve",
+          "summary": "ok",
+          "findings": []
+        }
+      ],
+      "checks": [
+        {
+          "at": 1791890199,
+          "ok": false,
+          "code": 1,
+          "timed_out": false,
+          "tail": "test a::works ... FAILED\n\nfailures:\n    a::works\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out\ntest b::works ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\ntest c::works ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out",
+          "secs": 0,
+          "on_candidate": false,
+          "summary": null,
+          "summary_source": "fallback",
+          "tier": {
+            "tier": 1,
+            "affected": "full suite (every module affected)",
+            "steps": 1,
+            "cached": 0,
+            "ok": false,
+            "secs": 0,
+            "flaky": [],
+            "failing": [
+              "a::works"
+            ],
+            "at": 1791890199,
+            "commit": ""
+          }
+        },
+        {
+          "at": 1791890201,
+          "ok": true,
+          "code": 0,
+          "timed_out": false,
+          "tail": "",
+          "secs": 0,
+          "on_candidate": false,
+          "summary": null,
+          "summary_source": null,
+          "tier": {
+            "tier": 1,
+            "affected": "2 modules (b, c)",
+            "steps": 3,
+            "cached": 0,
+            "ok": true,
+            "secs": 0,
+            "flaky": [
+              "b::flaky"
+            ],
+            "failing": [],
+            "at": 1791890201,
+            "commit": ""
+          }
+        },
+        {
+          "at": 1791890202,
+          "ok": true,
+          "code": 0,
+          "timed_out": false,
+          "tail": "",
+          "secs": 0,
+          "on_candidate": false,
+          "summary": null,
+          "summary_source": null,
+          "tier": {
+            "tier": 1,
+            "affected": "2 modules (b, c)",
+            "steps": 3,
+            "cached": 3,
+            "ok": true,
+            "secs": 0,
+            "flaky": [],
+            "failing": [],
+            "at": 1791890202,
+            "commit": ""
+          }
+        },
+        {
+          "at": 1791890203,
+          "ok": true,
+          "code": 0,
+          "timed_out": false,
+          "tail": "",
+          "secs": 0,
+          "on_candidate": true,
+          "summary": null,
+          "summary_source": null,
+          "tier": {
+            "tier": 2,
+            "affected": "2 modules (b, c)",
+            "steps": 3,
+            "cached": 3,
+            "ok": true,
+            "secs": 0,
+            "flaky": [],
+            "failing": [],
+            "at": 1791890203,
+            "commit": ""
+          }
+        }
+      ],
+      "proofs": [],
+      "handed_back": false,
+      "merge_commit": "d3dd3bed9909adee7f529ad42ae72e6c79c07a19",
+      "merged_without_approval": null,
+      "salvage_refs": [],
+      "failure_log": [
+        "[anthrex] The check failed (exit 1): sh check.sh \ntier 1: full suite (every module affected)\nLast 40 lines:\ntest a::works ... FAILED\n\nfailures:\n    a::works\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out\ntest b::works ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\ntest c::works ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\nFix it, commit, then call task_done again.",
+        "[anthrex] Review round 1 asked for changes. Fix every finding below, commit, then call task_done again.\n- [important] mods/a/src.txt:1 a must read a2"
+      ],
+      "history": [
+        {
+          "at": 1791890197,
+          "text": "dispatched"
+        },
+        {
+          "at": 1791890197,
+          "text": "worker session 1 starting"
+        },
+        {
+          "at": 1791890198,
+          "text": "done (task_done); next: check"
+        },
+        {
+          "at": 1791890198,
+          "text": "running tier 1"
+        },
+        {
+          "at": 1791890199,
+          "text": "tier 1: full suite (every module affected)"
+        },
+        {
+          "at": 1791890199,
+          "text": "the check gate bounced it (rung 1)"
+        },
+        {
+          "at": 1791890199,
+          "text": "done (task_done); next: check"
+        },
+        {
+          "at": 1791890199,
+          "text": "running tier 1"
+        },
+        {
+          "at": 1791890201,
+          "text": "tier 1: 2 modules (b, c)"
+        },
+        {
+          "at": 1791890201,
+          "text": "tier 1: flaky b::flaky passed on retry"
+        },
+        {
+          "at": 1791890201,
+          "text": "check passed; next: review"
+        },
+        {
+          "at": 1791890201,
+          "text": "review round 1 starting"
+        },
+        {
+          "at": 1791890201,
+          "text": "review round 1 asked for changes"
+        },
+        {
+          "at": 1791890201,
+          "text": "rung 2: a fresh session (the review gate failed again: [anthrex] Review round 1 asked for changes. Fix every finding below, commit, then call task_done again.)"
+        },
+        {
+          "at": 1791890201,
+          "text": "worker session 2 starting"
+        },
+        {
+          "at": 1791890202,
+          "text": "done (the turn-end fallback); next: check"
+        },
+        {
+          "at": 1791890202,
+          "text": "running tier 1"
+        },
+        {
+          "at": 1791890202,
+          "text": "tier 1: 2 modules (b, c)"
+        },
+        {
+          "at": 1791890202,
+          "text": "tier 1: cached (3 steps)"
+        },
+        {
+          "at": 1791890202,
+          "text": "check passed; next: review"
+        },
+        {
+          "at": 1791890202,
+          "text": "review round 2 starting"
+        },
+        {
+          "at": 1791890203,
+          "text": "review round 2 approved"
+        },
+        {
+          "at": 1791890203,
+          "text": "merging into the run branch"
+        },
+        {
+          "at": 1791890203,
+          "text": "tier 2: 2 modules (b, c)"
+        },
+        {
+          "at": 1791890203,
+          "text": "tier 2: cached (3 steps)"
+        },
+        {
+          "at": 1791890203,
+          "text": "merged at d3dd3be"
+        },
+        {
+          "at": 1791890203,
+          "text": "its checkouts are removed once its worker has exited"
+        },
+        {
+          "at": 1791890204,
+          "text": "worktree removed"
+        },
+        {
+          "at": 1791890204,
+          "text": "worktree removed"
+        },
+        {
+          "at": 1791890204,
+          "text": "worktree removed"
+        }
+      ],
+      "pending_failure": null,
+      "pending_classification": null,
+      "block_source": null,
+      "decider_usage": {
+        "input": 0,
+        "output": 0,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "size_check": null,
+      "phases": {
+        "queued": 0,
+        "preparing": 1,
+        "working": 1,
+        "proof": 0,
+        "check": 3,
+        "review": 1,
+        "merge": 0,
+        "blocked": 0
+      },
+      "phase_since": 1791890203,
+      "max_rung": 2,
+      "diff": {
+        "files": 1,
+        "hunks": 1,
+        "added": 1,
+        "removed": 0
+      },
+      "history_written": true,
+      "routing_decisions": [
+        {
+          "seq": 1,
+          "at": 1791890197,
+          "role": "worker",
+          "session": 1,
+          "round": null,
+          "lane": null,
+          "trigger": "initial",
+          "source": "role_table",
+          "policy_version": "m9.8-roles-v1",
+          "pick_policy": null,
+          "input": {
+            "title": "Task t1",
+            "brief": "Do t1",
+            "acceptance": [
+              "t1 is done"
+            ],
+            "owns": [
+              "mods/a/**",
+              "mods/b/**"
+            ],
+            "kind": "code",
+            "size": "M",
+            "hub": false,
+            "interface_change": false,
+            "test_mode": "check",
+            "languages": []
+          },
+          "chosen": {
+            "runtime": "claude",
+            "model": "claude-sonnet-5",
+            "effort": "medium"
+          },
+          "selected_index": 0,
+          "candidates": [
+            {
+              "route": {
+                "runtime": "claude",
+                "model": "claude-sonnet-5",
+                "effort": "medium"
+              },
+              "skipped_reason": null
+            }
+          ]
+        },
+        {
+          "seq": 2,
+          "at": 1791890201,
+          "role": "reviewer",
+          "session": 1,
+          "round": 1,
+          "lane": null,
+          "trigger": "review",
+          "source": "role_table",
+          "policy_version": "m9.8-roles-v1",
+          "pick_policy": null,
+          "input": {
+            "title": "Task t1",
+            "brief": "Do t1",
+            "acceptance": [
+              "t1 is done"
+            ],
+            "owns": [
+              "mods/a/**",
+              "mods/b/**"
+            ],
+            "kind": "code",
+            "size": "M",
+            "hub": false,
+            "interface_change": false,
+            "test_mode": "check",
+            "languages": []
+          },
+          "chosen": {
+            "runtime": "codex",
+            "model": "",
+            "effort": "high"
+          },
+          "selected_index": 0,
+          "candidates": [
+            {
+              "route": {
+                "runtime": "codex",
+                "model": "",
+                "effort": "high"
+              },
+              "skipped_reason": null
+            },
+            {
+              "route": {
+                "runtime": "claude",
+                "model": "claude-opus-5-5",
+                "effort": ""
+              },
+              "skipped_reason": "ranked after the selected route"
+            }
+          ]
+        },
+        {
+          "seq": 3,
+          "at": 1791890201,
+          "role": "worker",
+          "session": 2,
+          "round": null,
+          "lane": null,
+          "trigger": "escalation",
+          "source": "escalation_policy",
+          "policy_version": "m9.8-roles-v1",
+          "pick_policy": null,
+          "input": {
+            "title": "Task t1",
+            "brief": "Do t1",
+            "acceptance": [
+              "t1 is done"
+            ],
+            "owns": [
+              "mods/a/**",
+              "mods/b/**"
+            ],
+            "kind": "code",
+            "size": "M",
+            "hub": false,
+            "interface_change": false,
+            "test_mode": "check",
+            "languages": []
+          },
+          "chosen": {
+            "runtime": "claude",
+            "model": "claude-sonnet-5",
+            "effort": "high"
+          },
+          "selected_index": 0,
+          "candidates": [
+            {
+              "route": {
+                "runtime": "claude",
+                "model": "claude-sonnet-5",
+                "effort": "high"
+              },
+              "skipped_reason": null
+            },
+            {
+              "route": {
+                "runtime": "claude",
+                "model": "claude-sonnet-5",
+                "effort": "medium"
+              },
+              "skipped_reason": "ranked after the selected route"
+            }
+          ]
+        },
+        {
+          "seq": 4,
+          "at": 1791890202,
+          "role": "reviewer",
+          "session": 2,
+          "round": 2,
+          "lane": null,
+          "trigger": "review",
+          "source": "role_table",
+          "policy_version": "m9.8-roles-v1",
+          "pick_policy": null,
+          "input": {
+            "title": "Task t1",
+            "brief": "Do t1",
+            "acceptance": [
+              "t1 is done"
+            ],
+            "owns": [
+              "mods/a/**",
+              "mods/b/**"
+            ],
+            "kind": "code",
+            "size": "M",
+            "hub": false,
+            "interface_change": false,
+            "test_mode": "check",
+            "languages": []
+          },
+          "chosen": {
+            "runtime": "codex",
+            "model": "",
+            "effort": "high"
+          },
+          "selected_index": 0,
+          "candidates": [
+            {
+              "route": {
+                "runtime": "codex",
+                "model": "",
+                "effort": "high"
+              },
+              "skipped_reason": null
+            },
+            {
+              "route": {
+                "runtime": "claude",
+                "model": "claude-opus-5-5",
+                "effort": ""
+              },
+              "skipped_reason": "ranked after the selected route"
+            }
+          ]
+        }
+      ],
+      "escalated_from": null,
+      "orch": {
+        "gate_hold": null,
+        "research": null,
+        "review_range": null,
+        "integration_of": null,
+        "messages": [],
+        "worker_notes": [],
+        "refresh": null,
+        "refresh_merges": [],
+        "refresh_targets": [],
+        "rewrite_restarts": 0,
+        "research_append": null
+      },
+      "origin": "plan",
+      "fixes": null,
+      "signals": [],
+      "signals_more": 0,
+      "signal_refusals": 0,
+      "sync": null,
+      "round": 1,
+      "salvage_seq": 3
+    }
+  ],
+  "merge_queue": [],
+  "outbox": [],
+  "next_message": 3,
+  "pending_ops": {},
+  "next_op": 32,
+  "windows_created": 4,
+  "revision": 55,
+  "unverified": false,
+  "final_check_failed": false,
+  "trusted_project": [],
+  "trust_project": false,
+  "protected_files": [
+    "build.sh",
+    "check.sh",
+    "graph.sh",
+    "test.sh"
+  ],
+  "gate_files": [
+    {
+      "path": "build.sh",
+      "blob": "953239e7ca19cdd51ce7507d41d951516a43227b"
+    },
+    {
+      "path": "check.sh",
+      "blob": "cc1eedfbf43021ebd41a2dd1d29dd062ea7245e8"
+    },
+    {
+      "path": "graph.sh",
+      "blob": "5a7fc7c81f8a47fe94b27f4bd02764ec894b016d"
+    },
+    {
+      "path": "test.sh",
+      "blob": "ec8a743393e7d0d872655500ec0db293f62c04c8"
+    }
+  ],
+  "rate_limits": {},
+  "outcome": null,
+  "log": [
+    {
+      "at": 1791890197,
+      "text": "tuning: none (history has fewer than 30 samples per class)"
+    },
+    {
+      "at": 1791890197,
+      "text": "started; approved by --yes"
+    },
+    {
+      "at": 1791890197,
+      "text": "integration worktree ready"
+    },
+    {
+      "at": 1791890203,
+      "text": "merged t1 at d3dd3be"
+    },
+    {
+      "at": 1791890204,
+      "text": "every task is finished; verifying the refs"
+    },
+    {
+      "at": 1791890204,
+      "text": "stage 1: running tier 3 at d3dd3be (completion)"
+    },
+    {
+      "at": 1791890204,
+      "text": "stage 1: tier 3 green at d3dd3be (0s)"
+    },
+    {
+      "at": 1791890204,
+      "text": "every task is finished; verifying the refs"
+    },
+    {
+      "at": 1791890204,
+      "text": "complete: 1 merged, 0 cancelled"
+    }
+  ],
+  "created_at": 1791890197,
+  "finish_edit": false,
+  "finish_reply": null,
+  "cancelled": false,
+  "verify_failures": 0,
+  "halt_retryable": false,
+  "restored": null,
+  "session_nonce": 4521383191185647747,
+  "codex_project_config": "loaded",
+  "codex_config_base": [],
+  "profile_source": "plan",
+  "output_filter": "failures-only",
+  "filter_prefixes": [],
+  "repo_dir": "/tmp/anthrex-fixture/data/repos/repo-fdbd7897",
+  "stale_profile": [],
+  "decider_queue": [],
+  "next_decider": 1,
+  "decider_calls": 0,
+  "decider_fallbacks": 0,
+  "decider_usage": {
+    "input": 0,
+    "output": 0,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "scout_reports": [],
+  "onboarding_report": null,
+  "path": null,
+  "triage": null,
+  "triage_usage": {
+    "input": 0,
+    "output": 0,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "scout_usage": {
+    "input": 0,
+    "output": 0,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "orchestrator_usage": {
+    "input": 0,
+    "output": 0,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "promote_requested_at": null,
+  "run_record_written": false,
+  "profile_languages": [],
+  "role_routing_decisions": [],
+  "history": true,
+  "approved_at": 1791890197,
+  "plan_edits": [],
+  "plan_edits_since_approval": 0,
+  "orch": {
+    "orchestrator": null,
+    "epics": [],
+    "gate_holds": [],
+    "run_scouts": [],
+    "digest_rev": 14,
+    "digest_fp": 15353137390053585881,
+    "digest_read_at": null,
+    "installed": {},
+    "yes": false,
+    "research_report": null,
+    "planner_usage": {
+      "input": 0,
+      "output": 0,
+      "cache_read": 0,
+      "cache_write": 0
+    },
+    "note_seq": 0
+  },
+  "profile_hash": "17ed47163ac6864d",
+  "toolchain": null,
+  "graph_note": null,
+  "test_slots": 12,
+  "stage_layout": "single",
+  "stages": [
+    {
+      "n": 1,
+      "branch": "anthrex/add-a-ff9f/integration",
+      "head": "d3dd3bed9909adee7f529ad42ae72e6c79c07a19",
+      "created_from": "7528f8093ceb1739055d3aa27a73cd99d6bf924b",
+      "created_at": 1791890197,
+      "merges": [
+        {
+          "task": {
+            "id": "t1",
+            "commit": "d3dd3bed9909adee7f529ad42ae72e6c79c07a19"
+          }
+        }
+      ],
+      "floor": null,
+      "tasks_in": [
+        "t1"
+      ],
+      "synced_from": null,
+      "last_green_candidate": "d3dd3bed9909adee7f529ad42ae72e6c79c07a19",
+      "full": {
+        "green_at": "d3dd3bed9909adee7f529ad42ae72e6c79c07a19",
+        "red_at": null,
+        "bisect_fixes": 0,
+        "last": {
+          "tier": 3,
+          "affected": "full suite (full suite)",
+          "steps": 1,
+          "cached": 0,
+          "ok": true,
+          "secs": 0,
+          "flaky": [],
+          "failing": [],
+          "at": 1791890204,
+          "commit": "d3dd3bed9909adee7f529ad42ae72e6c79c07a19"
+        },
+        "note": null,
+        "infra": null,
+        "bisects": 0,
+        "ended": [],
+        "runs": 1
+      },
+      "bisect": null,
+      "propagate_red": null,
+      "propagate_note": null,
+      "round": 1
+    }
+  ],
+  "full_op": null,
+  "queue_idle_since": 1791890203,
+  "fix_seq": 0,
+  "propagate_due": [],
+  "delivery": {
+    "mode": "local",
+    "repo": null,
+    "limits": {
+      "poll_secs": 60,
+      "poll_max_secs": 300,
+      "ci_log_max_bytes": 2097152,
+      "ci_fix_max": 2,
+      "review_fix_max": 3,
+      "review_batch_secs": 120,
+      "reviewers": [],
+      "reply_to_comments": true,
+      "sync": "on_conflict",
+      "delete_merged_branches": false,
+      "stage_target_lines": [
+        300,
+        800
+      ]
+    },
+    "watching": false,
+    "poll_base_secs": 0,
+    "stages": [],
+    "permissions": {},
+    "base_synced": null,
+    "base_sync_due": {},
+    "failures": {},
+    "alerts": {},
+    "permission_retry_at": null,
+    "base_fetch_due": false,
+    "base_fetch_retry_at": null,
+    "remote_seal": null
+  },
+  "rounds": [
+    {
+      "n": 1,
+      "goal": "Add a",
+      "origin": "user",
+      "started_at": 1791890197,
+      "ended_at": null,
+      "outcome": null,
+      "summary": null,
+      "first_stage": 1,
+      "windows_before": 0,
+      "scouts_before": 0
+    }
+  ],
+  "tuning_lines": [
+    "tuning: none (history has fewer than 30 samples per class)"
+  ],
+  "last_step_at": 1791890204
+}

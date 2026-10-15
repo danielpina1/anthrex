@@ -142,6 +142,22 @@ fn accept_and_discard_confirm_with_the_run_id() {
                 run_id: ID.into(),
                 action,
                 confirm: Some(ID.into()),
+                reason: None,
+            })
+        );
+    }
+    // Milestone 9.15 decision 40: the discard form's reason, `None` when blank.
+    for (typed, reason) in [("too big", Some("too big")), ("  ", None)] {
+        assert_eq!(
+            on_run(
+                ActionKind::Discard,
+                ActionInput::DiscardReason(typed.into())
+            ),
+            Some(RunRequest::Finish {
+                run_id: ID.into(),
+                action: FinishAction::Discard,
+                confirm: Some(ID.into()),
+                reason: reason.map(Into::into),
             })
         );
     }

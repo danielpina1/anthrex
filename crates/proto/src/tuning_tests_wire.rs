@@ -356,11 +356,12 @@ fn appended_variants_keep_their_indices() {
     let names = variant_names::<RunRequest>();
     // Milestone 9.6 appends `DocGate` and `ShowDoc` after `McpReady`.
     assert_eq!(
-        names[names.len() - 6..names.len() - 3],
+        names[names.len() - 7..names.len() - 4],
         ["Watch", "Iterate", "McpReady"],
         "{names:?}"
     );
-    let n = names.len() as u8 - 3;
+    // Milestone 9.15 appends `Lessons` after `AnswerAsk` (`lessons_tests.rs`).
+    let n = names.len() as u8 - 4;
     assert_eq!(
         variant_at::<RunRequest>(n - 1, &json!({"run_id": "r1", "window_id": 3})),
         Some(RunRequest::McpReady {

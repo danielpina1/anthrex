@@ -68,11 +68,39 @@ impl RunService {
             Err(error) => failed(format!("a blocking step did not finish: {error}")),
         }
     }
+
+    /// `OpKind::QueueDistill` (milestone 9.15 decision 10): `line` written once to the
+    /// store at `path` (`<repo_dir>/lessons.jsonl`) under the daemon's lessons lock,
+    /// on `spawn_blocking`, never under the manager lock; then the distill worker is
+    /// woken for the repository (task M9.15.10), already written or not.
+    pub(in crate::run::driver) async fn queue_distill(
+        &self,
+        path: PathBuf,
+        line: proto::LessonLine,
+    ) -> OpResult {
+        let Some(repo_dir) = path.parent().map(Path::to_path_buf) else {
+            return failed(format!("{} has no directory", path.display()));
+        };
+        // Debug builds only: a test's hold on the write (`effects::DoneHolds`).
+        if let Some(hold) = self.done_holds.distill {
+            tokio::time::sleep(hold).await;
+        }
+        match crate::lessons::store::append_once(&self.lessons, &repo_dir, line).await {
+            Ok(_) => {
+                let service = self.adaptation.get().and_then(|a| a.lessons.as_ref());
+                if let Some(service) = service {
+                    service.wake(repo_dir);
+                }
+                OpResult::DistillQueued
+            }
+            Err(error) => failed(format!("could not append to {}: {error}", path.display())),
+        }
+    }
 }
 
 /// The checkout `dir` is in and its project (main checkout), without preflight's
 /// clean-tree rules: `run stats` works in a dirty checkout. Blocking.
-fn checkout_of(
+pub(in crate::run::driver) fn checkout_of(
     git: &std::ffi::OsStr,
     dir: &Path,
     timeout: Duration,

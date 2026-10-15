@@ -260,6 +260,20 @@ pub struct TaskRecord {
     /// round 1.
     #[serde(default)]
     pub round: u32,
+    // Milestone 9.15 (no history version bump: both fields default, and are skipped
+    // while empty).
+    /// Decision 6: the task's failure signatures, deduplicated by `fp`, at most
+    /// `SIGS_PER_TASK`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub signatures: Vec<crate::lessons_store::SigRef>,
+    /// Decision 6: the task's `spec.owns`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub owns: Vec<String>,
+    /// Decision 24: the lesson ids the task's workers were shown (a set, first seen
+    /// first); consolidation credits them (decision 25). Task M9.15.4 adds the field
+    /// (credit reads it), task M9.15.6 fills it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lessons_shown: Vec<String>,
 }
 
 /// One finished run.
@@ -280,6 +294,10 @@ pub struct RunRecord {
     pub accepted_commit: Option<String>,
     pub tasks: u32,
     pub usage: Option<RunUsage>,
+    /// Milestone 9.15 decision 26: why the user discarded the run (one line, at most
+    /// `DISCARD_REASON_MAX` characters). Left out while `None`; `HISTORY_VERSION` stays.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discard_reason: Option<String>,
 }
 
 /// A merged task's commit that was later reverted on the base branch.

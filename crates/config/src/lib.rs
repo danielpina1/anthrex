@@ -9,6 +9,7 @@ use std::str::FromStr;
 mod conversation;
 mod delivery;
 mod git;
+pub mod lessons;
 pub mod models;
 mod orchestrator;
 pub mod reserved_env;
@@ -30,6 +31,8 @@ pub use git::{
     GIT_DEBOUNCE_MS_RANGE, GIT_IGNORE_MAX_CHARS, GIT_IGNORE_MAX_ENTRIES, GIT_POLL_SECS_RANGE, Git,
 };
 use git::{KNOWN_GIT_KEYS, read_git};
+pub use lessons::Lessons;
+use lessons::{KNOWN_LESSONS_KEYS, read_lessons};
 pub use models::{ModelRef, ModelTable, Role, RoleChoice};
 pub use orchestrator::{
     AgentConfig, ClaudeAuth, ClaudeHeadless, ConfiguredBudgets, Deciders, DesignBudget,
@@ -73,6 +76,7 @@ pub struct Config {
     pub delivery: Delivery,
     pub theme: Theme,
     pub target_pool: TargetPool,
+    pub lessons: Lessons,
 }
 
 /// `Ctrl` plus this lowercase letter. Never `h`, `i`, `j` or `m`: terminals
@@ -182,6 +186,7 @@ impl Default for Config {
             delivery: Delivery::default(),
             theme: Theme::default(),
             target_pool: TargetPool::default(),
+            lessons: Lessons::default(),
         }
     }
 }
@@ -249,6 +254,7 @@ pub fn parse(text: &str) -> (Config, Vec<Problem>) {
     read_delivery(&table, &mut config, &mut problems);
     read_theme(&table, &mut config, &mut problems);
     read_target_pool(&table, &mut config, &mut problems);
+    read_lessons(&table, &mut config, &mut problems);
 
     report_unknown_keys(&table, &mut problems);
 
@@ -558,6 +564,7 @@ fn report_unknown_keys(table: &toml::Table, problems: &mut Vec<Problem>) {
             "target_pool" => {
                 report_unknown_nested(value, "target_pool", KNOWN_TARGET_POOL_KEYS, problems)
             }
+            "lessons" => report_unknown_nested(value, "lessons", KNOWN_LESSONS_KEYS, problems),
             other => problems.push(unknown_key_problem(other)),
         }
     }

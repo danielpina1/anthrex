@@ -373,3 +373,29 @@ fn a_repository_save_keeps_the_mode_and_the_link() {
     let mode = std::fs::metadata(&real).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o600);
 }
+
+/// Milestone 9.15 decision 33: the `distill` and `risk_note` helper rows are keys the
+/// role table reads, and each resolves through `helpers` when it has no row.
+#[test]
+fn the_distill_and_risk_note_rows_read_and_resolve_through_helpers() {
+    let text = "[models.helpers]\nmodel = \"codex:gpt-6-luna\"\n\n\
+                [models.helpers.distill]\nmodel = \"claude:claude-opus-5-5\"\neffort = \"low\"\n";
+    let (t, problems) = parse_text(text).unwrap();
+    assert!(problems.is_empty(), "{problems:?}");
+    let distill = Role::Helper(HelperKind::Distill);
+    let risk_note = Role::Helper(HelperKind::RiskNote);
+    assert_eq!(
+        t.rows.get(&distill),
+        Some(&choice("claude:claude-opus-5-5", Some("low"), None))
+    );
+    assert_eq!(
+        resolve(risk_note, None, &t).model.label(),
+        "codex:gpt-6-luna"
+    );
+    let text = "[models.helpers.risk_note]\nmodel = \"codex:default\"\n";
+    let (t, problems) = parse_text(text).unwrap();
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(resolve(risk_note, None, &t).model.label(), "codex:default");
+    assert_eq!(resolve(distill, None, &t), builtin_choice(Role::Helpers));
+    assert!(render(&t).contains("[models.helpers.risk_note]\n"));
+}

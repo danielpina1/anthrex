@@ -151,6 +151,8 @@ fn discard_and_cancel_pages_say_what_goes() {
         Some(ActionKind::Discard),
     );
     press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    // Milestone 9.15 decision 40: the reason's form first; Enter leaves it blank.
+    press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
     let ActionStep::Confirm(page) = &flow(&app).step else {
         panic!("not a page");
     };
@@ -166,6 +168,7 @@ fn discard_and_cancel_pages_say_what_goes() {
                 "main unchanged · uncommitted work under refs/anthrex/salvage/add-mul-0723/"
                     .to_string()
             ),
+            ("reason".to_string(), "(none)".to_string()),
         ]
     );
 

@@ -203,6 +203,7 @@ fn e2e_tui_accept_onto_a_moved_base() {
         run_id,
         action,
         confirm: Some(moved_base_confirm(&run, &moved)),
+        reason: None,
     };
     done_reply(h.tagged(22, resend, FINISH_WAIT), &h);
     assert_eq!(h.run(&run).unwrap().state, RunState::Accepted);

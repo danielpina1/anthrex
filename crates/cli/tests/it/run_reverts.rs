@@ -40,6 +40,7 @@ fn run_start_records_a_revert_of_an_accepted_run() {
         .unwrap()
         .as_secs();
     let run = HistoryLine::Run(RunRecord {
+        discard_reason: None,
         v: HISTORY_VERSION,
         record_id: "r1".into(),
         at: now,

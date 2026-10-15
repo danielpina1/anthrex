@@ -77,6 +77,10 @@ fn page_parts(
         kit::hints_joined(width, &list, crate::theme::dot_sep(p), p)
     };
     match page {
+        ProfilePage::Lessons(lessons) => {
+            let (title, body, _, bottom) = super::lessons::parts(s, lessons, width, keys, p);
+            (title, false, body, bottom)
+        }
         ProfilePage::Detect {
             trust_project,
             unconfined_checks,
@@ -312,6 +316,9 @@ pub(super) fn render_page(
     keys: bool,
     p: Palette,
 ) {
+    if let ProfilePage::Lessons(lessons) = page {
+        return super::lessons::render(frame, s, lessons, area, keys, p);
+    }
     let width = area.width.min(kit::DIALOG_MAX).saturating_sub(4);
     let (title, destructive, body, hints) = page_parts(s, page, width, keys, p);
     // The page fits the area: a long TOML scrolls inside it.

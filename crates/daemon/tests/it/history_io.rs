@@ -297,6 +297,39 @@ fn history_append_is_reconciled_exactly_once() {
     assert_eq!(ops, vec![(7, Reconciled::NotStarted)]);
 }
 
+/// Task 3's review I1, its last part (the controller's ruling at task M9.15.6): the
+/// `AppendHistory` reconcile row decides "already written" from lines that parse, as
+/// `append_once` does. A line torn by a crash carries the record's id in its first
+/// bytes but is no record: the op is appended again, not replayed as written.
+#[test]
+fn a_torn_history_line_is_not_reconciled_as_written() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.jsonl");
+    let (run, kind) = run_appending(dir.path(), &path);
+    let journal = vec![JournalLine::Intent { op: 7, kind }];
+    let git = std::ffi::OsStr::new("/nonexistent/anthrex-test/git");
+    let answer = |run: &Run| reconcile(git, run, &journal, &[], T).ops;
+    let whole = serde_json::to_string(&revert("history-5a1e/t1", 9)).unwrap();
+    let id = "history-5a1e/t1";
+    let torn = &whole[..whole.find(id).unwrap() + id.len() + 2];
+    std::fs::write(&path, torn).unwrap();
+    assert!(contains_record(&path, id).unwrap(), "the needle is there");
+    assert_eq!(answer(&run), vec![(7, Reconciled::NotStarted)]);
+    // The whole line after it (as `append_line` heals the torn tail) is the record.
+    append_line(&path, &revert(id, 9)).unwrap();
+    assert_eq!(
+        answer(&run),
+        vec![(7, Reconciled::Replay(OpResult::HistoryAppended))]
+    );
+    // An unreadable file cannot be checked: treated as not started, with a note.
+    let unreadable = dir.path().join("dir.jsonl");
+    std::fs::create_dir(&unreadable).unwrap();
+    let (run, kind) = run_appending(dir.path(), &unreadable);
+    let journal = vec![JournalLine::Intent { op: 7, kind }];
+    let found = reconcile(git, &run, &journal, &[], T);
+    assert_eq!(found.ops, vec![(7, Reconciled::NotStarted)]);
+}
+
 /// Milestone 9.6 ruling T13-4: a phase approved again after a back is appended under
 /// its own id (`…/v<n>`), so a restart with that append pending writes it although the
 /// first approval's line is there; the refit then counts the latest approval only.
@@ -540,4 +573,36 @@ fn version_1_history_and_an_old_run_json_still_load() {
     value.as_object_mut().unwrap().remove("routing");
     let back: daemon::run::orch::OrchestratorRecord = serde_json::from_value(value).unwrap();
     assert_eq!(back, record);
+}
+
+/// The coordinator's ruling on task 4's follow-up (as e3f81b84 did for the lessons
+/// store): `append_once` decides "already written" only from lines that parse. A line
+/// torn by a crash or a full disk carries the record's id in its first bytes but is no
+/// record, so the record must still be written whole. An unreadable file is an error.
+#[test]
+fn append_once_writes_a_record_whose_only_line_is_torn() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.jsonl");
+    let line = role_line(9, proto::RoleOutcome::Fallback);
+    let whole = serde_json::to_string(&line).unwrap();
+    let HistoryLine::RoleRoute(d) = &line else {
+        unreachable!()
+    };
+    let torn = &whole[..whole.find(&d.record_id).unwrap() + d.record_id.len() + 2];
+    std::fs::write(&path, torn).unwrap();
+    assert!(
+        contains_record(&path, &d.record_id).unwrap(),
+        "the needle is there"
+    );
+    assert!(
+        append_once(&path, &line).unwrap(),
+        "written despite the torn line"
+    );
+    let (records, problems) = read_history(&path);
+    assert_eq!(records, vec![line.clone()]);
+    assert_eq!(problems.len(), 1, "the torn line: {problems:?}");
+    assert!(!append_once(&path, &line).unwrap(), "now held");
+    let unreadable = dir.path().join("dir.jsonl");
+    std::fs::create_dir(&unreadable).unwrap();
+    assert!(append_once(&unreadable, &line).is_err());
 }

@@ -156,6 +156,10 @@ fn route(
         (kind @ OpKind::Decide { .. }, _) => deciders::op_done(run, &kind, result, now, fx),
         (OpKind::MeasureDiff { .. }, Some(i)) => history::measured(run, i, result, now, fx),
         (kind @ OpKind::AppendHistory { .. }, _) => history::appended(run, &kind, result, now),
+        // Milestone 9.15 decision 10: a distill entry.
+        (kind @ OpKind::QueueDistill { .. }, _) => {
+            super::lessons_queue::queued(run, &kind, result, now)
+        }
         // Milestone 9 decisions 5 and 11: the orchestrator's window.
         (OpKind::CreateOrchestrator { .. }, _) => orch_window::launched(run, op, result, now, fx),
         (OpKind::RestartOrchestrator { .. }, _) => orch_window::restarted(run, result, now, fx),

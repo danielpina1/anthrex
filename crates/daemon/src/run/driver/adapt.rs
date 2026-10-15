@@ -53,6 +53,7 @@ pub(super) use goal::{BuildError, CONTINUE_NEEDS_PROFILE, GoalNotReady, GoalRead
 // and revert detection (decisions 34, 35).
 #[path = "adapt_history.rs"]
 mod history;
+pub(super) use history::checkout_of;
 
 /// What decision 6 chose, for the run `build_run` makes.
 pub(super) struct ProfileChoice {
@@ -86,6 +87,9 @@ pub struct Adaptation {
     pub scouts: Arc<ScoutService>,
     /// Every decider call inside a run (decision 16).
     pub deciders: DeciderContext,
+    /// Milestone 9.15 decision 12 (ruling C9): the distill worker, which the
+    /// `QueueDistill` executor wakes; `None` in a daemon without one (a test's).
+    pub lessons: Option<Arc<crate::lessons::service::LessonService>>,
 }
 
 /// The fallback reason when the daemon has no decider context (a test's service).
@@ -246,6 +250,17 @@ impl RunService {
         .map_err(|error| format!("a blocking step did not finish: {error}"))??;
         input.evidence = evidence;
         Ok(())
+    }
+
+    /// Milestone 9.15 (ruling C9): the daemon's one lessons lock map, which the distill
+    /// worker shares.
+    pub fn lesson_locks(&self) -> Arc<crate::lessons::store::LessonLocks> {
+        self.lessons.clone()
+    }
+
+    /// Milestone 9.15: the daemon's `[lessons]` table, read once at start.
+    pub fn lessons_config(&self) -> config::Lessons {
+        self.ctx.lessons.clone()
     }
 
     /// Sets the services once; a second call is ignored.

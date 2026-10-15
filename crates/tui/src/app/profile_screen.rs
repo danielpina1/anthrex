@@ -108,18 +108,26 @@ pub enum ProfilePage {
         scroll: usize,
     },
     Edit(Box<Editor>),
+    /// Milestone 9.15 decision 35: the Lessons page (`l`).
+    Lessons(Box<LessonsPage>),
 }
 
 /// What a pending profile request asked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProfileAsk {
     Status,
-    Show { proposed: bool },
+    Show {
+        proposed: bool,
+    },
     Detect,
     Edit,
     Confirm,
     Discard,
     RevertEdit,
+    /// Milestone 9.15: a lessons request; `list` for a `List` (a view).
+    Lessons {
+        list: bool,
+    },
 }
 
 /// An edit sent from the screen whose outcome is not known yet: once its check passes
@@ -168,6 +176,8 @@ pub struct ProfileScreen {
     /// time (the daemon's clock, unix seconds): the screen's opening, or the last
     /// **Use this**. Older ones stay in `anthrex profile status`.
     pub(crate) drops_since: u64,
+    /// Milestone 9.15 decision 36: the proposed lessons in the last list.
+    pub to_review: usize,
 }
 
 /// Interfaces-style refusal of `C-b a`, `C-b m` and `C-b t` over a full screen.
@@ -195,6 +205,7 @@ impl ProfileScreen {
             acting: None,
             drain_until: None,
             drops_since: 0,
+            to_review: 0,
         }
     }
 
@@ -429,11 +440,14 @@ impl App {
     /// Opens the screen on `dir` (replacing any open screen) and asks the three things;
     /// a ready review proposal shows as the card (decision 27).
     pub(crate) fn open_profile_on(&mut self, dir: PathBuf) -> Vec<Effect> {
+        let dir_of = dir.clone();
         let mut screen = ProfileScreen::new(dir);
         // Final re-review N2: drops older than the screen are not drawn.
         screen.drops_since = self.run_now();
         self.set_screen(Some(Screen::Profile(Box::new(screen))));
-        self.profile_fetch_all(Instant::now())
+        let mut effects = self.profile_fetch_all(Instant::now());
+        effects.push(self.lessons_list_on_open(dir_of));
+        effects
     }
 
     fn profile_screen_mut(&mut self) -> Option<&mut ProfileScreen> {
@@ -509,6 +523,9 @@ impl App {
 
 #[path = "profile_keys.rs"]
 mod keys;
+#[path = "profile_lessons.rs"]
+pub(crate) mod lessons;
+pub use lessons::LessonsPage;
 #[path = "profile_pages.rs"]
 mod pages;
 #[path = "profile_views.rs"]

@@ -96,6 +96,9 @@ pub(super) fn start_gates(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             run.tasks[i].gate_op = None;
             continue;
         }
+        if state != TaskState::Review {
+            super::risk_note::queue_once(run, i, now); // 9.15 decision 28
+        }
         // M8b decision 20: a failed check waiting for its summary runs no other.
         if run.tasks[i].gate_op.is_some() || run.tasks[i].pending_failure.is_some() {
             continue;

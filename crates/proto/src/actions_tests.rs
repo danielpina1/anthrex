@@ -75,6 +75,11 @@ fn needs_and_destructive_follow_the_table() {
     assert_eq!(Stats.needs(), ActionNeeds::Open);
     assert_eq!(OpenConversation.needs(), ActionNeeds::Open);
     assert_eq!(Accept.needs(), ActionNeeds::Confirm);
+    // Milestone 9.15 decision 32: a discard opens its optional reason's form.
+    assert_eq!(
+        Discard.needs(),
+        ActionNeeds::Input(InputKind::DiscardReason)
+    );
     let destructive: Vec<_> = every_kind()
         .into_iter()
         .filter(ActionKind::destructive)

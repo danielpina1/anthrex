@@ -129,9 +129,7 @@ impl RunHarness {
         let lines = format!("{}{orchestrator}", decider_lines(mode));
         let mut harness = Self::unstarted(&lines, env, true, files);
         if !extra_toml.is_empty() {
-            let config = harness.dir.path().join("config.toml");
-            let text = std::fs::read_to_string(&config).unwrap();
-            std::fs::write(&config, format!("{text}\n{extra_toml}\n")).unwrap();
+            super::lessons::append_toml(&harness.dir.path().join("config.toml"), extra_toml);
         }
         let deciders = harness.decider_dir();
         std::fs::create_dir_all(&deciders).unwrap();
@@ -170,11 +168,14 @@ impl RunHarness {
 
     /// Every decider call `fake-agent` recorded (`calls.jsonl`: kind, argv, prompt) but
     /// the run name's, which every goal's start makes (the run title change; see
-    /// [`RunHarness::run_name_calls`]).
+    /// [`RunHarness::run_name_calls`]), and the lessons' `distill` and `risk_note`.
     pub fn decider_calls(&self) -> Vec<Value> {
         let all = jsonl(&self.decider_dir().join("calls.jsonl"));
         all.into_iter()
-            .filter(|c| c["kind"] != "run_name")
+            // Milestone 9.15 ruling C3: nor the lessons' background calls.
+            .filter(|c| {
+                !["run_name", "distill", "risk_note"].contains(&c["kind"].as_str().unwrap_or(""))
+            })
             .collect()
     }
 

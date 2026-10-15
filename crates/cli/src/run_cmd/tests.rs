@@ -13,6 +13,7 @@ fn finish_requests_outwait_the_accept_merge() {
             run_id: "r".into(),
             action,
             confirm: None,
+            reason: None,
         };
         assert!(
             request_timeout(&finish) >= ACCEPT_MERGE_TIMEOUT + Duration::from_secs(60),
@@ -23,6 +24,12 @@ fn finish_requests_outwait_the_accept_merge() {
     assert_eq!(request_timeout(&RunRequest::List), RUN_REQUEST_TIMEOUT);
     let approve = RunRequest::Approve { run_id: "r".into() };
     assert_eq!(request_timeout(&approve), RUN_REQUEST_TIMEOUT);
+    // Milestone 9.15: `anthrex lessons`' requests.
+    let lessons = RunRequest::Lessons(proto::LessonsRequest::List {
+        dir: "/r".into(),
+        all: false,
+    });
+    assert_eq!(request_timeout(&lessons), RUN_REQUEST_TIMEOUT);
 }
 
 /// Ruling T23-I2: `--base` takes the listed head or any hex prefix of it of at least
@@ -203,4 +210,51 @@ fn a_full_list_names_the_cap() {
         resolve_run(&finished(TERMINAL_RUNS_SHOWN - 1), "nope").unwrap_err(),
         "no run matches 'nope'"
     );
+}
+
+/// Milestone 9.15 decision 26: `run discard --reason <text>` sends the text cleaned to
+/// one line; a blank one is no reason.
+#[test]
+fn discard_takes_a_reason() {
+    use clap::Parser;
+    let parsed = |argv: &[&str]| match crate::Cli::try_parse_from(argv).unwrap().command {
+        Some(crate::Command::Run(args)) => match args.command {
+            super::RunCommand::Discard { run, reason, .. } => (run, reason),
+            other => panic!("{other:?}"),
+        },
+        other => panic!("{other:?}"),
+    };
+    let argv = [
+        "anthrex",
+        "run",
+        "discard",
+        "r",
+        "--reason",
+        "too big\nsplit it",
+        "--confirm",
+        "r",
+    ];
+    let (run, reason) = parsed(&argv);
+    assert_eq!(
+        (run.as_str(), reason.as_deref()),
+        ("r", Some("too big\nsplit it"))
+    );
+    assert_eq!(
+        super::finish::discard_request("r", Some("r".into()), reason.as_deref()),
+        RunRequest::Finish {
+            run_id: "r".into(),
+            action: FinishAction::Discard,
+            confirm: Some("r".into()),
+            reason: Some("too big split it".into()),
+        }
+    );
+    let (_, none) = parsed(&["anthrex", "run", "discard", "r"]);
+    assert_eq!(none, None);
+    for blank in [None, Some(""), Some("  \n ")] {
+        let RunRequest::Finish { reason, .. } = super::finish::discard_request("r", None, blank)
+        else {
+            unreachable!()
+        };
+        assert_eq!(reason, None, "{blank:?}");
+    }
 }

@@ -131,7 +131,8 @@ pub struct BrainstormChoice {
     pub effort: Option<String>,
 }
 
-/// The six one-shot calls (MR D5), in `DeciderKind::ALL`'s order but `run_name` first.
+/// The one-shot calls (MR D5), in `DeciderKind::ALL`'s order but `run_name` first;
+/// milestone 9.15 decision 32 appends `distill` and `risk_note`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HelperKind {
@@ -141,16 +142,20 @@ pub enum HelperKind {
     CheckSummary,
     BlockedReason,
     CiSummary,
+    Distill,
+    RiskNote,
 }
 
 impl HelperKind {
-    pub const ALL: [HelperKind; 6] = [
+    pub const ALL: [HelperKind; 8] = [
         HelperKind::RunName,
         HelperKind::Triage,
         HelperKind::SizeCheck,
         HelperKind::CheckSummary,
         HelperKind::BlockedReason,
         HelperKind::CiSummary,
+        HelperKind::Distill,
+        HelperKind::RiskNote,
     ];
 
     /// `run_name`, `triage`, … (the TOML table and the `DeciderKind::label`).
@@ -162,11 +167,13 @@ impl HelperKind {
             HelperKind::CheckSummary => "check_summary",
             HelperKind::BlockedReason => "blocked_reason",
             HelperKind::CiSummary => "ci_summary",
+            HelperKind::Distill => "distill",
+            HelperKind::RiskNote => "risk_note",
         }
     }
 
     /// What the table shows: `run name`, `triage`, `size check`, `check summary`,
-    /// `blocked reason`, `ci summary`.
+    /// `blocked reason`, `ci summary`, `distill`, `risk note`.
     pub fn label(self) -> &'static str {
         match self {
             HelperKind::RunName => "run name",
@@ -175,6 +182,8 @@ impl HelperKind {
             HelperKind::CheckSummary => "check summary",
             HelperKind::BlockedReason => "blocked reason",
             HelperKind::CiSummary => "ci summary",
+            HelperKind::Distill => "distill",
+            HelperKind::RiskNote => "risk note",
         }
     }
 }

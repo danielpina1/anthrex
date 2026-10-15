@@ -39,6 +39,9 @@ pub(super) struct DoneHolds {
     ops: Option<Duration>,
     window: Option<Duration>,
     pub(super) read_back: Option<Duration>,
+    /// Task 9's review, I3: a hold before the `QueueDistill` write, so a test can show
+    /// that it waits for the store rather than reading it once.
+    pub(super) distill: Option<Duration>,
 }
 
 impl DoneHolds {
@@ -55,6 +58,7 @@ impl DoneHolds {
             ops: read("ANTHREX_TEST_DELAY_DONE_MS"),
             window: read("ANTHREX_TEST_DELAY_WINDOW_MS"),
             read_back: read("ANTHREX_TEST_DELAY_READ_BACK_MS"),
+            distill: read("ANTHREX_TEST_DELAY_DISTILL_MS"),
         }
     }
 

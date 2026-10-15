@@ -212,7 +212,7 @@ fn row(label: &'static str, value: impl Into<String>, marks: Marks) -> SectionFi
     }
 }
 
-/// EVIDENCE: `diff`, `review`, `summary` with its source note, `merged`.
+/// EVIDENCE: `diff`, `review`, `summary` with its source note, `risk note`, `merged`.
 pub(super) fn evidence(run: &RunInfo, task: &TaskInfo, app: &App) -> Section {
     let mut fields = Vec::new();
     if let Some(diff) = diff_text(task) {
@@ -232,6 +232,12 @@ pub(super) fn evidence(run: &RunInfo, task: &TaskInfo, app: &App) -> Section {
             note,
             ..row("summary", summary.clone(), Marks::None)
         });
+    }
+    // Milestone 9.15 decision 30: model text written from the brief, drawn line by line.
+    if let Some(DetailState::Ready(detail)) = app.task_detail_for(&run.run_id, &task.id)
+        && let Some(note) = detail.risk_note.as_ref().filter(|n| !n.trim().is_empty())
+    {
+        fields.push(row("risk note", note.clone(), Marks::None));
     }
     if let Some(commit) = &task.merge_commit {
         let mut text: String = one_line(commit).chars().take(7).collect();

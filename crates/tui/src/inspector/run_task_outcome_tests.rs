@@ -79,6 +79,7 @@ pub(crate) fn land_detail(app: &mut App, summary: Option<&str>) {
             acceptance: CRITERIA.map(String::from).to_vec(),
             worker_summary: summary.map(str::to_owned),
             summary_source: summary.map(|_| SummarySource::TaskDone),
+            risk_note: None,
         })),
     });
 }

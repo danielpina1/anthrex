@@ -58,6 +58,8 @@ pub fn render(request: &DeciderRequest) -> String {
         DeciderRequest::BlockedReason(input) => blocked_reason(input),
         DeciderRequest::CiSummary(input) => super::ci::prompt(input),
         DeciderRequest::RunName(input) => super::run_name::prompt(input),
+        DeciderRequest::Distill(input) => super::distill::prompt(input),
+        DeciderRequest::RiskNote(input) => super::risk_note::prompt(input),
     };
     clamp(prompt)
 }

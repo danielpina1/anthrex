@@ -212,6 +212,12 @@ pub fn body(form: &ActionForm, width: u16, p: Palette) -> Vec<Line<'static>> {
             body.extend(area_rows("reason", lw, &f.reason, REASON_ROWS, vw, p));
             body.extend(why_not(form, f.blank, lw, p));
         }
+        // Milestone 9.15 decision 40: optional, so nothing says it is missing.
+        ActionForm::DiscardReason(f) => {
+            let lw = 8;
+            let vw = usize::from(width).saturating_sub(lw);
+            body.extend(area_rows("reason", lw, &f.reason, REASON_ROWS, vw, p));
+        }
         ActionForm::Resume(f) => {
             let lw = 12;
             body.push(choice_row(

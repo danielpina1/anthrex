@@ -498,6 +498,7 @@ pub fn op_name(kind: &OpKind) -> &'static str {
         OpKind::CrownRacer { .. } => "CrownRacer",
         OpKind::StartDesignAgent { .. } => "StartDesignAgent",
         OpKind::CommitDesignDocs(_) => "CommitDesignDocs",
+        OpKind::QueueDistill { .. } => "QueueDistill",
     }
 }
 

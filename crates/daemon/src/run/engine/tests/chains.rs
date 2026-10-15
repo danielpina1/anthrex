@@ -23,6 +23,7 @@ pub(super) fn finished(fx: &mut Fixture, action: FinishAction) {
         reply,
         run_id: RUN_ID.into(),
         action,
+        reason: None,
     });
     let (name, outcome) = match action {
         FinishAction::Accept => ("Accept", "accepted"),

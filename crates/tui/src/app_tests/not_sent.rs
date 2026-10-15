@@ -42,6 +42,7 @@ fn action_requests() -> Vec<(ActionKind, RunRequest)> {
                 run_id: run_id(),
                 action: FinishAction::Accept,
                 confirm: Some(run_id()),
+                reason: None,
             },
         ),
         (
@@ -50,6 +51,7 @@ fn action_requests() -> Vec<(ActionKind, RunRequest)> {
                 run_id: run_id(),
                 action: FinishAction::Discard,
                 confirm: Some(run_id()),
+                reason: None,
             },
         ),
         (

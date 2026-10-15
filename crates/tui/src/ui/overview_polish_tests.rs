@@ -133,6 +133,7 @@ fn long_task() -> App {
             acceptance: vec!["every event maps".into()],
             worker_summary: None,
             summary_source: None,
+            risk_note: None,
         })),
     });
     key(&mut app, KeyCode::Char('b'));

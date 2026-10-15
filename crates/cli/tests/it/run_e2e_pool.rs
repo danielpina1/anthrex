@@ -106,6 +106,7 @@ fn accept(h: &RunHarness, id: &str) {
         run_id: id.to_string(),
         action: FinishAction::Accept,
         confirm: Some(id.to_string()),
+        reason: None,
     }) {
         RunReply::Done { .. } => {}
         other => panic!("expected the accept, got {other:?}"),

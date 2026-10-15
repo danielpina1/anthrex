@@ -406,12 +406,14 @@ fn run_worktrees(run: &Run) -> Vec<(std::path::PathBuf, String)> {
 /// `run accept` and `run discard` (decision 20) on a complete run: one `Accept` or
 /// `Discard` op, answered when its result comes. The driver has already checked the
 /// confirmation and, for accept, the base (decision 20's moved base); `expected_base` is
-/// the base head the user confirmed.
+/// the base head the user confirmed. Milestone 9.15 decision 26: a discard keeps its
+/// `reason`, cleaned again here; an accept ignores it.
 pub(super) fn finish(
     state: &mut EngineState,
     reply: ReplyId,
     run_id: &str,
     action: FinishAction,
+    reason: Option<String>,
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
@@ -439,10 +441,12 @@ pub(super) fn finish(
             worktrees,
             branch_prefix,
         },
+        // Review I1 of M9.15.7: the reason waits with the op (see `finished`).
         FinishAction::Discard => OpKind::Discard {
             root,
             worktrees,
             branch_prefix,
+            reason: proto::discard_reason(reason.as_deref()),
         },
     };
     let op = next_op(run);
@@ -490,6 +494,10 @@ pub(super) fn finished(
                 (RunState::Discarded, "discarded")
             };
             run.state = state;
+            // Decision 26: a discard's reason reaches the run once the discard is done.
+            if let OpKind::Discard { reason, .. } = kind {
+                run.discard_reason = reason.clone();
+            }
             log(run, now, format!("{done}: {outcome}"));
             run.outcome = Some(outcome.clone());
             let mut windows: Vec<u32> = run
