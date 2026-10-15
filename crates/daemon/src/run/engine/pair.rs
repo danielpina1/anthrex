@@ -66,12 +66,18 @@ pub(super) fn begin(run: &mut Run, i: usize) {
 /// which its cap is checked against: a paired task's test writer's (the route [`begin`]
 /// gives it), else the task's.
 pub(super) fn dispatch_runtime(run: &Run, i: usize) -> Runtime {
+    dispatch_route(run, i).1.runtime
+}
+
+/// Milestone 9.16 decision 38: whether task `i`'s first session at dispatch is its test
+/// writer, and that session's route ([`dispatch_runtime`]'s).
+pub(super) fn dispatch_route(run: &Run, i: usize) -> (bool, Route) {
     let task = &run.tasks[i];
     match task.pair.as_ref() {
-        Some(pair) if writing(task) => pair.writer_route.runtime,
-        Some(_) => task.route.runtime,
-        None if task.spec.pair => writer_route(run, i).runtime,
-        None => task.route.runtime,
+        Some(pair) if writing(task) => (true, pair.writer_route.clone()),
+        Some(_) => (false, task.route.clone()),
+        None if task.spec.pair => (true, writer_route(run, i)),
+        None => (false, task.route.clone()),
     }
 }
 

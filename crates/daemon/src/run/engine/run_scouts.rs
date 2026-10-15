@@ -4,9 +4,11 @@
 //! stored by the service; the engine records that it reported, and its usage. Pure
 //! (design decision 2).
 
+use proto::models::Role;
 use proto::{AgentRole, RoleOutcome};
 
 use super::brakes::Gate;
+use super::failover::{self, Starter};
 use super::orch::{Pass, refuse, settle_quiet};
 use super::requests::log;
 use super::wake;
@@ -86,7 +88,8 @@ pub(super) fn spawn(
 }
 
 /// Starts the oldest queued run scout; false when none is queued, or when `gate`
-/// refuses the `research` row's runtime (milestone 9.16 decision 11, ruling C6).
+/// refuses the `research` row's runtime (milestone 9.16 decision 11, ruling C6) and it
+/// cannot fail over (decisions 36–41).
 pub(super) fn start_next(run: &mut Run, now: u64, gate: &mut Gate, fx: &mut Vec<Effect>) -> bool {
     let Some(k) = run
         .orch
@@ -96,8 +99,13 @@ pub(super) fn start_next(run: &mut Run, now: u64, gate: &mut Gate, fx: &mut Vec<
     else {
         return false;
     };
-    let runtime = crate::run::orch::launch::scout_route(run).runtime;
-    if !super::brakes::admits(gate, run, runtime, now) {
+    // Decisions 36–41: a quota-braked one may start on the row's fallback, the route
+    // its record names (`launch::run_scout_route`).
+    let current = crate::run::orch::launch::scout_route(run);
+    let id = run.orch.run_scouts[k].id.clone();
+    let starter = Starter::Scout(&id);
+    let admit = failover::admit(gate, run, starter, Role::Research, &current);
+    if failover::start(gate, run, starter, admit, current.runtime, now).is_none() {
         return false;
     }
     let spec = scout_spec(run, &run.orch.run_scouts[k], &run.root, &run.project);

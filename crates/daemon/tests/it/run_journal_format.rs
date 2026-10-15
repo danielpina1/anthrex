@@ -32,9 +32,9 @@ fn run_file(data: &Path) -> std::path::PathBuf {
 #[test]
 fn a_saved_run_records_its_format() {
     let data = tempfile::tempdir().unwrap();
-    assert_eq!(RUN_FORMAT, 4);
+    assert_eq!(RUN_FORMAT, 5);
     let json = saved_json(data.path());
-    assert_eq!(json["format"], serde_json::json!(4), "{json}");
+    assert_eq!(json["format"], serde_json::json!(5), "{json}");
 }
 
 /// Pinning (milestone 9.13, decision 36's bump to 2): a `run.json` a 9.11 or 9.12
@@ -87,6 +87,63 @@ fn a_format_3_run_loads() {
     assert_eq!(runs[0].0.id, id);
 }
 
+/// Pinning (milestone 9.16, pre-flight ruling C2's bump to 5): the `run.json` a 9.15
+/// daemon writes (stamped format 4, its frozen lessons, a task's risk note and a discard
+/// reason among its fields; captured by a throwaway test, M9.16.6) still loads, keeps
+/// those fields, and has no failovers.
+#[test]
+fn a_format_4_run_loads() {
+    let text = include_str!("../fixtures/run/m915-run.json");
+    let json: serde_json::Value = serde_json::from_str(text).unwrap();
+    assert_eq!(json["format"], serde_json::json!(4));
+    assert!(json["lessons"].is_object(), "a 9.15 field");
+    let id = json["id"].as_str().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let dir = data.path().join("runs").join(id);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(RUN_FILE), text).unwrap();
+    let (runs, problems) = load_all(data.path());
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(runs.len(), 1);
+    let run = &runs[0].0;
+    assert_eq!(run.id, id);
+    assert!(run.lessons.is_some());
+    assert!(run.tasks[0].risk_note.is_some());
+    assert!(run.discard_reason.is_some());
+    assert!(run.failovers.is_empty());
+}
+
+/// Milestone 9.16 (ruling C2): a run's failovers reach `run.json` stamped format 5 and
+/// survive a load.
+#[test]
+fn failovers_are_saved_as_format_5() {
+    let data = tempfile::tempdir().unwrap();
+    let mut run = plain_run(data.path());
+    let route = |runtime, model: &str| proto::Route {
+        runtime,
+        model: model.into(),
+        effort: proto::Effort::DEFAULT,
+    };
+    let (from, to) = (
+        route(proto::Runtime::Claude, "claude-sonnet-5"),
+        route(proto::Runtime::Codex, "gpt-6-sol"),
+    );
+    run.failovers.push(daemon::run::model::FailoverRecord {
+        who: "t1".into(),
+        from: from.clone(),
+        to: to.clone(),
+        at: 7,
+    });
+    save_run(&run).unwrap();
+    let json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(run_file(data.path())).unwrap()).unwrap();
+    assert_eq!(json["format"], serde_json::json!(5));
+    assert_eq!(json["failovers"][0]["who"], "t1");
+    let (runs, problems) = load_all(data.path());
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(runs[0].0.failovers, run.failovers);
+}
+
 /// Milestone 9.15 (ruling C1): a task record's signatures and `owns` reach `run.json`
 /// inside a pending `AppendHistory`, which a 9.14 daemon would drop: the run is saved as
 /// format 4, and both survive a load.
@@ -117,7 +174,7 @@ fn a_pending_task_record_keeps_its_signatures() {
     save_run(&run).unwrap();
     let json: serde_json::Value =
         serde_json::from_slice(&std::fs::read(run_file(data.path())).unwrap()).unwrap();
-    assert_eq!(json["format"], serde_json::json!(4));
+    assert_eq!(json["format"], serde_json::json!(5));
     let saved = json["pending_ops"]
         .as_object()
         .unwrap()
@@ -196,7 +253,7 @@ async fn a_run_from_a_newer_anthrex_is_left_alone() {
     let data = dir.path().join("data");
     let mut json = saved_json(&data);
     let object = json.as_object_mut().unwrap();
-    object.insert("format".into(), serde_json::json!(5));
+    object.insert("format".into(), serde_json::json!(6));
     object.insert(
         "a_field_from_the_future".into(),
         serde_json::json!({"kept": true}),
@@ -213,7 +270,7 @@ async fn a_run_from_a_newer_anthrex_is_left_alone() {
     assert_eq!(
         problems,
         [format!(
-            "run {RUN_ID} skipped: written by a newer anthrex (run format 5; this one reads up to 4); left as it is"
+            "run {RUN_ID} skipped: written by a newer anthrex (run format 6; this one reads up to 5); left as it is"
         )]
     );
     assert!(
@@ -271,7 +328,7 @@ fn a_run_whose_format_is_not_a_whole_number_is_left_alone() {
         assert_eq!(
             problems,
             [format!(
-                "run {RUN_ID} skipped: written by a newer anthrex (run format {format}; this one reads up to 4); left as it is"
+                "run {RUN_ID} skipped: written by a newer anthrex (run format {format}; this one reads up to 5); left as it is"
             )],
             "{format}"
         );

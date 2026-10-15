@@ -526,6 +526,7 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         // Milestone 9.15: frozen by the driver's start (`driver/lessons.rs`).
         lessons: None,
         discard_reason: None,
+        failovers: Vec::new(),
     })
 }
 

@@ -58,6 +58,7 @@ pub(crate) mod design;
 mod design_agents;
 pub(crate) mod design_commit;
 pub(crate) mod design_gate;
+// Milestone 9.16 decisions 36–45 (U17): cross-runtime failover.
 mod design_round;
 mod design_spend;
 mod dispatch;
@@ -66,6 +67,7 @@ mod done_checked;
 pub(crate) mod early;
 mod effect;
 mod event;
+pub(crate) mod failover;
 mod fallback;
 mod first_turn;
 mod fixes;

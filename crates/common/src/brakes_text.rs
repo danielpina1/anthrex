@@ -18,6 +18,12 @@ pub fn quota_held_text(runtime: Runtime, trip: &BrakeTripInfo) -> String {
     )
 }
 
+/// Decision 42 (`FAILOVER_ATTENTION_TEXT`): `<runtime> braked: <who> started on <other>
+/// (fallback)`.
+pub fn failover_attention_text(runtime: Runtime, who: &str, other: Runtime) -> String {
+    format!("{runtime} braked: {who} started on {other} (fallback)")
+}
+
 #[cfg(test)]
 mod tests {
     use proto::brakes::{Permille, QuotaWindow};
@@ -36,6 +42,14 @@ mod tests {
         assert_eq!(
             quota_held_text(Runtime::Claude, &trip),
             "claude dispatch held: 7d at 96% (≥95%) until 14:30 UTC"
+        );
+    }
+
+    #[test]
+    fn failover_attention_text_names_both_runtimes_and_who() {
+        assert_eq!(
+            failover_attention_text(Runtime::Claude, "t3", Runtime::Codex),
+            "claude braked: t3 started on codex (fallback)"
         );
     }
 }

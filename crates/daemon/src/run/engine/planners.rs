@@ -10,9 +10,11 @@
 //! under its epic's round, which its accepted epic submits to the user, so nothing it
 //! adds runs before the user approves a round that holds it.
 
-use proto::{RunPath, RunState};
+use proto::models::Role;
+use proto::{Route, RunPath, RunState};
 
 use super::brakes::Gate;
+use super::failover::{self, Admit, Starter};
 use super::orch::{Pass, refuse, settle_quiet};
 use super::requests::log;
 use super::{
@@ -63,12 +65,22 @@ pub(super) fn dispatch(run: &mut Run, now: u64, gate: &mut Gate, fx: &mut Vec<Ef
         return;
     }
     while super::schedule::readers_busy(run) < usize::from(run.limits.max_readers) {
-        if let Some(k) = (run.orch.epics.iter())
-            .position(|e| e.phase == PlannerPhase::Queued && gate.allows(e.route.runtime))
-        {
-            let runtime = run.orch.epics[k].route.runtime;
-            gate.started(run, runtime, now);
-            start(run, k, now, fx);
+        // Decisions 36–41: a quota-braked one may start on its row's fallback.
+        let admit = |e: &EpicRecord| {
+            let starter = Starter::Planner(&e.epic);
+            failover::admit(gate, run, starter, Role::Planner, &e.route)
+        };
+        let next = (run.orch.epics.iter())
+            .filter(|e| e.phase == PlannerPhase::Queued)
+            .find_map(|e| match admit(e) {
+                Admit::Wait => None,
+                admit => Some((e.epic.clone(), e.route.runtime, admit)),
+            });
+        if let Some((epic, runtime, admit)) = next {
+            let starter = Starter::Planner(&epic);
+            let from = failover::start(gate, run, starter, admit, runtime, now).flatten();
+            let k = (run.orch.epics.iter()).position(|e| e.epic == epic);
+            start(run, k.expect("the epic admitted"), from, now, fx);
         } else if !super::design_agents::start_next(run, now, gate, fx)
             && !run_scouts::start_next(run, now, gate, fx)
         {
@@ -77,8 +89,9 @@ pub(super) fn dispatch(run: &mut Run, now: u64, gate: &mut Gate, fx: &mut Vec<Ef
     }
 }
 
-/// Session `n + 1` of epic `k`'s sub-planner (decision 32).
-fn start(run: &mut Run, k: usize, now: u64, fx: &mut Vec<Effect>) {
+/// Session `n + 1` of epic `k`'s sub-planner (decision 32); `from`, the braked route it
+/// failed over from (milestone 9.16 decision 42).
+fn start(run: &mut Run, k: usize, from: Option<Route>, now: u64, fx: &mut Vec<Effect>) {
     let session = run.orch.epics[k].sessions.len() as u32 + 1;
     let op = next_op(run);
     let spec = planner_spec(run, &run.orch.epics[k], session);
@@ -96,7 +109,8 @@ fn start(run: &mut Run, k: usize, now: u64, fx: &mut Vec<Effect>) {
     let text = format!("sub-planner {} session {session} starting", epic.epic);
     log(run, now, text);
     // Decision 43: the session's record, before its start.
-    let record = roles::planner_record(run, k, session, now);
+    let mut record = roles::planner_record(run, k, session, now);
+    failover::mark(&mut record, from);
     history::open(run, record);
     let kind = OpKind::StartPlanner {
         spec: Box::new(spec),

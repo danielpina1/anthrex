@@ -96,17 +96,6 @@ impl Gate {
     }
 }
 
-/// Decision 11 at a reader entry point (a sub-planner, a design agent, a run scout, a
-/// research or review task): whether a fresh session of `runtime` may start now, the
-/// blind announcement made when it may.
-pub(super) fn admits(gate: &mut Gate, run: &mut Run, runtime: Runtime, now: u64) -> bool {
-    if !gate.allows(runtime) {
-        return false;
-    }
-    gate.started(run, runtime, now);
-    true
-}
-
 /// The step's gate at `now`; drops the trips that expired (`QuotaBook::verdict`).
 pub fn gate(brakes: &mut Brakes, now: u64) -> Gate {
     let mut gate = Gate {
@@ -149,7 +138,8 @@ pub fn info(brakes: &Brakes, now: u64) -> BrakesInfo {
 /// Decisions 13 and 21: a non-terminal run's brake lines, after its own attention
 /// (ruling C22). [`HOLD_TEXT`] while the hold is on; one [`quota_held_text`] per braked
 /// runtime that has something of this run waiting on it
-/// (`common::brakes_text::quota_held_text`, ruling C13).
+/// (`common::brakes_text::quota_held_text`, ruling C13); then decision 42's failover
+/// lines (`failover::attention`).
 pub fn attention(brakes: &Brakes, run: &Run, now: u64) -> Vec<String> {
     if run.state.is_terminal() {
         return Vec::new();
@@ -161,13 +151,18 @@ pub fn attention(brakes: &Brakes, run: &Run, now: u64) -> Vec<String> {
     if !brakes.config.quota_brake {
         return lines;
     }
+    let mut braked = BTreeSet::new();
     for quota in brakes.book.info(now, &brakes.config) {
-        if let Some(trip) = quota.trip.as_ref()
-            && waits_on(run, quota.runtime)
-        {
+        let Some(trip) = quota.trip.as_ref() else {
+            continue;
+        };
+        braked.insert(quota.runtime);
+        if waits_on(run, quota.runtime) {
             lines.push(common::brakes_text::quota_held_text(quota.runtime, trip));
         }
     }
+    // Decision 42: the failovers away from a runtime braked now.
+    lines.extend(super::failover::attention(&braked, run));
     lines
 }
 

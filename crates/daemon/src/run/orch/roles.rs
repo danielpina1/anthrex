@@ -317,16 +317,18 @@ pub fn design_agent_record(
 }
 
 /// The record of run scout `scout_id`'s session, on the route the driver starts it on
-/// (`launch::scout_route`: the run's `research` row, milestone 9.8).
+/// (`launch::run_scout_route`: the run's `research` row, milestone 9.8, or its fallback
+/// when the scout failed over, milestone 9.16 decision 42).
 pub fn scout_record(run: &Run, scout_id: &str, now: u64) -> RoleRoutingDecision {
-    let chosen = crate::run::orch::launch::scout_route(run);
+    let chosen = crate::run::orch::launch::run_scout_route(run, scout_id);
+    let from = crate::run::engine::failover::scout_route(run, scout_id).map(|f| f.from.clone());
     let row = row_candidates(run.limits.models().choice(Role::Research));
     let candidates = mark_not_installed(row, &run.orch.installed);
     let mut input = input_of(run);
     if let Some(scout) = run.orch.run_scouts.iter().find(|s| s.id == scout_id) {
         input.area = scout.area.clone();
     }
-    record(
+    let mut decision = record(
         Some(run),
         AgentRole::Scout,
         scout_id,
@@ -337,7 +339,9 @@ pub fn scout_record(run: &Run, scout_id: &str, now: u64) -> RoleRoutingDecision 
         candidates,
         &chosen,
         now,
-    )
+    );
+    crate::run::engine::failover::mark(&mut decision, from);
+    decision
 }
 
 /// A decider's record (`run`: a run-bound decider; `None`: pre-run triage, whose
