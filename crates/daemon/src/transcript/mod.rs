@@ -9,6 +9,7 @@ mod claude;
 mod codex;
 pub mod fill;
 pub mod reader;
+pub mod rollout;
 
 /// A transcript format version, as recognised by a parser's `detect`. It names the
 /// shape of the file, not the CLI release that wrote it.

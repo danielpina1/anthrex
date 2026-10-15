@@ -11,7 +11,6 @@
 //! frozen index entry) are read on
 //! `spawn_blocking`, within `CONTEXT_READ_TIMEOUT` and `IO_WAIT` (AGENTS.md rule 2).
 
-use std::ffi::OsString;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -33,6 +32,7 @@ use crate::run::design::state::sha256_hex;
 use crate::run::engine::{EventKind, OpKind, OpResult, OrchEvent, ScoutEnd};
 use crate::scout::design_spec::{DesignAgentKind, DesignAgentSpec};
 use crate::scout::service::{ScoutHandle, ScoutOutcome, ScoutService};
+use crate::transcript::rollout::codex_sessions_dir;
 
 /// Decision 30 and ruling T15-1: the frozen earlier spec read back, round 1's and each
 /// approved amendment, each against its index entry. What cannot be read in time is left
@@ -306,16 +306,6 @@ fn read_pack(path: &Path, expected: Option<&PackFile>) -> Result<String, String>
         return Err(mismatch());
     }
     String::from_utf8(bytes).map_err(|_| format!("{} is not UTF-8", path.display()))
-}
-
-/// Ruling T8-4: the folder Codex saves its sessions in, `$CODEX_HOME/sessions`, else
-/// `~/.codex/sessions`, from the daemon's environment (`var`).
-pub(super) fn codex_sessions_dir(var: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
-    let set = |key: &str| var(key).filter(|v| !v.is_empty()).map(PathBuf::from);
-    match set("CODEX_HOME") {
-        Some(home) => Some(home.join("sessions")),
-        None => set("HOME").map(|home| home.join(".codex").join("sessions")),
-    }
 }
 
 /// Ruling T8-4: a Claude brainstormer is also denied the Codex sessions folder; a Codex

@@ -279,8 +279,9 @@ async fn a_symlinked_data_dir_is_denied_by_both_its_paths() {
 #[test]
 fn a_claude_brainstormer_is_denied_the_codex_sessions() {
     use crate::run::design::state::{DesignAgent, DesignAgentState};
-    use crate::run::driver::design_ops::{codex_sessions_dir, deny_codex_sessions};
+    use crate::run::driver::design_ops::deny_codex_sessions;
     use crate::scout::design_spec::brainstormer_spec;
+    use crate::transcript::rollout::codex_sessions_dir;
     let env = |pairs: &'static [(&'static str, &'static str)]| {
         move |key: &str| {
             (pairs.iter())
