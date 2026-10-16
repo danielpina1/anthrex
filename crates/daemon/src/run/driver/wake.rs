@@ -196,8 +196,12 @@ impl Wakes {
     /// answer that held every note of `run_id`'s waiting wake-up (`notes_seq`, as the
     /// engine's `DigestRead` drops them) drops it, so an orchestrator that read the
     /// change by polling is not pasted at once its turn ends.
-    /// A request wake is not the read's to drop (milestone 9.3, D13).
+    /// A request wake is not the read's to drop (milestone 9.3, D13). The notes it
+    /// returned are remembered as delivered, so a wake-up queued after it (the
+    /// approval's own effect, applied once its step's lock is released) does not paste
+    /// them either.
     pub(super) fn read(&self, run_id: &str, notes_seq: u64) {
+        self.notes_pasted.read(run_id, notes_seq);
         let mut pending = crate::lock(&self.pending);
         if pending
             .get(run_id)
