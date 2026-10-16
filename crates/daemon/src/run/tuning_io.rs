@@ -17,6 +17,9 @@ use crate::profile::store::write_atomic;
 
 pub const TUNING_FILE: &str = "tuning.toml";
 
+/// Milestone 9.18 decision 5: how many `tuning.toml.bad-*` files a move leaves.
+pub const TUNING_BAD_KEEP: usize = 3;
+
 /// What [`load`] found.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Loaded {
@@ -61,7 +64,8 @@ fn read(path: &Path) -> io::Result<Option<String>> {
 }
 
 /// `<repo_dir>/tuning.toml`; one that does not parse is moved to
-/// `tuning.toml.bad-<now>` (`-<n>` added while that name is taken).
+/// `tuning.toml.bad-<now>` (`-<n>` added while that name is taken), and the older
+/// moved-aside files are pruned ([`prune_bad`]).
 pub fn load(repo_dir: &Path, now: u64) -> io::Result<Loaded> {
     let path = repo_dir.join(TUNING_FILE);
     let Some(text) = read(&path)? else {
@@ -81,7 +85,43 @@ pub fn load(repo_dir: &Path, now: u64) -> io::Result<Loaded> {
     };
     let moved_to = (0..).map(bad).find(|p| !p.exists()).expect("a free name");
     std::fs::rename(&path, &moved_to)?;
+    prune_bad(repo_dir, &moved_to);
     Ok(Loaded::MovedBad { error, moved_to })
+}
+
+/// Milestone 9.18 decision 5 and ruling C20: removes every `tuning.toml.bad-<secs>[-n]`
+/// in `repo_dir` but `moved_to` (the file just moved aside, kept even when the clock
+/// went back) and the `TUNING_BAD_KEEP - 1` newest others by `(secs, n)`. A name that
+/// does not parse is never removed; a failed read or removal is ignored.
+fn prune_bad(repo_dir: &Path, moved_to: &Path) {
+    let Ok(entries) = std::fs::read_dir(repo_dir) else {
+        return;
+    };
+    let just_moved = moved_to.file_name();
+    let mut others: Vec<((u64, u64), PathBuf)> = (entries.flatten())
+        .filter(|entry| Some(entry.file_name().as_os_str()) != just_moved)
+        .filter_map(|entry| Some((bad_stamp(entry.file_name().to_str()?)?, entry.path())))
+        .collect();
+    others.sort_by_key(|(stamp, _)| std::cmp::Reverse(*stamp));
+    for (_, path) in others.into_iter().skip(TUNING_BAD_KEEP.saturating_sub(1)) {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+/// The `(secs, n)` of a `tuning.toml.bad-<secs>[-<n>]` name (`n` 0 when absent), or
+/// `None` for any other name.
+fn bad_stamp(name: &str) -> Option<(u64, u64)> {
+    let rest = name.strip_prefix(TUNING_FILE)?.strip_prefix(".bad-")?;
+    let (secs, n) = match rest.split_once('-') {
+        Some((secs, n)) => (secs, Some(n)),
+        None => (rest, None),
+    };
+    let number = |s: &str| {
+        (!s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
+            .then(|| s.parse::<u64>().ok())
+            .flatten()
+    };
+    Some((number(secs)?, n.map_or(Some(0), number)?))
 }
 
 /// The file as [`load`] reads it, never moved (milestone 9.5 decision 48's read-only

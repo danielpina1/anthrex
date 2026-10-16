@@ -14,6 +14,7 @@ use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use super::LESSONS_FILE;
 use super::fold;
+use super::service::DAY_SECS;
 use crate::run::history_io::{self, UNREADABLE};
 
 /// One `tokio::sync::Mutex` per repository data directory, as `TuningLocks`. The map's
@@ -35,6 +36,13 @@ impl LessonLocks {
             .or_default()
             .clone();
         lock.lock_owned().await
+    }
+
+    /// How many hold or wait for `repo_dir`'s lock, the map's own reference included
+    /// (0 for a repository never locked): the service test's view of a waiting pass.
+    #[cfg(test)]
+    pub(crate) async fn holders(&self, repo_dir: &Path) -> usize {
+        (self.repos.lock().await.get(repo_dir)).map_or(0, Arc::strong_count)
     }
 }
 
@@ -106,6 +114,110 @@ async fn blocking<T: Send + 'static>(
         .unwrap_or_else(|error| Err(io::Error::other(error)))
 }
 
+/// Decision 4: the size below which [`compact`] leaves the store alone.
+pub const LESSONS_COMPACT_BYTES: u64 = 1024 * 1024;
+
+/// What [`compact`] did: nothing, or a rewrite from `before` lines to `after`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Compacted {
+    Skipped,
+    Rewrote { before: usize, after: usize },
+}
+
+/// Milestone 9.18 decision 3: rewrites the store at `path` without (a) an `attempt`
+/// line whose entry has a `distilled` or `gave_up` line, when it is at least
+/// [`DAY_SECS`] old at `now` (ruling C1: the daily cap still counts the recent ones),
+/// and (b) a line whose `record_id` a later line that parses repeats. A line that does
+/// not parse is kept byte for byte, in place, a torn last line included. Decision 4:
+/// skipped under [`LESSONS_COMPACT_BYTES`], or when less than a quarter of the lines
+/// would go. The rewrite is `write_atomic`, so a lock-free reader reads the whole old
+/// file or the whole new one, and a failed one leaves the file as it was. Blocking; the
+/// caller holds the repository's [`LessonLocks`] entry ([`compact_locked`]).
+pub fn compact(path: &Path, now: u64) -> io::Result<Compacted> {
+    match std::fs::metadata(path) {
+        Ok(meta) if meta.len() >= LESSONS_COMPACT_BYTES => {}
+        Ok(_) => return Ok(Compacted::Skipped),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Compacted::Skipped),
+        Err(error) => return Err(error),
+    }
+    let bytes = std::fs::read(path)?;
+    let segments: Vec<&[u8]> = bytes.split_inclusive(|b| *b == b'\n').collect();
+    let keep = kept(&segments, now);
+    let before = segments.len();
+    let after = keep.iter().filter(|k| **k).count();
+    if (before - after) * 4 < before {
+        return Ok(Compacted::Skipped);
+    }
+    let mut out = Vec::with_capacity(bytes.len());
+    for (segment, _) in segments.iter().zip(&keep).filter(|(_, k)| **k) {
+        out.extend_from_slice(segment);
+    }
+    crate::profile::store::write_atomic(path, &out)?;
+    Ok(Compacted::Rewrote { before, after })
+}
+
+/// Ruling C19: [`compact`] under `repo_dir`'s [`LessonLocks`] entry, on
+/// `spawn_blocking`. A failure is a warning and `None`, the file as it was. The lock is
+/// held untimed across the rewrite's `fsync`s, as [`append`] holds it across its own
+/// (AGENTS.md rule 2 is kept: no tokio worker blocks, only this repository's writers
+/// wait).
+pub async fn compact_locked(locks: &LessonLocks, repo_dir: &Path, now: u64) -> Option<Compacted> {
+    let path = repo_dir.join(LESSONS_FILE);
+    let shown = path.display().to_string();
+    let _guard = locks.lock(repo_dir).await;
+    match blocking(move || compact(&path, now)).await {
+        Ok(done) => {
+            if let Compacted::Rewrote { before, after } = done {
+                tracing::info!("lessons: compacted {shown} from {before} lines to {after}");
+            }
+            Some(done)
+        }
+        Err(error) => {
+            tracing::warn!("lessons: {shown} was not compacted: {error}");
+            None
+        }
+    }
+}
+
+/// Which of the store's raw lines (`\n` included) [`compact`] keeps.
+fn kept(segments: &[&[u8]], now: u64) -> Vec<bool> {
+    let parsed: Vec<Option<LessonLine>> = (segments.iter())
+        .map(|raw| {
+            let raw = raw.strip_suffix(b"\n").unwrap_or(raw);
+            let raw = raw.strip_suffix(b"\r").unwrap_or(raw);
+            serde_json::from_slice(raw).ok()
+        })
+        .collect();
+    let mut last: HashMap<&str, usize> = HashMap::new();
+    for (n, line) in parsed.iter().enumerate() {
+        if let Some(line) = line {
+            last.insert(line.record_id(), n);
+        }
+    }
+    let live = |n: usize, line: &LessonLine| last.get(line.record_id()) == Some(&n);
+    let closed: std::collections::HashSet<&str> = (parsed.iter().enumerate())
+        .filter_map(|(n, line)| match line.as_ref()? {
+            LessonLine::Distilled(d) if live(n, line.as_ref()?) => Some(d.queued.as_str()),
+            LessonLine::GaveUp(g) if live(n, line.as_ref()?) => Some(g.queued.as_str()),
+            _ => None,
+        })
+        .collect();
+    (parsed.iter().enumerate())
+        .map(|(n, line)| match line {
+            None => true,
+            Some(line) if !live(n, line) => false,
+            Some(LessonLine::Attempt(a)) => {
+                !(closed.contains(a.queued.as_str()) && now.saturating_sub(a.at) >= DAY_SECS)
+            }
+            Some(_) => true,
+        })
+        .collect()
+}
+
 #[cfg(test)]
 #[path = "store_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "store_tests_compact.rs"]
+mod tests_compact;

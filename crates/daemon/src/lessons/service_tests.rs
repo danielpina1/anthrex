@@ -29,6 +29,7 @@ struct Rig {
     data: PathBuf,
     clock: Arc<AtomicU64>,
     calls: Arc<AtomicUsize>,
+    locks: Arc<LessonLocks>,
 }
 
 impl Rig {
@@ -40,6 +41,7 @@ impl Rig {
             data,
             clock: Arc::new(AtomicU64::new(T)),
             calls: Arc::new(AtomicUsize::new(0)),
+            locks: Arc::new(LessonLocks::default()),
         }
     }
 
@@ -88,7 +90,7 @@ impl Rig {
             deciders,
             data_dir: self.data.clone(),
             config,
-            locks: Arc::new(LessonLocks::default()),
+            locks: self.locks.clone(),
             braked,
         };
         LessonService::start_seamed(parts, timing, decide)
@@ -360,3 +362,80 @@ async fn deciders_off_close_every_open_entry_without_a_call() {
 #[cfg(test)]
 #[path = "service_brake_tests.rs"]
 mod brake;
+
+/// Waits (a deadline loop) until `n` holders share `repo`'s store lock: one per guard
+/// and one per waiter, plus the lock map's own.
+async fn holders(locks: &LessonLocks, repo: &Path, n: usize) {
+    let deadline = Instant::now() + PASS_WAIT;
+    while locks.holders(repo).await != n {
+        assert!(
+            Instant::now() < deadline,
+            "{n} holders of the store lock not within {PASS_WAIT:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+/// Task M9.18.3, ruling C19: the pass compacts a store over the threshold, under the
+/// repository's lock, so an append that waits for the lock lands after the rewrite.
+#[tokio::test]
+async fn serve_compacts_a_large_store_under_its_lock() {
+    use crate::lessons::store::{LESSONS_COMPACT_BYTES, append};
+    let rig = Rig::new();
+    let repo = rig.repo("big");
+    // Closed entries of four lines each, two of them attempts two days old: half the
+    // store's lines go.
+    let old = T - 2 * super::DAY_SECS;
+    let mut text = String::new();
+    let mut entries = 0;
+    while (text.len() as u64) <= LESSONS_COMPACT_BYTES {
+        let id = format!("r{entries}");
+        let mut queued = queued(&id, old);
+        if let LessonLine::Queued(q) = &mut queued {
+            q.dossier = "d".repeat(4096);
+        }
+        let closed = LessonLine::GaveUp(proto::GaveUpLine {
+            v: LESSONS_VERSION,
+            record_id: format!("{id}/t1/distill/gave_up"),
+            at: old + 2,
+            queued: format!("{id}/t1/distill"),
+            reason: "no answer".into(),
+        });
+        let four = [
+            queued,
+            attempt(&id, 1, old, Some("no answer")),
+            attempt(&id, 2, old + 1, Some("no answer")),
+            closed,
+        ];
+        for line in &four {
+            text.push_str(&serde_json::to_string(line).unwrap());
+            text.push('\n');
+        }
+        entries += 1;
+    }
+    std::fs::write(repo.join(LESSONS_FILE), text).unwrap();
+
+    // The test holds the lock, so the pass waits for it, and the append behind the pass.
+    let guard = rig.locks.lock(&repo).await;
+    let service = rig.start(10, DeciderMode::Claude);
+    holders(&rig.locks, &repo, 3).await;
+    let late = queued("late", T);
+    let append = tokio::spawn({
+        let (locks, repo, late) = (rig.locks.clone(), repo.clone(), late.clone());
+        async move { append(&locks, &repo, late).await }
+    });
+    holders(&rig.locks, &repo, 4).await;
+    drop(guard);
+    append.await.unwrap().unwrap();
+    passes(&service, 1).await;
+
+    let after = std::fs::read_to_string(repo.join(LESSONS_FILE)).unwrap();
+    let after: Vec<&str> = after.lines().collect();
+    assert_eq!(after.len(), 2 * entries + 1, "the attempts are gone");
+    assert!(!after.iter().any(|l| l.contains("\"type\":\"attempt\"")));
+    assert_eq!(
+        after.last(),
+        Some(&serde_json::to_string(&late).unwrap().as_str())
+    );
+    service.stop();
+}

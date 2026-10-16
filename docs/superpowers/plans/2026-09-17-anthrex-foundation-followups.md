@@ -2488,3 +2488,7 @@ Each item was checked against the code at the M9.16.11 head; items the later tas
 - **`j` from the frame view skips one task** (PR #73's review). In the plan review, with the detail on the frame, `j` moves the selection by two. Pin it with a test from the frame view.
 - **An `edit_plan` tool description line is over width** (PR #73's review). One line of `edit_plan`'s MCP description runs past the width its neighbours wrap at.
 - **Minor brief findings wake the orchestrator** (PR #73's review). A `brief` finding of Minor severity queues an orchestrator wake-up like a Critical one. Consider batching Minor brief notes into the next digest.
+
+## From milestone 9.18 (2026-10-16), for later
+
+- **A crashed compaction's temporary file is never swept** (M9.18.3). `lessons::store::compact` rewrites `lessons.jsonl` with `profile::store::write_atomic`. A crash between creating the temporary file and the rename leaves `lessons.jsonl.<pid>.<n>.tmp` in the repository's data directory. The start sweeps (`sweep_leftovers`, the run restore's `sweep_named`) do not name `LESSONS_FILE`, so it stays. It is harmless but grows by one store's size per crash. The fix is to add `LESSONS_FILE` to a sweep that runs before the distill worker starts.
