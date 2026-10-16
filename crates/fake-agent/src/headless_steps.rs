@@ -105,6 +105,18 @@ impl Runner {
             }
             Step::Deny { tool, reason } => self.events.deny(&tool, &reason)?,
             Step::Usage(usage) => self.usage = usage,
+            Step::RateLimit(limit) => {
+                let info = crate::quota_steps::rate_limit_info(&limit, crate::quota_steps::now());
+                self.events.rate_limit(info)?;
+            }
+            Step::Rollout(rollout) => {
+                if self.kind == Kind::Codex {
+                    let now = crate::quota_steps::now();
+                    let line = crate::quota_steps::token_count(&rollout, self.usage, now);
+                    let home = crate::quota_steps::codex_home()?;
+                    crate::quota_steps::append_rollout(&home, &self.session, &line, now)?;
+                }
+            }
             Step::Hang => loop {
                 if let Some(id) = self.pause(HANG_POLL) {
                     return Ok(Outcome::Interrupted(id));

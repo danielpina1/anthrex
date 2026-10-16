@@ -517,6 +517,11 @@ impl Events for Claude {
         }});
         self.out.write(&line)
     }
+
+    /// Milestone 9.16: the 2.1.280 `rate_limit_event` (`quota_steps::rate_limit_info`).
+    fn rate_limit(&mut self, info: Value) -> Result<()> {
+        self.line("rate_limit_event", json!({"rate_limit_info": info}))
+    }
 }
 
 /// The recorded text of a tool the user interrupted, in full
