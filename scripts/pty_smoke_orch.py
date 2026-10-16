@@ -10,9 +10,10 @@ or stops a daemon of its own. Like `scripts/pty_smoke_run.py`, whose helpers it
 reuses, this module has no `__main__` of its own.
 
 A goal takes the plan path: a scripted orchestrator (`orchestrator-run-1`) plans two
-tasks and submits them; the user approves the plan in the run view, focuses the
-orchestrator from the run's root and tells it the run is done; the orchestrator writes
-its summary, and the run is accepted. On macOS the goal starts through the TUI's goal
+tasks and submits them with a plan frame; the user opens the plan review (`p`), which
+opens on the frame, flips to the first task and back with `f` (milestone 9.17), then
+approves the plan in the run view, focuses the orchestrator from the run's root and
+tells it the run is done; the orchestrator writes its summary, and the run is accepted. On macOS the goal starts through the TUI's goal
 form (`C-b g`, decision 44); elsewhere, where a run needs `--unconfined-checks` and the
 form has no such toggle, through `run start --goal`.
 """
@@ -40,6 +41,13 @@ SUMMARY = "Both files were added, a.txt and b.txt."
 # The run view's status-bar hint while the plan awaits approval
 # (`crates/tui/src/ui/statusbar.rs`, `navigate_hint`).
 GATE_HINT = "a approve  x reject"
+# Milestone 9.17 decision 19: the plan review's frame detail opens with this title.
+FRAME_TITLE = "Decided for you · Out of scope"
+# The plan frame the orchestrator submits (ruling C17).
+DECIDED = ("Which store?", "SQLite")
+OUT_OF_SCOPE = "no UI"
+# The first task's brief, as the review's task detail shows it.
+FIRST_BRIEF = "Add a.txt."
 # The name of the shell window that makes the repository a project the TUI lists, so
 # its project node can be selected for `C-b g`.
 SHELL = "orch-smoke"
@@ -90,7 +98,11 @@ ORCHESTRATOR = [
                     {"op": "add_task", "task": _task("t1", "a.txt")},
                     {"op": "add_task", "task": _task("t2", "b.txt")},
                 ],
-                "submit": True, "decided": [], "out_of_scope": [],
+                "submit": True,
+                # Milestone 9.17 ruling C17: one item each, so the review's frame row
+                # has counts and its detail has rows.
+                "decided": [{"question": DECIDED[0], "answer": DECIDED[1]}],
+                "out_of_scope": [OUT_OF_SCOPE],
             },
         }
     },
@@ -230,6 +242,56 @@ def _wait_either(proc, texts, timeout, label, fail):
         proc.read_available(timeout=0.2)
 
 
+def _wait_screen(proc, pred, timeout, label, fail):
+    """Waits until `pred` holds for the rendered screen, before `timeout`."""
+    deadline = time.monotonic() + timeout
+    while True:
+        screen = proc.screen_text()
+        if pred(screen):
+            return
+        if time.monotonic() >= deadline:
+            fail(f"timed out waiting for {label}\n--- rendered screen ---\n{screen}")
+        proc.read_available(timeout=0.2)
+
+
+def _review_frame(proc, fail):
+    """Milestone 9.17 ruling C17: at the gate, `p` opens the plan review on the frame;
+    `f` shows the first task's detail and `f` again the frame; `Esc` gives the run view
+    back, with its gate hint."""
+    proc.send(b"p")
+    _wait_screen(
+        proc,
+        lambda s: FRAME_TITLE in s and DECIDED[0] in s and OUT_OF_SCOPE in s,
+        10.0,
+        "the plan review opened on its frame",
+        fail,
+    )
+    proc.send(b"f")
+    _wait_screen(
+        proc,
+        lambda s: FIRST_BRIEF in s and FRAME_TITLE not in s,
+        10.0,
+        "f showing the first task's detail",
+        fail,
+    )
+    proc.send(b"f")
+    _wait_screen(
+        proc,
+        lambda s: FRAME_TITLE in s and FIRST_BRIEF not in s,
+        10.0,
+        "f returning to the frame",
+        fail,
+    )
+    proc.send(b"\x1b")
+    _wait_screen(
+        proc,
+        lambda s: GATE_HINT in s and FRAME_TITLE not in s,
+        10.0,
+        "Esc back to the run view's gate",
+        fail,
+    )
+
+
 def _wait_run(proc, run_cmd, run_id, pred, timeout, label, fail):
     """Waits, within `timeout`, until `pred` holds for the run's status; the run."""
     deadline = time.monotonic() + timeout
@@ -312,6 +374,8 @@ def orch_stage(pty_proc, bin_path, run_cmd, fail):
         print(f"ok: {how} started planned run {run_id}; its run view showed {seen!r}")
 
         proc.wait_for(GATE_HINT, timeout=RUN_WAIT, label="the submitted plan's gate")
+        _review_frame(proc, fail)
+        print("ok: the plan review opened on its frame; f flipped to the first task and back")
         proc.send(b"a")
         proc.wait_for(f"Approve run {run_id}?", label="the approve confirm")
         proc.send(b"y")
