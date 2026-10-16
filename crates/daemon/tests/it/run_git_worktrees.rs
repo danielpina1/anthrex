@@ -484,3 +484,96 @@ fn removing_a_listed_checkout_takes_its_task_temporary_directory() {
         tmp.display()
     );
 }
+
+/// `git`, except that `git worktree <sub>` fails: a removal whose git step fails.
+fn git_failing_worktree(dir: &std::path::Path, sub: &str) -> std::ffi::OsString {
+    let path = dir.join(format!("git-failing-{sub}"));
+    testexec::write_executable(
+        &path,
+        format!(
+            "#!/bin/sh\nw=\nfor a; do\n  [ \"$a\" = worktree ] && w=1\n  [ -n \"$w\" ] && [ \"$a\" = {sub} ] && {{ echo \"refused: worktree {sub}\" >&2; exit 1; }}\ndone\nexec git \"$@\"\n"
+        ),
+    );
+    path.into_os_string()
+}
+
+/// A listed checkout (the integration one) with a check's base under its task
+/// temporary directory, as `removing_a_listed_checkout_takes_its_task_temporary_directory`
+/// makes it: (repository, checkout, data directory, the base, keepers).
+fn listed_checkout_with_a_base() -> (
+    TempRepo,
+    std::path::PathBuf,
+    std::path::PathBuf,
+    std::path::PathBuf,
+    (crate::support::TestDir, crate::support::TestDir),
+) {
+    use daemon::run::driver::tier_step::{fresh_dir, remove_dir, step_base};
+    let repo = repo();
+    let base = head(&repo.root);
+    let (keep_wt, wt) = wt_dir();
+    let keep_data = crate::support::TestDir::new();
+    let data = keep_data.path().canonicalize().unwrap();
+    let path = wt.join("runs/r1/integration");
+    create_run_branch(
+        real_git(),
+        &repo.root,
+        "anthrex/r1/integration",
+        &base,
+        &path,
+        T,
+    )
+    .unwrap();
+    let tmp = step_base(&data, &path);
+    let step = fresh_dir(&repo.root.join(".git"), &tmp, "s1-check").unwrap();
+    assert_eq!(remove_dir(&step), None);
+    assert!(
+        tmp.is_dir(),
+        "the fixture made no base at {}",
+        tmp.display()
+    );
+    (repo, path, data, tmp, (keep_wt, keep_data))
+}
+
+/// The ax-leak-2 fix: a listed checkout's repository directory is never made, so once
+/// the checkout's removal has given up nothing can name its task temporary directory
+/// again (a later reconcile finds no repository; a test's sweep finds no directory).
+/// A `git worktree remove` that fails must not leave it behind.
+#[test]
+fn a_failed_worktree_remove_still_takes_the_task_temporary_directory() {
+    use daemon::run::git::{checkout_repo_dir, remove_checkout};
+    let (repo, path, data, tmp, keep) = listed_checkout_with_a_base();
+    let git = git_failing_worktree(keep.1.path(), "remove");
+    let repo_dir = checkout_repo_dir(&data, &path);
+
+    let error = remove_checkout(&git, &repo.root, &path, Some(&repo_dir), T).unwrap_err();
+
+    assert!(error.contains("refused: worktree remove"), "{error}");
+    assert!(
+        !tmp.exists(),
+        "a failed removal left the task temporary directory {}",
+        tmp.display()
+    );
+    // The checkout itself is kept for the next attempt, which still succeeds.
+    assert!(path.exists());
+    remove_checkout(real_git(), &repo.root, &path, Some(&repo_dir), T).unwrap();
+    assert!(!path.exists());
+}
+
+/// The same for a listed checkout the user deleted, whose registration git cannot prune.
+#[test]
+fn a_failed_prune_of_a_deleted_checkout_still_takes_the_task_temporary_directory() {
+    use daemon::run::git::{checkout_repo_dir, remove_checkout};
+    let (repo, path, data, tmp, keep) = listed_checkout_with_a_base();
+    std::fs::remove_dir_all(&path).unwrap();
+    let git = git_failing_worktree(keep.1.path(), "prune");
+    let repo_dir = checkout_repo_dir(&data, &path);
+
+    let error = remove_checkout(&git, &repo.root, &path, Some(&repo_dir), T).unwrap_err();
+
+    assert!(error.contains("refused: worktree prune"), "{error}");
+    assert!(
+        !tmp.exists(),
+        "a failed removal left the task temporary directory {}",
+        tmp.display()
+    );
+}

@@ -64,9 +64,13 @@ const PROBE_STALL: Duration = Duration::from_secs(3);
 /// than padded further — `WALL_CLOCK_SLACK` is still added for the real process spawn and
 /// scheduling on top of the two waits themselves.
 ///
-///     HANDSHAKE_TIMEOUT (5s) + WAIT_RELEASED_CAP (10s) + WALL_CLOCK_SLACK (10s) = 25s
+/// Since the ax-leak-2 fix it then waits for the process's exit too (`EXIT_WAIT_CAP`).
+///
+///     HANDSHAKE_TIMEOUT (5s) + WAIT_RELEASED_CAP (10s) + EXIT_WAIT_CAP (5s)
+///         + WALL_CLOCK_SLACK (10s) = 30s
 const STOP_BOUND: Duration = proto::HANDSHAKE_TIMEOUT
     .saturating_add(WAIT_RELEASED_CAP)
+    .saturating_add(EXIT_WAIT_CAP)
     .saturating_add(WALL_CLOCK_SLACK);
 
 /// `daemon stop`'s own bound on how long it waits for the daemon's lifetime lock to be
@@ -76,6 +80,11 @@ const STOP_BOUND: Duration = proto::HANDSHAKE_TIMEOUT
 /// only comment-couple to `HOOK_DEADLINE` rather than import it), so this is a named,
 /// commented literal rather than a bare one.
 const WAIT_RELEASED_CAP: Duration = Duration::from_secs(10);
+
+/// `daemon stop`'s wait for the daemon's process to exit once the lifetime lock is free
+/// (`crates/cli/src/daemon_cmd.rs`'s `EXIT_WAIT`: `BLOCKING_SHUTDOWN_GRACE` 2 s + 3 s),
+/// copied for the same reason as `WAIT_RELEASED_CAP`.
+const EXIT_WAIT_CAP: Duration = Duration::from_secs(5);
 
 /// How long the daemon process itself may take to actually exit after `Shutdown`: the
 /// same handshake and lock-release wait `STOP_BOUND` derives (the CLI's `daemon stop`

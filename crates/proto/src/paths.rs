@@ -82,6 +82,13 @@ pub fn lock_path() -> PathBuf {
     data_dir().join("daemon.lock")
 }
 
+/// The daemon process's exit lock: held from its start until the process exits, so
+/// `daemon stop` can wait for the exit itself, not only for the lifetime lock
+/// (`common::lockfile::hold_until_exit`).
+pub fn exit_lock_path() -> PathBuf {
+    data_dir().join("daemon.exit.lock")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

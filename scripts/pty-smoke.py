@@ -198,8 +198,9 @@ RESTART_CMD_TIMEOUT = 40.0
 # daemon's shutdown sequence escalating any still-live window through `HUP_GRACE` (1s,
 # `crates/daemon/src/process.rs`) then `KILL_GRACE` (3s) before the final flush and
 # socket unlink can even start, then the CLI's own post-shutdown poll,
-# `wait_released`, capped at 10s (`crates/cli/src/main.rs`'s `DaemonAction::Stop`) —
-# 5 + 1 + 3 + 10 = 19s before the CLI itself gives up and reports a timeout.
+# `wait_released`, capped at 10s (`crates/cli/src/main.rs`'s `DaemonAction::Stop`), then
+# its wait for the daemon process's exit, `EXIT_WAIT` (5s, `crates/cli/src/daemon_cmd.rs`)
+# — 5 + 1 + 3 + 10 + 5 = 24s before the CLI itself gives up and reports a timeout.
 DAEMON_STOP_CMD_TIMEOUT = 40.0
 
 # fix-wave-12-re-review Major 2: `run_worktree_cli_stage`'s three `anthrex new
