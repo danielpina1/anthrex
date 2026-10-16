@@ -287,6 +287,31 @@ fn notes_row_labels_brief() {
     );
 }
 
+/// Milestone 9.17 decision 26: `replaces   t3` and `replaced by   t9, t10`, each only
+/// while it has an id.
+#[test]
+fn inspector_rows_replaces_and_replaced_by() {
+    let (mut snapshot, windows) = held_fixture();
+    snapshot.runs[0].tasks[1].replaced_by = vec!["t9".into(), "t10".into()];
+    snapshot.runs[0].tasks[2].replaces = vec!["t3".into()];
+    let app = app_of((snapshot, windows));
+    let t1 = inspect_node(&app, &task_key("t1"));
+    assert_eq!(value(&t1, "replaced by"), Some("t9, t10"));
+    assert_eq!(value(&t1, "replaces"), None);
+    let t2 = inspect_node(&app, &task_key("t2"));
+    assert_eq!(value(&t2, "replaces"), Some("t3"));
+    assert_eq!(value(&t2, "replaced by"), None);
+    // DETAIL carries them, right after `deps`.
+    let detail = t1
+        .sections
+        .iter()
+        .find(|s| s.title == "DETAIL")
+        .expect("DETAIL");
+    let labels: Vec<&str> = detail.fields.iter().map(|f| f.label).collect();
+    let at = |l: &str| labels.iter().position(|x| *x == l);
+    assert_eq!(at("replaced by"), at("deps").map(|d| d + 1), "{labels:?}");
+}
+
 #[test]
 fn hold_attention_line_lists_every_awaiting_hold() {
     let (mut snapshot, windows) = held_fixture();

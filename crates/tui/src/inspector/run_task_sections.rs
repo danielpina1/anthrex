@@ -217,10 +217,24 @@ fn intent(run: &RunInfo, task: &TaskInfo, app: &App) -> Section {
 
 /// DETAIL's milestone 8c rows, in decision 12's order; milestone 9.3 decision 32 puts
 /// `round` after `stage` (a run of several rounds only), milestone 9.5 decision 29
-/// `race` and `pair` after `route` (a racing or paired task only).
-const DETAIL_ROWS: [&str; 13] = [
-    "deps", "budget", "tries", "stage", "round", "origin", "tier", "route", "race", "pair",
-    "messages", "notes", "history",
+/// `race` and `pair` after `route` (a racing or paired task only), milestone 9.17
+/// decision 26 `replaces` and `replaced by` after `deps`.
+const DETAIL_ROWS: [&str; 15] = [
+    "deps",
+    "replaces",
+    "replaced by",
+    "budget",
+    "tries",
+    "stage",
+    "round",
+    "origin",
+    "tier",
+    "route",
+    "race",
+    "pair",
+    "messages",
+    "notes",
+    "history",
 ];
 
 /// DETAIL: `phase` (the lifecycle words), `worker`, `now`, then milestone 8c's rows
