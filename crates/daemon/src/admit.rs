@@ -33,7 +33,7 @@ pub const COMMAND_WRAPPERS: [&str; 8] = [
 ];
 /// A wrapper's options that take the next word as their value (task 7 review M1). An
 /// attached value (`-oL`, `--signal=TERM`) is a word of its own and takes nothing more.
-const WRAPPER_FLAGS_WITH_VALUE: [(&str, &str); 13] = [
+const WRAPPER_FLAGS_WITH_VALUE: [(&str, &str); 16] = [
     ("nice", "-n"),
     ("nice", "--adjustment"),
     ("env", "-u"),
@@ -47,6 +47,9 @@ const WRAPPER_FLAGS_WITH_VALUE: [(&str, &str); 13] = [
     ("stdbuf", "-i"),
     ("stdbuf", "-o"),
     ("stdbuf", "-e"),
+    ("stdbuf", "--input"),
+    ("stdbuf", "--output"),
+    ("stdbuf", "--error"),
 ];
 /// How many positional words a wrapper takes after its options (M9.18 decision 7):
 /// `timeout`'s duration.

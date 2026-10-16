@@ -180,6 +180,18 @@ fn stdbuf_wraps_a_heavy_command() {
     assert_light(&["stdbuf -oL ls"]);
 }
 
+/// Task M9.18.5's review, m1: `stdbuf`'s long options take a separate value too, as
+/// `timeout`'s, `nice`'s and `env`'s do.
+#[test]
+fn stdbuf_long_options_take_a_separate_value() {
+    assert_heavy(&[
+        "stdbuf --output L cargo test",
+        "stdbuf --input 0 cargo test",
+        "stdbuf --error 0 --output L cargo build",
+    ]);
+    assert_light(&["stdbuf --output L ls"]);
+}
+
 #[test]
 fn wrappers_nest() {
     assert_heavy(&[
