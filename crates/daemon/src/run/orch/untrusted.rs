@@ -86,8 +86,9 @@ pub fn digest_source(digest: &Value, run: &Run) -> Option<String> {
 }
 
 /// Task 8 review I1 (ruling): a fix task's note the digest shows, in `task_notes`, as
-/// its task entry's `last` (`{HH:MM} note ({kind}): …`), or as an `attention` line
-/// (`{id} noted a {kind}: …`).
+/// its task entry's `last` (`{HH:MM} note ({kind}): …`, or a reviewer's
+/// `{HH:MM} brief finding: …`), or as an `attention` line (`{id} noted a {kind}: …`,
+/// or `{id} review flagged the brief: …`).
 fn note_source<'a>(
     digest: &'a Value,
     tasks: impl Iterator<Item = &'a Value>,
@@ -96,7 +97,11 @@ fn note_source<'a>(
     let line = |id: &str| Some(format!("task {id}'s note ({} fix)", fix(id)?));
     let notes = digest["task_notes"].as_array().into_iter().flatten();
     let in_notes = notes.filter_map(|n| n["task"].as_str()).find_map(line);
-    let is_note = |last: &str| line_text(last).starts_with("note (");
+    // Milestone 9.17 ruling C4: a reviewer's `brief` note logs `brief finding: …`.
+    let is_note = |last: &str| {
+        let text = line_text(last);
+        text.starts_with("note (") || text.starts_with("brief finding: ")
+    };
     in_notes
         .or_else(|| {
             tasks
@@ -106,9 +111,11 @@ fn note_source<'a>(
         })
         .or_else(|| {
             let attention = digest["attention"].as_array().into_iter().flatten();
-            attention
-                .filter_map(|l| l.as_str()?.split_once(" noted a ").map(|(id, _)| id))
-                .find_map(line)
+            let id = |l: &'a str| {
+                let brief = l.split_once(" review flagged the brief: ");
+                l.split_once(" noted a ").or(brief).map(|(id, _)| id)
+            };
+            attention.filter_map(|l| id(l.as_str()?)).find_map(line)
         })
 }
 

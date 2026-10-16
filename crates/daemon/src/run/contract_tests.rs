@@ -20,7 +20,30 @@ fn contracts_round_trip_through_toml_string() {
     }
     assert!(WORKER_CONTRACT.ends_with("Do not try to fix it or change git settings."));
     assert_eq!(WORKER_CONTRACT.lines().count(), 13);
-    assert_eq!(REVIEWER_CONTRACT.lines().count(), 7);
+    assert_eq!(REVIEWER_CONTRACT.lines().count(), 8);
+}
+
+/// Milestone 9.17 decision 27: reviewer rule 7, exact.
+#[test]
+fn reviewer_rule_7_judges_the_brief() {
+    assert!(REVIEWER_CONTRACT.ends_with("\n7. Judge the brief too. If the change does what its brief says but the brief is wrong for the run goal, asks for something out of scope, or leaves out something the goal needs, add a finding with target brief: it goes to whoever planned the task, not to the worker, and never blocks this change, so a change that must not merge also needs a code finding. A brief finding needs no file or line. Every other finding is about the code (target code, the default)."));
+}
+
+/// Milestone 9.17 decision 12: `- [<severity>] brief: <text>`, whatever it locates.
+#[test]
+fn finding_line_writes_a_brief_finding() {
+    let brief = Finding {
+        severity: Severity::Critical,
+        file: Some("a.rs".into()),
+        line: Some(3),
+        input: None,
+        text: "the brief is wrong".into(),
+        target: proto::FindingTarget::Brief,
+    };
+    assert_eq!(
+        finding_line(&brief),
+        "- [critical] brief: the brief is wrong"
+    );
 }
 
 fn prompt_run(profile: &str, extra: &str) -> Run {

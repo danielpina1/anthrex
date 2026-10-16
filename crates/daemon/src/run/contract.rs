@@ -59,7 +59,8 @@ pub const REVIEWER_CONTRACT: &str = "You are a reviewer in an anthrex orchestrat
 3. Read the diff; do not run the build. The engine has already run the check, and its summary is in your prompt.
 4. Call the anthrex tool submit_review (in Claude: mcp__anthrex__submit_review) exactly once, with verdict approve or changes, a summary, and findings.
 5. Every finding has a severity. critical: wrong or unsafe, must not merge. important: must be fixed before merging. minor: worth noting, does not block. Each critical or important finding must name a file and line, or a failing input.
-6. Use changes only when there is at least one critical or important finding. Earlier rounds' findings, if listed, must each be confirmed fixed.";
+6. Use changes only when there is at least one critical or important finding. Earlier rounds' findings, if listed, must each be confirmed fixed.
+7. Judge the brief too. If the change does what its brief says but the brief is wrong for the run goal, asks for something out of scope, or leaves out something the goal needs, add a finding with target brief: it goes to whoever planned the task, not to the worker, and never blocks this change, so a change that must not merge also needs a code finding. A brief finding needs no file or line. Every other finding is about the code (target code, the default).";
 
 /// The first seven characters of a sha (not `rev-parse --short`, which may be longer).
 pub fn sha7(sha: &str) -> &str {
@@ -276,7 +277,7 @@ pub fn reviewer_prompt(
         .iter()
         .filter(|r| r.round < round)
         .flat_map(|r| r.findings.iter())
-        .filter(|f| f.severity != Severity::Minor)
+        .filter(|f| f.severity != Severity::Minor && f.target.is_code()) // 9.17 decision 7
         .map(finding_line)
         .collect();
     if round > 1 && !earlier.is_empty() {
@@ -299,7 +300,8 @@ pub fn reviewer_prompt(
     lines.join("\n")
 }
 
-/// `- [<severity>] <file>:<line> <text>` or `- [<severity>] input <input>: <text>`.
+/// `- [<severity>] <file>:<line> <text>` or `- [<severity>] input <input>: <text>`; a
+/// `brief` finding is `- [<severity>] brief: <text>` (milestone 9.17 decision 12).
 pub fn finding_line(finding: &Finding) -> String {
     let severity = match finding.severity {
         Severity::Critical => "critical",
@@ -307,6 +309,7 @@ pub fn finding_line(finding: &Finding) -> String {
         Severity::Minor => "minor",
     };
     match (&finding.file, finding.line, &finding.input) {
+        _ if !finding.target.is_code() => format!("- [{severity}] brief: {}", finding.text),
         (Some(file), Some(line), _) => format!("- [{severity}] {file}:{line} {}", finding.text),
         (_, _, Some(input)) => format!("- [{severity}] input {input}: {}", finding.text),
         (Some(file), None, None) => format!("- [{severity}] {file} {}", finding.text),
@@ -549,7 +552,7 @@ pub fn review_changes_message(review: &ReviewRecord) -> String {
         review
             .findings
             .iter()
-            .filter(|f| f.severity != Severity::Minor)
+            .filter(|f| f.severity != Severity::Minor && f.target.is_code()) // 9.17 decision 7
             .map(finding_line),
     );
     lines.join("\n")

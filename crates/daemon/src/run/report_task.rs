@@ -44,7 +44,12 @@ pub(super) fn render_task(task: &Task, now: u64, out: &mut String) {
         // Milestone 9 decision 42i: the worker's own `task_note`s follow.
         for note in &task.orch.worker_notes {
             let kind = crate::run::orch::json::label(&note.kind);
-            let prefix = format!("{} ({kind}, from the worker) ", format_utc(note.at));
+            // Milestone 9.17 ruling C12: a `brief` note is the reviewer's.
+            let from = match note.kind {
+                proto::TaskNoteKind::Brief => "the reviewer",
+                _ => "the worker",
+            };
+            let prefix = format!("{} ({kind}, from {from}) ", format_utc(note.at));
             out.push_str(&format!("- {}\n", list_item_text(&prefix, &note.text)));
         }
         // A blank line closes the list: without it, CommonMark's lazy continuation

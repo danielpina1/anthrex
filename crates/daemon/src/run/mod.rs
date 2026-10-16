@@ -81,6 +81,7 @@ mod snapshot_detail;
 mod snapshot_frame;
 mod snapshot_orch;
 mod snapshot_patterns;
+mod snapshot_plan;
 mod snapshot_stages;
 pub mod stats;
 pub mod target_pool;

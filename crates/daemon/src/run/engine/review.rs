@@ -7,7 +7,8 @@
 //! them alone. Pure (design decision 2).
 
 use proto::{
-    AgentRole, BlockReason, GateKind, RunState, Runtime, Severity, TaskState, ToolCall, Verdict,
+    AgentRole, BlockReason, Finding, GateKind, RunState, Runtime, Severity, TaskState, ToolCall,
+    Verdict,
 };
 
 use super::dispatch::{block, history, new_round, window_limit_reached};
@@ -285,8 +286,9 @@ fn reply(fx: &mut Vec<Effect>, reply: ReplyId, result: Result<String, String>) {
 /// caller is a reviewer round of the task, its round has no verdict yet, it is the
 /// task's live reviewer, the task is under review, the arguments are valid, and an
 /// `approve` carries no blocking finding. The verdict is recorded and the reviewer
-/// retired; any critical or important finding is a gate failure of `review`, else
-/// the task goes to the merge queue (minor findings stay in the record).
+/// retired; any critical or important `code` finding is a gate failure of `review`,
+/// else the task goes to the merge queue (minor and `brief` findings stay in the
+/// record; each `brief` one is also a task note, milestone 9.17 decision 8).
 pub(super) fn submit(run: &mut Run, id: ReplyId, call: &ToolCall, now: u64, fx: &mut Vec<Effect>) {
     let task_id = call.task_id.clone().unwrap_or_default();
     let not_reviewer = format!("this window is not the reviewer of task {task_id}");
@@ -326,7 +328,9 @@ pub(super) fn submit(run: &mut Run, id: ReplyId, call: &ToolCall, now: u64, fx: 
         Ok(parsed) => parsed,
         Err(e) => return reply(fx, id, Err(format!("invalid arguments: {e}"))),
     };
-    if verdict == Verdict::Approve && findings.iter().any(|f| f.severity != Severity::Minor) {
+    // Milestone 9.17 decision 7: a `brief` finding never blocks.
+    let blocks = |f: &Finding| f.severity != Severity::Minor && f.target.is_code();
+    if verdict == Verdict::Approve && findings.iter().any(blocks) {
         return reply(fx, id, Err(APPROVE_WITH_BLOCKING.to_string()));
     }
     // Milestone 9.1 decision 42: every signal answered, or the engine's findings.
@@ -334,7 +338,7 @@ pub(super) fn submit(run: &mut Run, id: ReplyId, call: &ToolCall, now: u64, fx: 
     if let Err(text) = checked {
         return reply(fx, id, Err(text));
     }
-    let blocking = findings.iter().any(|f| f.severity != Severity::Minor);
+    let blocking = findings.iter().any(blocks);
     let task = &mut run.tasks[i];
     let route = task.rounds[r].route.clone();
     let k = match task.reviews.iter().position(|rv| rv.round == round_no) {
@@ -367,6 +371,8 @@ pub(super) fn submit(run: &mut Run, id: ReplyId, call: &ToolCall, now: u64, fx: 
     }
     drop_mail(run, i);
     reply(fx, id, Ok(REVIEW_RECORDED.to_string()));
+    // Milestone 9.17 decision 8 (ruling C29): before the reader-task return.
+    super::review_brief::record(run, i, round_no, &record.findings, now);
     // Milestone 9 decision 36: a review task reports whatever the verdict; nothing
     // is sent back and nothing merged.
     if is_reader_task(&run.tasks[i]) {

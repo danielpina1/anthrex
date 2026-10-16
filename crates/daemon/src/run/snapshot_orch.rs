@@ -67,8 +67,9 @@ pub(super) fn paused_line(task: &Task, now: u64) -> Option<String> {
         .then(|| format!("{} paused(message) for {} min", task.id(), lasted / 60))
 }
 
-/// Decision 42i: the last three `discovery` and `risk` notes across tasks, newest
-/// first, as `<t> noted a <kind>: <first 80 characters>`.
+/// Decision 42i: the last three `discovery`, `risk` and `brief` notes across tasks,
+/// newest first, as `<t> noted a <kind>: <first 80 characters>`, or a `brief` one as
+/// `<t> review flagged the brief: <first 80 characters>`.
 pub(super) fn noted_lines(run: &Run) -> Vec<String> {
     let mut notes: Vec<(&Task, &crate::run::orch::WorkerNote)> = run
         .tasks
@@ -87,6 +88,10 @@ pub(super) fn noted_lines(run: &Run) -> Vec<String> {
                 .take(80)
                 .map(|c| if c.is_control() { ' ' } else { c })
                 .collect();
+            // Milestone 9.17 decision 10: a reviewer's `brief` note says who wrote it.
+            if n.kind == proto::TaskNoteKind::Brief {
+                return format!("{} review flagged the brief: {first}", t.id());
+            }
             let kind = crate::run::orch::json::label(&n.kind);
             format!("{} noted a {kind}: {first}", t.id())
         })

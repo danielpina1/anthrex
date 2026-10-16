@@ -95,6 +95,8 @@ fn submit_review() -> Tool {
             "line": {"type": "integer", "minimum": 1},
             "input": text(2000),
             "text": text(2000),
+            // Milestone 9.17 decision 6: a finding about the brief, not the code.
+            "target": one_of(&["code", "brief"]),
         }),
         &["severity", "text"],
     );
@@ -219,6 +221,15 @@ mod tests {
             review["properties"]["findings"]["items"]["required"],
             json!(["severity", "text"])
         );
+    }
+
+    /// Milestone 9.17 decision 6: a finding may name its target, `code` or `brief`.
+    #[test]
+    fn submit_review_finding_has_optional_target() {
+        let review = schema(AgentRole::Reviewer, "submit_review");
+        let item = &review["properties"]["findings"]["items"];
+        assert_eq!(item["properties"]["target"], one_of(&["code", "brief"]));
+        assert_eq!(item["required"], json!(["severity", "text"]));
     }
 
     /// M9.2 review ruling 2: a decider is never given an anthrex tool.

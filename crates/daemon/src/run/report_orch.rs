@@ -113,7 +113,9 @@ fn review_entry(task: &Task, out: &mut String) {
     }
 }
 
-/// `critical src/a.rs:3: text`, `important: text`, or with `input <input>`.
+/// `critical src/a.rs:3: text`, `important: text`, or with `input <input>`; a `brief`
+/// finding is `critical brief: text`, as `contract::finding_line` (milestone 9.17
+/// decision 12).
 fn finding_line(finding: &Finding) -> String {
     let severity = match finding.severity {
         Severity::Critical => "critical",
@@ -122,6 +124,7 @@ fn finding_line(finding: &Finding) -> String {
     };
     let one = |s: &str| s.replace(['\n', '\r'], " ");
     let at = match (&finding.file, finding.line, &finding.input) {
+        _ if !finding.target.is_code() => " brief".to_string(),
         (Some(file), Some(line), _) => format!(" {}:{line}", one(file)),
         (Some(file), None, _) => format!(" {}", one(file)),
         (None, _, Some(input)) => format!(" input {}", one(input)),

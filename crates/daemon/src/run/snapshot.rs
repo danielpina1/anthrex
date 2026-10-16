@@ -299,6 +299,7 @@ pub(crate) fn attention(run: &Run, now: u64) -> Vec<String> {
     lines.extend(crate::run::orch::orchestrator_lines(&run.orch, terminal));
     // Milestone 9.16 decision 29: the live orchestrator's context fill.
     lines.extend(crate::run::engine::orch_fill::attention(run));
+    lines.extend(super::snapshot_plan::brief_attention(run)); // milestone 9.17 decision 10
     lines
 }
 
@@ -395,7 +396,8 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64, plan_text: b
                 verdict: r.verdict,
                 summary: r.summary.clone(),
                 findings: r.findings.clone(),
-                blocking: r.findings.iter().any(|f| f.severity != Severity::Minor),
+                blocking: (r.findings.iter())
+                    .any(|f| f.severity != Severity::Minor && f.target.is_code()),
                 lane: patterns::review_lane(r),
             })
             .collect(),

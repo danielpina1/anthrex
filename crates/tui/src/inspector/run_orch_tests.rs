@@ -269,6 +269,24 @@ fn message_pause_and_notes_render_with_attribution() {
     );
 }
 
+/// Milestone 9.17 decision 10: the notes row labels a reviewer's `brief` note.
+#[test]
+fn notes_row_labels_brief() {
+    let (mut snapshot, windows) = held_fixture();
+    let t1 = &mut snapshot.runs[0].tasks[1];
+    t1.task_notes = vec![note(
+        "t1",
+        TaskNoteKind::Brief,
+        "review round 1 (critical): wrong table",
+        9_900,
+    )];
+    let app = app_of((snapshot, windows));
+    assert_eq!(
+        value(&inspect_node(&app, &task_key("t1")), "notes"),
+        Some("02:45 brief from t1: review round 1 (critical): wrong table")
+    );
+}
+
 #[test]
 fn hold_attention_line_lists_every_awaiting_hold() {
     let (mut snapshot, windows) = held_fixture();

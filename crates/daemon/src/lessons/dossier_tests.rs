@@ -284,6 +284,30 @@ fn blocks_are_clipped_tail_or_head() {
     );
 }
 
+/// Milestone 9.17 ruling C11: a `brief` finding is the planner's to act on, never a
+/// serious review problem in the distill dossier.
+#[test]
+fn brief_findings_are_not_serious() {
+    let mut run = run_of(&["t1"]);
+    blocked(&mut run, "needs a human");
+    let task = &mut run.tasks[0];
+    let brief = Finding {
+        target: proto::FindingTarget::Brief,
+        ..finding(Severity::Critical, "the brief asks for the wrong table")
+    };
+    let findings = vec![brief, finding(Severity::Important, "no test")];
+    task.reviews.push(review(task, 1, "one problem", findings));
+    let task = &run.tasks[0];
+    let (dossier, _) = build(&run, Some(task), DistillCause::TaskBlocked, &limits(12_000));
+    assert!(
+        dossier.contains(
+            "## reviews\nround 1 changes: one problem\n- [important] src/lib.rs:3 no test"
+        ),
+        "{dossier}"
+    );
+    assert!(!dossier.contains("wrong table"), "{dossier}");
+}
+
 #[test]
 fn outcome_why_and_reviews_carry_their_fields() {
     let mut run = run_of(&["t1"]);

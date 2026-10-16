@@ -15,7 +15,7 @@ use crate::run::routing::{record_reviewer, record_worker};
 use crate::run::test_support::{escalated, set_row, with_efforts};
 
 #[path = "history_tests_fixtures.rs"]
-mod fixtures;
+pub(super) mod fixtures;
 use fixtures::*;
 #[path = "history_tests_patterns.rs"]
 mod patterns;

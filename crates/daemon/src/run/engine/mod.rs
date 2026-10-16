@@ -115,6 +115,7 @@ mod restore;
 mod restore_lost;
 mod results;
 mod review;
+mod review_brief;
 mod review_session;
 mod risk_note;
 mod rounds;
