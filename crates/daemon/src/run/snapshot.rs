@@ -190,7 +190,7 @@ fn run_info(run: &Run, brakes: &super::engine::brakes::Brakes, now: u64) -> RunI
         design_agents: super::snapshot_design::design_agents(run),
         title: run.title.clone(),
         handoff: run.handoff.as_ref().map(super::model::HandoffRecord::info),
-        plan_frame: None,
+        plan_frame: super::snapshot_plan::plan_frame_info(run),
     }
 }
 

@@ -53,3 +53,28 @@ fn frames_round_trip_and_are_left_out_while_empty() {
 fn bounds_are_decision_13s() {
     assert_eq!((DECIDED_MAX, OUT_OF_SCOPE_ITEMS_MAX), (20, 20));
 }
+
+/// Milestone 9.17 task M9.17.6 (decision 20): a frame as a client gets it, the spec's
+/// Non-goals beside it and cut to 2 KiB on a character.
+#[test]
+fn info_carries_the_lists_and_the_spec_non_goals() {
+    assert_eq!(info(None, None), None);
+    assert_eq!(info(None, Some("  \n ")), None, "blank Non-goals are none");
+    let frame = plan_frame(1, &[("Which DB?", "SQLite")], &["no UI"]);
+    let got = info(Some(&frame), None).unwrap();
+    assert_eq!(got.decided, frame.decided);
+    assert_eq!(got.out_of_scope, ["no UI"]);
+    assert_eq!(got.spec_non_goals, None);
+    // An empty frame is still a frame: the gate says `none stated`.
+    let empty = plan_frame(1, &[], &[]);
+    assert_eq!(
+        info(Some(&empty), None),
+        Some(proto::PlanFrameInfo::default())
+    );
+    let long = format!("- {}", "é".repeat(3000));
+    let got = info(None, Some(&long)).unwrap();
+    let cut = got.spec_non_goals.unwrap();
+    assert!(cut.len() <= SPEC_NON_GOALS_MAX && cut.len() > SPEC_NON_GOALS_MAX - 4);
+    assert!(long.starts_with(&cut));
+    assert_eq!(SPEC_NON_GOALS_MAX, 2048);
+}

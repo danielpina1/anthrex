@@ -117,3 +117,98 @@ fn noted_line_words_a_brief_note() {
         "{lines:?}"
     );
 }
+
+/// Task M9.17.6: run `run`'s snapshot entry.
+fn info_of(run: &Run) -> proto::RunInfo {
+    let mut state = EngineState::default();
+    state.runs.insert(run.id.clone(), run.clone());
+    snapshot(&state, 1_000).runs.remove(0)
+}
+
+/// `run_of(2)` with a round-1 frame and epic `e1` (owning `t1`) with its own.
+fn framed_run() -> Run {
+    use crate::run::orch::test_support::{plan_frame, task_mut};
+    use crate::run::orch::{EpicRecord, PlannerPhase};
+    let mut run = run_of(2);
+    run.orch.plan_frames = vec![plan_frame(1, &[("Which DB?", "SQLite")], &["no UI"])];
+    let mut epic = EpicRecord::new("e1", PlannerPhase::Finished);
+    epic.frame = Some(plan_frame(1, &[], &["no docs"]));
+    run.orch.epics.push(epic);
+    task_mut(&mut run, "t1").spec.epic = Some("e1".into());
+    run
+}
+
+/// Decision 20 (and ruling C7): the run's frame and an epic's are published only while
+/// the run awaits approval, or a hold awaits: an epic's hold publishes the epic's frame
+/// on its `PlannerInfo`, the `promotion` hold the run's.
+#[test]
+fn frame_is_published_only_at_the_gate_or_an_awaiting_hold() {
+    use crate::run::orch::test_support::hold;
+    use proto::{HoldState, RunState};
+    let mut run = framed_run();
+    let epic_frame = |info: &proto::RunInfo| info.planners[0].frame.clone();
+    run.state = RunState::Planning;
+    let info = info_of(&run);
+    assert_eq!((info.plan_frame, epic_frame(&info_of(&run))), (None, None));
+    run.state = RunState::AwaitingApproval;
+    let info = info_of(&run);
+    let frame = info
+        .plan_frame
+        .clone()
+        .expect("the gate shows the round's frame");
+    assert_eq!(frame.decided[0].answer, "SQLite");
+    assert_eq!(frame.out_of_scope, ["no UI"]);
+    assert_eq!(epic_frame(&info).unwrap().out_of_scope, ["no docs"]);
+    run.state = RunState::Running;
+    let info = info_of(&run);
+    assert_eq!((info.plan_frame.clone(), epic_frame(&info)), (None, None));
+    run.orch.gate_holds = vec![hold("epic:e1", HoldState::Awaiting, &["t1"], None)];
+    let info = info_of(&run);
+    assert_eq!(
+        info.plan_frame, None,
+        "an epic's hold shows its epic's frame only"
+    );
+    assert_eq!(epic_frame(&info).unwrap().out_of_scope, ["no docs"]);
+    run.orch.gate_holds = vec![hold("epic:e1", HoldState::Approved, &["t1"], Some(2))];
+    let info = info_of(&run);
+    assert_eq!((info.plan_frame.clone(), epic_frame(&info)), (None, None));
+}
+
+/// Ruling C7: a promoted run's `promotion` hold is its plan approval, so the round's
+/// frame is published while it awaits.
+#[test]
+fn promotion_hold_review_shows_the_run_frame() {
+    use crate::run::orch::test_support::hold;
+    use proto::{HoldState, RunState};
+    let mut run = framed_run();
+    run.state = RunState::Running;
+    run.orch.gate_holds = vec![hold("promotion", HoldState::Awaiting, &["t0", "t1"], None)];
+    let info = info_of(&run);
+    assert_eq!(info.plan_frame.unwrap().out_of_scope, ["no UI"]);
+    run.orch.gate_holds[0].state = HoldState::Approved;
+    assert_eq!(info_of(&run).plan_frame, None);
+}
+
+/// Decision 20: a design run's gate carries the approved spec's Non-goals, cut to
+/// 2 KiB, with or without a frame.
+#[test]
+fn design_run_publishes_spec_non_goals() {
+    use crate::run::design::state::DesignState;
+    let mut run = run_of(1);
+    run.state = proto::RunState::AwaitingApproval;
+    let text = format!("- no mobile app\n{}", "- more\n".repeat(600));
+    run.orch.design = Some(DesignState {
+        non_goals_section: text.clone(),
+        ..DesignState::default()
+    });
+    let frame = info_of(&run)
+        .plan_frame
+        .expect("the spec's Non-goals are a frame");
+    let goals = frame.spec_non_goals.unwrap();
+    assert!(goals.starts_with("- no mobile app\n"), "{goals}");
+    assert!(goals.len() <= 2048 && text.starts_with(&goals));
+    assert!(frame.decided.is_empty() && frame.out_of_scope.is_empty());
+    // Running, it is not published.
+    run.state = proto::RunState::Running;
+    assert_eq!(info_of(&run).plan_frame, None);
+}

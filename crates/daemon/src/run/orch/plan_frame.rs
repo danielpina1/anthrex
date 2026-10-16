@@ -4,7 +4,7 @@
 //! M9.17.3 adds the types, which nothing writes yet, and the reviewer prompt reads them
 //! (`contract_scope::out_of_scope_block`).
 
-use proto::DecidedItem;
+use proto::{DecidedItem, PlanFrameInfo};
 use serde::{Deserialize, Serialize};
 
 use crate::run::model::Run;
@@ -57,6 +57,31 @@ fn is_format(c: char) -> bool {
                 | '\u{13430}'..='\u{1343F}'
                 | '\u{1BCA0}'..='\u{1BCA3}'
         )
+}
+
+/// Decision 20: a spec's Non-goals as published, at most this many bytes.
+pub const SPEC_NON_GOALS_MAX: usize = 2048;
+
+/// Decision 20: `frame` and a design run's approved Non-goals as a client shows them at
+/// the plan gate; `None` when there is neither.
+pub fn info(frame: Option<&PlanFrame>, spec_non_goals: Option<&str>) -> Option<PlanFrameInfo> {
+    let goals = spec_non_goals
+        .map(str::trim)
+        .filter(|text| !text.is_empty());
+    if frame.is_none() && goals.is_none() {
+        return None;
+    }
+    Some(PlanFrameInfo {
+        decided: frame.map(|f| f.decided.clone()).unwrap_or_default(),
+        out_of_scope: frame.map(|f| f.out_of_scope.clone()).unwrap_or_default(),
+        spec_non_goals: goals.map(|text| {
+            let mut end = text.len().min(SPEC_NON_GOALS_MAX);
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            text[..end].to_string()
+        }),
+    })
 }
 
 #[cfg(test)]
