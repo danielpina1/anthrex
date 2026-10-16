@@ -375,4 +375,4 @@ impl super::entry::Entry {
 
 #[cfg(test)]
 #[path = "role_window_tests.rs"]
-mod tests;
+pub(super) mod tests;

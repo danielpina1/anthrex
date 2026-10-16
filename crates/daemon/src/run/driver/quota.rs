@@ -268,8 +268,6 @@ impl Quota {
     /// own (`[1m]` or none), when the route carries the tag or exactly one entry matches.
     /// A transcript line never carries `[1m]` (M9.16.1 finding 2), so a plain route never
     /// takes a tagged session's window, and an ambiguous plain match is no window.
-    // M9.16.9 (the context handoff) reads it; until then only its tests do.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn learned_window(&self, model: &str, route_model: &str) -> Option<u64> {
         let windows = crate::lock(&self.windows);
         if let Some(window) = windows.get(model) {

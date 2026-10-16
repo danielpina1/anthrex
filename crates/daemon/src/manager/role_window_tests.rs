@@ -21,7 +21,7 @@ fn run_ref(run_id: &str) -> RunRef {
     }
 }
 
-fn role(run_id: &str) -> RoleLaunch {
+pub(in crate::manager) fn role(run_id: &str) -> RoleLaunch {
     RoleLaunch {
         run_ref: run_ref(run_id),
         mcp: McpTarget {
@@ -44,7 +44,7 @@ fn role(run_id: &str) -> RoleLaunch {
 }
 
 /// A manager whose `claude` is a stand-in that sleeps.
-fn manager(dir: &Path) -> std::sync::Arc<WindowManager> {
+pub(in crate::manager) fn manager(dir: &Path) -> std::sync::Arc<WindowManager> {
     let claude = dir.join("claude");
     testexec::write_executable(&claude, "#!/bin/sh\nexec sleep 300\n");
     let mut config = ManagerConfig::for_tests(dir.join("d.sock"), "/bin/sh".into());

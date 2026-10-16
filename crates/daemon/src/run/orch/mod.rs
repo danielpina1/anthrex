@@ -154,6 +154,10 @@ pub struct RunOrch {
     /// first such read, kept for the session's life. Not written while `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub untrusted: Option<untrusted::UntrustedRecord>,
+    /// Milestone 9.16 decision 29 (ruling C8), in memory only: the live orchestrator's
+    /// last measured context fill, for its attention line.
+    #[serde(skip)]
+    pub fill: Option<crate::transcript::fill::Fill>,
 }
 
 /// Milestone 9.9 decision 15: a question the orchestrator put to the user. The text is

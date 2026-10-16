@@ -336,6 +336,8 @@ impl RunService {
                 window_id,
                 name,
             } => self.adopt(run_id, window_id, name),
+            // Milestone 9.16 decision 27 (`driver/chain_ops.rs`), off every lock.
+            Effect::RenameWindow { window_id, name } => self.rename_handed_off(window_id, name),
             // Milestone 9.6 decision 12 (`driver/design_io.rs`), off every lock.
             Effect::WriteDoc {
                 path,

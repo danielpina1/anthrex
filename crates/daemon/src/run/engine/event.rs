@@ -155,6 +155,12 @@ pub enum EventKind {
         reply: ReplyId,
         hold: Option<proto::brakes::DispatchHold>,
     },
+    /// Milestone 9.16 decision 29: run `run_id`'s live orchestrator's context fill, its
+    /// window resolved (`None`: not measured).
+    OrchestratorFill {
+        run_id: String,
+        fill: Option<crate::transcript::fill::Fill>,
+    },
 }
 
 /// The driver's translation of a window's session events (decision 27).

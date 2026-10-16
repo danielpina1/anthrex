@@ -243,7 +243,7 @@ fn run_info(run: &Run, brakes: &super::engine::brakes::Brakes, now: u64) -> RunI
         halted_phase,
         design_agents: super::snapshot_design::design_agents(run),
         title: run.title.clone(),
-        handoff: None,
+        handoff: run.handoff.as_ref().map(super::model::HandoffRecord::info),
     }
 }
 
@@ -350,6 +350,8 @@ pub(crate) fn attention(run: &Run, now: u64) -> Vec<String> {
     );
     // A held wake-up; milestone 9.5 decisions 38 and 39: a start prompt.
     lines.extend(crate::run::orch::orchestrator_lines(&run.orch, terminal));
+    // Milestone 9.16 decision 29: the live orchestrator's context fill.
+    lines.extend(crate::run::engine::orch_fill::attention(run));
     lines
 }
 

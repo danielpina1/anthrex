@@ -91,6 +91,7 @@ mod op_result;
 mod ops;
 mod orch;
 mod orch_events;
+pub(crate) mod orch_fill;
 mod orch_ops;
 pub(crate) mod orch_stall;
 mod orch_window;
@@ -342,6 +343,10 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
             state.brakes.book.reconfigure(&cfg);
         }
         EventKind::Hold { reply, hold } => brakes::hold(&mut state.brakes, reply, hold, &mut fx),
+        // Milestone 9.16 decision 29 (ruling C17): shown, never acted on.
+        EventKind::OrchestratorFill { run_id, fill } => {
+            orch_fill::record(&mut state, &run_id, fill)
+        }
         EventKind::Stop => {
             state.stopped = true;
             return (state, fx);

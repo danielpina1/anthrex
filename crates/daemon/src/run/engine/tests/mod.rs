@@ -21,6 +21,7 @@ mod chains_continue;
 mod chains_delivered;
 mod chains_delivered_table;
 mod chains_design;
+mod chains_handoff;
 mod chains_usage;
 mod chains_wave;
 mod checkout_name;

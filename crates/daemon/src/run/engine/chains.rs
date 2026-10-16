@@ -7,13 +7,17 @@
 //! discarded, or delivered, D17), makes it active again when that run iterates (D17),
 //! and drops it once that run fails. [`window_gone`] ends an idle chain.
 //! Task 6b: a continued run [`join`]s its idle chain, adopting its window (decision
-//! 23) or, once the chain has ended, with a fresh session (decision 24).
+//! 23) or, once the chain has ended, with a fresh session (decision 24). Milestone 9.16
+//! decision 25: a run that arrives with a handoff record starts a fresh session though
+//! the window is there, and the window is renamed and left open (decision 27).
 
 use super::requests::log;
 use super::{Effect, EngineState};
 use crate::run::chain::{Chain, ChainState, finished, in_order, make_idle, newest, outcome};
 use crate::run::model::Run;
-use crate::run::orch::contract_rounds::{next_goal_wake, no_chain_to_continue, still_going};
+use crate::run::orch::contract_rounds::{
+    handed_off_name, handed_off_text, next_goal_wake, no_chain_to_continue, still_going,
+};
 use proto::RunState;
 
 /// How a run started by `requests::start` joins a chain.
@@ -66,6 +70,11 @@ pub(super) fn join(
         .filter(|_| !chain.ended && window_id != 0);
     let prev_id = chain.current().to_string();
     let join = match prev {
+        // Milestone 9.16 decision 25: the driver measured the session too full to adopt.
+        Some(prev) if run.handoff.is_some() => {
+            hand_off(run, prev, window_id, now, fx);
+            Join::Fresh
+        }
         Some(prev) => {
             adopt(run, prev, window_id, now, fx);
             Join::Adopted
@@ -87,6 +96,21 @@ pub(super) fn join(
         }
     }
     Ok(join)
+}
+
+/// Milestone 9.16 decisions 25 and 27: `run` starts a fresh session (it launches as any
+/// planned run, with the driver's handoff prompt), and `prev`'s window `window_id` stays
+/// open under its handed-off name. Ruling C30: as for any fresh session, the old
+/// session's taint is not carried.
+fn hand_off(run: &mut Run, prev: &Run, window_id: u32, now: u64, fx: &mut Vec<Effect>) {
+    fx.push(Effect::RenameWindow {
+        window_id,
+        name: handed_off_name(prev.short()),
+    });
+    if let Some(handoff) = &run.handoff {
+        let text = handed_off_text(handoff);
+        log(run, now, text);
+    }
 }
 
 /// Decision 23: `run` takes `prev`'s orchestrator session in `window_id`.

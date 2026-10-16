@@ -58,6 +58,9 @@ pub struct RunContext {
     /// daemon's environment by [`RunContext::from_config`]; `None` (`new`, every test
     /// that does not set it) reads no rollout, so no test reaches the user's `~/.codex`.
     pub codex_sessions: Option<PathBuf>,
+    /// A test seam: caps every context fill read's bound (milestone 9.16 decision 22).
+    /// `None` in the daemon.
+    pub fill_read_cap: Option<Duration>,
 }
 
 /// One git read's budget: a deadline for all its calls, and a cap on each call's own
@@ -105,6 +108,7 @@ impl RunContext {
             host: crate::host::select::build(&manager.code_host),
             host_cap: None,
             continue_cap: None,
+            fill_read_cap: None,
             target_pool: config::TargetPool::default(),
             lessons: config::Lessons::default(),
             codex_sessions: None,

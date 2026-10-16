@@ -196,6 +196,7 @@ fn the_handoff_seed_never_quotes_comment_text() {
         (CHAIN, "3f9a", "accepted"),
         summary.as_deref(),
         Some(&lines.join("\n")),
+        None,
     );
     run.orch.orchestrator.as_mut().unwrap().first_prompt = seed;
     let effects = start(&mut fx, run);

@@ -52,6 +52,17 @@ impl RunService {
         });
     }
 
+    /// Milestone 9.16 decision 27: `Effect::RenameWindow`, on `spawn_blocking`, holding
+    /// no lock of the engine's; a rename that fails is logged and ignored.
+    pub(in crate::run::driver) fn rename_handed_off(&self, window_id: u32, name: String) {
+        let manager = self.manager.clone();
+        tokio::task::spawn_blocking(move || {
+            if let Err(error) = manager.rename(window_id, name) {
+                tracing::warn!(window_id, %error, "the handed-off orchestrator kept its name");
+            }
+        });
+    }
+
     /// Decision 23: window `window_id` is renamed `name` and rebound to run `run_id`
     /// (`WindowManager::rename`, then `rebind_run_window`, each taking the manager's
     /// lock for one change) on `spawn_blocking`, after `hold` (a test's; production
@@ -141,7 +152,7 @@ impl RunService {
         let Some((handoff, first, bound)) = found else {
             return;
         };
-        let first_prompt = handoff.prompt(&first, Some(bound)).await;
+        let first_prompt = handoff.prompt(&first, Some(bound), None).await;
         self.send(EventKind::Orch(OrchEvent::AdoptLost {
             run_id: run_id.to_string(),
             window_id,

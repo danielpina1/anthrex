@@ -11,9 +11,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use proto::WindowSpec;
 use proto::run_wire::request;
 use proto::{AgentRole, DeliveryMode, Effort, RunPath, RunRef, RunReply, RunRequest, RunState};
-use proto::{Runtime, WindowSpec};
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
@@ -116,6 +116,7 @@ impl ChainRig {
         let (decider, marker) = decider_stand_in(&tmp);
         let mut config = ManagerConfig::for_tests(socket.clone(), "/bin/sh".into());
         config.claude_bin = sleeping_claude(&tmp);
+        config.codex_bin = config.claude_bin.clone();
         config.decider_bin = Some(decider);
         config.worktrees_root = tmp.join("worktrees");
         config.launch_gate = LaunchGate::open_already();
@@ -148,19 +149,6 @@ impl ChainRig {
         };
         crate::profile::store::save(&repo_dir, &proto::RepoProfile::default(), &meta).unwrap();
 
-        let spec = WindowSpec {
-            name: Some("3f9a/orchestrator".into()),
-            runtime: Runtime::Claude,
-            cwd: checkout.work.clone(),
-            worktree_branch: None,
-            model: None,
-            initial_prompt: None,
-        };
-        let window = manager
-            .create_run_window(spec, checkout.work.clone(), role(PREV))
-            .await
-            .expect("the stand-in's window")
-            .id;
         let mut prev = run_of(1);
         prev.id = PREV.into();
         prev.project = pre.project.clone();
@@ -172,10 +160,25 @@ impl ChainRig {
         let resolved = crate::run::orch::launch::orchestrator_route(None, prev.limits.models());
         let mut record = orchestrator();
         record.route = resolved.route;
-        record.window_id = Some(window);
         record.live = false;
         prev.orch.orchestrator = Some(record);
         prepare(&mut prev);
+        // Milestone 9.16: the window is on the route `prepare` left (`codex` sleeps too).
+        let o = prev.orch.orchestrator.as_mut().unwrap();
+        let spec = WindowSpec {
+            name: Some("3f9a/orchestrator".into()),
+            runtime: o.route.runtime,
+            cwd: checkout.work.clone(),
+            worktree_branch: None,
+            model: None,
+            initial_prompt: None,
+        };
+        let window = manager
+            .create_run_window(spec, checkout.work.clone(), role(PREV))
+            .await
+            .expect("the stand-in's window")
+            .id;
+        o.window_id = Some(window);
         {
             let mut state = crate::lock(&s.state);
             state.runs.insert(PREV.into(), prev);
@@ -556,7 +559,13 @@ async fn the_handoff_history_read_is_bounded() {
         .await
         .unwrap();
     assert!(opened, "the read never opened the history file");
-    let prompt = handoff_prompt("first", (CHAIN, "3f9a", "accepted"), None, lines.as_deref());
+    let prompt = handoff_prompt(
+        "first",
+        (CHAIN, "3f9a", "accepted"),
+        None,
+        lines.as_deref(),
+        None,
+    );
     assert_eq!(lines, None);
     assert!(
         prompt.ends_with("```\n(history unavailable)\n```\n"),

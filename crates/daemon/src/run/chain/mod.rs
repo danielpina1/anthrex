@@ -21,8 +21,9 @@ use super::orch::tools::{OrchCall, parse_call};
 
 /// The final fix wave (review B, I1): the deadline on everything a continued start does
 /// before the engine's `Start` (the lookup, the root detection, `goal_ready` with the
-/// delivery's host preflight, the build and the handoff's history read), for a goal
-/// from a request: the CLI's `--continue` and the TUI's goal dialog. `run start`'s
+/// delivery's host preflight, the build, and the context handoff's fill read and the
+/// handoff's history read, which share one `git_timeout_secs` between them, milestone
+/// 9.16 ruling C14), for a goal from a request: the CLI's `--continue` and the TUI's goal dialog. `run start`'s
 /// terms, as the CLI's `RUN_START_TIMEOUT` counts them: M8a's git preflight (180 s),
 /// the host preflight (`PREFLIGHT_BOUND`), 30 s for the build and its tuning
 /// (`TUNING_START_BOUND`, milestone 9.5 ruling T9-3). Past it the start is refused and
@@ -35,7 +36,8 @@ pub const CONTINUE_START_BOUND: Duration = Duration::from_secs(180)
 /// The same deadline for the orchestrator's `start_goal`: `anthrex mcp`'s
 /// `TOOL_REPLY_TIMEOUT` (100 s) less 10 s for the engine step and the round trip, so
 /// the tool always hears the daemon's answer, which is then true: the run started, or
-/// nothing was.
+/// nothing was. Milestone 9.16 ruling C14: the context handoff's fill read and the
+/// history read share one `git_timeout_secs`, so a handoff adds no read to this bound.
 pub const START_GOAL_TOOL_BOUND: Duration = Duration::from_secs(90);
 
 /// The tools an idle orchestrator may call (decision 21): its last run's two reads and

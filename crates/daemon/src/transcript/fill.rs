@@ -14,7 +14,7 @@ use crate::headless::quota::{QuotaSample, codex_rate_limits};
 const SYNTHETIC_MODEL: &str = "<synthetic>";
 
 /// A session's context fill.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fill {
     pub tokens: u64,
     /// Codex: the rollout's `model_context_window`. Claude: `None`; decision 23 resolves it.

@@ -39,6 +39,7 @@ pub(crate) mod gate_files;
 #[cfg_attr(not(test), allow(dead_code))]
 mod graph;
 mod guard;
+mod handoff;
 mod hold;
 mod host_ops;
 pub mod lessons;
@@ -178,6 +179,8 @@ pub struct RunService {
     quota: quota::Quota,
     /// Milestone 9.16 decisions 16 and 17: `brakes.json`'s load and the hold's writes.
     hold_io: hold::HoldIo,
+    /// Milestone 9.16 decisions 22–29: the context fill reads (`driver/handoff.rs`).
+    handoff: handoff::FillCheck,
     /// Tests only (M9.11.8): run on each effect `execute` takes, before it is carried out.
     #[cfg(test)]
     execute_hook: Mutex<Option<effects::ExecuteHook>>,
@@ -283,6 +286,7 @@ impl RunService {
             pool_sweep: Mutex::new(None),
             quota,
             hold_io: Default::default(),
+            handoff: Default::default(),
             #[cfg(test)]
             execute_hook: Mutex::new(None),
             #[cfg(test)]
@@ -448,6 +452,7 @@ impl RunService {
     async fn on_tick(self: &Arc<Self>, now: u64) {
         self.retire_deadlines();
         self.check_orchestrators();
+        self.check_live();
         let publish = std::mem::take(&mut crate::lock(&self.book).publish_due);
         // Always asked (M9.10 final review M1): it moves the revision for a profile change.
         let moved = self.proposals_moved();

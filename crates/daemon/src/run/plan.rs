@@ -527,6 +527,7 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         lessons: None,
         discard_reason: None,
         failovers: Vec::new(),
+        handoff: None,
     })
 }
 

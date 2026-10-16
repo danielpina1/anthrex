@@ -154,6 +154,7 @@ pub(super) fn kind_name(kind: &EventKind) -> &'static str {
         EventKind::Quota { .. } => "Quota",
         EventKind::BrakesConfig(_) => "BrakesConfig",
         EventKind::Hold { .. } => "Hold",
+        EventKind::OrchestratorFill { .. } => "OrchestratorFill",
     }
 }
 
@@ -187,6 +188,7 @@ pub(super) fn reply_of(kind: &EventKind) -> Option<ReplyId> {
         | EventKind::PoolNote { .. }
         | EventKind::Quota { .. }
         | EventKind::BrakesConfig(_)
+        | EventKind::OrchestratorFill { .. }
         | EventKind::Stop
         | EventKind::Tick => None,
     }
