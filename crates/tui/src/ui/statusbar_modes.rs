@@ -312,8 +312,7 @@ fn review_hints(app: &App) -> Vec<Hint> {
     // Milestone 9.17 decision 19 (ruling C15): `f` while the review shows a frame.
     let frame = app.review_has_frame().then(|| hint("f", "frame", 5));
     if app.plan_doc_gate().is_some() {
-        let on_doc = app.plan_doc().is_some();
-        return design_review_hints(on_doc, frame.filter(|_| !on_doc));
+        return design_review_hints(app.plan_doc().is_some(), frame);
     }
     let tail = frame.into_iter().chain([
         hint("j/k", "task", 4),
@@ -334,7 +333,8 @@ fn review_hints(app: &App) -> Vec<Hint> {
     head.into_iter().chain(tail).collect()
 }
 
-/// [`review_hints`] at a design run's plan gate, on the task list or the Plan doc tab.
+/// [`review_hints`] at a design run's plan gate, on the task list or the Plan doc tab;
+/// `frame` (the `f` hint) shows on the task list only (ruling C20).
 fn design_review_hints(on_doc: bool, frame: Option<Hint>) -> Vec<Hint> {
     let mut hints = vec![hint("a", "approve", 9), hint("x", "reject", 9)];
     if on_doc {

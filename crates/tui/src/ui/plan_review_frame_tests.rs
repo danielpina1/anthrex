@@ -482,3 +482,36 @@ fn frame_row_renders_in_the_header() {
     let mut plain = app_with(overlapping_plan(), ReviewTarget::Gate);
     assert!(!rows(&draw(&mut plain, 80, 24))[23].contains("f frame"));
 }
+
+/// Task 6 review m3: at a design run's plan gate the status bar shows `f frame` on
+/// the task list while a frame exists (the approved spec's Non-goals), and not on the
+/// Plan doc tab, where `f` does nothing (ruling C20).
+#[test]
+fn design_gate_hints_f_frame_on_the_task_list_only() {
+    use crate::app::doc_gate::plan_doc::tests::{PLAN, on_tab, plan_run, reviewing};
+    let framed_run = || {
+        let mut run = plan_run(1);
+        run.plan_frame = Some(proto::PlanFrameInfo {
+            spec_non_goals: Some("- no app".into()),
+            ..proto::PlanFrameInfo::default()
+        });
+        run
+    };
+    for (w, h) in [(120, 40), (160, 40)] {
+        let mut list = reviewing(framed_run(), w, h);
+        assert!(list.plan_doc().is_none());
+        let bar = rows(&draw(&mut list, w, h))[usize::from(h) - 1].clone();
+        assert!(bar.contains("f frame"), "{w}x{h}: {bar:?}");
+        assert!(bar.contains("tab plan doc"), "{w}x{h}: {bar:?}");
+
+        let mut doc = on_tab(framed_run(), PLAN, w, h);
+        assert!(doc.plan_doc().is_some());
+        let bar = rows(&draw(&mut doc, w, h))[usize::from(h) - 1].clone();
+        assert!(!bar.contains("f frame"), "{w}x{h}: {bar:?}");
+        assert!(bar.contains("tab tasks"), "{w}x{h}: {bar:?}");
+
+        let mut plain = reviewing(plan_run(1), w, h);
+        let bar = rows(&draw(&mut plain, w, h))[usize::from(h) - 1].clone();
+        assert!(!bar.contains("f frame"), "{w}x{h}: {bar:?}");
+    }
+}
