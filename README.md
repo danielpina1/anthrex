@@ -45,6 +45,7 @@ anthrex fixes both:
 | **Stacked-PR delivery** | `pr` mode opens one pull request per stage; CI failures and review comments become fix tasks. You merge. |
 | **Keep going** | New rounds on a finished run, and next goals on the same orchestrator. |
 | **Tuning** | The run history refits size thresholds, routing and concurrency for the next run, and estimates a run before it starts. |
+| **Brakes** | A daemon-wide hold on new sessions (`C-b H`), a quota brake fed by the CLIs' own rate-limit readings, failover to a role's fallback on the other runtime, and a fresh orchestrator session when its context is full. |
 
 ### Every agent, with its status
 
@@ -137,6 +138,7 @@ Every command starts with the prefix, `C-b` by default (`prefix` in the config).
 | `C-b g` | start a goal |
 | `C-b a` | alerts: gates, the orchestrator's questions and problems only you can fix; `1`-`9` answers a question |
 | `C-b P` / `C-b S` | Profile screen / Settings screen |
+| `C-b H` | hold or release dispatch daemon-wide (with a confirm) |
 | `C-b s` | toggle the sidebar |
 | `C-b <` / `C-b >` | narrow / widen the sidebar |
 | `C-b r` | reconnect to the daemon |
@@ -250,6 +252,28 @@ max_distills_per_day = 20   # per repository; 0 stops the distiller
 ```
 
 With `enabled = false` no prompt carries a lessons block and nothing is distilled; failure signatures are still recorded, since they are history. The distiller and the risk note are decider calls, so they follow `[orchestrator] deciders` (with the deciders off, nothing is distilled).
+
+### Brakes
+
+anthrex keeps runs from spending a subscription it cannot see and lets you stop everything new at once. None of it reads a credential or calls a vendor: each runtime's quota comes from what its own CLI already writes.
+
+- **The hold.** `C-b H` (with a confirm) or `anthrex hold on` stops new work daemon-wide: no task, planner, scout or goal starts a fresh session. Work already started (a running session, its review, fix rounds and merge) finishes, and runs stay running. The status bar shows ` HELD `, an alert and each run's attention line say `dispatch is held daemon-wide · anthrex hold off`, a new goal is refused with that text, and a queued goal waits. The hold is saved in the data directory (`brakes.json`) and survives a restart; `C-b H` again or `anthrex hold off` releases it and says how many queued goals now start. `anthrex hold status` prints the hold and each runtime's quota.
+- **The quota brake.** Claude's stream reports its 5-hour and 7-day usage (`rate_limit_event`); Codex's session rollout under `$CODEX_HOME/sessions` reports its windows (`token_count`). When a runtime's 5-hour window reaches 90 % or its 7-day window 95 %, no new session of that runtime starts until the window resets: `claude dispatch held: 7d at 97% (≥95%) until 14:30 UTC`. Work already in flight finishes. A runtime with no reading in the last 10 minutes is never braked (the run log says once that it is unmeasured).
+- **Failover.** A new session whose runtime is braked starts on its role row's "if it struggles" fallback when that is on the other runtime, and the run says `claude braked: t2 started on codex (fallback)`. A reviewer never gets its author's model, two runtimes never share overlapping files, and the hold stops failover too. To keep a role on one subscription, give its row a fallback on the same runtime.
+- **The context handoff.** When you continue a goal on a chain whose orchestrator session is 80 % of its context window, or 300,000 tokens, full, a fresh orchestrator session starts with the previous goal's summary and history and says how full the old one was; the old window stays, renamed `<h4>/orchestrator (handed off)`. A live orchestrator at 90 % gets an attention line.
+
+```toml
+[orchestrator]
+handoff_at_percent = 80       # 0 turns this criterion off
+handoff_at_tokens = 300000    # 0 turns this criterion off
+context_window_tokens = 0     # 0: the session's own window, else 200,000
+
+[orchestrator.brakes]         # also on the Settings screen (C-b S), applied live
+quota_brake = true
+quota_pause_5h_percent = 90
+quota_pause_7d_percent = 95
+quota_fresh_secs = 600        # how long a reading counts
+```
 
 ## Configuration
 
@@ -371,6 +395,7 @@ Environment variables:
 | `anthrex profile status \| detect \| show \| use \| reject \| edit` | Detect, show, use (store; `confirm` is its alias) and correct the repository's profile; `edit --anyway` stores an edit whatever its check finds. |
 | `anthrex run <subcommand>` | Start, watch and finish orchestrated runs (below). |
 | `anthrex lessons list [--all] [--json] \| approve \| reject \| forget <ID>… [--yes]` | List the repository's lessons, approve or reject proposed ones, forget a lesson or dismiss a known failure. |
+| `anthrex hold on \| off \| status` | Hold or release dispatch daemon-wide, or show the hold and each runtime's quota. |
 
 `anthrex run` subcommands:
 
