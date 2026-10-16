@@ -64,6 +64,14 @@ pub(super) fn brief_attention(run: &Run) -> Vec<String> {
         .collect()
 }
 
+/// Decision 26: the tasks whose `replaces` names `id`, in plan order.
+pub(super) fn replaced_by(run: &Run, id: &str) -> Vec<String> {
+    (run.tasks.iter())
+        .filter(|t| t.replaces.iter().any(|r| r == id))
+        .map(|t| t.id().to_string())
+        .collect()
+}
+
 #[cfg(test)]
 #[path = "snapshot_plan_tests.rs"]
 mod tests;

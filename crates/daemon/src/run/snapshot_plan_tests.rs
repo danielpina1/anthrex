@@ -212,3 +212,19 @@ fn design_run_publishes_spec_non_goals() {
     run.state = proto::RunState::Running;
     assert_eq!(info_of(&run).plan_frame, None);
 }
+
+/// Decision 26's read side: `replaces` as stored, and `replaced_by` computed from every
+/// task that names this one, in plan order.
+#[test]
+fn task_info_shows_replaces_and_replaced_by() {
+    let mut run = run_of(4);
+    run.tasks[0].state = proto::TaskState::Cancelled;
+    run.tasks[2].replaces = vec!["t0".into()];
+    run.tasks[3].replaces = vec!["t0".into(), "t1".into()];
+    let info = info_of(&run);
+    let of = |id: &str| info.tasks.iter().find(|t| t.id == id).unwrap();
+    assert_eq!(of("t0").replaced_by, ["t2", "t3"]);
+    assert_eq!(of("t1").replaced_by, ["t3"]);
+    assert_eq!(of("t3").replaces, ["t0", "t1"]);
+    assert!(of("t2").replaced_by.is_empty() && of("t1").replaces.is_empty());
+}

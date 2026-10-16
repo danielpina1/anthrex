@@ -74,6 +74,8 @@ fn run_info(run: &Run, brakes: &super::engine::brakes::Brakes, now: u64) -> RunI
             info.actions = available(run, &ActionNode::Task(t.id()));
             // Milestone 9.2 decision 41: a review fix's text names its threads' authors.
             info.fixes = t.fixes.as_ref().map(|f| super::engine::fix_text(run, f));
+            // Milestone 9.17 decision 26.
+            info.replaced_by = super::snapshot_plan::replaced_by(run, t.id());
             // Milestone 9.8 (M9.8.11 fix round 1): the task's row, which the task edit
             // form shows for a pick of the row's own model; sent with the plan text,
             // while the form can open (the gate), as `route_spec` is.
@@ -508,7 +510,8 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64, plan_text: b
         pair: patterns::pair_info(t),
         // Milestone 9.6 decision 17.
         covers: t.spec.covers.clone(),
-        replaces: Vec::new(),
+        replaces: t.replaces.clone(),
+        // Set by `run_info`, which has the run.
         replaced_by: Vec::new(),
     }
 }
