@@ -275,9 +275,9 @@ impl App {
             | RunReply::Doc { .. }
             // Milestone 9.15: routed by id in `app/replies.rs`, never here.
             | RunReply::Lessons { .. }
-            | RunReply::LessonsGraph { .. }
-            // Milestone 9.16: the hold's reply is shown from task M9.16.10.
-            | RunReply::Held { .. } => {}
+            | RunReply::LessonsGraph { .. } => {}
+            // Milestone 9.16 decision 32: `C-b H`'s answer.
+            RunReply::Held { message, .. } => self.on_held(&message),
             RunReply::TaskDetail { detail, request_id } => self.on_task_detail(detail, request_id),
         }
         vec![]

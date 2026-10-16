@@ -12,7 +12,7 @@
 use super::models_table::ModelsTable;
 use config::settings::validate;
 use proto::settings::key;
-use proto::{BudgetLimit, Origin, SettingsDoc, SettingsLimits, TuningReport};
+use proto::{BudgetLimit, Origin, SettingsBrakes, SettingsDoc, SettingsLimits, TuningReport};
 use std::collections::BTreeMap;
 
 /// Interfaces "Exact user-visible text": a `Saved` reply.
@@ -69,6 +69,59 @@ pub const LIMITS: [(&str, &str); 10] = [
     (key::MAX_READERS, "max readers"),
     (key::MAX_BOUNCES, "max bounces"),
 ];
+
+/// Milestone 9.16 decision 33: the quota brake's rows, after the limits, in
+/// `SETTINGS_KEYS` order. `quota brake` reads `on` or `off` (space, `1` or `0` set it).
+pub const BRAKES: [(&str, &str); 4] = [
+    (key::QUOTA_BRAKE, "quota brake"),
+    (key::QUOTA_PAUSE_5H_PERCENT, "pause at 5h %"),
+    (key::QUOTA_PAUSE_7D_PERCENT, "pause at 7d %"),
+    (key::QUOTA_FRESH_SECS, "fresh for secs"),
+];
+
+/// `quota brake`'s text.
+pub fn on_off(on: bool) -> &'static str {
+    if on { "on" } else { "off" }
+}
+
+/// A brake row's value in `b` (`quota brake` as 1 or 0).
+fn brake_value(b: &SettingsBrakes, key: &str) -> u64 {
+    match key {
+        key::QUOTA_BRAKE => u64::from(b.quota_brake),
+        key::QUOTA_PAUSE_5H_PERCENT => u64::from(b.quota_pause_5h_percent),
+        key::QUOTA_PAUSE_7D_PERCENT => u64::from(b.quota_pause_7d_percent),
+        key::QUOTA_FRESH_SECS => b.quota_fresh_secs,
+        _ => 0,
+    }
+}
+
+/// Sets a brake row from its text; a value its field cannot hold saturates, so
+/// `validate` reports it.
+fn set_brake(b: &mut SettingsBrakes, key: &str, text: &str) {
+    let n = || text.parse::<u64>().unwrap_or(0);
+    let u8_of = |v: u64| u8::try_from(v).unwrap_or(u8::MAX);
+    match key {
+        key::QUOTA_BRAKE => b.quota_brake = text == on_off(true),
+        key::QUOTA_PAUSE_5H_PERCENT => b.quota_pause_5h_percent = u8_of(n()),
+        key::QUOTA_PAUSE_7D_PERCENT => b.quota_pause_7d_percent = u8_of(n()),
+        key::QUOTA_FRESH_SECS => b.quota_fresh_secs = n(),
+        _ => {}
+    }
+}
+
+/// Whether `key` is one of the brake rows.
+pub fn is_brake(key: &str) -> bool {
+    BRAKES.iter().any(|(k, _)| *k == key)
+}
+
+/// Any row's value in `doc`, the limits' and the brakes'.
+fn field_value(doc: &SettingsDoc, key: &str) -> u64 {
+    if is_brake(key) {
+        brake_value(&doc.brakes, key)
+    } else {
+        limit_value(&doc.limits, key)
+    }
+}
 
 /// A dialog over the screen.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -227,14 +280,20 @@ impl SettingsScreen {
     /// scope and the repository's table.
     pub fn load(&mut self, doc: &SettingsDoc, origin: &BTreeMap<String, Origin>) {
         self.models.global = doc.roles.clone();
-        self.limits = LIMITS
-            .iter()
-            .map(|(key, label)| LimitField {
-                key,
-                label,
-                text: limit_value(&doc.limits, key).to_string(),
-            })
-            .collect();
+        let limits = LIMITS.iter().map(|(key, label)| LimitField {
+            key,
+            label,
+            text: limit_value(&doc.limits, key).to_string(),
+        });
+        let brakes = BRAKES.iter().map(|(key, label)| LimitField {
+            key,
+            label,
+            text: match *key {
+                key::QUOTA_BRAKE => on_off(doc.brakes.quota_brake).to_owned(),
+                k => brake_value(&doc.brakes, k).to_string(),
+            },
+        });
+        self.limits = limits.chain(brakes).collect();
         self.base = doc.clone();
         self.origin = origin.clone();
         self.loaded = true;
@@ -250,8 +309,12 @@ impl SettingsScreen {
     /// the `everywhere` scope (M9.8.12: the roster and the orchestrator default left the
     /// document).
     pub fn built(&self) -> SettingsDoc {
-        let mut limits = self.base.limits.clone();
+        let (mut limits, mut brakes) = (self.base.limits.clone(), self.base.brakes);
         for f in &self.limits {
+            if is_brake(f.key) {
+                set_brake(&mut brakes, f.key, &f.text);
+                continue;
+            }
             // Blank reads 0, which every range refuses with its own message.
             set_limit(&mut limits, f.key, f.text.parse().unwrap_or(0));
         }
@@ -260,8 +323,8 @@ impl SettingsScreen {
             // Ruling T18-2: read-only here; the screen carries what the daemon said.
             design_default: self.base.design_default,
             roles: self.models.global.clone(),
-            // Milestone 9.16: carried as the daemon sent it until M9.16.10's rows.
-            brakes: self.base.brakes,
+            // Milestone 9.16 decision 33: the four rows; the hold row is never saved.
+            brakes,
         }
     }
 
@@ -303,7 +366,7 @@ impl SettingsScreen {
             return false;
         }
         let (now, base) = (self.built(), &self.base);
-        limit_value(&now.limits, key) == limit_value(&base.limits, key)
+        field_value(&now, key) == field_value(base, key)
     }
 
     /// Ruling RH-5: `refit: <budget>` beside the budget of `class` (`"S"` or `"M"`) when

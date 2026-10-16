@@ -199,14 +199,15 @@ fn j_k_and_pages_scroll_and_esc_closes() {
         assert!(tap(&mut app, code).is_empty(), "{code:?}");
         assert_eq!(scroll(&app), 0, "{code:?} does nothing");
     }
-    // The end: 116 lines from line 96 fill (task M9.6.18 added three, ruling T18-4; M9.8.11 four; the
+    // The end: 117 lines from line 97 fill (task M9.6.18 added three, ruling T18-4; M9.8.11 four;
+    // milestone 9.16's `C-b H` one; the
     // final fix wave's FW-76 thirteen) the 21 rows under the `↑` mark.
     for _ in 0..10 {
         tap(&mut app, KeyCode::PageDown);
     }
-    assert_eq!(scroll(&app), 96);
+    assert_eq!(scroll(&app), 97);
     tap(&mut app, KeyCode::Char('j'));
-    assert_eq!(scroll(&app), 96, "j stops where the view stops");
+    assert_eq!(scroll(&app), 97, "j stops where the view stops");
     tap(&mut app, KeyCode::Char('q'));
     assert!(app.modal.is_none(), "q closes");
     chord(&mut app, '?');
@@ -218,7 +219,7 @@ fn j_k_and_pages_scroll_and_esc_closes() {
 #[test]
 fn tab_jumps_between_groups() {
     let tops = group_tops(&help_groups("C-b"));
-    assert_eq!(tops[..3], [0, 22, 30]);
+    assert_eq!(tops[..3], [0, 23, 31]);
     let mut app = gate_app();
     chord(&mut app, '?');
     tap(&mut app, KeyCode::Tab);
@@ -246,7 +247,7 @@ fn tab_jumps_between_groups() {
     for _ in 0..12 {
         tap(&mut app, KeyCode::Tab);
     }
-    assert_eq!(scroll(&app), 96);
+    assert_eq!(scroll(&app), 97);
 }
 
 /// Task 6's ruling: `C-b ?` works over the Alerts view, and closing the help gives the
@@ -306,7 +307,7 @@ fn an_opened_group_past_the_end_holds_its_place() {
     for _ in 0..12 {
         tap(&mut app, KeyCode::Tab);
     }
-    assert_eq!(scroll(&app), 96);
+    assert_eq!(scroll(&app), 97);
 }
 
 /// Minor 1: Shift+Tab goes back a group, whether it arrives as BackTab or as Tab with

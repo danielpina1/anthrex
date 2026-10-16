@@ -17,6 +17,7 @@ use crate::safe_text::one_line;
 use crate::theme::{Glyph, Palette, Role, dot, dot_sep, ellipsis, glyph, role};
 use crate::ui::kit::{self, Hint, cut, wrap_words};
 use crate::ui::{model_picker, models_table};
+use config::{QUOTA_FRESH_SECS_RANGE, QUOTA_PAUSE_PERCENT_RANGE};
 use proto::settings::{
     BUDGET_MIN, MAX_BOUNCES_RANGE, MAX_READERS_RANGE, MAX_WRITERS_RANGE, STALL_AFTER_SECS_RANGE,
     key,
@@ -124,6 +125,16 @@ fn range_of(k: &str) -> String {
             (*MAX_BOUNCES_RANGE.start()).into(),
             (*MAX_BOUNCES_RANGE.end()).into(),
         ),
+        // Milestone 9.16 decision 33.
+        key::QUOTA_BRAKE => "on or off".to_owned(),
+        key::QUOTA_PAUSE_5H_PERCENT | key::QUOTA_PAUSE_7D_PERCENT => between(
+            (*QUOTA_PAUSE_PERCENT_RANGE.start()).into(),
+            (*QUOTA_PAUSE_PERCENT_RANGE.end()).into(),
+        ),
+        key::QUOTA_FRESH_SECS => between(
+            *QUOTA_FRESH_SECS_RANGE.start(),
+            *QUOTA_FRESH_SECS_RANGE.end(),
+        ),
         _ => format!("at least {BUDGET_MIN}"),
     }
 }
@@ -212,12 +223,22 @@ fn limit_lines(s: &SettingsScreen, keys: bool, p: Palette) -> (Vec<Line<'static>
 
 /// The `limits` section's lines and the selected line's index; `loading…` before the
 /// first doc. The `models` section draws whole (`models_table::lines`).
-fn section_lines(s: &SettingsScreen, keys: bool, p: Palette) -> (Vec<Line<'static>>, usize) {
+fn section_lines(
+    app: &App,
+    s: &SettingsScreen,
+    keys: bool,
+    p: Palette,
+) -> (Vec<Line<'static>>, usize) {
     if !s.loaded {
         let text = format!("loading{}", ellipsis(p));
         return (vec![Line::styled(text, role(Role::Muted, p))], 0);
     }
-    limit_lines(s, keys, p)
+    let (mut lines, at) = limit_lines(s, keys, p);
+    // Milestone 9.16 decision 33: the hold, read-only (not a row the keys select).
+    let prefix = &app.settings.prefix_label;
+    let hold = crate::app::brakes::hold_row(&app.runs.brakes, prefix, dot(p));
+    lines.push(Line::styled(format!("  {hold}"), role(Role::Muted, p)));
+    (lines, at)
 }
 
 /// `glyph text`, wrapped under itself, in `r`.
@@ -335,7 +356,7 @@ pub(crate) fn body_lines(app: &App, s: &SettingsScreen, width: u16) -> Vec<Line<
         ));
         return out;
     }
-    out.extend(section_lines(s, keys, p).0);
+    out.extend(section_lines(app, s, keys, p).0);
     out.extend(footer(app, s, width, p));
     out
 }
@@ -382,7 +403,7 @@ fn draw_limits(frame: &mut Frame, app: &App, s: &SettingsScreen, inner: Rect, ba
     let height = usize::from(inner.height);
     // The footer may take up to half the screen; the section keeps the rest.
     let foot = capped(footer(app, s, inner.width, p), height / 2, p);
-    let (lines, at) = section_lines(s, bars, p);
+    let (lines, at) = section_lines(app, s, bars, p);
     let rows = height.saturating_sub(2 + foot.len());
     let mut all = vec![section_row(s, p), Line::default()];
     all.extend(kit::window(lines, at, rows, p));

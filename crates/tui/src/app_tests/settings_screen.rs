@@ -307,3 +307,70 @@ fn defaults_are_marked() {
     assert!(!screen(&app).is_default(key::MAX_BOUNCES));
     assert!(!text(&app).contains("(default)"));
 }
+
+/// Milestone 9.16 decision 33: four brake rows after the limits, each the daemon's rule
+/// (`quota_pause_5h_percent` 0 is refused); the hold's row is drawn read-only and is never
+/// part of the saved document.
+#[test]
+fn settings_screen_has_four_brake_rows_and_a_read_only_hold_row() {
+    let mut app = opened();
+    to_section(&mut app, SettingsSection::Limits);
+    let keys: Vec<&str> = screen(&app).limits.iter().map(|f| f.key).collect();
+    assert_eq!(keys[10..], proto::SETTINGS_KEYS[11..]);
+    let texts: Vec<&str> = (screen(&app).limits[10..].iter())
+        .map(|f| f.text.as_str())
+        .collect();
+    assert_eq!(texts, ["on", "90", "95", "600"]);
+
+    set_limit(&mut app, key::QUOTA_PAUSE_5H_PERCENT, "0");
+    let problems = screen(&app).problems();
+    assert!(
+        problems.contains(
+            &"orchestrator.brakes.quota_pause_5h_percent: must be between 1 and 100".to_owned()
+        ),
+        "{problems:?}"
+    );
+    assert!(screen(&app).doc().is_err());
+    assert!(puts(&w(&mut app)).is_empty(), "a refused value was saved");
+
+    // A valid edit, and the switch off: what `w` sends carries them and no hold.
+    set_limit(&mut app, key::QUOTA_PAUSE_5H_PERCENT, "85");
+    let at = limit_at(&app, key::QUOTA_BRAKE);
+    select(&mut app, at);
+    tap(&mut app, KeyCode::Char(' '));
+    assert_eq!(screen(&app).limits[at].text, "off");
+    app.runs.brakes.hold = Some(proto::brakes::DispatchHold {
+        since: 0,
+        by: "user".into(),
+    });
+    let sent = puts(&w(&mut app));
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    let doc = &sent[0].1;
+    assert_eq!(
+        (doc.brakes.quota_brake, doc.brakes.quota_pause_5h_percent),
+        (false, 85)
+    );
+    let json = serde_json::to_string(doc).unwrap();
+    assert!(!json.contains("hold"), "{json}");
+
+    // The row itself: off, then on with its time and who.
+    let prefix = &app.settings.prefix_label;
+    let mut brakes = proto::brakes::BrakesInfo::default();
+    assert_eq!(
+        crate::app::brakes::hold_row(&brakes, prefix, "·"),
+        "dispatch hold   off · C-b H"
+    );
+    brakes.hold = Some(proto::brakes::DispatchHold {
+        since: 86_400 + 14 * 3600 + 30 * 60,
+        by: "user".into(),
+    });
+    assert_eq!(
+        crate::app::brakes::hold_row(&brakes, prefix, "·"),
+        "dispatch hold   on since 14:30 UTC (user) · C-b H"
+    );
+    let drawn = crate::ui::settings::tests::screen_text(&app, 100, 40);
+    assert!(
+        drawn.contains("dispatch hold   on since 00:00 UTC (user) · C-b H"),
+        "{drawn}"
+    );
+}

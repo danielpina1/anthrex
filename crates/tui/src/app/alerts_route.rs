@@ -38,6 +38,8 @@ pub enum RouteKind {
     Orchestrator,
     OrchestratorAsks,
     OrchestratorStuck,
+    /// Milestone 9.16 decision 31: the brakes', the user's alive orchestrator or not.
+    DispatchHeld,
 }
 
 /// OFA §4.1's table. With no living orchestrator every alert is the user's.
@@ -67,7 +69,8 @@ pub fn alert_route(kind: RouteKind, orchestrator_lives: bool) -> Route {
         | RouteKind::Proposal
         | RouteKind::Orchestrator
         | RouteKind::OrchestratorAsks
-        | RouteKind::OrchestratorStuck => Route::User,
+        | RouteKind::OrchestratorStuck
+        | RouteKind::DispatchHeld => Route::User,
     }
 }
 
@@ -107,6 +110,7 @@ pub fn route_kind(key: &AlertKey, run: Option<&RunInfo>) -> RouteKind {
         AlertKey::Orchestrator(_) => RouteKind::Orchestrator,
         AlertKey::OrchestratorAsks(_) => RouteKind::OrchestratorAsks,
         AlertKey::OrchestratorStuck(_) => RouteKind::OrchestratorStuck,
+        AlertKey::DispatchHeld(_) => RouteKind::DispatchHeld,
     }
 }
 

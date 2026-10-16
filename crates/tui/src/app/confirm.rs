@@ -31,6 +31,8 @@ pub enum PendingAction {
         kind: proto::DocGateKind,
         action: proto::DocGateAction,
     },
+    /// Milestone 9.16 decision 32: `C-b H`'s confirm; `true` holds dispatch.
+    DispatchHold(bool),
 }
 
 impl PendingAction {
@@ -53,6 +55,8 @@ impl PendingAction {
                 proto::DocGateAction::Changes { .. } => "ask for changes",
                 proto::DocGateAction::Edit { .. } => "save",
             },
+            PendingAction::DispatchHold(true) => "hold dispatch",
+            PendingAction::DispatchHold(false) => "release dispatch",
         }
     }
 

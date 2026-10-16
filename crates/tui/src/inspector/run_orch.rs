@@ -115,3 +115,17 @@ pub(super) fn handled_rows(orchestrator: &OrchestratorInfo, app: &App) -> Vec<(S
     }));
     rows
 }
+
+/// Milestone 9.16 decision 30: `from <h4> · context <n>% full (<tokens>/<window>)`, or
+/// `from <h4> · context <tokens> tokens` with no known window.
+pub(super) fn handoff_text(handoff: &proto::HandoffInfo) -> String {
+    let from = clean(&handoff.from_run);
+    match handoff.window_tokens.filter(|w| *w > 0) {
+        Some(window) => format!(
+            "from {from} \u{b7} context {}% full ({}/{window})",
+            u128::from(handoff.fill_tokens) * 100 / u128::from(window),
+            handoff.fill_tokens
+        ),
+        None => format!("from {from} \u{b7} context {} tokens", handoff.fill_tokens),
+    }
+}

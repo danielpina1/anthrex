@@ -46,6 +46,8 @@ impl App {
                 kind,
                 action,
             } => vec![self.send_doc_gate(run_id, kind, action).1],
+            // Milestone 9.16 decision 32, after a `y`.
+            PendingAction::DispatchHold(on) => self.send_hold(on),
         }
     }
 

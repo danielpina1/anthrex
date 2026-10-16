@@ -173,7 +173,7 @@ fn limits_section_renders_at_80x24_and_120x40() {
     section(&mut app, SettingsSection::Limits);
     for (w, h) in SIZES {
         assert_eq!(
-            head(&app, w, h, 13),
+            head(&app, w, h, 18),
             vec![
                 "models  limits",
                 "",
@@ -187,6 +187,12 @@ fn limits_section_renders_at_80x24_and_120x40() {
                 "  max writers       2             1 to 8",
                 "  max readers       4             1 to 8",
                 "  max bounces       3  (default)  1 to 5",
+                // Milestone 9.16 decision 33: the brake rows, then the hold's read-only row.
+                "  quota brake       on            on or off",
+                "  pause at 5h %     90            1 to 100",
+                "  pause at 7d %     95            1 to 100",
+                "  fresh for secs    600           60 to 86400",
+                "  dispatch hold   off · C-b H",
                 "",
             ],
             "{w}x{h}"

@@ -457,6 +457,7 @@ impl App {
             Command::FocusAlerts => self.focus_alerts(),
             Command::OpenProfile => self.open_profile(),
             Command::OpenSettings => self.open_settings(),
+            Command::ToggleHold => self.hold_command(),
             cmd @ (Command::ToggleTree
             | Command::ToggleOverview
             | Command::NarrowSidebar
@@ -478,6 +479,7 @@ mod alerts_route;
 mod alerts_stage;
 pub(crate) mod alerts_view;
 mod asks;
+pub(crate) mod brakes;
 mod confirm;
 mod conversation;
 mod daemon;
