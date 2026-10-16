@@ -30,6 +30,23 @@ pub(super) struct HoldIo {
     /// Ruling C10: held across a request's save and its `EventKind::Hold`, never
     /// across the engine lock.
     write: tokio::sync::Mutex<()>,
+    /// Tests only: a save's wait in place of [`BRAKES_IO_WAIT`], and a pause before its
+    /// rename (taken by the next save).
+    #[cfg(test)]
+    pub(super) seam: std::sync::Mutex<(Option<std::time::Duration>, Option<brakes_io::Pause>)>,
+}
+
+impl HoldIo {
+    /// The next save's wait and pause.
+    fn save_seam(&self) -> (std::time::Duration, Option<brakes_io::Pause>) {
+        #[cfg(test)]
+        {
+            let mut seam = crate::lock(&self.seam);
+            (seam.0.unwrap_or(BRAKES_IO_WAIT), seam.1.take())
+        }
+        #[cfg(not(test))]
+        (BRAKES_IO_WAIT, None)
+    }
 }
 
 /// Ruling C9's probe: whether dispatch is held daemon-wide now.
@@ -113,7 +130,8 @@ impl RunService {
             }),
             (false, _) => None,
         };
-        let saved = brakes_io::save(&self.ctx.data_dir, wanted.clone(), BRAKES_IO_WAIT).await;
+        let (wait, pause) = self.hold_io.save_seam();
+        let saved = brakes_io::save_paused(&self.ctx.data_dir, wanted.clone(), wait, pause).await;
         if let Err(error) = saved {
             return RunReply::refused(request::HOLD, format!("the hold was not saved: {error}"));
         }

@@ -242,6 +242,75 @@ async fn a_corrupt_files_hold_survives_two_restarts() {
     drop(handle);
 }
 
+/// The `brakes.json` temp files in `data`.
+fn temps(data: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(data) else {
+        return Vec::new();
+    };
+    let names = entries
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned());
+    names.filter(|n| n.ends_with(".tmp")).collect()
+}
+
+/// Task 8's review I2: a stalled save with the hold `on` that is answered "not saved",
+/// then released (the release first, then a later `off`, when `then_off`); waits until
+/// the stalled save has ended.
+async fn stalled_on(s: &RunService, data: &Path, then_off: bool) {
+    let (release, stalled) = std::sync::mpsc::channel::<()>();
+    let stalled = std::sync::Mutex::new(stalled);
+    let pause: super::brakes_io::Pause = Arc::new(move || {
+        // A hang guard: the test releases it at once below.
+        let _ = crate::lock(&stalled).recv_timeout(STEP);
+    });
+    *crate::lock(&s.hold_io.seam) = (Some(Duration::from_millis(200)), Some(pause));
+    match &hold(s, true).await {
+        RunReply::Refused { message, .. } => {
+            assert!(message.starts_with("the hold was not saved: "), "{message}")
+        }
+        other => panic!("not refused: {other:?}"),
+    }
+    assert_eq!(crate::lock(&s.state).brakes.hold, None);
+    if then_off {
+        // A later save, while the stalled one still waits before its rename.
+        let reply = hold(s, false).await;
+        assert!(
+            matches!(reply, RunReply::Held { hold: None, .. }),
+            "{reply:?}"
+        );
+    }
+    release.send(()).unwrap();
+    let deadline = Instant::now() + STEP;
+    while !temps(data).is_empty() {
+        assert!(Instant::now() < deadline, "the stalled save never ended");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// Task 8's review I2: a save held past its wait is answered "not saved" and never
+/// lands afterwards, and a later save is not raced by it: the file and the engine
+/// agree once the stalled save has ended, and a restart loads the engine's hold.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_save_past_its_wait_never_lands() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("data");
+    let (s, _manager) = service(dir.path());
+    let handle = s.spawn(CancellationToken::new());
+    stalled_on(&s, &data, false).await;
+    assert!(!data.join(BRAKES_FILE).exists(), "the refused save landed");
+    stalled_on(&s, &data, true).await;
+    let file: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(data.join(BRAKES_FILE)).unwrap()).unwrap();
+    assert_eq!(
+        file,
+        serde_json::json!({"v": 1, "hold": null}),
+        "file and engine disagree"
+    );
+    assert_eq!(crate::lock(&s.state).brakes.hold, None);
+    s.stop().await;
+    drop(handle);
+}
+
 /// The plan file `Start` asks for.
 const PLAN: &str = "[[task]]\nid = \"t1\"\ntitle = \"t\"\nbrief = \"b\"\nowns = [\"a.txt\"]\nacceptance = [\"a\"]\nsize = \"s\"\n";
 

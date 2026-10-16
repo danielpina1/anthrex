@@ -14,6 +14,8 @@
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use proto::brakes::DispatchHold;
@@ -49,25 +51,66 @@ async fn within<T: Send + 'static>(
     }
 }
 
+/// A test seam: run on the blocking thread after the temp file is synced, before the
+/// rename.
+pub type Pause = std::sync::Arc<dyn Fn() + Send + Sync>;
+
 /// Writes `hold` to `<data_dir>/brakes.json` (decision 16); `Err` is why it was not.
 pub async fn save(
     data_dir: &Path,
     hold: Option<DispatchHold>,
     wait: Duration,
 ) -> Result<(), String> {
+    save_paused(data_dir, hold, wait, None).await
+}
+
+/// [`save`], with `pause` run before the rename.
+pub async fn save_paused(
+    data_dir: &Path,
+    hold: Option<DispatchHold>,
+    wait: Duration,
+    pause: Option<Pause>,
+) -> Result<(), String> {
     let text =
         serde_json::to_vec(&BrakesFile { v: VERSION, hold }).map_err(|error| error.to_string())?;
     let dir = data_dir.to_path_buf();
-    within(wait, move || write_atomic(&dir, &text)).await
+    // Task 8's review I2 (`live_config::SaveFn`'s pattern): the rename and a timeout
+    // each claim `cancel`; whichever swaps it first wins, so a save answered "not saved"
+    // never renames into place afterwards.
+    let cancel = Arc::new(AtomicBool::new(false));
+    let flag = cancel.clone();
+    let mut task = tokio::task::spawn_blocking(move || write_atomic(&dir, &text, &flag, pause));
+    let joined = match tokio::time::timeout(wait, &mut task).await {
+        Ok(joined) => joined,
+        Err(_) if !cancel.swap(true, Ordering::SeqCst) => {
+            return Err(format!("it did not finish within {} ms", wait.as_millis()));
+        }
+        // The rename was claimed before the timeout: it lands, so its end is awaited
+        // (the rename and the directory's sync are all that is left).
+        Err(_) => task.await,
+    };
+    match joined {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(error.to_string()),
+        Err(error) => Err(format!("a blocking step did not finish: {error}")),
+    }
 }
 
-/// The temp file, `fsync`, rename; a temp file left by a failure is removed.
-fn write_atomic(dir: &Path, text: &[u8]) -> std::io::Result<()> {
+/// Each save's own temp file name (task 8's review I2): a stalled save and a later one
+/// never share a path.
+static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// The temp file, `fsync`, the claim of `cancel`, rename; a temp file left by a failure
+/// or a lost claim is removed.
+fn write_atomic(
+    dir: &Path,
+    text: &[u8],
+    cancel: &AtomicBool,
+    pause: Option<Pause>,
+) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
-    let tmp = dir.join(format!(".{BRAKES_FILE}.tmp"));
-    // Only one save runs at a time (the service's hold lock); a leftover of a crash
-    // is replaced, so the new file is created with its mode.
-    let _ = std::fs::remove_file(&tmp);
+    let n = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let tmp = dir.join(format!(".{BRAKES_FILE}.{}-{n}.tmp", std::process::id()));
     let written = (|| {
         let mut file = std::fs::OpenOptions::new()
             .write(true)
@@ -76,6 +119,13 @@ fn write_atomic(dir: &Path, text: &[u8]) -> std::io::Result<()> {
             .open(&tmp)?;
         file.write_all(text)?;
         file.sync_all()?;
+        if let Some(pause) = &pause {
+            pause();
+        }
+        if cancel.swap(true, Ordering::SeqCst) {
+            let why = "the save outlived its wait; nothing changed";
+            return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, why));
+        }
         std::fs::rename(&tmp, dir.join(BRAKES_FILE))
     })();
     if written.is_err() {
