@@ -294,7 +294,9 @@ async fn transcript_read_times_out_and_adopts() {
 /// Ruling C15: the orchestrator's own `start_goal` is a goal boundary too.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_start_goal_tool_hands_off_too() {
-    let rig = ChainRig::new(|_| {}).await;
+    // Off macOS a run's checks run only unconfined; `start_goal_tool` inherits the
+    // previous run's choice (as the sibling chain tests do).
+    let rig = ChainRig::new(|prev| prev.limits.unconfined_checks = true).await;
     let path = transcript(&rig, 170_000);
     session_start(&rig, Runtime::Claude, Some(&path), "sess-a");
     let answer = tokio::time::timeout(ANSWER, rig.s.start_goal_tool(PREV, "Add logout".into()))
