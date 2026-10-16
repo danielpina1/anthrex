@@ -179,13 +179,14 @@ pub async fn compact_locked(locks: &LessonLocks, repo_dir: &Path, now: u64) -> O
     }
 }
 
-/// Which of the store's raw lines (`\n` included) [`compact`] keeps.
+/// Which of the store's raw lines (`\n` included) [`compact`] keeps. Each line parses
+/// as `fold::parse` parses it: lossy UTF-8, then `from_str` (M9.18.3's review, M1).
 fn kept(segments: &[&[u8]], now: u64) -> Vec<bool> {
     let parsed: Vec<Option<LessonLine>> = (segments.iter())
         .map(|raw| {
             let raw = raw.strip_suffix(b"\n").unwrap_or(raw);
             let raw = raw.strip_suffix(b"\r").unwrap_or(raw);
-            serde_json::from_slice(raw).ok()
+            serde_json::from_str(&String::from_utf8_lossy(raw)).ok()
         })
         .collect();
     let mut last: HashMap<&str, usize> = HashMap::new();

@@ -337,3 +337,52 @@ fn a_failed_rewrite_leaves_the_file() {
         .collect();
     assert_eq!(names, [LESSONS_FILE], "no temporary file is left");
 }
+
+/// Task M9.18.3's review, M1: [`compact`] parses a line as the fold does, lossily. A
+/// later line with invalid UTF-8 in a string that repeats a live `distilled` line's
+/// `record_id` reopens its entry for the fold, so its old attempts must stay.
+#[test]
+fn a_line_with_invalid_utf8_parses_as_the_fold_parses_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(LESSONS_FILE);
+    let mut bytes: Vec<u8> = Vec::new();
+    let mut raw = padding();
+    raw.extend([
+        json(&queued("x", 10)),
+        json(&attempt("x", 1, OLD)),
+        json(&attempt("x", 2, OLD + 1)),
+        json(&attempt("x", 3, OLD + 2)),
+        json(&distilled("x", OLD + 10, &["Some lesson"])),
+    ]);
+    for line in &raw {
+        bytes.extend_from_slice(line.as_bytes());
+        bytes.push(b'\n');
+    }
+    bytes.extend_from_slice(
+        br#"{"type":"verdict","v":1,"record_id":"x/distill/distilled","at":5,"id":"l-"#,
+    );
+    bytes.push(0xFF);
+    bytes.extend_from_slice(b"\",\"approved\":true}\n");
+    std::fs::write(&path, &bytes).unwrap();
+    let fold_before = fold::fold_text(&String::from_utf8_lossy(&bytes), "s");
+    assert!(
+        fold_before.problems.is_empty(),
+        "{:?}",
+        fold_before.problems
+    );
+    assert!(fold_before.queued["x/distill"].open);
+    assert_eq!(fold_before.queued["x/distill"].attempts, 3);
+
+    // The padding's three attempts go, and the repeated `distilled` line; x's stay.
+    assert_eq!(
+        compact(&path, NOW).unwrap(),
+        Compacted::Rewrote {
+            before: 11,
+            after: 7
+        }
+    );
+    let after = std::fs::read(&path).unwrap();
+    let fold_after = fold::fold_text(&String::from_utf8_lossy(&after), "s");
+    assert_eq!(fold_after.queued["x/distill"].attempts, 3);
+    assert_eq!(zeroed(fold_before), zeroed(fold_after));
+}
