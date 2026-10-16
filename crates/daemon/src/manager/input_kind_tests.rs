@@ -75,3 +75,22 @@ fn mixed_reports_back_to_back_are_mouse_only() {
     bytes.extend_from_slice(b"\x1b[65;3;4M");
     assert!(only_mouse_reports(&bytes));
 }
+
+/// An ESC-led input whose first bytes cannot start a report is typing however long it
+/// is: a bracketed paste and a cursor key both lead with ESC. Pins the result only.
+#[test]
+fn a_large_bracketed_paste_and_a_cursor_key_are_typing() {
+    let mut paste = b"\x1b[200~".to_vec();
+    paste.extend(std::iter::repeat_n(b'a', 1 << 20));
+    paste.extend_from_slice(b"\x1b[201~");
+    assert!(!only_mouse_reports(&paste));
+    // A paste whose body is itself nothing but reports still opens with the paste mark.
+    let mut reports = b"\x1b[200~".to_vec();
+    reports.extend_from_slice(&b"\x1b[<64;10;5M".repeat(1000));
+    reports.extend_from_slice(b"\x1b[201~");
+    assert!(!only_mouse_reports(&reports));
+    assert!(!only_mouse_reports(b"\x1b[A"));
+    assert!(!only_mouse_reports(b"\x1b[1;5C"));
+    assert!(!only_mouse_reports(b"\x1bb"));
+    assert!(!only_mouse_reports(b"\x1b"));
+}

@@ -19,6 +19,13 @@ pub fn only_mouse_reports(bytes: &[u8]) -> bool {
     if bytes.first() != Some(&ESC) {
         return false;
     }
+    // Offset 0 must start a report, or no cut exists: bail before the table, in O(1)
+    // for the cursor keys, Alt keys and bracketed pastes that lead with ESC.
+    let mut starts = false;
+    report_ends(bytes, &mut |_| starts = true);
+    if !starts {
+        return false;
+    }
     let mut reachable = vec![false; bytes.len() + 1];
     reachable[0] = true;
     for start in 0..bytes.len() {
