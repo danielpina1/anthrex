@@ -168,7 +168,10 @@ pub(super) struct Batch {
 impl Batch {
     fn apply(&mut self, edit: &PlanEdit) {
         match edit {
-            PlanEdit::AddTask { task, .. } => self.add_owned(task),
+            PlanEdit::AddTask { task, replaces } => {
+                self.add_owned(task);
+                self.replaces(&task.id, replaces);
+            }
             PlanEdit::SplitTask { task_id, into } => self.split_owned(task_id, into),
             PlanEdit::CancelTask { task_id } => self.cancel(task_id),
             // Milestone 9 decisions 42a and 42e.
@@ -350,6 +353,12 @@ impl Batch {
     /// queue, and every unfinished task that declared it as a dependency becomes
     /// `blocked(dep_cancelled)`.
     fn cancel_at(&mut self, i: usize) {
+        self.cancel_logged(i, "cancelled by a plan edit");
+    }
+
+    /// [`Self::cancel_at`], with `line` as the task's history line (milestone 9.17
+    /// decision 24's `cancelled: replaced by <new>`).
+    fn cancel_logged(&mut self, i: usize, line: &str) {
         let id = self.run.tasks[i].id().to_string();
         // Ruling T14-I1: a task whose merge candidate is in flight is cancelled only if
         // that merge does not land (`engine::merge::candidate_done`).
@@ -377,7 +386,7 @@ impl Batch {
         task.block = None;
         // Ruling T14-R3: nothing is handed back to a cancelled task, as `run cancel` has it.
         task.handback_due = false;
-        self.log(i, "cancelled by a plan edit".to_string());
+        self.log(i, line.to_string());
         self.run.merge_queue.retain(|q| *q != id);
         // Review m3: its queued deciders are dropped.
         super::engine::deciders::drop_queued(&mut self.run.decider_queue, &id);
@@ -434,7 +443,7 @@ impl Batch {
             self.errors.extend(reserved_new_id(&s.id));
             self.errors.extend(split_child_stage(parent, s));
         }
-        let children: Vec<Task> = specs.into_iter().map(|s| self.resolve(s)).collect();
+        let mut children: Vec<Task> = specs.into_iter().map(|s| self.resolve(s)).collect();
         for child in &children {
             self.add_deps_of(child);
         }
@@ -461,6 +470,10 @@ impl Batch {
         self.cancel_at(i);
         self.log(i, format!("split into {}", child_ids.join(", ")));
         let count = children.len();
+        // Milestone 9.17 decision 25: each child replaces the original.
+        for child in &mut children {
+            child.replaces = vec![id.to_string()];
+        }
         self.run.tasks.splice(i + 1..i + 1, children);
         for j in i + 1..=i + count {
             self.log(j, format!("split from {id}"));
@@ -507,6 +520,9 @@ impl Batch {
 
 #[path = "edits_amend.rs"]
 mod amend;
+
+#[path = "edits_replaces.rs"]
+mod replaces;
 
 #[cfg(test)]
 #[path = "edits_tests.rs"]
