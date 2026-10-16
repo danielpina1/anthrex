@@ -7,11 +7,12 @@
 //! `expect_no_publication(.., LONG)` really does cross four poll deadlines without
 //! the suite taking four poll intervals to run.
 //!
-//! `a_real_write_triggers_a_probe` is the single exception the brief allows: it uses
+//! `a_real_write_triggers_a_probe`, in `git_registry_wall_clock.rs` since M9.18.2's
+//! split, is the single exception the brief allows: it uses
 //! the real watcher against a real repository and waits on wall-clock time, with a
 //! deadline derived from [`daemon::git::probe::PROBE_TIMEOUT`] and
 //! [`daemon::git::schedule::DEBOUNCE`] (see `watcher_probe_deadline` and
-//! `registration_probe_deadline` near the bottom of this file) rather than a literal
+//! `registration_probe_deadline` in `git_registry_wall_clock.rs`) rather than a literal
 //! that could coincide with either. `a_commit_in_a_linked_worktree_triggers_a_probe` is
 //! its sibling for the linked-worktree watch, and waits the same way.
 //!

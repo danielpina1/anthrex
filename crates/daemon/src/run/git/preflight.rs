@@ -14,8 +14,8 @@ const MIN_GIT: (u32, u32) = (2, 38);
 
 /// Decision 17's start preflight, in its order. `protected_files` is left empty: the
 /// protected list depends on the resolved profile, which the caller has and passes to
-/// [`protected_files`]; decision 53's project-settings refusal is likewise the
-/// caller's, through [`project_settings`], only when it applies.
+/// [`super::protected_files`]; decision 53's project-settings refusal is likewise the
+/// caller's, through [`super::project_settings`], only when it applies.
 pub fn preflight(git: &OsStr, dir: &Path, timeout: Duration) -> Result<Preflight, String> {
     let roots = project::detect_roots_with(git, dir, timeout);
     let Some(root) = roots.worktree else {
