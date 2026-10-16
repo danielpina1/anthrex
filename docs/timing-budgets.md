@@ -995,6 +995,16 @@ Smoke stage 11n (`scripts/pty_smoke_lessons.py`), its daemon its own child under
 | `brakes_io::tests::unreadable_file_holds_and_stays`'s injected read wait (200 ms) and its writer's hold (wait × 100) | `crates/daemon/src/run/driver/brakes_io_tests.rs` | `200ms` injected `BRAKES_IO_WAIT` | The FIFO read blocks until the writer is released; the load returns at its injected wait (ruling C26). | **Recorded** (task M9.16.8). |
 | `lessons::service::tests::brake`, the worker's injected `brake_recheck` (1 s) and `PASS_WAIT` | `crates/daemon/src/lessons/service_brake_tests.rs` | `1s` recheck; `10s` deadline | A braked repository is served again one recheck later; a pass is one small store read. Each wait is a deadline loop on passes or the store. | **Recorded** (task M9.16.8). |
 
+### Recorded, from M9.16.11 (the brakes end to end and smoke stage 11o, 2026-10-16)
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| `run_e2e_brakes`'s `wait_braked`, `wait_status_line` and the t2 history line (deadline loops over `snapshot()`, `anthrex run status` and `history.jsonl`, 100 ms apart) | `crates/cli/tests/it/run_e2e_brakes.rs` | `RUN_WAIT` (300 s) each | A reading reaches the engine on the session's own stream line (Claude) or on its turn's end, one rollout read on `spawn_blocking` within `QUOTA_READ_WAIT` (Codex); the trip is published with that step. Both come within one task path, `RUN_WAIT`'s derivation. The history line follows the accept's records, one op. | **Recorded.** |
+| `run_e2e_brakes`'s `wait_for` step (a worker's or reviewer's `sh` loop of 1500 × 0.2 s) | `crates/cli/tests/it/run_e2e_brakes.rs` | `300s` | The file the test writes once it saw the trip or the hold; one `RUN_WAIT`, as `orch_script::wait_file`. | **Recorded.** |
+| Stage 11o: the confirm's frame after `C-b H` (`SCREEN_WAIT`) and the detach (`DETACH_WAIT`) | `scripts/pty_smoke_brakes.py` | `10s`; `5s` | The confirm is built from the snapshot the client holds and drawn on its 100 ms tick, as stage 11t's screens; the detach is local. | **Recorded.** |
+| Stage 11o: ` HELD ` drawn or gone after `y` (`HOLD_WAIT`) | `scripts/pty_smoke_brakes.py` | `15s` | The daemon saves `brakes.json` within `BRAKES_IO_WAIT` (5 s), steps the engine and publishes; the client draws the snapshot on its next tick: 5 s plus the frame's 10 s. | **Recorded.** The coupling to `BRAKES_IO_WAIT` is a comment (a language boundary). |
+| Stage 11o: `anthrex hold status`'s exit (`HOLD_STATUS_WAIT`) | `scripts/pty_smoke_brakes.py` | `210s` | `ensure_daemon` (0.25 s + `ENSURE_DAEMON_SOCKET_WAIT` 10 s) + `HANDSHAKE_TIMEOUT` (5 s) + its `List` within `HOLD_REQUEST_TIMEOUT` (`RUN_REQUEST_TIMEOUT`, 180 s, ruling C34) = 195.25 s. | **Recorded.** A comment coupling, as above. |
+
 ### Fixed, from the environment-block flake on macOS CI (2026-10-12)
 
 | Test | Site | Bound | The code's own legal worst case | Status |
