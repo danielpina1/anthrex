@@ -6,7 +6,8 @@
 //! their blocking half on `spawn_blocking` within a wait ([`BRAKES_IO_WAIT`] in
 //! production), never under a lock (AGENTS.md rule 2). The load fails closed: a file
 //! that does not parse or has another `v` is moved aside to
-//! `brakes.json.corrupt-<unix>` and holds with [`CORRUPT_BY`]; a read that fails or
+//! `brakes.json.corrupt-<unix>` and holds with [`CORRUPT_BY`], a hold written back to a
+//! fresh file so a restart stays held (task 8's ruling); a read that fails or
 //! does not finish in time holds with [`UNREADABLE_BY`] and leaves the file as it is.
 //! Only a missing file is off. Never in `state.json`.
 
@@ -118,15 +119,22 @@ pub async fn load(data_dir: &Path, wait: Duration, now: u64) -> Option<DispatchH
             let aside = corrupt_path(data_dir, now);
             let to = aside.clone();
             let moved = within(wait, move || std::fs::rename(&path, &to)).await;
+            let hold = fail_closed(CORRUPT_BY, now);
             match moved {
                 Ok(()) => {
-                    tracing::warn!(%why, aside = %aside.display(), "brakes.json is corrupt; moved aside, dispatch is held")
+                    tracing::warn!(%why, aside = %aside.display(), "brakes.json is corrupt; moved aside, dispatch is held");
+                    // Task 8's ruling: the fail-closed hold is written back, so a restart
+                    // stays held until the user lifts it. A file that could not be moved
+                    // aside is left for the next start, which fails closed on it again.
+                    if let Err(error) = save(data_dir, Some(hold.clone()), wait).await {
+                        tracing::warn!(%error, "the fail-closed hold was not saved; a restart starts unheld");
+                    }
                 }
                 Err(error) => {
                     tracing::warn!(%why, %error, "brakes.json is corrupt and could not be moved aside; dispatch is held")
                 }
             }
-            Some(fail_closed(CORRUPT_BY, now))
+            Some(hold)
         }
     }
 }

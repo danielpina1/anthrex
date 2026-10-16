@@ -95,7 +95,11 @@ async fn corrupt_case(text: &str) {
         std::fs::read_to_string(dir.path().join(&moved[0])).unwrap(),
         text
     );
-    assert!(!dir.path().join(BRAKES_FILE).exists());
+    // Task 8's ruling: the fail-closed hold is written back in a fresh file.
+    assert_eq!(
+        on_disk(dir.path()),
+        json!({"v": 1, "hold": {"since": NOW, "by": CORRUPT_BY}})
+    );
     // A new save works beside the moved file.
     save(dir.path(), None, WAIT).await.unwrap();
     assert_eq!(on_disk(dir.path()), json!({"v": 1, "hold": null}));

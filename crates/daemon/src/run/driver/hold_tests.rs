@@ -206,6 +206,42 @@ async fn a_persisted_or_corrupt_hold_holds_from_the_start() {
     }
 }
 
+/// Task 8's ruling: a corrupt file's fail-closed hold is written back, so the next
+/// start and the one after it stay held (the same hold) until the user lifts it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_corrupt_files_hold_survives_two_restarts() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::write(data.join(BRAKES_FILE), "{").unwrap();
+    let mut first = None;
+    for start in 0..3 {
+        let (s, _manager) = service(dir.path());
+        let handle = s.spawn(CancellationToken::new());
+        s.brakes_ready().await;
+        let hold = crate::lock(&s.state).brakes.hold.clone();
+        let hold = hold.unwrap_or_else(|| panic!("start {start} was not held"));
+        assert_eq!(hold.by, CORRUPT_BY, "start {start}");
+        assert_eq!(*first.get_or_insert(hold.clone()), hold, "start {start}");
+        s.stop().await;
+        drop(handle);
+    }
+    let (s, _manager) = service(dir.path());
+    let handle = s.spawn(CancellationToken::new());
+    assert!(matches!(
+        hold(&s, false).await,
+        RunReply::Held { hold: None, .. }
+    ));
+    s.stop().await;
+    drop(handle);
+    let (s, _manager) = service(dir.path());
+    let handle = s.spawn(CancellationToken::new());
+    s.brakes_ready().await;
+    assert_eq!(crate::lock(&s.state).brakes.hold, None, "lifted for good");
+    s.stop().await;
+    drop(handle);
+}
+
 /// The plan file `Start` asks for.
 const PLAN: &str = "[[task]]\nid = \"t1\"\ntitle = \"t\"\nbrief = \"b\"\nowns = [\"a.txt\"]\nacceptance = [\"a\"]\nsize = \"s\"\n";
 
