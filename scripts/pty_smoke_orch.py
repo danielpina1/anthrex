@@ -13,9 +13,10 @@ A goal takes the plan path: a scripted orchestrator (`orchestrator-run-1`) plans
 tasks and submits them with a plan frame; the user opens the plan review (`p`), which
 opens on the frame, flips to the first task and back with `f` (milestone 9.17), then
 approves the plan in the run view, focuses the orchestrator from the run's root and
-tells it the run is done; the orchestrator writes its summary, and the run is accepted. On macOS the goal starts through the TUI's goal
-form (`C-b g`, decision 44); elsewhere, where a run needs `--unconfined-checks` and the
-form has no such toggle, through `run start --goal`.
+tells it the run is done; the orchestrator writes its summary, and the run is
+accepted. On macOS the goal starts through the TUI's goal form (`C-b g`, decision 44);
+elsewhere, where a run needs `--unconfined-checks` and the form has no such toggle,
+through `run start --goal`.
 """
 
 import json

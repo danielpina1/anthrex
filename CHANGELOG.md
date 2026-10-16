@@ -50,7 +50,7 @@ your runs before downgrading below 0.2.0.
 - **Decided for you · Out of scope.** The orchestrator's plan submit, and each
   sub-planner's `submit_epic`, now carry `decided` (each question the goal left open,
   with the answer chosen) and `out_of_scope` (what the run will not do); a submit
-  without them is refused once, with the reason. At the plan gate the review opens on
+  without them is refused, with the reason. At the plan gate the review opens on
   the frame (`frame  2 decided for you · 1 out of scope · f shows them`, or `frame
   none stated` in the attention colour), and `f` flips the detail between the frame
   and the selected task. `anthrex run status` prints `decided for you: <question> →
@@ -164,6 +164,11 @@ your runs before downgrading below 0.2.0.
   changes; for a pinned gate script the reply adds that it `stays pinned until a task's
   owns names it (run edit)`, so the next gate command halts until you add a task whose
   `owns` names it.
+- **`brief` findings leave the code-review counts** (milestone 9.17). A history
+  record's `reviews_rejected` no longer counts a round whose only findings are about
+  the brief, the orchestrator's digest shows them apart in a task's review text (`r1
+  changes (1 brief)`), and an integration review whose findings are all about the
+  brief approves its epic.
 
 ## [0.2.0] — 2026-10-11
 
