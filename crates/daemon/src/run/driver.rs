@@ -42,6 +42,7 @@ mod guard;
 mod handoff;
 mod hold;
 mod host_ops;
+mod in_flight;
 pub mod lessons;
 pub mod lessons_requests;
 mod merge;
@@ -136,6 +137,8 @@ pub struct RunService {
     /// Per run: every op holds it shared; `Accept` and `Discard` take it exclusively, so
     /// they run after every op of their run emitted before them (M8a.8's concern).
     op_order: Mutex<HashMap<String, Arc<RwLock<()>>>>,
+    /// Every op in flight and its kind (`driver/in_flight.rs`), for a test's teardown.
+    in_flight: Arc<in_flight::InFlight>,
     stopped: AtomicBool,
     /// Set once `stop_now` has written every run's last `run.json` (ruling T22-N2).
     saved: AtomicBool,
@@ -262,6 +265,7 @@ impl RunService {
             book: Mutex::new(Book::new()),
             journal: Arc::new(Mutex::new(())),
             op_order: Mutex::new(HashMap::new()),
+            in_flight: Arc::default(),
             stopped: AtomicBool::new(false),
             saved: AtomicBool::new(false),
             stop_wait_ms: AtomicU64::new(STOP_WAIT.as_millis() as u64),
