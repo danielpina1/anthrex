@@ -159,6 +159,7 @@ fn each_rule_refuses_the_whole_batch() {
             one("t4", ""),
             one("a1", "epic = \"auth\""),
             one("b1", "epic = \"billing\""),
+            one("u1", ""),
         ],
     ));
     set(&mut run, "t1", TaskState::Cancelled);
@@ -166,6 +167,16 @@ fn each_rule_refuses_the_whole_batch() {
     set(&mut run, "t4", TaskState::Working);
     set(&mut run, "a1", TaskState::Cancelled);
     set(&mut run, "b1", TaskState::Cancelled);
+    // Pre-flight ruling C3: 9.13's retry cap (`dispatch::block`) makes the third block
+    // user-only, and `replaces` never cancels it for the orchestrator or a planner.
+    set(&mut run, "u1", TaskState::Blocked);
+    let u1 = run.tasks.iter_mut().find(|t| t.id() == "u1").unwrap();
+    let block = u1.block.as_mut().unwrap();
+    block.text = "which way? · the orchestrator retried it 2 times; the user decides".into();
+    block.user_only = true;
+    u1.orch.orch_retries = 2;
+    let user_only = "task u1 waits on something only the user can fix, and they have been \
+                     alerted: which way? · the orchestrator retried it 2 times; the user decides";
     for e in ["auth", "billing"] {
         (run.orch.epics).push(EpicRecord::new(e, PlannerPhase::Planning));
     }
@@ -212,6 +223,7 @@ fn each_rule_refuses_the_whole_batch() {
             &planner,
             "replaces: b1 is not in epic auth",
         ),
+        ("user-only block", add("t2", &["u1"]), &orch, user_only),
     ];
     for (case, edit, source, text) in cases {
         // A valid edit first: the refusal takes the whole batch.
@@ -224,30 +236,12 @@ fn each_rule_refuses_the_whole_batch() {
         );
         assert_eq!(run, before, "{case}");
     }
-    // The control: the planner replaces its own epic's task.
+    // The controls: the planner replaces its own epic's task, and the user replaces
+    // the user-only block.
     let edited = applied(&run, &[add("a2", &["a1"])], &planner);
     assert_eq!(task(&edited, "a2").replaces, ["a1"]);
-}
-
-/// Pre-flight ruling C3: a block only the user may cancel is never cancelled by
-/// `replaces` from the orchestrator or a sub-planner; the user's own edit may.
-#[test]
-fn a_user_only_block_is_replaced_only_by_the_user() {
-    let mut run = fixture();
-    set(&mut run, "t1", TaskState::Blocked);
-    // 9.13's retry cap (`dispatch::block`): the third block is user-only.
-    let block = run.tasks[0].block.as_mut().unwrap();
-    block.text = "which way? · the orchestrator retried it 2 times; the user decides".into();
-    block.user_only = true;
-    run.tasks[0].orch.orch_retries = 2;
-    let text = "task t1 waits on something only the user can fix, and they have been \
-                alerted: which way? · the orchestrator retried it 2 times; the user decides";
-    assert_eq!(
-        refused(&run, &[add("t2", &["t1"])], &EditSource::Orchestrator),
-        [("replaces".to_string(), text.to_string())]
-    );
-    let edited = applied(&run, &[add("t2", &["t1"])], &EditSource::User);
-    assert_eq!(task(&edited, "t1").state, TaskState::Cancelled);
+    let edited = applied(&run, &[add("t2", &["u1"])], &EditSource::User);
+    assert_eq!(task(&edited, "u1").state, TaskState::Cancelled);
 }
 
 #[test]
