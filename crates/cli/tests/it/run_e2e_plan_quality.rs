@@ -15,9 +15,9 @@ use crate::support::run_orch::ORCH_WAIT;
 use crate::support::run_plans::{
     approve, brief_finding, changes, commit, done, plan, task, user_texts,
 };
-
-/// The orchestrator's script: the first orchestrator session of the run.
-const ORCH: &str = "orchestrator-run-1";
+// The orchestrator's script, the first orchestrator session of the run, and the wait
+// for it to see the approval.
+use crate::run_e2e_orch::common::{ORCH, wait_saw_approval};
 
 /// The reviewer's one finding, about the brief.
 const WRONG_BRIEF: &str = "the brief asks for a.txt but the goal needs a.md";
@@ -114,7 +114,14 @@ fn worker_was_never_bounced(h: &RunHarness, info: &proto::RunInfo) {
 #[test]
 fn e2e_submit_without_frame_is_refused_then_gate_shows_it() {
     let h = RunHarness::orch("", &[]);
-    green(&h, "t1", "a.txt");
+    // `t1`'s worker waits for `go`, so the run stays running after the approval until
+    // the test has checked the frame is gone (decision 20: published only at the gate).
+    let go = h.dir.path().join("go");
+    h.script(
+        "worker-t1-1",
+        &[wait_file(&go), commit("a.txt", "t1\n"), done("added a.txt")],
+    );
+    h.script("reviewer-t1-1", &[approve()]);
     let edits = || vec![add(plan_task("t1", &["a.txt"], json!({})))];
     let steps = [
         prompt(),
@@ -158,6 +165,14 @@ fn e2e_submit_without_frame_is_refused_then_gate_shows_it() {
     );
 
     ok(&h.anthrex(&["run", "approve", &run]));
+    let info = h.wait_run(&run, |r| r.state != RunState::AwaitingApproval, RUN_WAIT);
+    assert_eq!(
+        info.state,
+        RunState::Running,
+        "still running: t1 waits for go"
+    );
+    assert_eq!(info.plan_frame, None, "a running run publishes no frame");
+    std::fs::write(&go, "").unwrap();
     let info = h.wait_run(&run, |r| r.state == RunState::Complete, RUN_WAIT);
     wait_passed(&h, 1);
     assert_eq!(info.plan_frame, None);
@@ -275,18 +290,7 @@ fn e2e_replaces_is_judged_by_the_replacement() {
     let run = start(&h, &steps);
     h.wait_run(&run, |r| r.state == RunState::AwaitingApproval, ORCH_WAIT);
     ok(&h.anthrex(&["run", "approve", &run]));
-    h.wait_log(
-        "the orchestrator's script to see the approval",
-        |log| {
-            log.iter().any(|l| {
-                l["script"] == ORCH
-                    && l["tool"] == "run_status"
-                    && serde_json::from_str::<Value>(l["result"].as_str().unwrap_or_default())
-                        .is_ok_and(|r| r.pointer("/gate/state") == Some(&json!("approved")))
-            })
-        },
-        ORCH_WAIT,
-    );
+    wait_saw_approval(&h);
     std::fs::write(&go, "").unwrap();
     let info = h.wait_run(&run, |r| r.state == RunState::Complete, RUN_WAIT * 2);
     wait_passed(&h, 1);
@@ -297,6 +301,12 @@ fn e2e_replaces_is_judged_by_the_replacement() {
     assert_eq!(t2.replaces, ["t1"]);
     let t1 = info.tasks.iter().find(|t| t.id == "t1").unwrap();
     assert_eq!(t1.replaced_by, ["t2"]);
+    // Decision 24: the cancel reason names the replacement.
+    assert!(
+        (t1.history.iter()).any(|e| e.text == "cancelled: replaced by t2"),
+        "{:#?}",
+        t1.history
+    );
 
     // History: `t2`'s record names `t1`.
     let records = h.history_lines("task");

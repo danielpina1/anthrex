@@ -10,7 +10,7 @@
 #[path = "run_e2e_orch/alerts.rs"]
 mod alerts;
 #[path = "run_e2e_orch/common.rs"]
-mod common;
+pub(crate) mod common;
 #[path = "run_e2e_orch/gate.rs"]
 mod gate;
 #[path = "run_e2e_orch/messages.rs"]
