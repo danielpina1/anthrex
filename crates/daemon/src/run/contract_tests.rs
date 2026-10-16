@@ -332,8 +332,9 @@ fn an_interface_change_reviewer_checks_the_old_interface() {
     for (multi, tiered) in [(true, false), (false, true), (true, true)] {
         let prompt = interface_prompt(true, multi, tiered);
         let lines: Vec<&str> = prompt.lines().collect();
+        // Line 5 since milestone 9.17's `Run goal:` line 2 (task M9.17.3, decision 1).
         assert_eq!(
-            lines[4], INTERFACE_LINE,
+            lines[5], INTERFACE_LINE,
             "multi={multi} tiered={tiered}\n{prompt}"
         );
         assert_eq!(prompt.matches(INTERFACE_LINE).count(), 1, "{prompt}");

@@ -1,6 +1,8 @@
 //! Task M9.6.4: decision 14's requirement parsing, with the exact refusal texts.
 
-use super::{GOAL_CAP, Requirement, TEXT_CAP, goal_section, parse, parse_amendment, scan};
+use super::{
+    GOAL_CAP, Requirement, TEXT_CAP, goal_section, non_goals_section, parse, parse_amendment, scan,
+};
 
 fn req(id: &str, text: &str) -> Requirement {
     Requirement {
@@ -223,5 +225,20 @@ fn the_goal_section_is_read_trimmed_and_capped() {
         "a".repeat(GOAL_CAP - 1)
     );
     let cut = goal_section(&long);
+    assert_eq!(cut.len(), GOAL_CAP - 1, "the é would cross the cap");
+}
+
+/// Milestone 9.17 decision 5: the spec's Non-goals section, read as the Goal section
+/// is: trimmed, empty when absent, and cut to 8 KiB on a character.
+#[test]
+fn non_goals_section_reads_the_section() {
+    let text = "# T\n\n## Goal and success criteria\nUsers reset.\n\n## Non-goals\n\n  SSO.\nNo admin page.\n\n## Approach\nTokens.\n";
+    assert_eq!(non_goals_section(text), "SSO.\nNo admin page.");
+    assert_eq!(
+        non_goals_section("# T\n\n## Goal and success criteria\nx\n"),
+        ""
+    );
+    let long = format!("## Non-goals\n{}é\n", "a".repeat(GOAL_CAP - 1));
+    let cut = non_goals_section(&long);
     assert_eq!(cut.len(), GOAL_CAP - 1, "the é would cross the cap");
 }

@@ -48,8 +48,11 @@ pub const RUN_TMP: &str = "run.json.tmp";
 /// 9.15, pre-flight ruling C1): `TaskRecord.{signatures, owns}` in a pending
 /// `AppendHistory`, and the milestone's other new `Run` fields and ops. Format 5
 /// (milestone 9.16, pre-flight ruling C2): `Run.failovers`, `RoutingDecision.failover`
-/// in a pending `AppendHistory`, and the milestone's later `Run.handoff`.
-pub const RUN_FORMAT: u32 = 5;
+/// in a pending `AppendHistory`, and the milestone's later `Run.handoff`. Format 6
+/// (milestone 9.17, pre-flight ruling C2): `RunOrch.plan_frames`, `EpicRecord.frame`,
+/// `DesignState.non_goals_section`, `DesignRound.non_goals_before`, `Task.replaces`,
+/// and the milestone's later `Finding.target` and `TaskNoteKind::Brief` notes.
+pub const RUN_FORMAT: u32 = 6;
 pub const JOURNAL_FILE: &str = "journal.jsonl";
 const JOURNAL_TMP: &str = "journal.jsonl.tmp";
 

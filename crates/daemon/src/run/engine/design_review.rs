@@ -248,6 +248,7 @@ pub(in crate::run::engine) fn requirements_read(
                 ids = design.requirements.iter().map(|r| r.id.clone()).collect();
                 design.goal_section = requirements::goal_section(text);
                 design.interfaces_section = requirements::interfaces_section(text);
+                design.non_goals_section = requirements::non_goals_section(text);
                 design.spec_unread = false;
             }
             let text = format!(
@@ -327,6 +328,7 @@ pub(in crate::run::engine) fn unapproved(run: &mut Run) {
         design.requirements.clear();
         design.goal_section.clear();
         design.interfaces_section.clear();
+        design.non_goals_section.clear();
         design.spec_unread = false;
     }
 }

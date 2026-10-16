@@ -11,6 +11,7 @@
 
 use proto::{Budget, DeciderSource, Finding, Severity, Size, Spend, TestMode};
 
+use super::contract_scope::{goal_line, out_of_scope_block}; // milestone 9.17 decisions 1-3
 use super::messages::summary;
 use super::model::{CheckRecord, ProofRecord, ReviewLevel, ReviewRecord, Run, Task};
 use super::orch::contract_design::{JUDGE_LINE, requirements_block}; // 9.6 decisions 25, 26
@@ -122,7 +123,7 @@ fn worker_head(run: &Run, task: &Task) -> String {
     let start = task.start_commit.as_deref().unwrap_or(run.head_for(task));
     let mut lines = vec![
         format!("[anthrex] Task {}: {}", spec.id, spec.title),
-        format!("Run goal: {}", run.goal),
+        goal_line(run),
         format!("Worktree: {}", task.worktree.display()),
         format!("Branch: {}", task.branch),
         format!("Start commit: {}", sha7(start)),
@@ -226,6 +227,7 @@ pub fn reviewer_prompt(
             spec.title,
             level_label(level)
         ),
+        goal_line(run),
         format!("Base: {}", sha7(base)),
         format!("Head: {}", sha7(head)),
         format!("Test mode: {}", mode_label(task.test_mode)),
@@ -288,6 +290,7 @@ pub fn reviewer_prompt(
     lines.extend((!lessons.is_empty()).then_some(lessons));
     let note = super::contract_lessons::risk_note_block(task); // 9.15 decision 30
     lines.extend((!note.is_empty()).then_some(note));
+    lines.extend(out_of_scope_block(run, task));
     if let Some(block) = requirements_block(run, task) {
         lines.extend([block, JUDGE_LINE.to_string()]);
     }

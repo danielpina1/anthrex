@@ -32,9 +32,9 @@ fn run_file(data: &Path) -> std::path::PathBuf {
 #[test]
 fn a_saved_run_records_its_format() {
     let data = tempfile::tempdir().unwrap();
-    assert_eq!(RUN_FORMAT, 5);
+    assert_eq!(RUN_FORMAT, 6);
     let json = saved_json(data.path());
-    assert_eq!(json["format"], serde_json::json!(5), "{json}");
+    assert_eq!(json["format"], serde_json::json!(6), "{json}");
 }
 
 /// Pinning (milestone 9.13, decision 36's bump to 2): a `run.json` a 9.11 or 9.12
@@ -113,8 +113,50 @@ fn a_format_4_run_loads() {
     assert!(run.failovers.is_empty());
 }
 
-/// Milestone 9.16 (ruling C2): a run's failovers reach `run.json` stamped format 5 and
-/// survive a load.
+/// Pinning (milestone 9.17, pre-flight ruling C2's bump to 6): the `run.json` a 9.16
+/// daemon writes (stamped format 5, with a failover and a handoff; captured by a
+/// throwaway engine test before the bump, task M9.17.3) still loads, keeps those
+/// fields, and has none of 9.17's: no plan frame, no `replaces`, no Non-goals.
+#[test]
+fn a_format_5_run_loads() {
+    let text = include_str!("../fixtures/run/m916-run.json");
+    let json: serde_json::Value = serde_json::from_str(text).unwrap();
+    assert_eq!(json["format"], serde_json::json!(5));
+    assert!(
+        json["failovers"].is_array() && json["handoff"].is_object(),
+        "9.16 fields"
+    );
+    let id = json["id"].as_str().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let dir = data.path().join("runs").join(id);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(RUN_FILE), text).unwrap();
+    let (runs, problems) = load_all(data.path());
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(runs.len(), 1);
+    let run = &runs[0].0;
+    assert_eq!(run.id, id);
+    assert_eq!(run.failovers.len(), 1);
+    assert_eq!(run.handoff.as_ref().map(|h| h.from_window), Some(41));
+    assert!(run.orch.plan_frames.is_empty());
+    assert!(run.orch.epics.iter().all(|e| e.frame.is_none()));
+    assert!(run.tasks.iter().all(|t| t.replaces.is_empty()));
+    assert!(run.orch.design.is_none());
+    // Saved again by this build, it carries this build's format and no 9.17 key.
+    let mut again = run.clone();
+    again.data_dir = data.path().join("again");
+    save_run(&again).unwrap();
+    let saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(again.data_dir.join(RUN_FILE)).unwrap()).unwrap();
+    assert_eq!(saved["format"], serde_json::json!(6));
+    let text = saved.to_string();
+    for key in ["plan_frames", "\"frame\"", "replaces", "non_goals"] {
+        assert!(!text.contains(key), "{key} in {text}");
+    }
+}
+
+/// Milestone 9.16 (ruling C2): a run's failovers reach `run.json` stamped with this
+/// build's format (5 then, 6 since milestone 9.17) and survive a load.
 #[test]
 fn failovers_are_saved_as_format_5() {
     let data = tempfile::tempdir().unwrap();
@@ -137,7 +179,7 @@ fn failovers_are_saved_as_format_5() {
     save_run(&run).unwrap();
     let json: serde_json::Value =
         serde_json::from_slice(&std::fs::read(run_file(data.path())).unwrap()).unwrap();
-    assert_eq!(json["format"], serde_json::json!(5));
+    assert_eq!(json["format"], serde_json::json!(RUN_FORMAT));
     assert_eq!(json["failovers"][0]["who"], "t1");
     let (runs, problems) = load_all(data.path());
     assert!(problems.is_empty(), "{problems:?}");
@@ -146,7 +188,7 @@ fn failovers_are_saved_as_format_5() {
 
 /// Milestone 9.15 (ruling C1): a task record's signatures and `owns` reach `run.json`
 /// inside a pending `AppendHistory`, which a 9.14 daemon would drop: the run is saved as
-/// format 4, and both survive a load.
+/// format 4 or later (this build's), and both survive a load.
 #[test]
 fn a_pending_task_record_keeps_its_signatures() {
     let data = tempfile::tempdir().unwrap();
@@ -174,7 +216,7 @@ fn a_pending_task_record_keeps_its_signatures() {
     save_run(&run).unwrap();
     let json: serde_json::Value =
         serde_json::from_slice(&std::fs::read(run_file(data.path())).unwrap()).unwrap();
-    assert_eq!(json["format"], serde_json::json!(5));
+    assert_eq!(json["format"], serde_json::json!(RUN_FORMAT));
     let saved = json["pending_ops"]
         .as_object()
         .unwrap()
@@ -253,7 +295,7 @@ async fn a_run_from_a_newer_anthrex_is_left_alone() {
     let data = dir.path().join("data");
     let mut json = saved_json(&data);
     let object = json.as_object_mut().unwrap();
-    object.insert("format".into(), serde_json::json!(6));
+    object.insert("format".into(), serde_json::json!(7));
     object.insert(
         "a_field_from_the_future".into(),
         serde_json::json!({"kept": true}),
@@ -270,7 +312,7 @@ async fn a_run_from_a_newer_anthrex_is_left_alone() {
     assert_eq!(
         problems,
         [format!(
-            "run {RUN_ID} skipped: written by a newer anthrex (run format 6; this one reads up to 5); left as it is"
+            "run {RUN_ID} skipped: written by a newer anthrex (run format 7; this one reads up to 6); left as it is"
         )]
     );
     assert!(
@@ -328,7 +370,7 @@ fn a_run_whose_format_is_not_a_whole_number_is_left_alone() {
         assert_eq!(
             problems,
             [format!(
-                "run {RUN_ID} skipped: written by a newer anthrex (run format {format}; this one reads up to 5); left as it is"
+                "run {RUN_ID} skipped: written by a newer anthrex (run format {format}; this one reads up to 6); left as it is"
             )],
             "{format}"
         );

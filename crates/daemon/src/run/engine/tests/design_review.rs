@@ -390,3 +390,25 @@ fn approving_the_spec_stores_its_requirements_and_goal_section() {
     assert_eq!(design(&fx).goal_section, "Users reset their password.");
     assert_eq!(fx.run().state, RunState::Planning);
 }
+
+/// Milestone 9.17 decision 5: the approved spec's Non-goals are stored beside its Goal
+/// section from the driver's read-back, and a Back that unapproves the spec clears them.
+#[test]
+fn approval_stores_non_goals_and_unapproval_clears_them() {
+    let mut fx = at_spec_gate(false);
+    act(&mut fx, DocGateKind::Spec, DocGateAction::APPROVE).unwrap();
+    assert!(
+        design(&fx).non_goals_section.is_empty(),
+        "not before the read"
+    );
+    super::design_plan_fixture::read_back(&mut fx, 1, SPEC);
+    assert_eq!(design(&fx).non_goals_section, "SSO.");
+    let mut fx = at_plan_gate(false);
+    assert_eq!(design(&fx).non_goals_section, "SSO.");
+    let back = DocGateAction::Back {
+        note: "Rethink R2.".into(),
+    };
+    act(&mut fx, DocGateKind::Plan, back).unwrap();
+    assert_eq!(design(&fx).approved_spec, None);
+    assert!(design(&fx).non_goals_section.is_empty());
+}

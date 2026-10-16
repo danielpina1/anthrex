@@ -235,6 +235,12 @@ fn an_old_run_json_still_loads() {
         "failovers",
         "failover",
         "handoff",
+        // Milestone 9.17 ruling C2: no plan frame, `replaces` or Non-goals either.
+        "plan_frames",
+        "frame",
+        "replaces",
+        "non_goals_section",
+        "non_goals_before",
     ] {
         assert_eq!(count(&written, key), 0, "run.json gained {key}");
     }

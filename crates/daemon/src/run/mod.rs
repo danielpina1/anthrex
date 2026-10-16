@@ -31,6 +31,7 @@ pub mod contract;
 pub mod contract_lessons;
 pub mod contract_patterns;
 mod contract_protected;
+pub mod contract_scope;
 pub mod delivery;
 pub mod design;
 pub mod driver;

@@ -283,3 +283,39 @@ fn a_rounds_phase_record_counts_the_rounds_versions() {
     assert_eq!(last.record_id, format!("{RUN_ID}/phase/2/specifying/v2"));
     assert_eq!((last.round, last.gate_versions), (2, 1));
 }
+
+/// Milestone 9.17 decision 5 (ruling C2): a round keeps the Non-goals approved before it
+/// and its cancel restores them, as it restores the Goal section.
+#[test]
+fn cancelled_round_restores_non_goals() {
+    let non_goals = |fx: &Fixture| {
+        fx.run()
+            .orch
+            .design
+            .as_ref()
+            .unwrap()
+            .non_goals_section
+            .clone()
+    };
+    let mut fx = design_complete();
+    assert_eq!(non_goals(&fx), "SSO.");
+    iterate_with(&mut fx, None).unwrap();
+    let amendment = AMENDMENT.replace("## Non-goals\nSSO.", "## Non-goals\nSSO. Passkeys.");
+    submit_amendment(&mut fx, &amendment).unwrap();
+    act(&mut fx, DocGateKind::Spec, DocGateAction::APPROVE).unwrap();
+    super::design_plan_fixture::read_back(&mut fx, 2, &amendment);
+    assert_eq!(fx.run().state, RunState::Planning);
+    assert_eq!(non_goals(&fx), "SSO. Passkeys.");
+    let design = fx.run().orch.design.as_ref().unwrap();
+    assert_eq!(design.round.as_ref().unwrap().non_goals_before, "SSO.");
+    let now = fx.now;
+    crate::run::engine::merge::halt(fx.run_mut(), "remote stage branch moved".into(), now);
+    fx.run_mut().halt_retryable = true;
+    let cancelled = reply(&super::kinds_cancel::cancel(&mut fx));
+    assert!(cancelled.is_ok(), "{cancelled:?}");
+    assert!(
+        fx.run().orch.design.as_ref().unwrap().round.is_none(),
+        "dropped"
+    );
+    assert_eq!(non_goals(&fx), "SSO.");
+}

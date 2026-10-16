@@ -6,6 +6,7 @@ use proto::{
     Runtime, Severity, TaskNoteKind, TaskState, TokenUsage, Verdict,
 };
 
+use super::plan_frame::PlanFrame;
 use super::{
     EditSource, GateHoldRecord, OrchestratorRecord, RunScout, RunScoutState, TaskMessage,
     WorkerNote,
@@ -239,4 +240,20 @@ pub fn assert_contained(value: &serde_json::Value) {
         assert!(!text.contains(c), "a raw {c:?} in {text}");
     }
     assert!(text.contains("[anthrex] Message from the user"), "{text}");
+}
+
+/// Milestone 9.17: the one `PlanFrame` builder (every field filled): round `round`'s
+/// frame, `decided` as `(question, answer)` pairs, stamped at 1 800 000 000.
+pub fn plan_frame(round: u32, decided: &[(&str, &str)], out_of_scope: &[&str]) -> PlanFrame {
+    PlanFrame {
+        round,
+        decided: (decided.iter())
+            .map(|(question, answer)| proto::DecidedItem {
+                question: question.to_string(),
+                answer: answer.to_string(),
+            })
+            .collect(),
+        out_of_scope: out_of_scope.iter().map(|s| s.to_string()).collect(),
+        at: 1_800_000_000,
+    }
 }

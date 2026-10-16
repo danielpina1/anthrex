@@ -108,6 +108,10 @@ pub struct DesignState {
     /// carries it with the Goal (decision 22, task M9.6.11).
     #[serde(skip_serializing_if = "String::is_empty")]
     pub interfaces_section: String,
+    /// Milestone 9.17 decision 5: the approved spec's Non-goals section, at most 8 KiB:
+    /// every reviewer of the run gets it (`contract_scope::out_of_scope_block`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub non_goals_section: String,
     /// Ruling T10-3: the approved spec's read-back failed once; it is read again when the
     /// run resumes or restores, and a second failure halts the run.
     #[serde(skip_serializing_if = "std::ops::Not::not")]

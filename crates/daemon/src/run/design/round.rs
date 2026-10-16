@@ -30,6 +30,9 @@ pub struct DesignRound {
     pub goal_before: String,
     #[serde(default)]
     pub interfaces_before: String,
+    /// Milestone 9.17 decision 5 (ruling C2): the Non-goals section approved before it.
+    #[serde(default)]
+    pub non_goals_before: String,
     /// The gate versions of the brainstorm, the spec and the plan when it started.
     #[serde(default)]
     pub versions_before: [u32; 3],
@@ -89,6 +92,7 @@ impl DesignRound {
             spec_before: design.approved_spec,
             goal_before: design.goal_section.clone(),
             interfaces_before: design.interfaces_section.clone(),
+            non_goals_before: design.non_goals_section.clone(),
             versions_before: versions.map(|k| design.gate_versions(k)),
             rethinks_before: design.rethinks,
             packs_before: packs.saturating_sub(design.rethinks),

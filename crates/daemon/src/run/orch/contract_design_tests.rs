@@ -106,7 +106,9 @@ Notes: y
 
 Brief t1";
 
+/// Milestone 9.17 (task M9.17.3, decision 1) added line 2, `Run goal: Test goal`.
 const REVIEWER: &str = "[anthrex] Review task t1 \"Title t1\", round 1, level small.
+Run goal: Test goal
 Base: ccccccc
 Head: ddddddd
 Test mode: tdd

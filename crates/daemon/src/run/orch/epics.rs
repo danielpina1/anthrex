@@ -60,6 +60,9 @@ pub struct EpicRecord {
     /// as its latest `spawn_subplanner` named them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub covers: Vec<String>,
+    /// Milestone 9.17 decision 18: the latest accepted `submit_epic`'s frame.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame: Option<super::plan_frame::PlanFrame>,
 }
 
 impl EpicRecord {
@@ -100,6 +103,7 @@ impl EpicRecord {
             integration_rounds: 0,
             integration_reviewed: 0,
             covers: Vec::new(),
+            frame: None,
         }
     }
 
@@ -161,6 +165,7 @@ impl EpicRecord {
             integration_rounds: 0,
             integration_reviewed: 0,
             covers: Vec::new(),
+            frame: None,
         }
     }
 }
