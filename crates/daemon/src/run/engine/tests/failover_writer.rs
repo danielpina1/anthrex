@@ -6,7 +6,7 @@
 
 use proto::models::Role;
 
-use super::brakes::trip_claude;
+use super::brakes::{attention, claude_held, trip_claude};
 use super::failover::{OPUS, SOL, SONNET, failover_line, failover_lines, route, rows};
 use super::fixture::*;
 use super::gates::{check_result, only_op};
@@ -148,4 +148,57 @@ fn the_reviewer_launched_keeps_off_the_failed_over_writer() {
         (proto::Runtime::Codex, "gpt-6-luna"),
         "the reviewer started on the test writer's model"
     );
+}
+
+/// PR #72's review I1: the reviewer row is the worker's fallback model and has no
+/// fallback of its own, so decision 27 would keep the reviewer on that model (the
+/// same-model line). A worker that would fail over onto it waits instead: a reviewer
+/// never receives the author's model this way (U17). The test writer on the same rows
+/// waits too (its task's reviewer is that model). Without a review level the worker
+/// still fails over.
+#[test]
+fn a_failover_never_lands_on_a_reviewer_row_with_no_other_model() {
+    let config = rows(&[(Role::Reviewer, SOL, None)]);
+    let mut fx = Fixture::with_config(&plan_with(PROFILE, &[task("t3", "M", "a", "")]), config);
+    let until = trip_claude(&mut fx);
+    fx.ready(true);
+    let t3 = fx.task("t3");
+    assert_eq!(t3.review_route, Some(route(SOL)));
+    assert_eq!(t3.state, proto::TaskState::Queued, "it waits");
+    assert_eq!(t3.route, route(SONNET));
+    assert!(failover_lines(&fx).is_empty(), "{:?}", failover_lines(&fx));
+    assert!(fx.run().failovers.is_empty());
+    assert!(attention(&fx).contains(&claude_held(until)));
+    // With no review, nobody reviews the fallback: the worker fails over.
+    let i = (fx.run().tasks.iter())
+        .position(|t| t.id() == "t3")
+        .unwrap();
+    fx.task_mut("t3").review_level = None;
+    let admitted = failover::admit(
+        &fx.state.gate,
+        fx.run(),
+        Starter::Worker(i),
+        Role::ImplementerMedium,
+        &route(SONNET),
+    );
+    assert!(matches!(admitted, Admit::FailOver(_)), "{admitted:?}");
+
+    // The test writer on its own row's fallback, the same reviewer row: it waits.
+    let config = rows(&[
+        (Role::TestWriter, SONNET, Some(SOL)),
+        (Role::ImplementerMedium, SONNET, None),
+        (Role::Reviewer, SOL, None),
+    ]);
+    let tasks = [task("t1", "M", "a", PAIRED)];
+    let mut fx = Fixture::with_config(&plan_with(PROFILE, &tasks), config);
+    trip_claude(&mut fx);
+    fx.ready(true);
+    let t1 = fx.task("t1");
+    assert_eq!(t1.state, proto::TaskState::Queued, "the test writer waits");
+    assert!(
+        t1.pair
+            .as_ref()
+            .is_none_or(|p| p.writer_route != route(SOL))
+    );
+    assert!(failover_lines(&fx).is_empty(), "{:?}", failover_lines(&fx));
 }

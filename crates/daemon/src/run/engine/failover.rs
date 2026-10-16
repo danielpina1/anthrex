@@ -17,7 +17,9 @@ use super::brakes::{Gate, Refusal};
 use super::quota_book::Trip;
 use super::requests::log;
 use crate::run::model::{FailoverRecord, Run, writes};
-use crate::run::model_roles::{Mover, RunModels, failed_in, failed_routes, missing, runtime_open};
+use crate::run::model_roles::{
+    Mover, RunModels, failed_in, failed_routes, missing, reviewer_at_launch, runtime_open,
+};
 
 /// Decision 42: the newest failover records a run keeps.
 pub const FAILOVERS_KEPT: usize = 32;
@@ -98,8 +100,8 @@ pub fn admit(gate: &Gate, run: &Run, starter: Starter<'_>, role: Role, current: 
     // (c) the fallback's runtime is not braked and the hold is off.
     let allowed = gate.allows(to.runtime);
     // (e) ruling RL-1: the fallback did not fail in this task.
-    let failed =
-        (starter.task()).is_some_and(|i| failed_in(models, &failed_routes(&run.tasks[i]), &to));
+    let task_failed = (starter.task()).map(|i| failed_routes(&run.tasks[i]));
+    let failed = (task_failed.as_ref()).is_some_and(|f| failed_in(models, f, &to));
     // (f) decision 39: the overlap rule.
     let overlap = match starter {
         Starter::Worker(i) => !runtime_open(run, i, to.runtime, Mover::Worker),
@@ -113,14 +115,20 @@ pub fn admit(gate: &Gate, run: &Run, starter: Starter<'_>, role: Role, current: 
     // the fallback in `record` (decision 41), so it never is that model.
     // Task 7's review M2: nor does a worker's failover re-pick its reviewer onto the
     // model its failed-over test writer runs.
+    // PR #72's review I1: nor onto the fallback itself, which decision 27 allows when
+    // the reviewer row has no other model (U17: a reviewer never receives the author's
+    // model this way); the worker waits instead.
     let reviewer = match starter {
         Starter::TestWriter(i) => {
             (run.tasks[i].review_route.as_ref()).is_some_and(|r| models.same_model(r, &to))
         }
-        Starter::Worker(i) => (run.tasks[i].review_level.is_some())
-            .then(|| writer_failed_over(run, i))
-            .flatten()
-            .is_some_and(|w| models.same_model(&models.reviewer_route(&to).0, &w)),
+        Starter::Worker(i) if run.tasks[i].review_level.is_some() => {
+            let failed = task_failed.as_deref().unwrap_or_default();
+            let own = models.same_model(&reviewer_at_launch(models, &to, failed).0, &to);
+            let writer = writer_failed_over(run, i)
+                .is_some_and(|w| models.same_model(&models.reviewer_route(&to).0, &w));
+            own || writer
+        }
         _ => false,
     };
     match allowed && !failed && !overlap && !author && !reviewer {
