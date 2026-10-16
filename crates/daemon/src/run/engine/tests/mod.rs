@@ -187,6 +187,7 @@ mod orch_routes;
 mod orch_stall;
 mod orch_window_events;
 mod pair;
+mod plan_frame;
 mod plan_stages;
 mod planners;
 mod planners_confine;

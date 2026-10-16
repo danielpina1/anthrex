@@ -212,6 +212,12 @@ fn the_halted_gate_admits_a_lone_resume_run_and_ask_user_only() {
     assert!(admitted(RunState::Halted, &call("edit_plan", defaults)));
     let submitted = json!({"edits": [{"op": "resume_run", "reason": "r"}], "submit": true});
     assert!(!admitted(RunState::Halted, &call("edit_plan", submitted)));
+    // Milestone 9.17 ruling C6: a plan frame key makes it more than a lone resume_run.
+    for key in ["decided", "out_of_scope"] {
+        let mut framed = json!({"edits": [{"op": "resume_run", "reason": "r"}]});
+        framed[key] = json!([]);
+        assert!(!admitted(RunState::Halted, &call("edit_plan", framed)));
+    }
     let iterate = json!({"edits": [{"op": "resume_run", "reason": "r"}], "iterate": "more"});
     assert!(!admitted(RunState::Halted, &call("edit_plan", iterate)));
     let malformed = json!({"edits": [{"op": "resume_run"}]});

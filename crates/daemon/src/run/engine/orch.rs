@@ -14,7 +14,9 @@ use serde_json::json;
 use super::batch::{Applied, Refused, apply_batch, record_rejected};
 use super::brakes::Gate;
 use super::requests::log;
-use super::{Effect, EngineState, ReplyId, gate_holds, goal_rounds, kinds, planners, run_scouts};
+use super::{
+    Effect, EngineState, ReplyId, gate_holds, goal_rounds, kinds, plan_frame, planners, run_scouts,
+};
 use crate::run::edits_orch::{MessageOutcome, one_edit_rule};
 use crate::run::model::Run;
 use crate::run::orch::tools::{OrchCall, parse_call};
@@ -144,9 +146,12 @@ pub(super) fn tool(
             submit,
             summary,
             responses,
-            ..
+            decided,
+            out_of_scope,
         } => {
             let alone = edits.is_empty() && !submit && summary.is_none() && responses.is_empty();
+            // Milestone 9.17 ruling C6: nor a plan frame key.
+            let alone = alone && decided.is_none() && out_of_scope.is_none();
             goal_rounds::edit(run, reply, (&goal, alone), (now, pass), fx)
         }
         OrchCall::EditPlan {
@@ -155,9 +160,11 @@ pub(super) fn tool(
             summary,
             iterate: None,
             responses,
-            ..
+            decided,
+            out_of_scope,
         } => {
             let call = (&edits[..], submit, summary, &responses[..]);
+            let call = (call, (decided, out_of_scope));
             edit_plan(run, reply, call, refusals, (now, pass), fx)
         }
         // Milestone 9.9 ruling R9: a complete run may still ask (decision 15).
@@ -205,13 +212,14 @@ pub(super) fn tool(
 fn edit_plan(
     run: &mut Run,
     reply: ReplyId,
-    (edits, submit, summary, responses): (&[PlanEdit], bool, Option<String>, &[FindingAnswer]),
+    ((edits, submit, summary, responses), frame): (EditCall<'_>, plan_frame::Frame),
     refusals: &[(Runtime, String)],
     (now, pass): (u64, &mut Pass<'_>),
     fx: &mut Vec<Effect>,
 ) {
+    let keys = plan_frame::any(&frame);
     if run.state == RunState::Complete {
-        let Some(summary) = summary.filter(|_| edits.is_empty()) else {
+        let Some(summary) = summary.filter(|_| edits.is_empty() && !keys) else {
             let text = "edits are not accepted on a complete run; only a summary is";
             return refuse(fx, reply, text);
         };
@@ -219,7 +227,7 @@ fn edit_plan(
         return accepted(run, reply, (Vec::new(), None, None), (now, pass), fx);
     }
     // Milestone 9.9 decision 11: an op is alone in its call and answered there.
-    let others = summary.is_some() || !responses.is_empty();
+    let others = summary.is_some() || !responses.is_empty() || keys;
     if super::orch_ops::intercept(run, reply, (edits, submit, others), (now, pass), fx) {
         return;
     }
@@ -228,6 +236,11 @@ fn edit_plan(
         return refuse(fx, reply, error.to_string());
     }
     let source = EditSource::Orchestrator;
+    // Milestone 9.17 decision 14 (ruling C6): the plan frame, before any batch.
+    if let Err(text) = plan_frame::check_edit_plan(run, submit, &frame) {
+        record_rejected(run, edits, &source, text.into(), now);
+        return refuse(fx, reply, text);
+    }
     // Decision 37: the engine owns its integration reviews.
     if let Some(text) = kinds::engine_owned(run, edits) {
         record_rejected(run, edits, &source, text.clone(), now);
@@ -288,6 +301,9 @@ fn edit_plan(
     if let Some(summary) = summary {
         write_summary(&mut edited, summary, now, &mut effects);
     }
+    if submit {
+        plan_frame::store_run(&mut edited, frame, now);
+    }
     let notes = new_notes(run, &edited);
     *run = edited;
     if submit {
@@ -298,6 +314,9 @@ fn edit_plan(
     fx.extend(effects);
     accepted(run, reply, (notes, held, message), (now, pass), fx)
 }
+
+/// An `edit_plan` call's edits, `submit`, `summary` and `responses`.
+type EditCall<'a> = (&'a [PlanEdit], bool, Option<String>, &'a [FindingAnswer]);
 
 /// Decision 19's rejected batch: `{"accepted": false, "errors": [...]}`.
 pub(super) fn rejected(errors: &[crate::run::plan::PlanError]) -> String {

@@ -98,6 +98,7 @@ mod orch_window;
 mod outbox;
 mod pair;
 pub(crate) mod pause;
+mod plan_frame;
 mod planners;
 mod planners_tool;
 mod promote;
