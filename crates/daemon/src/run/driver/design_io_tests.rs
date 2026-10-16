@@ -80,17 +80,12 @@ pub(super) fn names(dir: &Path) -> Vec<String> {
     names
 }
 
-/// M9.12.13's follow-up (macOS CI leaked an `ax-design-io-*` directory): how long
-/// [`Engine::stop`] may take. `RunService::stop` waits `STOP_WAIT` for the loop's
-/// acknowledgement; 30 s more for the last save and the join on a loaded machine. No
-/// window is started, so there is no kill grace or clean-up to add.
-const STOP_BOUND: std::time::Duration =
-    std::time::Duration::from_secs(30).saturating_add(super::super::STOP_WAIT);
-
 /// The run service's loop, started for a test by [`Engine::start`]. It is stopped with
-/// [`Engine::stop`], which awaits the loop and the last `run.json` save, so nothing
-/// writes into the test's directory after it drops; one merely dropped fails the test
-/// (a test already failing only cancels).
+/// [`Engine::stop`], which awaits the loop, the last `run.json` save and the ops still in
+/// flight (`RunService::stop_and_settle`, within `SETTLE_BOUND`: M9.12.13's follow-up,
+/// macOS CI leaked an `ax-design-io-*` directory; no window is started, so none is
+/// killed), so nothing writes into the test's directory after it drops; one merely
+/// dropped fails the test (a test already failing only cancels).
 pub(super) struct Engine {
     service: Arc<RunService>,
     shutdown: tokio_util::sync::CancellationToken,
@@ -113,17 +108,11 @@ impl Engine {
     /// Cancels, stops the run service (its last `run.json` written and awaited) and
     /// awaits its loop, as `lifecycle.rs` does at shutdown.
     pub(super) async fn stop(mut self) {
-        self.shutdown.cancel();
-        let task = self.task.take();
-        let stopping = async {
-            self.service.stop().await;
-            if let Some(task) = task {
-                let _ = task.await;
-            }
-        };
-        if tokio::time::timeout(STOP_BOUND, stopping).await.is_err() {
-            panic!("the run service did not stop within {STOP_BOUND:?}");
-        }
+        let task = self.task.take().expect("the loop");
+        let bound = super::super::stop::SETTLE_BOUND;
+        self.service
+            .stop_and_settle(task, &self.shutdown, bound)
+            .await;
         self.stopped = true;
     }
 }

@@ -394,7 +394,7 @@ async fn run_promote_records_what_its_check_found() {
     // The teardown is polled first, and the turn released once it waits: the checkout
     // op runs only after the teardown has begun.
     let tearing = async {
-        teardown(&service, run_loop, shutdown, &ended, tmp).await;
+        teardown(&service, run_loop, shutdown, tmp).await;
         has_ended(&ended, PREPARE)
     };
     let release = async {
