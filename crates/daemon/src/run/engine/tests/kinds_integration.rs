@@ -138,9 +138,7 @@ fn integration_review_takes_the_first_free_round_id() {
     let spec = crate::run::plan::parse_plan(&plan_with(PROFILE, &[user])).unwrap();
     let effects = super::dispatch::edit(
         &mut fx,
-        vec![proto::PlanEdit::AddTask {
-            task: spec.tasks[0].clone(),
-        }],
+        vec![proto::PlanEdit::add_task(spec.tasks[0].clone())],
     );
     assert!(matches!(&replies(&effects)[..], [Ok(_)]), "{effects:#?}");
     merge_real(&mut fx, "m1", C1);

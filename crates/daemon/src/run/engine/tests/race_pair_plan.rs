@@ -105,7 +105,7 @@ fn a_racing_task_that_widens_the_reach_is_refused_by_the_trust_check() {
     let effects = fx.next(EventKind::Edit {
         reply,
         run_id: RUN_ID.into(),
-        edits: vec![PlanEdit::AddTask { task: racing }],
+        edits: vec![PlanEdit::add_task(racing)],
         scope: EditScope::Run,
         refusals: vec![(Runtime::Codex, refusal.clone())],
         submit: false,

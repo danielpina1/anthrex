@@ -67,6 +67,7 @@ fn finding(severity: Severity, text: &str) -> Finding {
         line: Some(3),
         input: None,
         text: text.into(),
+        target: proto::FindingTarget::Code,
     }
 }
 

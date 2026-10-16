@@ -10,6 +10,7 @@ pub(super) fn a_finding() -> Finding {
         line: Some(42),
         input: Some("token::expires_after_one_hour".into()),
         text: "off by one on the expiry check".into(),
+        target: crate::FindingTarget::Code,
     }
 }
 
@@ -180,6 +181,8 @@ pub(super) fn a_task_info() -> TaskInfo {
         race: None,
         pair: None,
         covers: Vec::new(),
+        replaces: Vec::new(),
+        replaced_by: Vec::new(),
     }
 }
 
@@ -259,6 +262,7 @@ pub(super) fn a_run_info() -> RunInfo {
         design_agents: Vec::new(),
         title: String::new(),
         handoff: None,
+        plan_frame: None,
     }
 }
 

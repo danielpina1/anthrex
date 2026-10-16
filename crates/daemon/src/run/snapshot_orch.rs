@@ -176,6 +176,7 @@ pub(super) fn planners(run: &Run) -> Vec<PlannerInfo> {
             replans: e.replans.clone(),
             note: e.note.clone(),
             covers: e.covers.clone(),
+            frame: None,
         })
         .collect()
 }

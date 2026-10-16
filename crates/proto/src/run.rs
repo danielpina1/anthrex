@@ -372,6 +372,26 @@ pub struct Finding {
     #[serde(default)]
     pub input: Option<String>,
     pub text: String,
+    /// Milestone 9.17 decision 6: what the finding is about; left out while `Code`, so
+    /// every finding written before it serialises unchanged.
+    #[serde(default, skip_serializing_if = "FindingTarget::is_code")]
+    pub target: FindingTarget,
+}
+
+/// Milestone 9.17 decision 6: a finding about the code (the default), or about the
+/// task's brief, which goes to whoever planned the task and never blocks the change.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FindingTarget {
+    #[default]
+    Code,
+    Brief,
+}
+
+impl FindingTarget {
+    pub fn is_code(&self) -> bool {
+        *self == FindingTarget::Code
+    }
 }
 
 /// How a task's `done` gate was reached: the agent called `task_done`, or its turn

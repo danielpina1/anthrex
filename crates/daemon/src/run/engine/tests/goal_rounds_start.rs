@@ -320,7 +320,7 @@ fn the_round_wake_survives_notes_and_is_cleared_once_delivered() {
         t["task"].take()
     })
     .unwrap();
-    let effects = edit(&mut fx, vec![PlanEdit::AddTask { task }]);
+    let effects = edit(&mut fx, vec![PlanEdit::add_task(task)]);
     assert!(replies(&effects)[0].is_ok(), "{effects:#?}");
     let woken = wakes(&effects);
     assert_eq!(woken.len(), 1, "{effects:#?}");

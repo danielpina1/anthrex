@@ -130,6 +130,8 @@ fn task(
         race: None,
         pair: None,
         covers: Vec::new(),
+        replaces: Vec::new(),
+        replaced_by: Vec::new(),
     }
 }
 
@@ -257,6 +259,7 @@ pub(in crate::run_cmd) fn example() -> RunInfo {
         design_agents: Vec::new(),
         title: String::new(),
         handoff: None,
+        plan_frame: None,
     }
 }
 

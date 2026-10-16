@@ -251,6 +251,8 @@ pub fn task_record(run: &Run, task: &Task, outcome: TaskOutcome, now: u64) -> Ta
         owns: task.spec.owns.clone(),
         // Decision 24: the lessons its worker launches showed.
         lessons_shown: task.lessons_shown.clone(),
+        replaces: Vec::new(),
+        brief_findings: 0,
     }
 }
 

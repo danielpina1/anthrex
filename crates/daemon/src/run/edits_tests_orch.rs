@@ -129,9 +129,7 @@ fn a_planners_added_task_inherits_its_epic() {
         epic: "auth".into(),
     };
     let edits = [
-        PlanEdit::AddTask {
-            task: spec(&one("a1", "")),
-        },
+        PlanEdit::add_task(spec(&one("a1", ""))),
         PlanEdit::SplitTask {
             task_id: "t4".into(),
             into: vec![spec(&one("a2", "")), spec(&one("a3", ""))],
@@ -164,9 +162,7 @@ fn a_planners_task_for_another_epic_is_refused() {
         epic: "auth".into(),
     };
     let edits = [
-        PlanEdit::AddTask {
-            task: spec(&one("a1", "epic = \"billing\"")),
-        },
+        PlanEdit::add_task(spec(&one("a1", "epic = \"billing\""))),
         PlanEdit::SplitTask {
             task_id: "t4".into(),
             into: vec![spec(&one("a2", "epic = \"billing\"")), spec(&one("a3", ""))],
@@ -185,9 +181,7 @@ fn a_planners_task_for_another_epic_is_refused() {
         ]
     );
     // Its own epic, named or not, is accepted.
-    let own = [PlanEdit::AddTask {
-        task: spec(&one("a1", "epic = \"auth\"")),
-    }];
+    let own = [PlanEdit::add_task(spec(&one("a1", "epic = \"auth\"")))];
     let (edited, _) = apply_edits(&run, &own, &EditScope::Run, &source, 9).unwrap();
     assert_eq!(
         edited.tasks.last().unwrap().spec.epic.as_deref(),
@@ -303,7 +297,7 @@ fn routes_are_ignored(run: &Run, source: &EditSource) {
             "{source:?} {ids:?}"
         );
     };
-    let add = || PlanEdit::AddTask { task: routed("a1") };
+    let add = || PlanEdit::add_task(routed("a1"));
     let split = || PlanEdit::SplitTask {
         task_id: "t4".into(),
         into: vec![routed("a2"), routed("a3")],

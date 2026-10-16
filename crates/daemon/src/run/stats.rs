@@ -162,6 +162,7 @@ pub fn aggregate(lines: &[HistoryLine], path: &Path) -> HistoryStats {
         rounds,
         iterated_runs: iterated.len() as u32,
         tuning: None,
+        replaced: 0,
     }
 }
 

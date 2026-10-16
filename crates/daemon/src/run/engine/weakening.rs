@@ -203,6 +203,7 @@ pub(super) fn check_review(
             line,
             input: None,
             text: signal_unjustified(&id(n), path, line),
+            target: proto::FindingTarget::Code,
         });
     }
     *verdict = Verdict::Changes;

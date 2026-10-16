@@ -169,9 +169,7 @@ fn edits_recompute_implicit_deps() {
 #[test]
 fn an_added_task_waits_for_an_overlapping_earlier_task() {
     let run = overlapping();
-    let add = PlanEdit::AddTask {
-        task: spec(&task_toml("t9", "S", "[\"crates/a/src/x.rs\"]", "")),
-    };
+    let add = PlanEdit::add_task(spec(&task_toml("t9", "S", "[\"crates/a/src/x.rs\"]", "")));
     let (edited, _) = applied(&run, vec![add]);
     assert_eq!(task(&edited, "t9").implicit_deps, vec!["t1", "t2"]);
 }
@@ -214,9 +212,7 @@ fn a_dep_cancelled_task_stays_editable() {
     let (edited, _) = applied(&run, vec![priority]);
     assert_eq!(task(&edited, "t2").spec.priority, 3);
 
-    let replacement = PlanEdit::AddTask {
-        task: spec(&one("t1b", "")),
-    };
+    let replacement = PlanEdit::add_task(spec(&one("t1b", "")));
     let (edited, _) = applied(&run, vec![replacement, add_dep("t2", "t1b")]);
     assert_eq!(task(&edited, "t2").spec.deps, vec!["t1", "t1b"]);
 
@@ -316,9 +312,7 @@ fn edits_write_task_history() {
     let (edited, _) = applied(
         &run,
         vec![
-            PlanEdit::AddTask {
-                task: spec(&one("t9", "")),
-            },
+            PlanEdit::add_task(spec(&one("t9", ""))),
             amend_brief("t1", "New", &["n"]),
             add_dep("t2", "t9"),
             answer("t4", "yes"),
@@ -459,9 +453,7 @@ fn a_split_child_returns_an_overlapping_queued_task_to_pending() {
 fn new_tasks_on_a_cancelled_dependency_are_rejected() {
     let mut run = flat();
     set_state(&mut run, "t2", TaskState::Cancelled, None);
-    let add = PlanEdit::AddTask {
-        task: spec(&one("t9", "deps = [\"t2\"]")),
-    };
+    let add = PlanEdit::add_task(spec(&one("t9", "deps = [\"t2\"]")));
     assert_eq!(
         rejected(&run, vec![add]),
         vec!["task t9: deps: t2 is cancelled"]

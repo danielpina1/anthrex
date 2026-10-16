@@ -138,6 +138,7 @@ fn report_has_every_section() {
                 line: Some(12),
                 input: None,
                 text: "Missing expiry test".to_string(),
+                target: proto::FindingTarget::Code,
             }],
             lane: None,
         });
@@ -218,6 +219,7 @@ fn minor_findings_are_listed_even_when_approved() {
             line: Some(3),
             input: None,
             text: "nit: rename this".to_string(),
+            target: proto::FindingTarget::Code,
         }],
         lane: None,
     });

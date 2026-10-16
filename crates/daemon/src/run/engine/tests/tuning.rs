@@ -58,7 +58,7 @@ fn working_tuned(size: &str, tuning: Tuned) -> (Fixture, u32) {
 fn add_s(fx: &mut Fixture, id: &str, module: &str) -> Vec<Effect> {
     let text = plan_with(PROFILE, &[task(id, "S", module, "")]);
     let spec = crate::run::plan::parse_plan(&text).unwrap().tasks[0].clone();
-    edit(fx, vec![PlanEdit::AddTask { task: spec }])
+    edit(fx, vec![PlanEdit::add_task(spec)])
 }
 
 #[test]

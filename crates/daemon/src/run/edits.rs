@@ -168,7 +168,7 @@ pub(super) struct Batch {
 impl Batch {
     fn apply(&mut self, edit: &PlanEdit) {
         match edit {
-            PlanEdit::AddTask { task } => self.add_owned(task),
+            PlanEdit::AddTask { task, .. } => self.add_owned(task),
             PlanEdit::SplitTask { task_id, into } => self.split_owned(task_id, into),
             PlanEdit::CancelTask { task_id } => self.cancel(task_id),
             // Milestone 9 decisions 42a and 42e.

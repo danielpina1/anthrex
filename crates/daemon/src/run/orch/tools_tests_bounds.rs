@@ -285,7 +285,7 @@ fn stage_and_atomic_fields_are_accepted() {
     };
     match &parsed[..] {
         [
-            PlanEdit::AddTask { task },
+            PlanEdit::AddTask { task, .. },
             PlanEdit::SplitTask { into, .. },
             PlanEdit::AmendTask { stage, .. },
         ] => {
@@ -304,7 +304,7 @@ fn stage_and_atomic_fields_are_accepted() {
     else {
         panic!("submit_epic must parse");
     };
-    let [PlanEdit::AddTask { task }] = &edits[..] else {
+    let [PlanEdit::AddTask { task, .. }] = &edits[..] else {
         panic!("{edits:?}");
     };
     assert_eq!((task.stage, task.atomic), (2, true));

@@ -125,6 +125,7 @@ pub(crate) fn planner(epic: &str, title: &str) -> PlannerInfo {
         replans: vec![],
         note: None,
         covers: Vec::new(),
+        frame: None,
     }
 }
 
@@ -306,13 +307,19 @@ fn routed(runtime: Runtime, effort: proto::Effort) -> proto::Route {
     }
 }
 
-fn finding(severity: proto::Severity, file: &str, line: u32, text: &str) -> proto::Finding {
+pub(crate) fn finding(
+    severity: proto::Severity,
+    file: &str,
+    line: u32,
+    text: &str,
+) -> proto::Finding {
     proto::Finding {
         severity,
         file: Some(file.into()),
         line: Some(line),
         input: None,
         text: text.into(),
+        target: proto::FindingTarget::Code,
     }
 }
 

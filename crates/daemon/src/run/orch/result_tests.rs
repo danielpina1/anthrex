@@ -320,6 +320,7 @@ fn the_cap_holds_at_the_schema_maxima() {
                         line: Some(1),
                         input: Some(text(2000)),
                         text: text(2000),
+                        target: proto::FindingTarget::Code,
                     })
                     .collect();
                 r

@@ -26,7 +26,7 @@ fn amend_stage(task_id: &str, stage: u16, priority: Option<i32>) -> PlanEdit {
 }
 
 fn add(table: &str) -> PlanEdit {
-    PlanEdit::AddTask { task: spec(table) }
+    PlanEdit::add_task(spec(table))
 }
 
 fn stage_of(run: &Run, id: &str) -> u16 {

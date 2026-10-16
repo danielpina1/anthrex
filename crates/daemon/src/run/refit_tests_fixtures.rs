@@ -90,6 +90,8 @@ pub(crate) fn record(
         signatures: Vec::new(),
         owns: Vec::new(),
         lessons_shown: Vec::new(),
+        replaces: Vec::new(),
+        brief_findings: 0,
     }
 }
 

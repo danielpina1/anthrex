@@ -134,7 +134,7 @@ fn the_users_edit_of_a_cancelled_run_only_removes_work() {
         .unwrap()
         .tasks[0]
         .clone();
-    let effects = user_edit(&mut fx, vec![PlanEdit::AddTask { task: spec }], false);
+    let effects = user_edit(&mut fx, vec![PlanEdit::add_task(spec)], false);
     assert_eq!(replies(&effects), vec![Err(cancelled_text())]);
     let effects = user_edit(&mut fx, Vec::new(), true);
     assert_eq!(replies(&effects), vec![Err(cancelled_text())]);
@@ -161,7 +161,7 @@ fn the_ref_guard_does_not_complete_a_run_with_an_unfinished_task() {
         .unwrap()
         .tasks[0]
         .clone();
-    let effects = user_edit(&mut fx, vec![PlanEdit::AddTask { task: spec }], false);
+    let effects = user_edit(&mut fx, vec![PlanEdit::add_task(spec)], false);
     assert!(matches!(&replies(&effects)[..], [Ok(_)]), "{effects:#?}");
     fx.done(refs, crate::run::engine::OpResult::RefsOk);
     assert_eq!(fx.run().state, RunState::Running);

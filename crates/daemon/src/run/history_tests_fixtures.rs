@@ -103,6 +103,7 @@ pub(super) fn finding(severity: Severity) -> Finding {
         line: None,
         input: None,
         text: "x".into(),
+        target: proto::FindingTarget::Code,
     }
 }
 

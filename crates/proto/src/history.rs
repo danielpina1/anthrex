@@ -281,6 +281,14 @@ pub struct TaskRecord {
     /// (credit reads it), task M9.15.6 fills it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lessons_shown: Vec<String>,
+    // Milestone 9.17 (no history version bump: both fields default, and are skipped
+    // while empty or zero).
+    /// Decision 26: the tasks this one replaces (`Task.replaces`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub replaces: Vec<String>,
+    /// Decision 11: the task's `brief` findings over all its review rounds.
+    #[serde(default, skip_serializing_if = "crate::is_zero_u32")]
+    pub brief_findings: u32,
 }
 
 /// One finished run.
@@ -368,6 +376,10 @@ pub struct HistoryStats {
     /// on the wire.
     #[serde(default)]
     pub tuning: Option<Box<TuningReport>>,
+    /// Milestone 9.17 decision 26: the records left out of the class rows because a
+    /// later task replaced them; left out while zero (ruling C15).
+    #[serde(default, skip_serializing_if = "crate::is_zero_u32")]
+    pub replaced: u32,
 }
 
 /// One tier job (decision 57), `record_id` `<run>/tier/<op>`.

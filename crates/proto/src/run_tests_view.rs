@@ -25,6 +25,7 @@ fn a_planner() -> PlannerInfo {
         replans: vec!["split t4".into()],
         note: None,
         covers: Vec::new(),
+        frame: None,
     }
 }
 

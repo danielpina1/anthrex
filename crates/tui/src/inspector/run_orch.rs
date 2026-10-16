@@ -78,6 +78,7 @@ pub(super) fn notes_text(task: &TaskInfo, app: &App) -> Option<String> {
                 TaskNoteKind::Discovery => "discovery",
                 TaskNoteKind::Risk => "risk",
                 TaskNoteKind::Progress => "progress",
+                TaskNoteKind::Brief => "brief",
             };
             format!(
                 "{} {kind} from {}: {}",

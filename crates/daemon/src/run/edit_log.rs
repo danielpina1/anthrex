@@ -96,7 +96,7 @@ fn kind_label(kind: proto::MessageKind) -> &'static str {
 
 fn describe_one(edit: &PlanEdit) -> String {
     match edit {
-        PlanEdit::AddTask { task } => format!("add {}", task.id),
+        PlanEdit::AddTask { task, .. } => format!("add {}", task.id),
         PlanEdit::SplitTask { task_id, .. } => format!("split {task_id}"),
         PlanEdit::CancelTask { task_id } => format!("cancel {task_id}"),
         // Milestone 9.1 decision 43: a move names its stage.

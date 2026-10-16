@@ -108,9 +108,7 @@ fn answer_only_on_blocked_question_or_working() {
 fn a_batch_is_atomic() {
     let run = chain();
     let before = run.clone();
-    let add = PlanEdit::AddTask {
-        task: spec(&one("t9", "deps = [\"t4\"]")),
-    };
+    let add = PlanEdit::add_task(spec(&one("t9", "deps = [\"t4\"]")));
     // The add alone is valid.
     assert!(apply(&run, vec![add.clone()]).is_ok());
 
@@ -183,9 +181,7 @@ fn edit_outside_its_area_is_rejected() {
     let area = EditScope::Area {
         globs: vec!["crates/daemon/**".to_string()],
     };
-    let outside = PlanEdit::AddTask {
-        task: spec(&task_toml("t5", "S", "[\"crates/tui/**\"]", "")),
-    };
+    let outside = PlanEdit::add_task(spec(&task_toml("t5", "S", "[\"crates/tui/**\"]", "")));
     let errors: Vec<String> = match apply_edits(&run, &[outside], &area, &EditSource::User, 5_000) {
         Err(errors) => errors.iter().map(ToString::to_string).collect(),
         Ok(_) => panic!("an add outside the area must be rejected"),
@@ -195,9 +191,12 @@ fn edit_outside_its_area_is_rejected() {
         vec!["task t5: owns: crates/tui/** is outside the area crates/daemon/**"]
     );
 
-    let inside = PlanEdit::AddTask {
-        task: spec(&task_toml("t6", "S", "[\"crates/daemon/src/x.rs\"]", "")),
-    };
+    let inside = PlanEdit::add_task(spec(&task_toml(
+        "t6",
+        "S",
+        "[\"crates/daemon/src/x.rs\"]",
+        "",
+    )));
     let (edited, _) = apply_edits(&run, &[inside], &area, &EditSource::User, 5_000)
         .unwrap_or_else(|e| panic!("inside the area must apply: {}", show(&e)));
     assert_eq!(ids(&edited), vec!["t1", "t2", "t3", "t4", "t6"]);

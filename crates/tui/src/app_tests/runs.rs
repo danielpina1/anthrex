@@ -394,6 +394,7 @@ fn other_run_replies_change_nothing() {
         rounds: 0,
         iterated_runs: 0,
         tuning: None,
+        replaced: 0,
     };
     let replies = vec![
         RunReply::Started {

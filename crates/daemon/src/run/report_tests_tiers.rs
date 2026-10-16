@@ -113,6 +113,7 @@ fn staged_run() -> Run {
             line: None,
             input: None,
             text: "W1 accepted: the tests moved to tests/new.rs".into(),
+            target: proto::FindingTarget::Code,
         }],
         lane: None,
     }];

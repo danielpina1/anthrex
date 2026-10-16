@@ -276,9 +276,7 @@ fn s1_bisect_with_propagate_and_edits() {
         &mut fx,
         vec![
             amend("t5", Some(1), Some(7)),
-            PlanEdit::AddTask {
-                task: plan_task(&doc_task("t6", "stage = 2")),
-            },
+            PlanEdit::add_task(plan_task(&doc_task("t6", "stage = 2"))),
         ],
     );
     assert_eq!(

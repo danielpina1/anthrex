@@ -244,6 +244,7 @@ fn run_info(run: &Run, brakes: &super::engine::brakes::Brakes, now: u64) -> RunI
         design_agents: super::snapshot_design::design_agents(run),
         title: run.title.clone(),
         handoff: run.handoff.as_ref().map(super::model::HandoffRecord::info),
+        plan_frame: None,
     }
 }
 
@@ -559,6 +560,8 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64, plan_text: b
         pair: patterns::pair_info(t),
         // Milestone 9.6 decision 17.
         covers: t.spec.covers.clone(),
+        replaces: Vec::new(),
+        replaced_by: Vec::new(),
     }
 }
 

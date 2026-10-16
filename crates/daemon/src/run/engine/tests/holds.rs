@@ -143,9 +143,7 @@ fn a_dependency_added_while_the_hand_back_runs_keeps_the_hold() {
     let effects = edit(
         &mut fx,
         vec![
-            PlanEdit::AddTask {
-                task: plan_task("t3", "[\"crates/c/**\"]"),
-            },
+            PlanEdit::add_task(plan_task("t3", "[\"crates/c/**\"]")),
             add_dep("t1", "t3"),
         ],
     );

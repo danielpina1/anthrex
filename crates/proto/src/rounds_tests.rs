@@ -355,6 +355,7 @@ fn round_history_line_round_trips() {
         rounds: 5,
         iterated_runs: 2,
         tuning: None,
+        replaced: 0,
     };
     both_ways(&stats);
     let mut old = serde_json::to_value(&stats).unwrap();

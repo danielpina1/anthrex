@@ -155,6 +155,7 @@ pub fn review(round: u32, verdict: Option<Verdict>, findings: &[(Severity, &str)
                 line: Some(118),
                 input: None,
                 text: text.to_string(),
+                target: proto::FindingTarget::Code,
             })
             .collect(),
         lane: None,

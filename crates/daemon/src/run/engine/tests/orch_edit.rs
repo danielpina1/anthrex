@@ -260,9 +260,7 @@ fn user_edit(fx: &mut Fixture, edits: Vec<proto::PlanEdit>, submit: bool) -> Vec
 #[test]
 fn a_user_submit_while_planning_opens_the_gate() {
     let mut fx = launched(false);
-    let t1 = proto::PlanEdit::AddTask {
-        task: super::holds::plan_task("t1", "[\"crates/auth/**\"]"),
-    };
+    let t1 = proto::PlanEdit::add_task(super::holds::plan_task("t1", "[\"crates/auth/**\"]"));
     let effects = user_edit(&mut fx, vec![t1], true);
     assert_eq!(
         replies(&effects),
@@ -301,9 +299,7 @@ fn a_user_submit_is_refused_in_any_other_state() {
     );
     let refused = |fx: &mut Fixture| {
         let before = fx.run().clone();
-        let t9 = proto::PlanEdit::AddTask {
-            task: super::holds::plan_task("t9", "[\"crates/t9/**\"]"),
-        };
+        let t9 = proto::PlanEdit::add_task(super::holds::plan_task("t9", "[\"crates/t9/**\"]"));
         let effects = user_edit(fx, vec![t9], true);
         assert_eq!(*fx.run(), before, "nothing is applied");
         replies(&effects).remove(0).unwrap_err()

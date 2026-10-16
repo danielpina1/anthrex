@@ -300,9 +300,7 @@ fn a_fast_path_start_refuses_a_task_owning_a_protected_file() {
 fn a_fast_path_run_refuses_task_additions() {
     let refused =
         format!("run {RUN_ID} is on the fast path: it runs one task; start a planned run instead");
-    let add = || PlanEdit::AddTask {
-        task: super::holds::plan_task("t2", "[\"crates/mail/**\"]"),
-    };
+    let add = || PlanEdit::add_task(super::holds::plan_task("t2", "[\"crates/mail/**\"]"));
     let split = || PlanEdit::SplitTask {
         task_id: "t1".into(),
         into: vec![

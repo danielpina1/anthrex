@@ -48,9 +48,7 @@ fn amend(brief: String) -> PlanEdit {
 
 fn add(id: &str, brief: &str) -> PlanEdit {
     let mut plan = parse_plan(&plan_with(PROFILE, &[with_brief(id, brief)])).unwrap();
-    PlanEdit::AddTask {
-        task: plan.tasks.pop().unwrap(),
-    }
+    PlanEdit::add_task(plan.tasks.pop().unwrap())
 }
 
 const CHAR_CAP: &str = "task t1: brief: at most 1000000 characters";

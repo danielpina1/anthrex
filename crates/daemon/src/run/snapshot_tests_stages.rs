@@ -32,6 +32,7 @@ fn finding(severity: Severity, text: &str) -> Finding {
         line: None,
         input: None,
         text: text.into(),
+        target: proto::FindingTarget::Code,
     }
 }
 

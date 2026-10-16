@@ -266,6 +266,7 @@ fn planners_snapshot_fields() {
                 replans: Vec::new(),
                 note: None,
                 covers: Vec::new(),
+                frame: None,
             },
             PlannerInfo {
                 epic: "web".into(),
@@ -282,6 +283,7 @@ fn planners_snapshot_fields() {
                 replans: Vec::new(),
                 note: None,
                 covers: Vec::new(),
+                frame: None,
             },
         ]
     );

@@ -145,9 +145,10 @@ fn tasks_added_before_submit_after_promote_carry_the_promotion_hold() {
     // refused as a fast-path addition).
     let effects = super::dispatch::edit(
         &mut fx,
-        vec![proto::PlanEdit::AddTask {
-            task: super::holds::plan_task("t4", "[\"crates/log/**\"]"),
-        }],
+        vec![proto::PlanEdit::add_task(super::holds::plan_task(
+            "t4",
+            "[\"crates/log/**\"]",
+        ))],
     );
     assert_eq!(replies(&effects), vec![Ok("applied 1 edit".to_string())]);
     assert_eq!(fx.task("t4").orch.gate_hold, None);

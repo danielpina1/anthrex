@@ -191,6 +191,29 @@ pub enum TaskNoteKind {
     Discovery,
     Risk,
     Progress,
+    /// Milestone 9.17 decision 8: a reviewer's `brief` finding, recorded by the engine;
+    /// a worker never sends it. Appended last.
+    Brief,
+}
+
+/// Milestone 9.17 decision 13: one question the goal left open, with the answer the
+/// planner chose (**Decided for you**).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DecidedItem {
+    pub question: String,
+    pub answer: String,
+}
+
+/// Milestone 9.17 decision 20: a plan's frame as a client shows it at the plan gate.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlanFrameInfo {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub decided: Vec<DecidedItem>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub out_of_scope: Vec<String>,
+    /// A design run's approved spec's `## Non-goals`, at most 2 KiB.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spec_non_goals: Option<String>,
 }
 
 /// One `task_note`, attributed to its task.
@@ -284,6 +307,10 @@ impl<'de> Visitor<'de> for TargetVisitor {
         Ok(MessageTarget::Tasks(ids))
     }
 }
+
+#[cfg(test)]
+#[path = "plan_frame_tests.rs"]
+mod plan_frame_tests;
 
 #[cfg(test)]
 mod effort_problem_tests {

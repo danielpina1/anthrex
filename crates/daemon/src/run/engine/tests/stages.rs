@@ -260,7 +260,7 @@ fn the_layout_is_fixed_at_the_gate_and_a_single_run_keeps_one_stage() {
     t9.id = "t9".into();
     t9.owns = vec!["docs/t9/**".into()];
     t9.stage = 2;
-    let effects = edit(&mut fx, vec![proto::PlanEdit::AddTask { task: t9 }]);
+    let effects = edit(&mut fx, vec![proto::PlanEdit::add_task(t9)]);
     let replies = replies(&effects);
     let [Err(text)] = &replies[..] else {
         panic!("{replies:?}")

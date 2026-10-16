@@ -196,6 +196,7 @@ fn status_shows_orchestrator_planners_holds_summary_and_paused_lines() {
         replans: vec![],
         note: None,
         covers: Vec::new(),
+        frame: None,
     };
     run.planners = vec![
         planner("mail", PlannerState::Finished),

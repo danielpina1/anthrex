@@ -133,5 +133,6 @@ fn parse_finding(item: &Value) -> Result<Finding, String> {
         line,
         input,
         text,
+        target: proto::FindingTarget::Code,
     })
 }

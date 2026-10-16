@@ -365,6 +365,7 @@ fn a_review_with_no_findings_and_a_finding_without_a_file() {
             line: None,
             input: Some("the plan".into()),
             text: "t4 overlaps".into(),
+            target: proto::FindingTarget::Code,
         }];
     });
     assert_eq!(

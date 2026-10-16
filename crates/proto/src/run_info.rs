@@ -331,6 +331,12 @@ pub struct TaskInfo {
     /// while empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub covers: Vec<String>,
+    /// Milestone 9.17 decision 26: the tasks this one replaces, and the tasks that
+    /// replace it (computed on snapshot); each left out while empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub replaces: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub replaced_by: Vec<String>,
 }
 
 fn first_stage() -> u16 {
@@ -523,6 +529,10 @@ pub struct RunInfo {
     /// boundary; left out while `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub handoff: Option<crate::brakes::HandoffInfo>,
+    /// Milestone 9.17 decision 20: the current round's plan frame and the spec's
+    /// Non-goals, filled only while the plan text is shown; left out while `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_frame: Option<crate::orch::PlanFrameInfo>,
 }
 
 /// Every run the daemon knows about, at one revision.

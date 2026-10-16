@@ -291,7 +291,7 @@ fn e2e_a_claude_bound_plan_starts_and_an_edit_onto_codex_is_refused() {
     .unwrap();
     let reply = h.request(proto::RunRequest::Edit {
         run_id: id.clone(),
-        edits: vec![proto::PlanEdit::AddTask { task: on_codex }],
+        edits: vec![proto::PlanEdit::add_task(on_codex)],
         submit: false,
     });
     match reply {
