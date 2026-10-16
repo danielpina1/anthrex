@@ -341,9 +341,12 @@ impl WindowManager {
     }
 
     /// A client's `Input`: noted, then written. The engine's own writes (a wake-up) go
-    /// through `write_input` and are not client input.
+    /// through `write_input` and are not client input. Milestone 9.18 decision 10: an
+    /// input of only mouse reports (a wheel over a mouse-mode app) is written, not noted.
     pub fn write_client_input(&self, id: u32, bytes: &[u8]) -> anyhow::Result<()> {
-        self.note_client_input(id);
+        if !super::input_kind::only_mouse_reports(bytes) {
+            self.note_client_input(id);
+        }
         self.write_input(id, bytes)
     }
 

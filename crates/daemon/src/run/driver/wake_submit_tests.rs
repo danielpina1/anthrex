@@ -94,6 +94,37 @@ async fn input_inside_the_submit_delay_leaves_the_paste_unsubmitted() {
     let _ = manager.kill(id);
 }
 
+/// Milestone 9.18 decision 10 (ruling C11): a wheel report is not typing. Sent inside
+/// the delay, it reaches the window and the paste is still submitted.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_wheel_report_during_the_paste_still_submits_the_wake() {
+    let dir = tempfile::tempdir().unwrap();
+    let (manager, id) = raw_window(dir.path()).await;
+    let paste = encode_paste("[anthrex] run r1 changed");
+    let delivering = manager.clone();
+    let sent = paste.clone();
+    let delivery =
+        tokio::spawn(async move { deliver_wake_with(&delivering, id, &sent, LONG_DELAY).await });
+    wait_for("the paste", || holds(&got(dir.path()), &paste)).await;
+    // Inside the delay by construction: the delivery is still asleep.
+    assert!(!delivery.is_finished());
+    let wheel: &[u8] = b"\x1b[<64;10;5M";
+    manager.write_client_input(id, wheel).unwrap();
+    wait_for("the wheel report", || holds(&got(dir.path()), wheel)).await;
+    let delivered = tokio::time::timeout(LONG_DELAY + WALL_CLOCK_SLACK, delivery)
+        .await
+        .expect("the delivery returns")
+        .unwrap();
+    assert_eq!(delivered.unwrap(), Delivery::Submitted);
+    wait_for("the submit", || got(dir.path()).ends_with(b"\r")).await;
+    let seen = got(dir.path());
+    let mut expected = paste.clone();
+    expected.extend_from_slice(wheel);
+    expected.push(b'\r');
+    assert_eq!(seen, expected);
+    let _ = manager.kill(id);
+}
+
 /// Pinning: with no input during the delay the paste is submitted, as before.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn quiet_input_submits() {

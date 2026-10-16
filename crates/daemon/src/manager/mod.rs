@@ -10,6 +10,7 @@ mod headless;
 mod headless_end;
 mod headless_terminal;
 mod headless_turns;
+mod input_kind;
 mod remove;
 mod restart;
 mod restore;
