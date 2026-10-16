@@ -323,3 +323,30 @@ fn a_replaces_cycle_is_named() {
         Some("replaces: t1 → t3 → t4 → t1 is a cycle")
     );
 }
+
+/// Review M1: the walk visits each task once, so a layered DAG of shared ancestors
+/// costs its links, not its paths. Each of `LAYERS` layers of two tasks replaces both
+/// tasks of the layer below: 2^LAYERS paths, but 4 links per layer.
+#[test]
+fn the_cycle_walk_is_linear() {
+    const LAYERS: usize = 12;
+    let ids: Vec<String> = (0..LAYERS)
+        .flat_map(|l| [format!("l{l}a"), format!("l{l}b")])
+        .chain(["top".to_string()])
+        .collect();
+    let tomls: Vec<String> = ids.iter().map(|id| one(id, "")).collect();
+    let mut run = run_ok(&plan_with(PROFILE, &tomls));
+    let layer = |l: usize| vec![format!("l{l}a"), format!("l{l}b")];
+    for l in 1..LAYERS {
+        for side in ["a", "b"] {
+            let i = run.tasks.iter().position(|t| t.id() == format!("l{l}{side}"));
+            run.tasks[i.unwrap()].replaces = layer(l - 1);
+        }
+    }
+    let top = run.tasks.iter().position(|t| t.id() == "top").unwrap();
+    run.tasks[top].replaces = layer(LAYERS - 1);
+    let links = 2 + 4 * (LAYERS - 1);
+    let (found, steps) = super::cycle_walk(&run, "top");
+    assert_eq!(found, None);
+    assert!(steps <= links, "{steps} steps for {links} links");
+}

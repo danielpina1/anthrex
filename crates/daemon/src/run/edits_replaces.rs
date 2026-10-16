@@ -106,30 +106,55 @@ impl Batch {
 /// `replaces: <a> → <b> → … → <a> is a cycle`. A new task replaces only existing ones,
 /// so this cannot fire today; it guards a later edit kind and costs one walk.
 pub(super) fn cycle(run: &Run, from: &str) -> Option<String> {
-    fn walk<'a>(run: &'a Run, at: &'a str, from: &str, path: &mut Vec<&'a str>) -> bool {
+    cycle_walk(run, from).0
+}
+
+/// [`cycle`], with the number of `replaces` links the walk followed. Each task is
+/// entered once (review M1): a task already visited either is on the current path or
+/// leads back to `from` by no path, so the walk is linear in the links, not the paths.
+fn cycle_walk(run: &Run, from: &str) -> (Option<String>, usize) {
+    struct Walk<'a> {
+        run: &'a Run,
+        from: &'a str,
+        path: Vec<&'a str>,
+        visited: BTreeSet<&'a str>,
+        steps: usize,
+    }
+    fn walk<'a>(w: &mut Walk<'a>, at: &'a str) -> bool {
+        let run = w.run;
         let Some(task) = run.tasks.iter().find(|t| t.id() == at) else {
             return false;
         };
         for next in &task.replaces {
-            if next == from {
+            w.steps += 1;
+            if next == w.from {
                 return true;
             }
-            if path.contains(&next.as_str()) {
+            if !w.visited.insert(next.as_str()) {
                 continue;
             }
-            path.push(next);
-            if walk(run, next, from, path) {
+            w.path.push(next);
+            if walk(w, next) {
                 return true;
             }
-            path.pop();
+            w.path.pop();
         }
         false
     }
-    let mut path = vec![from];
-    walk(run, from, from, &mut path).then(|| {
+    let mut w = Walk {
+        run,
+        from,
+        path: vec![from],
+        visited: BTreeSet::from([from]),
+        steps: 0,
+    };
+    let found = walk(&mut w, from);
+    let (mut path, steps) = (w.path, w.steps);
+    let found = found.then(|| {
         path.push(from);
         format!("replaces: {} is a cycle", path.join(" → "))
-    })
+    });
+    (found, steps)
 }
 
 #[cfg(test)]
