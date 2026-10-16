@@ -67,7 +67,7 @@ pub(crate) fn history() -> HistoryStats {
     }
 }
 
-fn app_with(ascii: bool, state: StatsState) -> App {
+pub(super) fn app_with(ascii: bool, state: StatsState) -> App {
     let mut settings = UiSettings::default();
     settings.badges.ascii = ascii;
     let mut app = App::new(vec![], "/tmp".into(), settings);
@@ -110,7 +110,7 @@ fn screen_text(app: &App, w: u16, h: u16) -> String {
 }
 
 /// The screen's interior rows (inside the frame, above the status bar), trimmed.
-fn rows(app: &App, w: u16, h: u16) -> Vec<String> {
+pub(super) fn rows(app: &App, w: u16, h: u16) -> Vec<String> {
     let buffer = draw(app, w, h);
     (1..h - 2)
         .map(|y| {
