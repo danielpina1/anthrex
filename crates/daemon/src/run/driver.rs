@@ -19,6 +19,7 @@
 
 mod adapt;
 mod book;
+mod brakes_io;
 pub(crate) mod build;
 pub(crate) mod build_models;
 mod build_name;
@@ -38,6 +39,7 @@ pub(crate) mod gate_files;
 #[cfg_attr(not(test), allow(dead_code))]
 mod graph;
 mod guard;
+mod hold;
 mod host_ops;
 pub mod lessons;
 pub mod lessons_requests;
@@ -60,7 +62,7 @@ pub mod tuning;
 mod usage;
 mod wake;
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -89,6 +91,7 @@ pub use adapt::Adaptation;
 pub use build::installed::INSTALLED_PROBE_TIMEOUT;
 pub(crate) use context::OpCtx;
 pub use context::{GitBudget, RunContext};
+pub use hold::{BrakeProbe, HeldProbe};
 pub use observe::{ACTIVITY_EVERY, translate};
 
 /// Decision 52: a retired window stays listed, `Exited`, this long.
@@ -173,6 +176,8 @@ pub struct RunService {
     pool_sweep: Mutex<Option<(CancellationToken, tokio::task::JoinHandle<()>)>>,
     /// Milestone 9.16: the quota and context readings `forward` feeds (`driver/quota.rs`).
     quota: quota::Quota,
+    /// Milestone 9.16 decisions 16 and 17: `brakes.json`'s load and the hold's writes.
+    hold_io: hold::HoldIo,
     /// Tests only (M9.11.8): run on each effect `execute` takes, before it is carried out.
     #[cfg(test)]
     execute_hook: Mutex<Option<effects::ExecuteHook>>,
@@ -240,7 +245,7 @@ impl RunService {
         ));
         let quota = quota::for_service(&manager, ctx.codex_sessions.clone(), &tx);
         let state = quota::configured_state(&ctx.settings.current().orchestrator);
-        Arc::new(RunService {
+        let service = Arc::new(RunService {
             manager,
             ctx,
             state: Mutex::new(state),
@@ -251,18 +256,7 @@ impl RunService {
             next_reply: AtomicU64::new(1),
             pushes,
             queue: Arc::new(GitQueue::new()),
-            book: Mutex::new(Book {
-                retiring: HashMap::new(),
-                killed: HashMap::new(),
-                watched: HashSet::new(),
-                dirty: BTreeSet::new(),
-                last_counter_save: Instant::now(),
-                reports_written: HashMap::new(),
-                reports_due: BTreeSet::new(),
-                publish_due: false,
-                proposals_published: 0,
-                intents: HashMap::new(),
-            }),
+            book: Mutex::new(Book::new()),
             journal: Arc::new(Mutex::new(())),
             op_order: Mutex::new(HashMap::new()),
             stopped: AtomicBool::new(false),
@@ -288,11 +282,14 @@ impl RunService {
             pool,
             pool_sweep: Mutex::new(None),
             quota,
+            hold_io: Default::default(),
             #[cfg(test)]
             execute_hook: Mutex::new(None),
             #[cfg(test)]
             after_op: Mutex::new(None),
-        })
+        });
+        service.start_brakes_load();
+        service
     }
 
     /// Milestone 9.8: the discovered models.

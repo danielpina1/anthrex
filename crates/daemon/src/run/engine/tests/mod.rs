@@ -11,6 +11,7 @@ mod asks;
 mod bisect;
 mod brakes;
 mod brakes_design;
+mod brakes_hold;
 mod brakes_readers;
 mod budgets;
 mod cancel_work;

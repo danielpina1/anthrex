@@ -68,6 +68,8 @@ impl RunService {
     /// Restores the runs of an earlier daemon. Called once, before the socket is bound
     /// and before [`RunService::spawn`]; the effects of the restore run here.
     pub async fn restore(self: &Arc<Self>) {
+        // Milestone 9.16 decision 16 (ruling C9): the hold before the restore's step.
+        self.brakes_ready().await;
         let data_dir = self.ctx.data_dir.clone();
         let loaded = tokio::task::spawn_blocking(move || {
             sweep_run_leftovers(&data_dir);

@@ -51,6 +51,16 @@ impl Rig {
 
     /// A worker whose calls answer one episodic lesson, and are counted.
     fn start(&self, max_per_day: u32, mode: DeciderMode) -> Arc<LessonService> {
+        self.start_braked(max_per_day, mode, None)
+    }
+
+    /// [`Rig::start`] with ruling C28's probe, looked at again every second.
+    fn start_braked(
+        &self,
+        max_per_day: u32,
+        mode: DeciderMode,
+        braked: Option<crate::run::driver::BrakeProbe>,
+    ) -> Arc<LessonService> {
         let mut cfg = config::Orchestrator::default();
         cfg.deciders.mode = mode;
         let mut manager =
@@ -67,6 +77,7 @@ impl Rig {
             bound: Duration::from_secs(5),
             retry: [Duration::from_secs(60), Duration::from_secs(300)],
             now: Arc::new(move || clock.load(Ordering::SeqCst)),
+            brake_recheck: Duration::from_secs(1),
         };
         let calls = self.calls.clone();
         let decide: DecideFn = Arc::new(move |_request, _project| {
@@ -78,6 +89,7 @@ impl Rig {
             data_dir: self.data.clone(),
             config,
             locks: Arc::new(LessonLocks::default()),
+            braked,
         };
         LessonService::start_seamed(parts, timing, decide)
     }
@@ -344,3 +356,7 @@ async fn deciders_off_close_every_open_entry_without_a_call() {
     );
     service.stop();
 }
+
+#[cfg(test)]
+#[path = "service_brake_tests.rs"]
+mod brake;

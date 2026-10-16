@@ -147,8 +147,8 @@ pub struct ProfileService {
     /// The rollback's seam: when set, `save_if_current`'s write fails.
     #[cfg(test)]
     pub(super) fail_save: std::sync::atomic::AtomicBool,
-    /// Decision 6: starts a drained goal (`set_goal_starter`).
-    pub(super) starter: Mutex<Option<super::service_queue::GoalStarter>>,
+    /// Decision 6 and milestone 9.16 ruling C9: the drain's starter and hold probe.
+    pub(super) starter: Mutex<super::service_queue::Starters>,
 }
 
 /// Decision 37: the ids of the runs live in a project (`RunService::live_runs_in`).
@@ -232,7 +232,7 @@ impl ProfileService {
             ready_gap: Mutex::new(None),
             #[cfg(test)]
             fail_save: std::sync::atomic::AtomicBool::new(false),
-            starter: Mutex::new(None),
+            starter: Mutex::default(),
         })
     }
 
@@ -499,6 +499,7 @@ pub fn wire(
     profiles.set_host(runs.host());
     // Milestone 9.10 decision 6: a drained goal starts through the run service.
     profiles.set_goal_starter(runs.queued_starter());
+    profiles.set_dispatch_held(runs.held_probe());
     // Decision 37: a weak handle, since the run service holds this one (`Adaptation`).
     let weak = Arc::downgrade(runs);
     profiles.set_live_runs(Arc::new(move |project: &Path| {
@@ -518,6 +519,7 @@ pub fn wire(
             data_dir: data_dir.to_path_buf(),
             config: runs.lessons_config(),
             locks: runs.lesson_locks(),
+            braked: Some(runs.distill_probe()),
         });
     runs.set_adaptation(crate::run::driver::Adaptation {
         profiles: profiles.clone(),

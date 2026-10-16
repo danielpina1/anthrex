@@ -55,6 +55,7 @@ mod run_e2e_admit;
 mod run_e2e_base;
 mod run_e2e_basic;
 mod run_e2e_bisect;
+mod run_e2e_brakes;
 mod run_e2e_chain;
 mod run_e2e_codex_config;
 #[cfg(target_os = "macos")]

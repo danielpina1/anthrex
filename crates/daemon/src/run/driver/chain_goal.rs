@@ -153,6 +153,8 @@ impl RunService {
         last: &str,
         goal: String,
     ) -> Result<String, String> {
+        // Milestone 9.16 decision 19 (ruling C11): the first statement.
+        self.refuse_if_held().await?;
         let next = {
             let state = crate::lock(&self.state); // lookup
             let prev = state

@@ -78,6 +78,7 @@ fn start_with(
         data_dir: fx.root().join("data"),
         config,
         locks,
+        braked: None,
     };
     let timing = ServiceTiming {
         bound: daemon::lessons::service::DISTILL_BOUND,

@@ -31,6 +31,8 @@ impl RunService {
         // and the event it was carrying out are gone (`stop`'s fallback waits on it).
         let gate = gate.map(Arc::new);
         let Some(mut rx) = rx else { return };
+        // Milestone 9.16 decision 16: the hold is known before the loop's first step.
+        service.brakes_ready().await;
         while let Some(msg) = rx.recv().await {
             match msg {
                 Msg::Event(kind) => service.handle_isolated(kind, &gate).await,

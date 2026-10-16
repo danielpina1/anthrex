@@ -30,3 +30,21 @@ pub(super) struct Book {
     /// Decision 48: the intents of each kind appended so far.
     pub(super) intents: HashMap<&'static str, u32>,
 }
+
+impl Book {
+    /// Nothing recorded yet.
+    pub(super) fn new() -> Book {
+        Book {
+            retiring: HashMap::new(),
+            killed: HashMap::new(),
+            watched: HashSet::new(),
+            dirty: BTreeSet::new(),
+            last_counter_save: Instant::now(),
+            reports_written: HashMap::new(),
+            reports_due: BTreeSet::new(),
+            publish_due: false,
+            proposals_published: 0,
+            intents: HashMap::new(),
+        }
+    }
+}

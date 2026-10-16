@@ -86,7 +86,7 @@ pub(in crate::run::driver) struct ChainRig {
     pub s: Arc<RunService>,
     pub manager: Arc<WindowManager>,
     shutdown: CancellationToken,
-    marker: PathBuf,
+    pub marker: PathBuf,
     pub window: u32,
     project: PathBuf,
     root: PathBuf,

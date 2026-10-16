@@ -128,6 +128,8 @@ mod tests_queue_drain;
 #[cfg(test)]
 mod tests_queue_drain_race;
 #[cfg(test)]
+mod tests_queue_hold;
+#[cfg(test)]
 mod tests_queue_order;
 #[cfg(test)]
 mod tests_queue_restore;
