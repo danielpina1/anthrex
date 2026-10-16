@@ -19,10 +19,11 @@ use support::{RunningCommand, isolated_command, tempdir};
 /// `DAEMON_STOP_CMD_TIMEOUT` derives it: `HANDSHAKE_TIMEOUT` (5 s, imported) for the
 /// connect, then the daemon's shutdown, whose kills are `HUP_GRACE` (1 s) + `KILL_GRACE`
 /// (3 s, `daemon::process`, private to the daemon crate so copied here), then
-/// `wait_released`'s own 10 s cap (`daemon_cmd.rs`). 19 s; plus 10 s for the `anthrex`
-/// spawn and the daemon's teardown on a loaded machine.
+/// `wait_released`'s own 10 s cap (`daemon_cmd.rs`), then its wait for the process's
+/// exit, `EXIT_WAIT` (5 s: `BLOCKING_SHUTDOWN_GRACE` 2 s + 3 s, copied). 24 s; plus 10 s
+/// for the `anthrex` spawn and the daemon's teardown on a loaded machine.
 const STOP_LIMIT: Duration = proto::HANDSHAKE_TIMEOUT
-    .saturating_add(Duration::from_secs(1 + 3 + 10))
+    .saturating_add(Duration::from_secs(1 + 3 + 10 + 5))
     .saturating_add(Duration::from_secs(10));
 
 /// From `daemon stop`'s return (the lock is free, so `run` has returned) to the process's
@@ -44,11 +45,11 @@ impl Drop for KillOnDrop {
     }
 }
 
-#[test]
-fn daemon_stop_returns_with_a_blocking_task_stuck() {
-    let dir = tempdir();
-    let log = std::fs::File::create(dir.path().join("daemon.log")).unwrap();
-    let child = isolated_command(dir.path(), &["daemon", "start", "--foreground"])
+/// A foreground daemon of `dir`'s, its blocking task stuck (`ANTHREX_TEST_STALL_BLOCKING`),
+/// once it has bound its socket and written its pid file: (the child, its pid).
+fn start_stalled_daemon(dir: &std::path::Path) -> (KillOnDrop, u32) {
+    let log = std::fs::File::create(dir.join("daemon.log")).unwrap();
+    let child = isolated_command(dir, &["daemon", "start", "--foreground"])
         .env("ANTHREX_TEST_STALL_BLOCKING", "1")
         .stdin(Stdio::null())
         .stdout(log.try_clone().unwrap())
@@ -60,8 +61,8 @@ fn daemon_stop_returns_with_a_blocking_task_stuck() {
     // The socket appears once the daemon has bound, and the pid file just after it
     // (`lifecycle::run` writes it after binding); the same bound the client's own start
     // waits (`ENSURE_DAEMON_SOCKET_WAIT`, decision 31) covers both.
-    let socket = dir.path().join("daemon.sock");
-    let pid_file = dir.path().join("data/daemon.pid");
+    let socket = dir.join("daemon.sock");
+    let pid_file = dir.join("data/daemon.pid");
     let read_pid =
         || -> Option<u32> { std::fs::read_to_string(&pid_file).ok()?.trim().parse().ok() };
     let deadline = Instant::now() + tui::spawn::ENSURE_DAEMON_SOCKET_WAIT;
@@ -74,16 +75,25 @@ fn daemon_stop_returns_with_a_blocking_task_stuck() {
         assert!(
             daemon.0.try_wait().unwrap().is_none(),
             "the daemon exited before binding: {}",
-            std::fs::read_to_string(dir.path().join("daemon.log")).unwrap_or_default()
+            std::fs::read_to_string(dir.join("daemon.log")).unwrap_or_default()
         );
         assert!(
             Instant::now() < deadline,
             "the daemon never bound its socket: {}",
-            std::fs::read_to_string(dir.path().join("daemon.log")).unwrap_or_default()
+            std::fs::read_to_string(dir.join("daemon.log")).unwrap_or_default()
         );
         std::thread::sleep(Duration::from_millis(10));
     };
     assert_eq!(pid, daemon.0.id(), "the pid file names another process");
+    (daemon, pid)
+}
+
+#[test]
+fn daemon_stop_returns_with_a_blocking_task_stuck() {
+    let dir = tempdir();
+    let (mut daemon, pid) = start_stalled_daemon(dir.path());
+    let socket = dir.path().join("daemon.sock");
+    let pid_file = dir.path().join("data/daemon.pid");
 
     let started = Instant::now();
     let stop = RunningCommand::start(&mut isolated_command(dir.path(), &["daemon", "stop"]))
@@ -124,4 +134,37 @@ fn daemon_stop_returns_with_a_blocking_task_stuck() {
             .is_some(),
         "the stopped daemon's lifetime lock is still held"
     );
+}
+
+/// From the daemon process's last file closed to its reap: the exit's own last step,
+/// microseconds, far below `BLOCKING_SHUTDOWN_GRACE` (2 s), so a stop that returned
+/// during that grace cannot meet it. Bounded loosely for a loaded machine.
+const REAP_LIMIT: Duration = Duration::from_millis(500);
+
+/// The ax-leak-2 fix (the leak hunt's concern 2): `daemon stop` returns only once the
+/// daemon's process has exited. It used to return when the lifetime lock was released,
+/// which is before the runtime's `shutdown_timeout` (2 s) lets a blocking task finish:
+/// for that long the "stopped" daemon could still write, a task temporary directory
+/// among it, after its caller had moved on and removed what it owns.
+#[test]
+fn daemon_stop_returns_only_once_the_daemon_has_exited() {
+    let dir = tempdir();
+    let (mut daemon, pid) = start_stalled_daemon(dir.path());
+
+    let stop = RunningCommand::start(&mut isolated_command(dir.path(), &["daemon", "stop"]))
+        .finish(STOP_LIMIT);
+    assert!(
+        stop.status.success(),
+        "daemon stop failed: {}",
+        String::from_utf8_lossy(&stop.stderr)
+    );
+
+    let stopped = Instant::now();
+    while daemon.0.try_wait().unwrap().is_none() {
+        assert!(
+            stopped.elapsed() < REAP_LIMIT,
+            "`daemon stop` returned while the daemon (pid {pid}) was still running"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
 }

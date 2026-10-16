@@ -22,8 +22,8 @@ import subprocess
 import sys
 
 # Decision 19: a test daemon's stop is HANDSHAKE_TIMEOUT (5 s) + HUP_GRACE (1 s) +
-# KILL_GRACE (3 s) + wait_released's cap (10 s) = 19 s (docs/timing-budgets.md, the
-# `daemon stop` row), plus slack.
+# KILL_GRACE (3 s) + wait_released's cap (10 s) + the exit wait (5 s) = 24 s
+# (docs/timing-budgets.md, the `daemon stop` row), plus slack.
 PROCESS_WAIT = 30
 POLL = 0.5
 # Decision 20 with "Spec and brief defects" 7's ruling: `ax ` (with a space) is the

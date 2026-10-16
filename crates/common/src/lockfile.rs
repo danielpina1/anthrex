@@ -183,6 +183,36 @@ fn lock_path(data_dir: &Path) -> PathBuf {
     data_dir.join("daemon.lock")
 }
 
+/// The ax-leak-2 fix: the daemon process's exit lock. The lifetime lock is released when
+/// `lifecycle::run` returns, but the process lives on for up to its runtime's
+/// `shutdown_timeout` while blocking tasks finish, and may still write in that time.
+/// This takes an exclusive `flock` on `path` and never releases it: the descriptor is
+/// kept for the rest of the process and closed only by the kernel at its exit (it is
+/// `O_CLOEXEC`, so no child keeps it). `wait_released` on `path` therefore returns
+/// only once the process has exited.
+///
+/// `Ok(false)`: another process holds it, which is a daemon still exiting; this one
+/// then runs without it, and a stop of it waits for its lifetime lock alone.
+pub fn hold_until_exit(path: &Path) -> io::Result<bool> {
+    static HELD: std::sync::OnceLock<std::fs::File> = std::sync::OnceLock::new();
+    if HELD.get().is_some() {
+        return Ok(true);
+    }
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(path)?;
+    if !try_lock(&file)? {
+        return Ok(false);
+    }
+    // A static is never dropped: the descriptor stays open until the process exits.
+    let _ = HELD.set(file);
+    Ok(true)
+}
+
 /// Blocks until `lock_path` is unlocked, or `timeout` elapses. Returns whether it was
 /// released. Tries `LOCK_EX | LOCK_NB` on a fresh descriptor every 100 ms, releasing at
 /// once on success so it never itself holds the lock the caller is waiting to see freed.
@@ -386,5 +416,16 @@ mod tests {
         assert!(!wait_released(&lock_file, Duration::from_millis(300)));
         drop(held);
         assert!(wait_released(&lock_file, Duration::from_secs(2)));
+    }
+
+    /// The ax-leak-2 fix: the exit lock is held for the rest of the process, so a wait
+    /// for its release cannot return while this process lives; a second hold is a no-op.
+    #[test]
+    fn the_exit_lock_is_held_until_the_process_exits() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("daemon.exit.lock");
+        assert!(hold_until_exit(&path).unwrap());
+        assert!(hold_until_exit(&path).unwrap());
+        assert!(!wait_released(&path, Duration::from_millis(300)));
     }
 }
