@@ -312,7 +312,7 @@ fn early_submit(fx: &mut Fixture) -> Vec<Effect> {
         fx,
         (EARLY, "mail"),
         "submit_epic",
-        serde_json::json!({ "edits": edits }),
+        serde_json::json!({ "edits": edits, "decided": [], "out_of_scope": [] }),
     )
 }
 

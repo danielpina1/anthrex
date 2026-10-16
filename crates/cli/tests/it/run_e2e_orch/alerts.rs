@@ -65,7 +65,7 @@ fn e2e_an_environment_block_is_the_orchestrators_and_it_retries() {
         prompt(),
         edit_plan(
             vec![add(plan_task("t1", &["a.txt"], json!({})))],
-            json!({"submit": true}),
+            json!({"submit": true, "decided": [], "out_of_scope": []}),
         ),
         // A slow orchestrator's next poll of the gate comes well after the approval,
         // as one on a loaded machine's did (the macOS CI flake): it must not read the

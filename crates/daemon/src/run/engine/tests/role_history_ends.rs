@@ -42,7 +42,7 @@ fn an_orchestrator_exit_is_failed_before_its_plan_and_completed_after() {
     with_history(&mut fx);
     edit_plan(
         &mut fx,
-        json!({"edits": [add("t1", "auth")], "submit": true}),
+        json!({"edits": [add("t1", "auth")], "submit": true, "decided": [], "out_of_scope": []}),
     );
     window_exits(&mut fx);
     let records = of_role(&fx, AgentRole::Orchestrator);

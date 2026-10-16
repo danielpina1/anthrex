@@ -125,7 +125,7 @@ fn e2e_message_refresh_and_task_note() {
                 .iter()
                 .map(|(id, file, more)| add(plan_task(id, &[file], more.clone())))
                 .collect(),
-            json!({"submit": true}),
+            json!({"submit": true, "decided": [], "out_of_scope": []}),
         ),
         until("/gate/state", json!("approved"), ORCH_WAIT),
         until("/tasks/0/state", json!("merged"), RUN_WAIT),
@@ -277,7 +277,7 @@ fn e2e_messages_are_not_redelivered_after_a_restart() {
                 add(plan_task("t1", &["a.txt"], json!({}))),
                 add(plan_task("t2", &["b.txt"], json!({}))),
             ],
-            json!({"submit": true}),
+            json!({"submit": true, "decided": [], "out_of_scope": []}),
         ),
         until("/gate/state", json!("approved"), ORCH_WAIT),
         read(None),
@@ -360,7 +360,7 @@ fn e2e_user_run_message_is_recorded_with_source_user() {
         prompt(),
         edit_plan(
             vec![add(plan_task("t1", &["a.txt"], json!({})))],
-            json!({"submit": true}),
+            json!({"submit": true, "decided": [], "out_of_scope": []}),
         ),
         until("/gate/state", json!("approved"), ORCH_WAIT),
         read(None),

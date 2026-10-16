@@ -529,7 +529,7 @@ fn an_epic_review_waits_for_its_highest_stage_to_hold_every_merge() {
     t2["task"]["stage"] = json!(2);
     edit_plan(
         &mut fx,
-        json!({"edits": [add("t1", "auth"), t2], "submit": true}),
+        json!({"edits": [add("t1", "auth"), t2], "submit": true, "decided": [], "out_of_scope": []}),
     );
     spawn(&mut fx, "mail");
     planner_started(&mut fx, PLANNER);

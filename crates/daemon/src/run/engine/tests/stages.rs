@@ -328,7 +328,7 @@ fn an_epic_integration_review_goes_into_its_highest_stage() {
     t2["task"]["stage"] = json!(2);
     edit_plan(
         &mut fx,
-        json!({"edits": [add("t1", "auth"), t2], "submit": true}),
+        json!({"edits": [add("t1", "auth"), t2], "submit": true, "decided": [], "out_of_scope": []}),
     );
     assert_eq!(fx.run().stage_layout, StageLayout::Multi);
     spawn(&mut fx, "mail");
@@ -497,7 +497,7 @@ fn an_epic_review_ignores_a_cancelled_tasks_stage() {
     t2["task"]["stage"] = json!(2);
     edit_plan(
         &mut fx,
-        json!({"edits": [add("t1", "auth"), t2], "submit": true}),
+        json!({"edits": [add("t1", "auth"), t2], "submit": true, "decided": [], "out_of_scope": []}),
     );
     spawn(&mut fx, "mail");
     planner_started(&mut fx, PLANNER);

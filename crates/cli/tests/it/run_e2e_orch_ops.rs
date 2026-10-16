@@ -393,7 +393,7 @@ fn start_planner_op_runs_a_planner_and_sends_planner_ended() {
     h.script(
         "planner-mail-1",
         &[json!({"mcp_call": {"tool": "submit_epic", "args": {
-            "edits": [{"op": "add_task", "task": task}]}}})],
+            "edits": [{"op": "add_task", "task": task}], "decided": [], "out_of_scope": []}}})],
     );
     let run = h.start_goal_id("rework mail", &[]);
     let info = h.wait_run(

@@ -33,7 +33,7 @@ pub(super) fn complete() -> Fixture {
     let mut fx = launched(false);
     let effects = edit_plan(
         &mut fx,
-        json!({"edits": [add("t1", "auth")], "submit": true}),
+        json!({"edits": [add("t1", "auth")], "submit": true, "decided": [], "out_of_scope": []}),
     );
     assert!(answer(&effects).0, "{effects:#?}");
     fx.approve();

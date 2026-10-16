@@ -80,7 +80,7 @@ fn yes_never_skips_a_design_gate_and_logs_once() {
     );
     // A run without the flow still skips its gate with --yes.
     let mut plain = launched(true);
-    let args = json!({"edits": [super::orch::add("t1", "auth")], "submit": true});
+    let args = json!({"edits": [super::orch::add("t1", "auth")], "submit": true, "decided": [], "out_of_scope": []});
     orch_tool(&mut plain, ORCH, "edit_plan", args);
     assert_eq!(plain.run().state, RunState::Running);
 }

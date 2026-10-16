@@ -38,7 +38,10 @@ pub(super) fn complete_staged() -> Fixture {
 /// The orchestrator plans round 2's `t2` in stage 2 and submits it.
 pub(super) fn submit_round(fx: &mut Fixture) -> Vec<Effect> {
     let edits = json!([add_in("t2", "mail", 2, &[])]);
-    let effects = edit_plan(fx, json!({"edits": edits, "submit": true}));
+    let effects = edit_plan(
+        fx,
+        json!({"edits": edits, "submit": true, "decided": [], "out_of_scope": []}),
+    );
     assert!(answer(&effects).0, "{effects:#?}");
     effects
 }
@@ -288,7 +291,7 @@ fn rejecting_round_one_still_discards_the_run() {
     let mut fx = launched(false);
     let effects = edit_plan(
         &mut fx,
-        json!({"edits": [add("t1", "auth")], "submit": true}),
+        json!({"edits": [add("t1", "auth")], "submit": true, "decided": [], "out_of_scope": []}),
     );
     assert!(answer(&effects).0);
     let reply_id = fx.reply();
@@ -499,7 +502,13 @@ fn each_round_counts_its_own_limits() {
     let (op, _) = fx.op("StartScout");
     fx.done(op, OpResult::ScoutStarted { window_id: 77 });
     scout_ended(&mut fx, &format!("{H4}-a"), ScoutEnd::Reported);
-    assert!(answer(&edit_plan(&mut fx, json!({"edits": [], "submit": true}))).0);
+    assert!(
+        answer(&edit_plan(
+            &mut fx,
+            json!({"edits": [], "submit": true, "decided": [], "out_of_scope": []})
+        ))
+        .0
+    );
     fx.approve();
     fx.complete_prepares();
     let blocked = fx.run().tasks.iter().any(|t| {
@@ -531,7 +540,13 @@ fn each_round_counts_its_own_limits() {
         error(&scout(&mut fx, "d")),
         format!("round 2 of run {RUN_ID} already has 1 scouts, the most max_scouts allows")
     );
-    assert!(answer(&edit_plan(&mut fx, json!({"edits": [], "submit": true}))).0);
+    assert!(
+        answer(&edit_plan(
+            &mut fx,
+            json!({"edits": [], "submit": true, "decided": [], "out_of_scope": []})
+        ))
+        .0
+    );
     fx.approve();
     create_stages(&mut fx);
     fx.complete_prepares();

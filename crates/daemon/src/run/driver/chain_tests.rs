@@ -107,7 +107,10 @@ async fn a_call_outside_the_chain_is_refused() {
     for (tool, args) in [
         ("run_status", json!({})),
         ("get_context", json!({})),
-        ("edit_plan", json!({"edits": [], "submit": true})),
+        (
+            "edit_plan",
+            json!({"edits": [], "submit": true, "decided": [], "out_of_scope": []}),
+        ),
     ] {
         let (ok, answer) = chained(&rig, (&first, "o-4c1d"), tool, args).await;
         assert!(!ok, "{tool}: {answer}");
@@ -146,7 +149,7 @@ async fn a_failed_runs_window_reads_its_own_run() {
     assert!(ok, "{digest}");
     assert_eq!(digest["run"]["id"], json!(first), "{digest}");
     assert_eq!(digest["run"]["state"], json!("failed"), "{digest}");
-    let args = json!({"edits": [], "submit": true});
+    let args = json!({"edits": [], "submit": true, "decided": [], "out_of_scope": []});
     let (ok, answer) = chained(&rig, (&first, CHAIN), "edit_plan", args).await;
     assert!(!ok, "{answer}");
     assert!(
@@ -205,7 +208,10 @@ async fn an_idle_orchestrator_may_read_but_not_edit() {
     );
     let text = "run 3f9a has ended; start a new goal with start_goal when the user gives you one";
     for (tool, args) in [
-        ("edit_plan", json!({"edits": [], "submit": true})),
+        (
+            "edit_plan",
+            json!({"edits": [], "submit": true, "decided": [], "out_of_scope": []}),
+        ),
         ("spawn_scout", json!({"question": "where is auth?"})),
         ("task_result", json!({"task_id": "t0"})),
     ] {
@@ -483,9 +489,9 @@ async fn a_delivered_runs_idle_orchestrator_may_only_summarise_or_iterate() {
     let text = "run 3f9a has ended; start a new goal with start_goal when the user gives you one";
     for args in [
         json!({}),
-        json!({"submit": true}),
+        json!({"submit": true, "decided": [], "out_of_scope": []}),
         json!({"edits": [{"op": "cancel_task", "task_id": "t1"}]}),
-        json!({"edits": [], "submit": true}),
+        json!({"edits": [], "submit": true, "decided": [], "out_of_scope": []}),
         json!({"summary": "done", "edits": [{"op": "cancel_task", "task_id": "t1"}]}),
         json!({"edits": [], "summary": "done", "iterate": "more"}),
     ] {

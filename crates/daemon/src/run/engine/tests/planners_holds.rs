@@ -62,11 +62,14 @@ fn a_promoted_runs_planner_and_its_replan_wait_for_their_rounds() {
     let mut fx = promoted();
     assert_eq!(spawn(&mut fx, "web")["hold"], "epic:web");
     planner_started(&mut fx, PLANNER);
-    let args = json!({"edits": [task_in("t5", "web/a")]});
+    let args = json!({"edits": [task_in("t5", "web/a")], "decided": [], "out_of_scope": []});
     let effects = planner_tool(&mut fx, (PLANNER, "web"), "submit_epic", args);
     assert_eq!(replies(&effects), vec![Ok(EPIC_RECORDED.to_string())]);
     assert_eq!(fx.task("t5").orch.gate_hold.as_deref(), Some("epic:web"));
-    edit_plan(&mut fx, json!({"edits": [], "submit": true}));
+    edit_plan(
+        &mut fx,
+        json!({"edits": [], "submit": true, "decided": [], "out_of_scope": []}),
+    );
     hold_verdict(&mut fx, "promotion", true);
     fx.tick();
     assert!(!prepared(&fx, "t5"), "the promotion does not release web");
@@ -80,7 +83,7 @@ fn a_promoted_runs_planner_and_its_replan_wait_for_their_rounds() {
     assert_eq!(value["hold"], "epic:web.2");
     planner_started(&mut fx, PLANNER + 1);
     // Its own module, so it does not wait for t5 (decision 41's implicit dependency).
-    let args = json!({"edits": [task_in("t6", "web/b")]});
+    let args = json!({"edits": [task_in("t6", "web/b")], "decided": [], "out_of_scope": []});
     planner_tool(&mut fx, (PLANNER + 1, "web"), "submit_epic", args);
     assert_eq!(fx.task("t6").orch.gate_hold.as_deref(), Some("epic:web.2"));
     assert_eq!(hold_state(&fx, "epic:web.2"), Some(HoldState::Awaiting));
@@ -101,7 +104,7 @@ fn an_accepted_epic_with_no_new_task_asks_the_user_nothing() {
     planner_ended(&mut fx, ("mail", 1), ScoutEnd::Reported);
     assert_eq!(spawn(&mut fx, "mail")["hold"], "epic:mail.2");
     planner_started(&mut fx, PLANNER + 1);
-    let args = json!({"edits": [{"op": "cancel_task", "task_id": "t2"}]});
+    let args = json!({"edits": [{"op": "cancel_task", "task_id": "t2"}], "decided": [], "out_of_scope": []});
     let effects = planner_tool(&mut fx, (PLANNER + 1, "mail"), "submit_epic", args);
     assert_eq!(replies(&effects), vec![Ok(EPIC_RECORDED.to_string())]);
     assert_eq!(fx.task("t2").state, proto::TaskState::Cancelled);
@@ -119,7 +122,10 @@ fn orchestrator_submit_submits_its_drafting_epic_rounds() {
     assert_eq!(hold_state(&fx, "epic:mail"), Some(HoldState::Drafting));
     assert_eq!(spawn(&mut fx, "web")["hold"], "epic:web");
     assert_eq!(epic(&fx, "web").phase, PlannerPhase::Planning);
-    let (ok, value) = answer(&edit_plan(&mut fx, json!({"edits": [], "submit": true})));
+    let (ok, value) = answer(&edit_plan(
+        &mut fx,
+        json!({"edits": [], "submit": true, "decided": [], "out_of_scope": []}),
+    ));
     assert!(ok, "{value}");
     assert_eq!(hold_state(&fx, "epic:mail"), Some(HoldState::Awaiting));
     assert_eq!(hold_state(&fx, "epic:web"), Some(HoldState::Drafting));

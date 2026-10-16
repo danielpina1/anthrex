@@ -108,7 +108,7 @@ fn a_granted_gate_file_is_not_pinned() {
     let mut fx = super::orch::launched(false);
     let effects = edit_plan(
         &mut fx,
-        json!({"edits": [add("t1", "auth")], "submit": true}),
+        json!({"edits": [add("t1", "auth")], "submit": true, "decided": [], "out_of_scope": []}),
     );
     assert!(matches!(&replies(&effects)[..], [Ok(_)]), "{effects:#?}");
     assert!(fx.run().approved_at.is_none());

@@ -174,7 +174,7 @@ fn an_off_rounds_halt_is_9_3s() {
 fn a_rebaseline_clears_a_stale_halted_from() {
     let mut fx = design_complete();
     iterate_with(&mut fx, Some(RoundDesign::Off)).unwrap();
-    round_submit(&mut fx, json!([off_task()])).unwrap();
+    off_round_submit(&mut fx, json!([off_task()])).unwrap();
     assert_eq!(fx.run().state, RunState::AwaitingApproval);
     halted(&mut fx);
     let design = fx.run_mut().orch.design.as_mut().unwrap();
@@ -201,7 +201,7 @@ fn an_off_rounds_gate_is_skipped_with_yes_only_when_the_user_started_it() {
         let mut fx = design_complete_with(true);
         iterate_with(&mut fx, Some(RoundDesign::Off)).unwrap();
         fx.run_mut().rounds.last_mut().unwrap().origin = origin;
-        let answer = round_submit(&mut fx, json!([off_task()])).unwrap();
+        let answer = off_round_submit(&mut fx, json!([off_task()])).unwrap();
         assert_eq!(answer["awaiting_approval"], gate, "{origin:?}: {answer}");
         let state = fx.run().state;
         assert_eq!(

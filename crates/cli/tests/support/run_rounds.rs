@@ -126,13 +126,19 @@ pub fn staged(id: &str, file: &str, stage: u16) -> Value {
 pub fn two_rounds() -> Vec<Value> {
     vec![
         prompt(),
-        edit_plan(vec![staged("t1", "a.txt", 1)], json!({"submit": true})),
+        edit_plan(
+            vec![staged("t1", "a.txt", 1)],
+            json!({"submit": true, "decided": [], "out_of_scope": []}),
+        ),
         until("/gate/state", json!("approved"), ORCH_WAIT),
         until("/run/complete", json!(true), RUN_WAIT),
         edit_plan(vec![], json!({"summary": SUMMARY_1})),
         until("/run/round", json!(2), ITERATE_WAIT),
         read(Some("the user asks for round 2 of run ")),
-        edit_plan(vec![staged("t2", "b.txt", 2)], json!({"submit": true})),
+        edit_plan(
+            vec![staged("t2", "b.txt", 2)],
+            json!({"submit": true, "decided": [], "out_of_scope": []}),
+        ),
         // The user's approval (one request), then the task path.
         until("/run/complete", json!(true), SUMMARY_WAIT),
         edit_plan(vec![], json!({"summary": SUMMARY_2})),

@@ -187,7 +187,7 @@ fn each_role_launches_its_configured_model() {
             call("get_context", json!({})),
             call(
                 "submit_epic",
-                json!({"edits": [add(plan_task("t1", &["a.txt"], json!({})))]}),
+                json!({"edits": [add(plan_task("t1", &["a.txt"], json!({})))], "decided": [], "out_of_scope": []}),
             ),
         ],
     );
@@ -249,7 +249,7 @@ fn each_role_launches_its_configured_model() {
                 add(plan_task("t3", &["tests/**"], paired)),
                 add(research_task("t4")),
             ],
-            json!({"submit": true}),
+            json!({"submit": true, "decided": [], "out_of_scope": []}),
         ),
         expect("/awaiting_approval", json!(true)),
         until("/gate/state", json!("approved"), ORCH_WAIT),

@@ -56,7 +56,10 @@ fn e2e_large_path_two_subplanners_submit_their_epics() {
     ];
     steps.extend(until_planners_finished(2));
     steps.extend([
-        edit_plan(vec![], json!({"submit": true})),
+        edit_plan(
+            vec![],
+            json!({"submit": true, "decided": [], "out_of_scope": []}),
+        ),
         expect("/awaiting_approval", json!(true)),
         until("/run/complete", json!(true), RUN_WAIT * 3),
         marker(),
@@ -182,7 +185,10 @@ fn e2e_new_epic_after_approval_is_held_until_approved() {
     let mut steps = vec![prompt(), subplanner("a", &["src/a/**"])];
     steps.extend(until_planners_finished(1));
     steps.extend([
-        edit_plan(vec![], json!({"submit": true})),
+        edit_plan(
+            vec![],
+            json!({"submit": true, "decided": [], "out_of_scope": []}),
+        ),
         until("/gate/state", json!("approved"), ORCH_WAIT),
         subplanner("c", &["src/c/**"]),
         expect("/hold", json!("epic:c")),

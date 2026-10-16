@@ -90,7 +90,7 @@ ORCHESTRATOR = [
                     {"op": "add_task", "task": _task("t1", "a.txt")},
                     {"op": "add_task", "task": _task("t2", "b.txt")},
                 ],
-                "submit": True,
+                "submit": True, "decided": [], "out_of_scope": [],
             },
         }
     },

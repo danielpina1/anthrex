@@ -67,7 +67,8 @@ pub(super) fn note(fx: &mut Fixture, window: u32, kind: &str, text: &str) -> Vec
 /// A planned run with its orchestrator, `t1` submitted and working: its window.
 pub(super) fn orchestrated() -> (Fixture, u32) {
     let mut fx = launched(true);
-    let submit = json!({"edits": [add("t1", "a")], "submit": true});
+    let submit =
+        json!({"edits": [add("t1", "a")], "submit": true, "decided": [], "out_of_scope": []});
     assert!(answer(&edit_plan(&mut fx, submit)).0);
     let window = fx.launch_all()[0].1;
     (fx, window)

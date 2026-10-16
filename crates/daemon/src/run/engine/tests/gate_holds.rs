@@ -33,7 +33,7 @@ pub(super) fn held(yes: bool) -> Fixture {
     let mut fx = launched(yes);
     edit_plan(
         &mut fx,
-        json!({"edits": [add("t1", "auth")], "submit": true}),
+        json!({"edits": [add("t1", "auth")], "submit": true, "decided": [], "out_of_scope": []}),
     );
     if !yes {
         fx.approve();
@@ -136,7 +136,10 @@ fn held_tasks_are_not_runnable_or_prewarmed() {
             decided_by: None,
         });
     gate.task_mut("t9").orch.gate_hold = Some("epic:x".into());
-    let effects = edit_plan(&mut gate, json!({"edits": [], "submit": true}));
+    let effects = edit_plan(
+        &mut gate,
+        json!({"edits": [], "submit": true, "decided": [], "out_of_scope": []}),
+    );
     assert_eq!(tasks_of(&effects, "PrepareWorktree"), vec!["t1"]);
 }
 
@@ -386,7 +389,7 @@ fn an_epic_planned_before_the_gate_is_not_held() {
     fx.run_mut().orch.epics[0].phase = PlannerPhase::Finished;
     edit_plan(
         &mut fx,
-        json!({"edits": [in_epic("t1", "mail", "mail")], "submit": true}),
+        json!({"edits": [in_epic("t1", "mail", "mail")], "submit": true, "decided": [], "out_of_scope": []}),
     );
     fx.approve();
     let (ok, value) = answer(&edit_plan(
@@ -423,7 +426,7 @@ fn an_empty_drafting_round_of_an_ended_planner_is_dropped() {
     let mut fx = launched(false);
     edit_plan(
         &mut fx,
-        json!({"edits": [add("t1", "auth")], "submit": true}),
+        json!({"edits": [add("t1", "auth")], "submit": true, "decided": [], "out_of_scope": []}),
     );
     fx.approve();
     assert_eq!(spawn(&mut fx, "web")["hold"], "epic:web");
@@ -444,7 +447,7 @@ fn approve_hold_of_a_protected_grant_is_user_only() {
     let mut fx = launched(false);
     edit_plan(
         &mut fx,
-        json!({"edits": [add("t1", "auth")], "submit": true}),
+        json!({"edits": [add("t1", "auth")], "submit": true, "decided": [], "out_of_scope": []}),
     );
     fx.approve();
     assert_eq!(spawn(&mut fx, "mail")["hold"], "epic:mail");

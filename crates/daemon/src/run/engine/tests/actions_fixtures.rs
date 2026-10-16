@@ -126,7 +126,7 @@ fn gate_dormant() -> Fixture {
     let mut fx = launched(false);
     edit_plan(
         &mut fx,
-        json!({"edits": [add("t1", "auth")], "submit": true}),
+        json!({"edits": [add("t1", "auth")], "submit": true, "decided": [], "out_of_scope": []}),
     );
     assert_eq!(fx.run().state, RunState::AwaitingApproval);
     crate::run::engine::orch_window::restored(fx.run_mut());

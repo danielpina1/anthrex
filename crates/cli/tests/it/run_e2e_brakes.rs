@@ -385,7 +385,10 @@ fn e2e_continue_hands_off_a_full_orchestrator() {
         ORCH,
         &[
             first,
-            edit_plan(vec![staged("t1", "a.txt", 1)], json!({"submit": true})),
+            edit_plan(
+                vec![staged("t1", "a.txt", 1)],
+                json!({"submit": true, "decided": [], "out_of_scope": []}),
+            ),
             poll("/run/complete", json!(true), RUN_WAIT),
             edit_plan(vec![], json!({"summary": SUMMARY_1})),
             poll("/run/state", json!("accepted"), FINISH_WAIT),

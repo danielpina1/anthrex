@@ -172,7 +172,10 @@ fn an_orchestrator_rounds_holds_await_the_user_under_yes() {
         task["task"]["stage"] = json!(2);
         let (ok, value) = answer(&edit_plan(&mut fx, json!({"edits": [task]})));
         assert!(ok, "{value}");
-        let (ok, value) = answer(&edit_plan(&mut fx, json!({"edits": [], "submit": true})));
+        let (ok, value) = answer(&edit_plan(
+            &mut fx,
+            json!({"edits": [], "submit": true, "decided": [], "out_of_scope": []}),
+        ));
         assert!(ok, "{value}");
         let want = match origin {
             RoundOrigin::Orchestrator => HoldState::Awaiting,

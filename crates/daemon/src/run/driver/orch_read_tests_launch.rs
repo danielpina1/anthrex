@@ -214,7 +214,8 @@ async fn a_held_submit_carries_its_runtime_refusals() {
         "brief": "Send mail.", "acceptance": ["mail is sent"],
         "route": {"runtime": "claude"},
     });
-    let args = json!({"edits": [{"op": "add_task", "task": task}]});
+    let args =
+        json!({"edits": [{"op": "add_task", "task": task}], "decided": [], "out_of_scope": []});
     let opts = rig.opts(AgentRole::Planner, PLANNER, Some("mail"));
     let call = spawn_call(&rig, opts, "submit_epic", args);
     tokio::time::sleep(Duration::from_millis(500)).await;

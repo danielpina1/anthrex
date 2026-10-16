@@ -88,7 +88,7 @@ fn orchestrated_mis_sized() -> Fixture {
     let mut fx = launched(true);
     edit_plan(
         &mut fx,
-        json!({"edits": [add("t1", "auth")], "submit": true}),
+        json!({"edits": [add("t1", "auth")], "submit": true, "decided": [], "out_of_scope": []}),
     );
     fx.launch_all();
     mis_sized_again(&mut fx);
