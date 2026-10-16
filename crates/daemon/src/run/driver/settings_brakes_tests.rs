@@ -76,3 +76,74 @@ async fn settings_save_sends_brakes_config() {
     };
     assert_eq!(brakes_sent(&mut rx), [saved]);
 }
+
+/// Task 7's review M4: a save that outlives its timeout but lands (`finish_late`) also
+/// sends the live brakes, once, after its swap.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_late_settings_save_sends_brakes_config() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::{Duration, Instant};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, "[orchestrator]\n").unwrap();
+    let release = Arc::new(AtomicBool::new(false));
+    let held = release.clone();
+    // Claims the rename before the timeout fires, then waits to be released.
+    let save: crate::live_config::SaveFn = Arc::new(move |path, doc, cancel| {
+        let claimed = !cancel.swap(true, Ordering::SeqCst);
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while !held.load(Ordering::SeqCst) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(claimed, "the rename was not claimed");
+        config::settings::save(path, doc, &AtomicBool::new(false))
+    });
+    let config = ManagerConfig::for_tests("/tmp/ax-unused.sock".into(), "/bin/sh".into());
+    let (manager, _events) = WindowManager::new(config);
+    let orchestrator = config::load(&path).0.orchestrator;
+    let live = LiveSettings::defaults_of(orchestrator.clone());
+    let mut ctx = RunContext::new(
+        dir.path().join("data"),
+        manager.config(),
+        orchestrator,
+        Arc::new(NoRoots),
+    )
+    .with_settings(live, path.clone());
+    ctx.settings_io = crate::live_config::SettingsIo {
+        timeout: Duration::from_millis(50),
+        save,
+    };
+    let s = RunService::new(manager, ctx);
+    let mut rx = crate::lock(&s.rx).take().expect("the loop is not running");
+
+    let mut doc = config::settings::doc_of(&s.ctx.settings.current().orchestrator);
+    doc.brakes.quota_pause_5h_percent = 70;
+    let request = proto::RunRequest::Settings(SettingsRequest::Put { settings: doc });
+    let RunReply::Settings { reply, .. } = s.request(request).await else {
+        panic!("not a settings reply")
+    };
+    assert!(matches!(*reply, SettingsReply::Refused { .. }), "{reply:?}");
+    let reply = *reply;
+    assert!(brakes_sent(&mut rx).is_empty(), "sent before it landed");
+
+    release.store(true, Ordering::SeqCst);
+    let mut sent = Vec::new();
+    // The released save is one small config write; the deadline is a hang guard.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while sent.is_empty() {
+        assert!(
+            Instant::now() < deadline,
+            "the late save sent no BrakesConfig; reply {reply:?}; live {:?}",
+            s.ctx.settings.current().orchestrator.brakes
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        sent.extend(brakes_sent(&mut rx));
+    }
+    let landed = BrakeConfig {
+        quota_brake: true,
+        pause_5h_percent: 70,
+        pause_7d_percent: 95,
+        fresh_secs: 600,
+    };
+    assert_eq!(sent, [landed]);
+}
