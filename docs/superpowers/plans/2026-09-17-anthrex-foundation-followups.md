@@ -2349,3 +2349,7 @@ Five minors from the merge review of milestone 9.11, none blocking:
 
 - **Other headless stand-ins may answer without reading stdin.** The lag rig's stand-in printed its turn and exited without reading its message, so a reap that beat the first send refused it (fixed in f24d5243). The stand-ins in `crates/daemon/tests/support/headless.rs` and the other headless rigs were not audited for the same defect.
 - **No permanent seam keeps `daemon.log`'s non-blocking writer slow.** A future test that reads `daemon.log` once, right after an event, would pass locally and flake on CI. `RunHarness::wait_daemon_log` is the pattern; a source-rules check, or a debug-build seam on the appender, would catch a new one-shot read.
+
+### From the ax-<uid> leak hunt (fix/ax-cache-leak-2, 2026-10-16)
+
+- **`AX_TMP_TRACE` names each task temporary directory's creator.** It is test-only and off unless set (`crates/daemon/src/run/git/tmp_trace.rs`). When set, every process appends one line per creation to that file: the hash, the repository, the binary, `NEXTEST_TEST_NAME` and the pid. CI sets it for the suite, the smoke and the gate. `leak_gate.py check` prints the creator under each leaked `ax-<uid>/<hash>`. Locally: `AX_TMP_TRACE=/tmp/<yours>.tsv` on both the run and the check.
