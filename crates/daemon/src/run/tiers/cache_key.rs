@@ -47,20 +47,54 @@ pub const TOOLCHAIN_ENV_VARS: [&str; 5] = [
     "CARGO_BUILD_TARGET",
 ];
 
+/// Milestone 9.18 decision 8: every variable named with one of these prefixes changes
+/// what cargo builds (`CARGO_PROFILE_<NAME>_DEBUG`, `_OPT_LEVEL`, `_OVERFLOW_CHECKS`…).
+pub const TOOLCHAIN_ENV_PREFIXES: [&str; 1] = ["CARGO_PROFILE_"];
+/// Decision 8: two more single variables, beside [`TOOLCHAIN_ENV_VARS`].
+pub const TOOLCHAIN_ENV_EXTRA: [&str; 2] = ["CARGO_BUILD_RUSTFLAGS", "CARGO_INCREMENTAL"];
+/// Decision 8: `CARGO_TARGET_<TRIPLE>_RUSTFLAGS`. Only these `CARGO_TARGET_` names
+/// count, so `CARGO_TARGET_DIR` (a lease) and `CARGO_TARGET_TMPDIR` never do.
+const TARGET_RUSTFLAGS: (&str, &str) = ("CARGO_TARGET_", "_RUSTFLAGS");
+
+/// Whether `name` is one of decision 8's variables (not one of the five).
+fn matches_rule(name: &str) -> bool {
+    let (prefix, suffix) = TARGET_RUSTFLAGS;
+    TOOLCHAIN_ENV_PREFIXES
+        .iter()
+        .any(|p| name.len() > p.len() && name.starts_with(p))
+        || TOOLCHAIN_ENV_EXTRA.contains(&name)
+        || (name.len() > prefix.len() + suffix.len()
+            && name.starts_with(prefix)
+            && name.ends_with(suffix))
+}
+
 /// The key's toolchain part with the step's effective `PATH` and the listed variables
 /// in it (ruling C-13 (5), decision 29): `<toolchain> path:<fnv>`, then ` env:<fnv>`
 /// over `NAME=value\n` for each set variable. The daemon's own environment is read
-/// here.
+/// here: the five by name, and decision 8's from the whole environment.
 pub fn with_env(toolchain: &str, env: &[(String, String)]) -> String {
-    with_env_from(toolchain, env, &|name| std::env::var(name).ok())
+    let daemon_vars: Vec<(String, String)> = std::env::vars_os()
+        .filter_map(|(n, v)| Some((n.into_string().ok()?, v.into_string().ok()?)))
+        .filter(|(n, _)| matches_rule(n))
+        .collect();
+    with_env_from(
+        toolchain,
+        env,
+        &|name| std::env::var(name).ok(),
+        &daemon_vars,
+    )
 }
 
-/// The pure core of [`with_env`]: `daemon` looks a variable up in the daemon's own
-/// environment. The step env's last value wins over the daemon's.
+/// The pure core of [`with_env`]: `daemon` looks one of [`TOOLCHAIN_ENV_VARS`] up in
+/// the daemon's own environment, and `daemon_vars` holds the daemon's variables for
+/// decision 8's rules (any others in it are ignored). The step env's last value wins
+/// over the daemon's. Ruling C10: the five keep their array order, then decision 8's
+/// follow sorted by name, so with none of them set the part is what it was.
 pub fn with_env_from(
     toolchain: &str,
     env: &[(String, String)],
     daemon: &dyn Fn(&str) -> Option<String>,
+    daemon_vars: &[(String, String)],
 ) -> String {
     let lookup = |name: &str| {
         env.iter()
@@ -77,6 +111,15 @@ pub fn with_env_from(
         if let Some(value) = lookup(name) {
             vars.push_str(&format!("{name}={value}\n"));
         }
+    }
+    let mut more = std::collections::BTreeMap::new();
+    for (name, value) in daemon_vars.iter().chain(env) {
+        if matches_rule(name) {
+            more.insert(name.as_str(), value.as_str());
+        }
+    }
+    for (name, value) in more {
+        vars.push_str(&format!("{name}={value}\n"));
     }
     if !vars.is_empty() {
         let mut hash = crate::profile::store::Fnv1a64::new();
