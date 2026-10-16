@@ -2,9 +2,7 @@
 //! review task `<e>-int<n>` run through decision 36's dispatch, and what it holds
 //! (decision 38).
 
-use proto::{
-    AgentRole, BlockInfo, BlockReason, IntegrationState, RunState, TaskKind, TaskState,
-};
+use proto::{AgentRole, BlockInfo, BlockReason, IntegrationState, RunState, TaskKind, TaskState};
 use serde_json::json;
 
 use super::dispatch::replies;

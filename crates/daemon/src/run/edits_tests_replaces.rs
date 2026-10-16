@@ -339,7 +339,10 @@ fn the_cycle_walk_is_linear() {
     let layer = |l: usize| vec![format!("l{l}a"), format!("l{l}b")];
     for l in 1..LAYERS {
         for side in ["a", "b"] {
-            let i = run.tasks.iter().position(|t| t.id() == format!("l{l}{side}"));
+            let i = run
+                .tasks
+                .iter()
+                .position(|t| t.id() == format!("l{l}{side}"));
             run.tasks[i.unwrap()].replaces = layer(l - 1);
         }
     }

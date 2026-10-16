@@ -111,9 +111,11 @@ fn outside_its_round(run: &Run, edits: &[PlanEdit], epic: &str) -> Vec<PlanError
             | PlanEdit::SplitTask { task_id, .. }
             | PlanEdit::AddDep { task_id, .. } => vec![(task_id, false)],
             PlanEdit::CancelTask { task_id } => vec![(task_id, true)],
-            PlanEdit::AddTask { replaces, .. } => {
-                replaces.iter().filter(blocked).map(|id| (id, true)).collect()
-            }
+            PlanEdit::AddTask { replaces, .. } => replaces
+                .iter()
+                .filter(blocked)
+                .map(|id| (id, true))
+                .collect(),
             _ => Vec::new(),
         })
         .filter(|(id, cancel)| {
