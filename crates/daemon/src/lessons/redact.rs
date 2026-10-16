@@ -102,11 +102,18 @@ static URL_CUT: LazyLock<Regex> =
 /// anywhere, with no left boundary; [`bearer`] keeps it only when the credential is at
 /// least [`BEARER_MIN`] characters holding a digit, so `Bearer authentication-required`
 /// is prose and no escape spelling before `Bearer` can hide a credential.
+/// Task 6's review, M1: the credential is read through escapes, whose final may be its
+/// first character ([`more::visible_and_kept`]).
 static BEARER_RE: LazyLock<Regex> = LazyLock::new(|| {
     re(&format!(
-        r"(?i)bearer[ \t]+([A-Za-z0-9._~+/=-]{{{BEARER_MIN},}})"
+        r"(?i)bearer[ \t]+((?:[A-Za-z0-9._~+/=-]|{ESCAPE_FORMS}){{{BEARER_MIN},}})"
     ))
 });
+
+/// A bearer credential's characters.
+fn bearer_char(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'~' | b'+' | b'/' | b'=' | b'-')
+}
 /// Three dot-separated base64url segments, the first two JSON objects (`eyJ`); a clip
 /// may have cut the signature. Task 9's review, I2 (the controller's ruling): the shape
 /// is unambiguous, so whatever stands before it (an escape that ends in a letter, an
@@ -121,10 +128,11 @@ static JWT: LazyLock<Regex> =
 /// placeholder-split token of these prefixes is [`PREFIXED`]'s. The controller's
 /// ruling after task 13's fix: a body with no uppercase letter and no digit is a word
 /// ([`unambiguous`]). Milestone 9.18 decision 6: Stripe's `sk_live_` and `sk_test_`,
-/// their body base62.
+/// their body base62. Task 6's review, concern 2: an STS `ASIA` id in its full shape
+/// (not in [`PREFIXED`], which would take uppercase words such as `ASIAPAC2`).
 static UNAMBIGUOUS: LazyLock<Regex> = LazyLock::new(|| {
     re(
-        r"(?:github_pat_|gh[pousr]_|glpat-|sk-ant-|sk-proj-|sk-svcacct-|sk-admin-|xox[abprs]-)([A-Za-z0-9_-]{16,})|AKIA[0-9A-Z]{16}[A-Za-z0-9_-]*|sk_(?:live|test)_([A-Za-z0-9]{16,})",
+        r"(?:github_pat_|gh[pousr]_|glpat-|sk-ant-|sk-proj-|sk-svcacct-|sk-admin-|xox[abprs]-)([A-Za-z0-9_-]{16,})|A[KS]IA[0-9A-Z]{16}[A-Za-z0-9_-]*|sk_(?:live|test)_([A-Za-z0-9]{16,})",
     )
 });
 /// Task 12's review, I2 and M7 (the controller's ruling): the ambiguous `sk-` (any
@@ -150,13 +158,14 @@ static PREFIXED: LazyLock<Regex> = LazyLock::new(|| {
         r"github_pat_|gh[pousr]_|glpat-|sk-ant-|sk-proj-|sk-svcacct-|sk-admin-|xox[abprs]-|AKIA|sk_live_|sk_test_",
     )
 });
+/// [`ESCAPE`]'s forms, which [`ESCAPE_HERE`] and the `Basic` and `Bearer` credentials
+/// (task 6's review, M1) read too.
+const ESCAPE_FORMS: &str = concat!(
+    r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b[\]PX^_][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[ -/]*[0-~]?",
+    r"|\x{9b}[0-?]*[ -/]*[@-~]|\x{9b}"
+);
 /// A real escape sequence at the start of the text, in [`ESCAPE`]'s forms.
-static ESCAPE_HERE: LazyLock<Regex> = LazyLock::new(|| {
-    re(concat!(
-        r"^(?:\x1b\[[0-?]*[ -/]*[@-~]|\x1b[\]PX^_][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[ -/]*[0-~]?",
-        r"|\x{9b}[0-?]*[ -/]*[@-~]|\x{9b})"
-    ))
-});
+static ESCAPE_HERE: LazyLock<Regex> = LazyLock::new(|| re(&format!("^(?:{ESCAPE_FORMS})")));
 /// Decision 5's placeholders, which count as a token's characters.
 const PLACEHOLDERS: [&str; 8] = [
     "<sha>", "<id>", "<dur>", "<l>", "<c>", "<tmp>", "<time>", "<tid>",
@@ -268,7 +277,9 @@ fn ambiguous(text: &str) -> String {
 fn bearer(text: &str) -> String {
     BEARER_RE
         .replace_all(text, |c: &Captures| {
-            if has_digit(&c[1]) {
+            let (visible, kept) = more::visible_and_kept(&c[1], bearer_char);
+            let credential = |run: &String| run.len() >= BEARER_MIN && has_digit(run);
+            if credential(&visible) || (kept != visible && credential(&kept)) {
                 BEARER.to_string()
             } else {
                 c[0].to_string()
@@ -368,12 +379,7 @@ fn decode(text: &str) -> String {
 /// single-byte CSI (U+009B), with its sequence or alone. The general form can take a
 /// token's first character as its final (`ESC g…`), so it is private: only [`scrub`]
 /// strips, after it redacts.
-static ESCAPE: LazyLock<Regex> = LazyLock::new(|| {
-    re(concat!(
-        r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b[\]PX^_][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[ -/]*[0-~]?",
-        r"|\x{9b}[0-?]*[ -/]*[@-~]|\x{9b}"
-    ))
-});
+static ESCAPE: LazyLock<Regex> = LazyLock::new(|| re(ESCAPE_FORMS));
 
 /// `text` without its escape sequences ([`ESCAPE`]). An ESC right before a redaction's
 /// placeholder (`[redacted …]`, `Bearer [redacted]`, `Basic [redacted]`, which a redaction before the strip
@@ -426,3 +432,7 @@ mod scrub_tests_unambiguous;
 #[cfg(test)]
 #[path = "scrub_tests_residuals.rs"]
 mod scrub_tests_residuals;
+
+#[cfg(test)]
+#[path = "scrub_tests_escapes.rs"]
+mod scrub_tests_escapes;

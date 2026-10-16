@@ -30,19 +30,19 @@ fn stripe(kind: &str) -> String {
 }
 
 /// AWS's published example key id, built in pieces.
-fn aws_id() -> String {
+pub(super) fn aws_id() -> String {
     ["AKIA", "IOSFODNN7", "EXAMPLE"].concat()
 }
 
 /// AWS's published example secret access key (40 characters), built in pieces.
-fn aws_secret() -> String {
+pub(super) fn aws_secret() -> String {
     let secret = ["wJalrXUtnFEMI", "/K7MDENG/", "bPxRfiCYEXAMPLEKEY"].concat();
     assert_eq!(secret.len(), 40);
     secret
 }
 
 /// `user:pass` in base64, built in pieces.
-fn basic_credential() -> String {
+pub(super) fn basic_credential() -> String {
     ["dXNl", "cjpw", "YXNz"].concat()
 }
 
@@ -192,6 +192,21 @@ fn scrub_stays_idempotent_and_linear_on_the_new_rules() {
             format!("{}{} ", "https%3A%2F%2F", "user%3A".repeat(3)),
             true,
         ),
+        // Task 6's review: escapes whose final byte is a secret's character, written-out
+        // escapes glued before a secret, and runs of escapes with no visible piece.
+        (format!("{} \u{1b}{} ", aws_id(), aws_secret()), true),
+        (format!("{} ^[[1m{} ", aws_id(), aws_secret()), true),
+        (
+            format!("{}=\u{1b}{} ", "secret_access_key", aws_secret()),
+            true,
+        ),
+        (format!("{} a\u{1b}[0m", aws_id()), true),
+        (format!("{} \u{1b}a\u{1b}a\u{1b}]x", aws_id()), true),
+        (format!("{} \u{1b}{} ", "Basic", basic_credential()), true),
+        (
+            format!("{} \u{1b}{} ", "Bearer", "abcd1234".repeat(2)),
+            true,
+        ),
     ] {
         for size in [16 * 1024, 64 * 1024] {
             let text = unit.repeat(size / unit.len());
@@ -210,12 +225,12 @@ fn scrub_stays_idempotent_and_linear_on_the_new_rules() {
 }
 
 /// AWS's published example key id with the STS prefix, built in pieces.
-fn sts_id() -> String {
+pub(super) fn sts_id() -> String {
     ["ASIA", "IOSFODNN7", "EXAMPLE"].concat()
 }
 
 /// Standard base64 with padding, for the clipped `Basic` inputs.
-fn base64(bytes: &[u8]) -> String {
+pub(super) fn base64(bytes: &[u8]) -> String {
     let alphabet: Vec<u8> = (b'A'..=b'Z')
         .chain(b'a'..=b'z')
         .chain(b'0'..=b'9')
@@ -307,12 +322,13 @@ fn an_aws_secret_in_escaped_json_or_beside_an_sts_id_is_redacted() {
             r#"{{\"Credentials\":{{\"AccessKeyId\":\"{sts}\",\"SecretAccessKey\":\"{secret}\"}}}}"#
         ),
         &format!(
-            r#"{{\"Credentials\":{{\"AccessKeyId\":\"{sts}\",\"SecretAccessKey\":\"{TOKEN}\"}}}}"#
+            r#"{{\"Credentials\":{{\"AccessKeyId\":\"{TOKEN}\",\"SecretAccessKey\":\"{TOKEN}\"}}}}"#
         ),
     );
-    // Rule (b) takes an STS key id: the id itself is not a secret and stays.
+    // Rule (b) takes an STS key id. Task 6's review, concern 2: the id in its full
+    // shape is now redacted too, as an `AKIA` id is.
     assert_becomes(
         &format!("id {sts} secret {secret}"),
-        &format!("id {sts} secret {TOKEN}"),
+        &format!("id {TOKEN} secret {TOKEN}"),
     );
 }
