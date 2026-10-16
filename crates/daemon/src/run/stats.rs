@@ -79,7 +79,9 @@ fn row(class: &str, tasks: &[&TaskRecord], reverted: &dyn Fn(&TaskRecord) -> boo
 /// left out of the rows (controller ruling, M8b.16 review Q2); it is still one of the
 /// task records. A merged task is reverted when a `revert` record in effect
 /// (`history_io::effective_reverts`) names it, or names its run's accept merge
-/// (`task_id: None`). `problems` is the caller's.
+/// (`task_id: None`). A task record another record's `replaces` names (milestone 9.17
+/// decision 26, keyed `(run_id, task_id)`) is judged by its replacement: it leaves the
+/// rows and counts in `replaced`. `problems` is the caller's.
 pub fn aggregate(lines: &[HistoryLine], path: &Path) -> HistoryStats {
     let mut tasks = Vec::new();
     let mut runs = Vec::new();
@@ -123,13 +125,18 @@ pub fn aggregate(lines: &[HistoryLine], path: &Path) -> HistoryStats {
         run_reverts.contains(t.run_id.as_str())
             || task_reverts.contains(&(t.run_id.as_str(), t.task_id.as_str()))
     };
+    let named: HashSet<(&str, &str)> = tasks
+        .iter()
+        .flat_map(|t| t.replaces.iter().map(|r| (t.run_id.as_str(), r.as_str())))
+        .collect();
+    let replaced = |t: &TaskRecord| named.contains(&(t.run_id.as_str(), t.task_id.as_str()));
     let rows = CLASSES
         .iter()
         .map(|&c| {
             let of_class: Vec<&TaskRecord> = tasks
                 .iter()
                 .copied()
-                .filter(|t| t.sessions > 0 && class(t) == Some(c))
+                .filter(|t| t.sessions > 0 && class(t) == Some(c) && !replaced(t))
                 // M9.9 review fixes, M5: a research or review task reports; it is
                 // neither merged nor unmerged work.
                 .filter(|t| t.outcome != TaskOutcome::Reported)
@@ -162,7 +169,7 @@ pub fn aggregate(lines: &[HistoryLine], path: &Path) -> HistoryStats {
         rounds,
         iterated_runs: iterated.len() as u32,
         tuning: None,
-        replaced: 0,
+        replaced: tasks.iter().filter(|t| replaced(t)).count() as u32,
     }
 }
 
@@ -285,6 +292,11 @@ pub fn render(stats: &HistoryStats) -> String {
         stats.size_checked,
         stats.size_raised
     ));
+    // Milestone 9.17 decision 26: only once a record was replaced.
+    if stats.replaced > 0 {
+        let n = stats.replaced;
+        out.push_str(&format!("replaced {n} (judged by their replacements)\n"));
+    }
     // Milestone 9.3 (KG §2.6): only once a run has been iterated.
     if stats.rounds > 0 {
         let (total, runs) = (stats.rounds, stats.iterated_runs);
@@ -351,3 +363,7 @@ mod tests;
 #[cfg(test)]
 #[path = "stats_tests_flaky.rs"]
 mod flaky_tests;
+
+#[cfg(test)]
+#[path = "stats_tests_replaced.rs"]
+mod replaced_tests;
