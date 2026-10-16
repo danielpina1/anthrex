@@ -116,3 +116,21 @@ fn render_says_replaced_only_above_zero() {
     );
     assert_eq!(render(&none).lines().count() + 1, text.lines().count());
 }
+
+/// Task 8 review m1: a chain is judged by its last link. `c` is cancelled, `b`
+/// replaced it and was cancelled too, `a` replaced `b` and merged: both `b` and `c`
+/// leave the rows, whatever their replacement's outcome, and only `a` counts.
+#[test]
+fn a_replacement_chain_is_judged_by_its_last_link() {
+    let c = task("r1", "c", Size::M, false, TaskOutcome::Cancelled, 1);
+    let mut b = task("r1", "b", Size::M, false, TaskOutcome::Cancelled, 1);
+    b.bounces.review = 2;
+    b.replaces = vec!["c".into()];
+    let mut a = merged("r1", "a", Size::M, (10, 4, 1_000, 60));
+    a.replaces = vec!["b".into()];
+    let stats = aggregate(&lines(vec![c, b, a]), Path::new(PATH));
+    let m = row(&stats, "M");
+    assert_eq!((m.tasks, m.merged, m.bounces), (1, 1, 0), "{m:?}");
+    assert_eq!(stats.replaced, 2);
+    assert_eq!(stats.task_records, 3);
+}
