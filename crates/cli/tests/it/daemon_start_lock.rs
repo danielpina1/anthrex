@@ -31,9 +31,10 @@ const START_LIMIT: Duration = tui::spawn::ENSURE_DAEMON_SOCKET_WAIT
 const STATUS_LIMIT: Duration = proto::HANDSHAKE_TIMEOUT.saturating_add(Duration::from_secs(10));
 
 /// `daemon stop`'s legal worst case, as `daemon_stop_stuck.rs` derives it: the handshake
-/// (5 s) + `HUP_GRACE` (1 s) + `KILL_GRACE` (3 s) + `wait_released`'s 10 s cap, plus 10 s.
+/// (5 s) + `HUP_GRACE` (1 s) + `KILL_GRACE` (3 s) + `wait_released`'s 10 s cap + the
+/// exit wait `EXIT_WAIT` (5 s), plus 10 s.
 const STOP_LIMIT: Duration = proto::HANDSHAKE_TIMEOUT
-    .saturating_add(Duration::from_secs(1 + 3 + 10))
+    .saturating_add(Duration::from_secs(1 + 3 + 10 + 5))
     .saturating_add(Duration::from_secs(10));
 
 /// Stops whatever daemon this test's `daemon start` left on the tempdir's socket, through

@@ -12,18 +12,32 @@ use tokio::net::UnixStream;
 /// `daemon stop` has returned, since dropping a runtime waits for every blocking task.
 const BLOCKING_SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 
+/// How long `daemon stop` waits, once the lifetime lock is free, for the daemon's process
+/// to exit (its exit lock, `lockfile::hold_until_exit`): the runtime's grace, plus 3 s
+/// for the process's own exit on a loaded machine.
+const EXIT_WAIT: Duration = BLOCKING_SHUTDOWN_GRACE.saturating_add(Duration::from_secs(3));
+
 /// `daemon start --foreground` (decision 30): the daemon on a runtime of its own, dropped
 /// with `shutdown_timeout(BLOCKING_SHUTDOWN_GRACE)` once `daemon::run` returns, so a stuck
 /// blocking task can delay the exit by that grace and no more. The lifetime lock is
 /// `run`'s own local and is released when `run` returns, before this drop, so `daemon
 /// stop`'s `wait_released` is unaffected.
 pub(super) fn foreground(socket: PathBuf) -> anyhow::Result<()> {
+    // The ax-leak-2 fix: held until this process exits, past the grace below, so
+    // `daemon stop` returns only once nothing of this daemon can still write.
+    let data_dir = proto::paths::data_dir();
+    std::fs::create_dir_all(&data_dir)?;
+    if !daemon::lockfile::hold_until_exit(&proto::paths::exit_lock_path())? {
+        eprintln!(
+            "anthrex: an earlier daemon is still exiting; `daemon stop` will not wait for this one's exit"
+        );
+    }
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
     let result = runtime.block_on(daemon::run(daemon::DaemonOptions {
         socket_path: socket,
-        data_dir: proto::paths::data_dir(),
+        data_dir,
         config_path: proto::paths::config_path(),
         lock_wait: daemon::LOCK_WAIT,
     }));
@@ -58,6 +72,21 @@ pub(super) async fn daemon_command(action: DaemonAction, socket: PathBuf) -> any
             if !released {
                 anyhow::bail!(
                     "the daemon did not exit within 10 s; see {}",
+                    proto::paths::log_path().display()
+                );
+            }
+            // The ax-leak-2 fix: the lifetime lock is free once `run` has returned, but
+            // the process may still be finishing blocking tasks for its grace; it has
+            // exited only once its exit lock is free.
+            let exit_lock = proto::paths::exit_lock_path();
+            let exited = tokio::task::spawn_blocking(move || {
+                daemon::lockfile::wait_released(&exit_lock, EXIT_WAIT)
+            })
+            .await?;
+            if !exited {
+                anyhow::bail!(
+                    "the daemon released its data directory but its process did not exit within {} s; see {}",
+                    EXIT_WAIT.as_secs(),
                     proto::paths::log_path().display()
                 );
             }

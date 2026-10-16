@@ -11,6 +11,7 @@ it never stops, ends or touches any process or file of anyone's. The one excepti
     python3 scripts/leak_gate.py selftest
 
 `snapshot` writes the matching processes (pids) and temporary entries present now.
+With `AX_TMP_TRACE` set, `check` also names the creator of each leaked `ax-<uid>/<hash>`.
 `check` waits until no matching process the snapshot did not hold remains, or
 `--wait` seconds pass, then exits 1 when such a process or a new temporary entry
 exists, printing each one; 0 when clean; 2 on a usage error or an unreadable snapshot.
@@ -21,8 +22,8 @@ import subprocess
 import sys
 
 # Decision 19: a test daemon's stop is HANDSHAKE_TIMEOUT (5 s) + HUP_GRACE (1 s) +
-# KILL_GRACE (3 s) + wait_released's cap (10 s) = 19 s (docs/timing-budgets.md, the
-# `daemon stop` row), plus slack.
+# KILL_GRACE (3 s) + wait_released's cap (10 s) + the exit wait (5 s) = 24 s
+# (docs/timing-budgets.md, the `daemon stop` row), plus slack.
 PROCESS_WAIT = 30
 POLL = 0.5
 # Decision 20 with "Spec and brief defects" 7's ruling: `ax ` (with a space) is the
@@ -35,6 +36,13 @@ PREFIXES = ("ax-", "ax ", "anthrex-")
 # (`daemon/src/run/git/tmp.rs`); `anthrex-<uid>` is the default socket directory
 # (`proto/src/paths.rs`), the live daemon's.
 SHARED_ROOTS = ("anthrex-worktrees", f"ax-{os.getuid()}", f"anthrex-{os.getuid()}")
+# The ax-leak-2 fix: a task temporary directory's name is a hash of its repository's
+# path and says nothing about who made it. With `AX_TMP_TRACE` naming a file, the
+# daemon's code appends one line to it per task temporary directory it creates
+# (`crates/daemon/src/run/git/tmp_trace.rs`, whose test pins these field names), and
+# `check` prints the creator of each leaked `ax-<uid>/<hash>`.
+TRACE_ENV = "AX_TMP_TRACE"
+TRACE_FIELDS = ("created", "hash", "repo", "exe", "test", "pid")
 
 
 def usage(message):
@@ -133,6 +141,37 @@ def temporary_entries():
     return entries
 
 
+def trace_creators(path):
+    """{hash: [record]} from the trace file at `path`, each record a dict of
+    `TRACE_FIELDS`; {} when there is no file. A line of any other shape is skipped."""
+    creators = {}
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                fields = line.rstrip("\n").split("\t")
+                if len(fields) != len(TRACE_FIELDS) or fields[0] != "created":
+                    continue
+                record = dict(zip(TRACE_FIELDS, fields))
+                creators.setdefault(record["hash"], []).append(record)
+    except OSError:
+        return {}
+    return creators
+
+
+def creator_lines(entry, creators):
+    """The report lines naming who made `entry`, a leaked child of the task temporary
+    root `ax-<uid>`; none for any other entry."""
+    if os.path.basename(os.path.dirname(entry)) != f"ax-{os.getuid()}":
+        return []
+    records = creators.get(os.path.basename(entry), [])
+    if not records:
+        return ["  created by: not in the trace"]
+    return [
+        f"  created by: test {r['test']} ({r['exe']}, pid {r['pid']}), repository {r['repo']}"
+        for r in records
+    ]
+
+
 def snapshot(path):
     data = {"pids": sorted(matching_processes()), "entries": sorted(temporary_entries())}
     with open(path, "w", encoding="utf-8") as f:
@@ -164,8 +203,13 @@ def check(path, wait):
     for pid in sorted(new):
         ppid, args = new[pid]
         print(f"leaked process: pid {pid} ppid {ppid}: {args}")
+    trace = os.environ.get(TRACE_ENV)
+    creators = trace_creators(trace) if trace else {}
     for entry in entries:
         print(f"leaked temporary entry: {entry}")
+        if trace:
+            for line in creator_lines(entry, creators):
+                print(line)
     if new or entries:
         print(f"leak gate: {len(new)} leaked processes, {len(entries)} leaked temporary entries")
         return 1
@@ -195,6 +239,7 @@ def selftest():
     import tempfile
 
     failures = []
+    failures.extend(selftest_trace())
     temp = system_temp()
     # A match present before the snapshot stands in for the user's live daemon.
     before_dir = os.path.join(temp, f"ax-leakgate-selftest-before-{os.getpid()}")
@@ -304,6 +349,40 @@ def selftest():
         print(f"leak gate selftest: {failure}")
     print("leak gate selftest: " + ("FAILED" if failures else "ok"))
     return 1 if failures else 0
+
+
+def selftest_trace():
+    """The creator lookup: a leaked task temporary directory is named with every line
+    the trace holds for its hash, an unknown one says so, and nothing else is looked
+    up. Only a trace file of its own is written; the shared root is never touched."""
+    import tempfile
+
+    failures = []
+    root = os.path.join("/tmp", f"ax-{os.getuid()}")
+    fd, trace = tempfile.mkstemp(suffix=".tsv")
+    with os.fdopen(fd, "w") as f:
+        f.write("created\t00000000000000aa\t/d/runs/r1/tasks/t1\tanthrex\tit::one\t7\n")
+        f.write("a line of another shape\n")
+        f.write("created\t00000000000000aa\t/d/runs/r1/tasks/t1\tit-1\tit::two\t8\n")
+    try:
+        creators = trace_creators(trace)
+        got = creator_lines(os.path.join(root, "00000000000000aa"), creators)
+        want = [
+            "  created by: test it::one (anthrex, pid 7), repository /d/runs/r1/tasks/t1",
+            "  created by: test it::two (it-1, pid 8), repository /d/runs/r1/tasks/t1",
+        ]
+        if got != want:
+            failures.append(f"creator_lines of a traced hash is {got}, not {want}")
+        got = creator_lines(os.path.join(root, "00000000000000bb"), creators)
+        if got != ["  created by: not in the trace"]:
+            failures.append(f"creator_lines of an untraced hash is {got}")
+        if creator_lines("/tmp/ax-run123456", creators):
+            failures.append("creator_lines looked up an entry outside ax-<uid>")
+        if trace_creators(trace + ".missing") != {}:
+            failures.append("a missing trace file is not an empty trace")
+    finally:
+        os.unlink(trace)
+    return failures
 
 
 def main(argv):

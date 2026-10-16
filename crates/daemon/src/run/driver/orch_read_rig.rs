@@ -14,6 +14,7 @@ use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use crate::launch::LaunchGate;
+use crate::run::driver::effects::ExecuteHook;
 use crate::run::driver::*;
 use crate::run::model::Run;
 use crate::run::orch::test_support::{block, orchestrator, round, run_of, task_mut};
@@ -75,6 +76,20 @@ impl Rig {
         prepare: impl FnOnce(&mut Run, &Path),
         configure: impl FnOnce(&Path, &mut RunContext),
     ) -> Rig {
+        Rig::build(prepare, configure, None).await
+    }
+
+    /// As [`Rig::new`], with `hook` as the run service's `execute_hook`, installed
+    /// before its loop starts, so it sees the effects of the loop's first step too.
+    pub(super) async fn hooked(hook: ExecuteHook) -> Rig {
+        Rig::build(|_, _| {}, |_, _| {}, Some(hook)).await
+    }
+
+    async fn build(
+        prepare: impl FnOnce(&mut Run, &Path),
+        configure: impl FnOnce(&Path, &mut RunContext),
+        hook: Option<ExecuteHook>,
+    ) -> Rig {
         let dir = tempfile::Builder::new()
             .prefix("anthrex-orch-read-")
             .tempdir_in("/tmp")
@@ -100,6 +115,9 @@ impl Rig {
         );
         configure(dir.path(), &mut ctx);
         let runs = RunService::new(manager.clone(), ctx);
+        if let Some(hook) = hook {
+            *crate::lock(&runs.execute_hook) = Some(hook);
+        }
 
         let mut run = run_of(2);
         run.state = proto::RunState::Running;
@@ -230,6 +248,26 @@ impl Rig {
 
     pub(super) fn digest_rev(&self) -> u64 {
         self.run(|run| run.orch.digest_rev)
+    }
+
+    /// Every event the loop took before this call has been carried out, its effects
+    /// included: the loop answers in order. The rig's loop runs from [`Rig::new`] on (its
+    /// first tick at once), and a step publishes the snapshot it built under the engine
+    /// lock only after its `run.json` saves. So a test that changes `runs.state` itself,
+    /// behind the loop, awaits this before a call reads the pushes: no push built from
+    /// the state before the change can reach that call afterwards.
+    pub(super) async fn settled(&self) {
+        let answer = tokio::time::timeout(
+            ANSWER,
+            self.runs.ask(|reply| EventKind::Cancel {
+                reply,
+                run_id: "no-such-run".into(),
+            }),
+        )
+        .await
+        .expect("the loop answers");
+        let error = answer.expect_err("an unknown run is refused");
+        assert!(!error.contains("shutting down"), "{error}");
     }
 
     /// One client request over the socket, as `anthrex run …` sends it; its reply.

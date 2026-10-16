@@ -323,7 +323,8 @@ pub(crate) fn engine_child(path: &Path) -> Result<PathBuf, String> {
     }
     // Final fix batch F1d: a task's temporary directory lives under the daemon's short
     // root, which is made private and checked with `lstat`, never resolved.
-    let parent = if parent == super::tmp::tmp_root() {
+    let in_root = parent == super::tmp::tmp_root();
+    let parent = if in_root {
         super::tmp::ensure_root()?
     } else {
         std::fs::create_dir_all(parent)
@@ -334,6 +335,8 @@ pub(crate) fn engine_child(path: &Path) -> Result<PathBuf, String> {
     };
     let dir = parent.join(name);
     match std::fs::create_dir(&dir) {
+        // The ax-leak-2 fix: a task temporary directory's creator, when a test traces it.
+        Ok(()) if in_root => super::tmp_trace::created(&dir),
         Err(err) if err.kind() != std::io::ErrorKind::AlreadyExists => {
             return Err(format!("cannot create {}: {err}", dir.display()));
         }

@@ -2337,6 +2337,8 @@ Five minors from the merge review of milestone 9.11, none blocking:
 - **The e2e waits depend on `requirements_stored`, a key the digest shows only during planning** (PR #62 review). A digest change that drops or renames it breaks the fixtures' waits.
 - **A profile `setup` (or check) still running when its daemon stops outlives the daemon** (the rate-limit ordering flake, 2026-10-14). `scheduled::run` runs the command through `exec::run_isolated` on a blocking thread, which kills the group on its own timeout; when the daemon exits first, that thread is gone and nothing ends the group. Seen with a temporary `setup` that polled for a release file: after each failed test's daemon stop, its `/bin/sh` was reparented to pid 1 and ran on past the 10 s `check_timeout_secs`, until its own poll cap. A setup or check that hangs would stay forever. Proposed: track live step groups in the service and end them in the daemon's shutdown, as windows are.
 
+- **Rig fixtures that change `runs.state` behind a live loop** (the chain long-poll flake, `chain_tests::two_runs`, fixed by `Rig::settled`). `idle`, `delivered` and the inline set-ups in `chain_tests.rs`, and the state edits in `orch_read_tests*.rs`, still change the engine state while the rig's loop may have a push of the older state in flight. None of them then long-polls on what it changed, so none can fail this way today; a new test that does must await `Rig::settled` after its change. `wait_digest` reading a run missing from a push as gone is correct only while every change to the runs is a loop step that publishes before the next one; worth a sentence in `orch.rs` if that ever changes.
+
 ### From the PR #63 reviews (2026-10-13), for later
 
 - **A predictable staging name in a shared sticky directory** (Master). Another user can pre-create `.<name>.<pid>.bind` beside a socket in a shared sticky directory such as `/tmp`, which denies the start, just as a pre-created socket does today. Proposed: give the staging name a random suffix, or bind it in a private directory on the same filesystem.
@@ -2385,6 +2387,29 @@ Five minors from the merge review of milestone 9.11, none blocking:
 
 - **Other headless stand-ins may answer without reading stdin.** The lag rig's stand-in printed its turn and exited without reading its message, so a reap that beat the first send refused it (fixed in f24d5243). The stand-ins in `crates/daemon/tests/support/headless.rs` and the other headless rigs were not audited for the same defect.
 - **No permanent seam keeps `daemon.log`'s non-blocking writer slow.** A future test that reads `daemon.log` once, right after an event, would pass locally and flake on CI. `RunHarness::wait_daemon_log` is the pattern; a source-rules check, or a debug-build seam on the appender, would catch a new one-shot read.
+
+### From the rate-limit test's timeout on macOS CI (bac2aa9e, 2026-10-15), for later
+
+- **Waits that can outlast nextest's 600 s fail silently and leak.** nextest terminates a test at 600 s with a signal: no unwinding, no `Drop`, so the harness's daemon (its own process group) and its sessions survive, and a wait whose deadline lies past 600 s never prints its trail. `run_e2e_tuning`'s rate-limit test now ends every wait by its `SCENARIO_WAIT` (400 s). Other tests still have waits that reach or sum past 600 s: `2 * RUN_WAIT` in the race, pair, patterns and safety tests, `THREE_GATES_WAIT` (900 s), `FINISH_WAIT` (900 s) and every scenario of sequential `RUN_WAIT`s. A harness-wide budget (each `wait_run` capped at a deadline counted from the harness's creation) would cover them all; it narrows many tests' waits, so it needs its own review.
+- **`RunHarness::windows()` has no bound at all**, and `request_unanswered` and `RunWatcher::connect` wait for the `Welcome` outside their bounds (the watcher's 10 s ready guard aside). `request` now bounds its handshake (`request_within`); the others should too.
+- **A profile `setup` or check still running when the daemon stops outlives it.** In a forced reproduction, a `setup` held in a poll loop kept running (parent pid 1) after `daemon stop` returned and the daemon exited, until its own loop ended. The daemon's shutdown ends session process groups, not in-flight `setup` and check commands. Process-ending code, so not changed here.
+
+### From the ax-<uid> leak hunt (fix/ax-cache-leak-2, 2026-10-16)
+
+- **`AX_TMP_TRACE` names each task temporary directory's creator.** It is test-only and off unless set (`crates/daemon/src/run/git/tmp_trace.rs`). When set, every process appends one line per creation to that file: the hash, the repository, the binary, `NEXTEST_TEST_NAME` and the pid. CI sets it for the suite, the smoke and the gate. `leak_gate.py check` prints the creator under each leaked `ax-<uid>/<hash>`. Locally: `AX_TMP_TRACE=/tmp/<yours>.tsv` on both the run and the check.
+- **The CI leak's source is still unattributed.** It is `056b782e51c46167` on main 29afa208 (Linux). Instrumented local runs found no creator: six full suites (one with creation delays, one throttled below CI speed) and three smokes. A meet-in-the-middle inversion of the hash against every observed test and smoke path found no match either. That inversion could not cover `RunHarness` paths, whose temp directory and run id are both random. The leak stays unattributed until the tracer's first red CI run names its creator.
+- **Two candidate causes are fixed in this branch, neither proven to be the CI leak's.**
+  - `remove_checkout` left a listed checkout's tmp when `git worktree remove` or `prune` failed.
+  - `daemon stop` returned when the lifetime lock was freed. That was before the 2 s `shutdown_timeout` grace, during which a blocking op can still create a tmp after "daemon stopped". `daemon stop` now waits for the exit lock instead.
+- **Not changed: a daemon started while a previous one is still in that grace runs without the exit lock.** `hold_until_exit` returns false, and a stop of the new daemon then waits for its lifetime lock alone. It is logged to the new daemon's stderr.
+- **`leak_gate.py selftest` can fail when other worktrees run tests concurrently.** Its final clean `check` sees their fresh entries. It is fine on CI, where nothing else runs.
+- **#71's review minors (2026-10-16), for later.**
+  - A duplicate `daemon start --foreground` that yields prints "an earlier daemon is still exiting" and briefly holds the exit lock.
+  - A stop's poll can make a just-starting daemon run without the exit lock (it falls back to the old behaviour).
+  - `daemon stop` now fails if exit takes more than 5 s after the lifetime lock is freed.
+  - Stale "19 s" comments remain in `run_daemon.rs:27`, `scripts/pty-smoke.py` (about line 1638) and `scripts/pty_smoke_pr.py:73`; stop's worst case is now 24 s.
+  - No test pins `exit_lock_path()`'s path.
+  - The 500 ms `REAP_LIMIT` may flake under load.
 
 ## From milestone 9.16 (2026-10-15, recorded by M9.16.6), for later
 
