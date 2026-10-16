@@ -153,3 +153,51 @@ fn profile_prefixes_count_too() {
     assert!(!is_heavy("make tests", &prefixes));
     assert!(!is_heavy("./slow-test --all", &[]));
 }
+
+/// Task M9.18.5, decision 7: `timeout` runs the rest of its segment, after its options
+/// (`-s`, `--signal`, `-k` and `--kill-after` take a value) and its duration.
+#[test]
+fn timeout_wraps_a_heavy_command() {
+    assert_heavy(&[
+        "timeout 600 cargo test",
+        "timeout -s KILL 10m cargo build",
+        "timeout --signal=TERM 5 cargo check",
+        "timeout -k 5 60 cargo test",
+        "timeout --foreground 30 cargo nextest run",
+    ]);
+    assert_light(&["timeout 5 ls", "timeout 600"]);
+}
+
+/// Task M9.18.5, decision 7: `stdbuf` takes no positional word; `-i`, `-o` and `-e`
+/// take a value unless it is attached.
+#[test]
+fn stdbuf_wraps_a_heavy_command() {
+    assert_heavy(&[
+        "stdbuf -oL cargo test",
+        "stdbuf -o L cargo test",
+        "stdbuf --output=L -e0 cargo build",
+    ]);
+    assert_light(&["stdbuf -oL ls"]);
+}
+
+#[test]
+fn wrappers_nest() {
+    assert_heavy(&[
+        "time timeout 60 nice cargo test",
+        "env A=1 timeout 60 cargo test",
+    ]);
+}
+
+/// Task M9.18.5, decision 7: `llvm-cov`, `miri` and `hack` are heavy whatever follows;
+/// `insta` only as `insta test`.
+#[test]
+fn cargo_plugins_count() {
+    assert_heavy(&[
+        "cargo llvm-cov",
+        "cargo llvm-cov --workspace",
+        "cargo miri test",
+        "cargo hack check --each-feature",
+        "cargo insta test",
+    ]);
+    assert_light(&["cargo insta review"]);
+}

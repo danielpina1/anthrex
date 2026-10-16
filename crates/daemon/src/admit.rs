@@ -24,17 +24,33 @@ pub const HEAVY_CARGO_SUBCOMMANDS: [&str; 16] = [
 /// Cargo's global flags that take the next word as their value (unless `--flag=value`).
 pub const CARGO_FLAGS_WITH_VALUE: [&str; 5] =
     ["-Z", "--config", "--color", "-C", "--manifest-path"];
+/// Cargo plugin subcommands that are heavy whatever follows them (M9.18 decision 7);
+/// `insta` is heavy only as `insta test`.
+pub const HEAVY_CARGO_PLUGINS: [&str; 3] = ["llvm-cov", "miri", "hack"];
 /// Words that run the rest of the segment as a command.
-pub const COMMAND_WRAPPERS: [&str; 6] = ["time", "nice", "env", "command", "nohup", "exec"];
-/// A wrapper's options that take the next word as their value (task 7 review M1).
-const WRAPPER_FLAGS_WITH_VALUE: [(&str, &str); 6] = [
+pub const COMMAND_WRAPPERS: [&str; 8] = [
+    "time", "nice", "env", "command", "nohup", "exec", "timeout", "stdbuf",
+];
+/// A wrapper's options that take the next word as their value (task 7 review M1). An
+/// attached value (`-oL`, `--signal=TERM`) is a word of its own and takes nothing more.
+const WRAPPER_FLAGS_WITH_VALUE: [(&str, &str); 13] = [
     ("nice", "-n"),
     ("nice", "--adjustment"),
     ("env", "-u"),
     ("env", "--unset"),
     ("env", "-C"),
     ("env", "--chdir"),
+    ("timeout", "-s"),
+    ("timeout", "--signal"),
+    ("timeout", "-k"),
+    ("timeout", "--kill-after"),
+    ("stdbuf", "-i"),
+    ("stdbuf", "-o"),
+    ("stdbuf", "-e"),
 ];
+/// How many positional words a wrapper takes after its options (M9.18 decision 7):
+/// `timeout`'s duration.
+const WRAPPER_POSITIONALS: [(&str, usize); 1] = [("timeout", 1)];
 /// Words that open a group or a clause and precede a command (task 7 review M2).
 const RESERVED_WORDS: [&str; 9] = [
     "{", "!", "if", "then", "do", "else", "elif", "while", "until",
@@ -192,11 +208,13 @@ fn is_assignment(word: &str) -> bool {
 
 /// The segment without its leading `NAME=value` words, reserved words
 /// (`RESERVED_WORDS`), [`COMMAND_WRAPPERS`] and a wrapper's options (with the value of
-/// each of `WRAPPER_FLAGS_WITH_VALUE`). A leading `cd <dir>` is a segment of its own,
-/// since its `&&` already split it off.
+/// each of `WRAPPER_FLAGS_WITH_VALUE`) and positional words (`WRAPPER_POSITIONALS`).
+/// Wrappers nest. A leading `cd <dir>` is a segment of its own, since its `&&` already
+/// split it off.
 fn strip_wrappers(segment: &[String]) -> &[String] {
     let mut rest = segment;
     let mut wrapper: Option<&str> = None;
+    let mut positionals = 0;
     while let Some((first, tail)) = rest.split_first() {
         let first = first.as_str();
         rest = tail;
@@ -207,8 +225,13 @@ fn strip_wrappers(segment: &[String]) -> &[String] {
             if WRAPPER_FLAGS_WITH_VALUE.contains(&(name, first)) {
                 rest = rest.get(1..).unwrap_or_default();
             }
+        } else if positionals > 0 {
+            positionals -= 1;
         } else if COMMAND_WRAPPERS.contains(&first) {
             wrapper = Some(first);
+            positionals = (WRAPPER_POSITIONALS.iter())
+                .find(|(name, _)| *name == first)
+                .map_or(0, |(_, n)| *n);
         } else if !is_assignment(first) && !RESERVED_WORDS.contains(&first) {
             return &segment[segment.len() - tail.len() - 1..];
         }
@@ -222,26 +245,28 @@ fn segment_is_heavy(words: &[String], prefixes: &[Vec<String>]) -> bool {
     };
     let name = program.rsplit('/').next().unwrap_or(program);
     if name == "cargo" {
-        return cargo_subcommand(&words[1..])
-            .is_some_and(|sub| HEAVY_CARGO_SUBCOMMANDS.contains(&sub));
+        return cargo_subcommand(&words[1..]).is_some_and(|(sub, after)| {
+            HEAVY_CARGO_SUBCOMMANDS.contains(&sub)
+                || HEAVY_CARGO_PLUGINS.contains(&sub)
+                || (sub == "insta" && after.first().is_some_and(|w| w == "test"))
+        });
     }
     HEAVY_PROGRAMS.contains(&name) || prefixes.iter().any(|prefix| words.starts_with(prefix))
 }
 
-/// The subcommand of `cargo <args>`: after a `+<toolchain>` word and cargo's global
-/// flags (with the value of each of [`CARGO_FLAGS_WITH_VALUE`]).
-fn cargo_subcommand(args: &[String]) -> Option<&str> {
-    let mut args = args.iter().map(String::as_str).peekable();
-    if args.peek().is_some_and(|a| a.starts_with('+')) {
-        args.next();
-    }
-    while let Some(arg) = args.next() {
+/// The subcommand of `cargo <args>` and the words after it: after a `+<toolchain>` word
+/// and cargo's global flags (with the value of each of [`CARGO_FLAGS_WITH_VALUE`]).
+fn cargo_subcommand(args: &[String]) -> Option<(&str, &[String])> {
+    let mut n = usize::from(args.first().is_some_and(|a| a.starts_with('+')));
+    while let Some(arg) = args.get(n) {
         if !arg.starts_with('-') {
-            return Some(arg);
+            return Some((arg, &args[n + 1..]));
         }
-        if CARGO_FLAGS_WITH_VALUE.contains(&arg) {
-            args.next();
-        }
+        n += if CARGO_FLAGS_WITH_VALUE.contains(&arg.as_str()) {
+            2
+        } else {
+            1
+        };
     }
     None
 }
