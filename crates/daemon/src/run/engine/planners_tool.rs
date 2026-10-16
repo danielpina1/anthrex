@@ -102,8 +102,15 @@ fn outside_its_round(run: &Run, edits: &[PlanEdit], epic: &str) -> Vec<PlanError
         }
     };
     // Milestone 9.17 task 7's review, I1: `add_task … replaces` cancels each blocked
-    // task it names (decision 24), so each counts as a `cancel_task` of it here.
-    let blocked = |id: &&String| run.task(id).is_some_and(|t| t.state == TaskState::Blocked);
+    // task it names (decision 24), so each counts as a `cancel_task` of it here. Task
+    // 9's review, M1: this reads the run before the batch, as `cancel_task`'s check
+    // does, and an earlier edit of the batch may block a task (a `cancel_task` of its
+    // dependency), so every named task not already cancelled counts. One not blocked
+    // by the time the edit applies is refused by rule (b) anyway.
+    let uncancelled = |id: &&String| {
+        run.task(id)
+            .is_some_and(|t| t.state != TaskState::Cancelled)
+    };
     edits
         .iter()
         .flat_map(|edit| match edit {
@@ -113,7 +120,7 @@ fn outside_its_round(run: &Run, edits: &[PlanEdit], epic: &str) -> Vec<PlanError
             PlanEdit::CancelTask { task_id } => vec![(task_id, true)],
             PlanEdit::AddTask { replaces, .. } => replaces
                 .iter()
-                .filter(blocked)
+                .filter(uncancelled)
                 .map(|id| (id, true))
                 .collect(),
             _ => Vec::new(),
