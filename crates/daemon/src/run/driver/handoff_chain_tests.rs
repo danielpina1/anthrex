@@ -348,3 +348,6 @@ async fn the_live_check_reports_a_running_orchestrators_fill() {
     );
     finish(rig).await;
 }
+
+#[path = "handoff_tick_tests.rs"]
+mod tick;

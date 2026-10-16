@@ -9,12 +9,14 @@
 //! - Mid-run ([`RunService::check_live`], from `on_tick`, every [`FILL_CHECK_EVERY`]):
 //!   each `Running` run's live orchestrator is measured the same way, on a task of its
 //!   own, and `EventKind::OrchestratorFill` carries the result to the engine, which only
-//!   shows it (decision 29). One check is in flight at a time.
+//!   shows it (decision 29). One check is in flight at a time, and one blocking read
+//!   per window: a read past its bound keeps its window's entry until it really ends.
 //!
 //! **Locks.** The engine lock is taken to copy the live orchestrators out, the manager's
 //! for each window's session files; no file is read under either, nor on a tokio worker
 //! (AGENTS.md rules 2 and 10).
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -47,6 +49,10 @@ pub(super) struct FillCheck {
     last: std::sync::Mutex<Option<Instant>>,
     /// A check is in flight (cleared by the check's task when it ends).
     busy: Arc<AtomicBool>,
+    /// Task 9 review I1: the windows whose blocking read has not ended, each cleared by
+    /// the read itself ([`InFlight`]), so a read that outlives its bound holds its one
+    /// blocking thread and no later measurement of that window starts another.
+    reading: Arc<std::sync::Mutex<BTreeSet<u32>>>,
 }
 
 impl Default for FillCheck {
@@ -55,6 +61,7 @@ impl Default for FillCheck {
             read: std::sync::Mutex::new(Arc::new(read_fill)),
             last: std::sync::Mutex::new(None),
             busy: Arc::default(),
+            reading: Arc::default(),
         }
     }
 }
@@ -135,12 +142,19 @@ impl RunService {
     async fn fill_of(&self, window_id: u32, route_model: &str, bound: Duration) -> Option<Fill> {
         let bound = self.ctx.fill_read_cap.map_or(bound, |cap| cap.min(bound));
         let files = self.manager.session_files(window_id)?;
+        let Some(in_flight) = InFlight::claim(&self.handoff.reading, window_id) else {
+            tracing::debug!(window_id, "the last context fill read has not ended");
+            return None;
+        };
         let (read, sessions, copy) = (
             crate::lock(&self.handoff.read).clone(),
             self.ctx.codex_sessions.clone(),
             files.clone(),
         );
-        let task = tokio::task::spawn_blocking(move || read(&copy, sessions.as_deref()));
+        let task = tokio::task::spawn_blocking(move || {
+            let _in_flight = in_flight;
+            read(&copy, sessions.as_deref())
+        });
         let mut fill = match tokio::time::timeout(bound, task).await {
             Ok(Ok(fill)) => fill?,
             Ok(Err(error)) => {
@@ -250,6 +264,29 @@ struct Busy(Arc<AtomicBool>);
 impl Drop for Busy {
     fn drop(&mut self) {
         self.0.store(false, Ordering::SeqCst);
+    }
+}
+
+/// One window's blocking read in flight; dropped inside the blocking closure, so the
+/// entry goes only when the read really ends (task 7's M1 pattern, for the quota reader).
+struct InFlight {
+    reading: Arc<std::sync::Mutex<BTreeSet<u32>>>,
+    window_id: u32,
+}
+
+impl InFlight {
+    /// `None` while `window_id`'s last read is still running.
+    fn claim(reading: &Arc<std::sync::Mutex<BTreeSet<u32>>>, window_id: u32) -> Option<Self> {
+        crate::lock(reading).insert(window_id).then(|| InFlight {
+            reading: reading.clone(),
+            window_id,
+        })
+    }
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        crate::lock(&self.reading).remove(&self.window_id);
     }
 }
 
