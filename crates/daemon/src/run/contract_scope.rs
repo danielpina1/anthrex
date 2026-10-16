@@ -1,7 +1,6 @@
 //! Milestone 9.17 decisions 1 to 4: what the run is for, in the worker's and the
 //! reviewer's prompts, and what it leaves out, in the reviewer's alone.
-//! Pure — no `std::fs`, `std::process`, `std::thread`, `tokio` or
-//! `std::time::SystemTime` (design decision 2).
+//! Pure: text from the run alone, no I/O (milestone 9.17 decision 3).
 
 use super::messages::one_line;
 use super::model::{Run, Task};
