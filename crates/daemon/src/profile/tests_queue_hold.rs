@@ -55,14 +55,19 @@ async fn queued_goal_stays_queued_under_hold() {
             .unwrap()
             .expect("queued");
     }
-    // The profile is confirmed under the hold.
-    done(
+    // The profile is confirmed under the hold; the answer says the goals wait (task 8's
+    // concern: never "starting 2 queued goals").
+    let message = done(
         rig.profiles
             .request(ProfileRequest::Confirm {
                 dir: project.clone(),
                 shown: None,
             })
             .await,
+    );
+    assert!(
+        message.ends_with("; 2 queued goals wait for hold off"),
+        "{message}"
     );
     until("the held drain to end", || {
         asked.load(Ordering::SeqCst) > 0 && listed(&rig.profiles, &project, 2)

@@ -100,6 +100,16 @@ fn starting(n: usize) -> String {
     }
 }
 
+/// Under the hold (decision 20): `; 1 queued goal waits for hold off` / `; <n> queued
+/// goals wait for hold off`; empty for none.
+fn held_waiting(n: usize) -> String {
+    match n {
+        0 => String::new(),
+        1 => "; 1 queued goal waits for hold off".to_string(),
+        n => format!("; {n} queued goals wait for hold off"),
+    }
+}
+
 /// `; dropped 1 queued goal` / `; dropped <n> queued goals`; empty for none.
 pub(super) fn dropped_note(n: usize) -> String {
     match n {
@@ -353,7 +363,11 @@ impl ProfileService {
         if n > 0 && self.claim_drain(project) {
             tokio::spawn(self.clone().run_drain(project.to_path_buf()));
         }
-        starting(n)
+        // Milestone 9.16 decision 20: under the hold the drain starts nothing.
+        match self.dispatch_held() {
+            true => held_waiting(n),
+            false => starting(n),
+        }
     }
 
     /// `project`'s drain marked as running; `false` when one already runs. The caller
