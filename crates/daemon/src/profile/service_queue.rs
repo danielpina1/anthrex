@@ -120,8 +120,9 @@ impl ProfileService {
         crate::lock(&self.starter).held = Some(f);
     }
 
-    /// Whether the hold keeps queued goals waiting; never held with no probe.
-    fn dispatch_held(&self) -> bool {
+    /// Whether the hold keeps queued goals waiting (and, task 8's review I1, scouts from
+    /// starting); never held with no probe.
+    pub(super) fn dispatch_held(&self) -> bool {
         let held = crate::lock(&self.starter).held.clone();
         held.is_some_and(|held| held())
     }
@@ -136,6 +137,7 @@ impl ProfileService {
         for project in projects {
             tokio::spawn(self.clone().drain_if_stored(project));
         }
+        self.resume_auto_at_start();
     }
 
     /// `project`'s queue as memory holds it.

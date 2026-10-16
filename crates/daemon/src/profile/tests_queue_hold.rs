@@ -157,3 +157,79 @@ async fn restore_drain_waits_for_a_persisted_hold() {
     until("the goal to start", || texts(&seen) == ["waiting"]).await;
     token.cancel();
 }
+
+/// A stored profile for `project` whose fingerprint no longer matches its tree, so
+/// the start's staleness check (decision 7) would re-detect it.
+fn store_stale(rig: &Rig, project: &Path) {
+    let dir = rig.repo_dir(project);
+    std::fs::create_dir_all(&dir).unwrap();
+    let meta = proto::ProfileMeta {
+        confirmed_at: 1,
+        report: None,
+        verification: None,
+        fingerprint: [("src/lib.rs".to_string(), "stale".to_string())].into(),
+        edited_keys: Vec::new(),
+        project: Some(project.to_path_buf()),
+    };
+    super::store::save(&dir, &proto::RepoProfile::default(), &meta).unwrap();
+}
+
+/// Whether a detection was started (or recorded) for `project`.
+fn detected(rig: &Rig, project: &Path) -> bool {
+    super::store::load_proposal(&rig.repo_dir(project))
+        .ok()
+        .flatten()
+        .is_some()
+}
+
+/// Task 8's review I1 (the controller's ruling): `profile detect` is refused with the
+/// hold's text while the hold is on, and no scout starts.
+#[tokio::test(flavor = "multi_thread")]
+async fn detect_is_refused_under_the_hold() {
+    let rig = Rig::new();
+    let (_held, _asked) = probe(&rig.profiles);
+    let project = repo(rig.dir.path(), "app");
+    let detect = ProfileRequest::Detect {
+        dir: project.clone(),
+        trust_project: false,
+        unconfined_checks: true,
+    };
+    let reply = rig.profiles.request(detect).await;
+    assert_eq!(
+        reply,
+        proto::ProfileReply::Refused {
+            message: HOLD_TEXT.to_string()
+        }
+    );
+    assert!(
+        !detected(&rig, &project),
+        "a detection started under the hold"
+    );
+    assert!(crate::lock(&rig.profiles.table).active.is_empty());
+}
+
+/// Task 8's review I1: the start's staleness check scouts nothing while the hold is
+/// on, and runs once `hold off` (`drain_all`) is issued.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_starts_staleness_check_waits_for_hold_off() {
+    let rig = Rig::new();
+    let project = repo(rig.dir.path(), "app");
+    store_stale(&rig, &project);
+    let fresh = service(rig.dir.path());
+    let (held, asked) = probe(&fresh);
+    fresh.restore().await;
+    let token = CancellationToken::new();
+    fresh.spawn(token.clone());
+    until("the staleness check to find the hold", || {
+        asked.load(Ordering::SeqCst) > 0 && crate::lock(&fresh.table).auto_at_start.len() == 1
+    })
+    .await;
+    assert!(!detected(&rig, &project), "a scout started under the hold");
+    held.store(false, Ordering::SeqCst);
+    fresh.drain_all();
+    until("the re-detection to start", || detected(&rig, &project)).await;
+    assert!(crate::lock(&fresh.table).auto_at_start.is_empty());
+    // Whatever the detection started (its agent does not exist), stop it.
+    let _ = fresh.request(ProfileRequest::Reject { dir: project }).await;
+    token.cancel();
+}
