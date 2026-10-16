@@ -70,7 +70,14 @@ fn inputs() -> Vec<String> {
         "https%3A%2F%2Fuser%3Atok%40host".to_string(),
         "https%3a%2f%2fuser%3atok%40host".to_string(),
         "https%3A%2F%2Fhost%2Fpath%40x".to_string(),
+        // Task 4's review, I2 and I3.
+        format!("Basic {}", ["YWRt", "aW46", "aHVu", "dGVy", "M"].concat()),
+        format!(r#"{{\"SecretAccessKey\":\"{secret}\"}}"#),
+        format!("id {} secret {secret}", sts_id()),
     ]
+    .into_iter()
+    .chain(escaped_aws_inputs())
+    .collect()
 }
 
 #[test]
@@ -200,4 +207,112 @@ fn scrub_stays_idempotent_and_linear_on_the_new_rules() {
             assert_eq!(scrub(&out), out, "{unit:?}");
         }
     }
+}
+
+/// AWS's published example key id with the STS prefix, built in pieces.
+fn sts_id() -> String {
+    ["ASIA", "IOSFODNN7", "EXAMPLE"].concat()
+}
+
+/// Standard base64 with padding, for the clipped `Basic` inputs.
+fn base64(bytes: &[u8]) -> String {
+    let alphabet: Vec<u8> = (b'A'..=b'Z')
+        .chain(b'a'..=b'z')
+        .chain(b'0'..=b'9')
+        .chain(*b"+/")
+        .collect();
+    let mut out = String::new();
+    for chunk in bytes.chunks(3) {
+        let n = chunk
+            .iter()
+            .enumerate()
+            .fold(0u32, |n, (i, b)| n | u32::from(*b) << (16 - 8 * i));
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(char::from(alphabet[(n >> (18 - 6 * i) & 63) as usize]));
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+/// The task-4 review's I1 inputs, and their split and glued variants.
+fn escaped_aws_inputs() -> Vec<String> {
+    let (id, secret) = (aws_id(), aws_secret());
+    let (head, tail) = secret.split_at(20);
+    vec![
+        format!("{id} \u{1b}[1m{secret}\u{1b}[0m"),
+        format!(r"{id} \u001b[1m{secret}\u001b[0m"),
+        format!("AKIA\u{1b}[0m{} {secret}", &id[4..]),
+        format!("{id} {head}\u{1b}[0m{tail}"),
+        format!("{id}\u{1b}[1m{secret}"),
+    ]
+}
+
+#[test]
+fn an_escape_beside_an_aws_secret_or_inside_its_id_still_redacts_it() {
+    // Task 4's review, I1: the first pass must catch the secret, because it replaces
+    // the id the second pass would need.
+    let secret = aws_secret();
+    for input in escaped_aws_inputs() {
+        let out = scrub(&input);
+        assert!(!out.contains(&secret), "{input:?} -> {out:?}");
+        assert!(!out.contains(&secret[..20]), "{input:?} -> {out:?}");
+        assert!(!out.contains(&secret[20..]), "{input:?} -> {out:?}");
+        assert_eq!(scrub(&out), out, "{input:?}");
+    }
+    let mut want = vec![format!("{TOKEN} {TOKEN}"); 4];
+    want.push(format!("{TOKEN}{TOKEN}"));
+    let got: Vec<String> = escaped_aws_inputs().iter().map(|s| scrub(s)).collect();
+    assert_eq!(got, want);
+}
+
+#[test]
+fn a_clipped_basic_credential_is_redacted() {
+    // Task 4's review, I2: the reviewer's input, `admin:hunter2` and 6 bits.
+    let reviewer = ["YWRt", "aW46", "aHVu", "dGVy", "M"].concat();
+    assert_becomes(
+        &format!("Authorization: Basic {reviewer}"),
+        &format!("Authorization: {BASIC}"),
+    );
+    // Every clip of an ASCII credential and of one whose password is multibyte, from
+    // the 8 characters that already hold the colon on.
+    for credential in ["admin:hunter2hunter2", "admin:ééééééééé"] {
+        let full = base64(credential.as_bytes());
+        for len in 8..=full.len() {
+            assert_becomes(&format!("Basic {}", &full[..len]), BASIC);
+        }
+    }
+    // A clipped run with no colon in its decoding is still prose.
+    let plain = base64(b"hello world, friend");
+    assert_left(&format!("Basic {}", &plain[..17]));
+}
+
+#[test]
+fn an_aws_secret_in_escaped_json_or_beside_an_sts_id_is_redacted() {
+    // Task 4's review, I3.
+    let (sts, secret) = (sts_id(), aws_secret());
+    assert_becomes(
+        &format!(r#"{{\"SecretAccessKey\":\"{secret}\"}}"#),
+        &format!(r#"{{\"SecretAccessKey\":\"{TOKEN}\"}}"#),
+    );
+    assert_becomes(
+        &format!(r#"{{\"SecretAccessKey\": \"{secret}\"}}"#),
+        &format!(r#"{{\"SecretAccessKey\": \"{TOKEN}\"}}"#),
+    );
+    assert_becomes(
+        &format!(
+            r#"{{\"Credentials\":{{\"AccessKeyId\":\"{sts}\",\"SecretAccessKey\":\"{secret}\"}}}}"#
+        ),
+        &format!(
+            r#"{{\"Credentials\":{{\"AccessKeyId\":\"{sts}\",\"SecretAccessKey\":\"{TOKEN}\"}}}}"#
+        ),
+    );
+    // Rule (b) takes an STS key id: the id itself is not a secret and stays.
+    assert_becomes(
+        &format!("id {sts} secret {secret}"),
+        &format!("id {sts} secret {TOKEN}"),
+    );
 }
