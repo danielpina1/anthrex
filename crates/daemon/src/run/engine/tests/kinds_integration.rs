@@ -2,7 +2,9 @@
 //! review task `<e>-int<n>` run through decision 36's dispatch, and what it holds
 //! (decision 38).
 
-use proto::{AgentRole, IntegrationState, RunState, TaskKind, TaskState};
+use proto::{
+    AgentRole, BlockInfo, BlockReason, IntegrationState, RunState, TaskKind, TaskState,
+};
 use serde_json::json;
 
 use super::dispatch::replies;
@@ -338,6 +340,22 @@ fn integration_review_tasks_refuse_orchestrator_edits() {
         );
         assert_eq!(fx.run().tasks, before.tasks);
     }
+    // Milestone 9.17 task 7's review, I2: `add_task … replaces` would cancel a blocked
+    // integration review, so it is refused the same way.
+    let review = fx.task_mut("mail-int1");
+    review.state = TaskState::Blocked;
+    review.block = Some(BlockInfo::new(BlockReason::Environment, "no target"));
+    fx.tick();
+    assert_eq!(fx.task("mail-int1").state, TaskState::Blocked);
+    let before = fx.run().clone();
+    let mut replace = add("x2", "mail");
+    replace["replaces"] = json!(["mail-int1"]);
+    let text = error(&edit_plan(&mut fx, json!({"edits": [replace]})));
+    assert_eq!(
+        text,
+        "task mail-int1 is an integration review; the engine owns it"
+    );
+    assert_eq!(fx.run().tasks, before.tasks);
 }
 
 /// Task 4 review M2, ruling (refines milestone 9.17 decision 11): an integration review

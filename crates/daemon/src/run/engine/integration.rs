@@ -9,18 +9,23 @@ use super::requests::log;
 use crate::run::model::{ReviewLevel, Run, TaskEvent, task_branch, task_path};
 use crate::run::validate::{is_valid_id, resolve_task_lenient};
 
-/// Decision 37: the orchestrator may not amend, split or cancel an integration review.
+/// Decision 37: the orchestrator may not amend, split or cancel an integration review,
+/// nor name one in an `add_task`'s `replaces`, which would cancel it (milestone 9.17
+/// task 7's review, I2).
 pub(super) fn engine_owned(run: &Run, edits: &[PlanEdit]) -> Option<String> {
     edits.iter().find_map(|edit| {
-        let id = match edit {
+        let ids = match edit {
             PlanEdit::AmendTask { task_id, .. }
             | PlanEdit::SplitTask { task_id, .. }
-            | PlanEdit::CancelTask { task_id } => task_id,
+            | PlanEdit::CancelTask { task_id } => std::slice::from_ref(task_id),
+            PlanEdit::AddTask { replaces, .. } => replaces.as_slice(),
             _ => return None,
         };
-        run.task(id)
-            .filter(|t| is_integration(t))
-            .map(|_| format!("task {id} is an integration review; the engine owns it"))
+        ids.iter().find_map(|id| {
+            run.task(id)
+                .filter(|t| is_integration(t))
+                .map(|_| format!("task {id} is an integration review; the engine owns it"))
+        })
     })
 }
 
