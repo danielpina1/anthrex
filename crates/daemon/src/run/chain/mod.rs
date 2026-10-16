@@ -315,6 +315,7 @@ fn summary_or_iterate(args: &Value) -> bool {
             summary,
             iterate,
             responses,
+            ..
         }) => {
             let bare = edits.is_empty() && !submit && responses.is_empty();
             bare && (summary.is_some() != iterate.is_some())

@@ -4,7 +4,7 @@
 //! have. Every object is closed. Problems read `invalid arguments: <field>: <problem>`,
 //! in M8a's worker-tool wording (`engine/tools.rs`). Pure.
 
-use proto::{AgentRole, DocFinding, DocKind, FindingAnswer, PlanEdit, TaskNoteKind};
+use proto::{AgentRole, DecidedItem, DocFinding, DocKind, FindingAnswer, PlanEdit, TaskNoteKind};
 use serde_json::{Map, Value};
 
 use super::json::label;
@@ -45,6 +45,9 @@ pub enum OrchCall {
         iterate: Option<String>,
         /// Milestone 9.6 decision 20: the answers to the plan review's findings.
         responses: Vec<FindingAnswer>,
+        /// Milestone 9.17 decision 13: the plan frame, `None` when the key is absent.
+        decided: Option<Vec<DecidedItem>>,
+        out_of_scope: Option<Vec<String>>,
     },
     RunStatus {
         since: Option<u64>,
@@ -56,6 +59,8 @@ pub enum OrchCall {
     SubmitEpic {
         edits: Vec<PlanEdit>,
         note: Option<String>,
+        decided: Option<Vec<DecidedItem>>,
+        out_of_scope: Option<Vec<String>>,
     },
     /// Milestone 9.3 decision 22: a next goal on the orchestrator's chain (the
     /// driver's, `chain_goal.rs`).
@@ -164,7 +169,15 @@ fn parse(role: AgentRole, tool: &str, args: &Value) -> Result<OrchCall, String> 
         "edit_plan" => {
             let map = object(
                 args,
-                &["edits", "submit", "summary", "iterate", "responses"],
+                &[
+                    "edits",
+                    "submit",
+                    "summary",
+                    "iterate",
+                    "responses",
+                    "decided",
+                    "out_of_scope",
+                ],
             )?;
             let iterate = text(map, "iterate", proto::GOAL_MAX_CHARS)?;
             // Milestone 9.3 decision 30: an iterate needs no `edits` array; and task
@@ -180,6 +193,8 @@ fn parse(role: AgentRole, tool: &str, args: &Value) -> Result<OrchCall, String> 
                 summary: text(map, "summary", 8000)?,
                 iterate,
                 responses: design::responses(map)?,
+                decided: decided(map)?,
+                out_of_scope: out_of_scope(map)?,
             })
         }
         "run_status" => {
@@ -213,10 +228,12 @@ fn parse(role: AgentRole, tool: &str, args: &Value) -> Result<OrchCall, String> 
             })
         }
         "submit_epic" => {
-            let map = object(args, &["edits", "note"])?;
+            let map = object(args, &["edits", "note", "decided", "out_of_scope"])?;
             Ok(OrchCall::SubmitEpic {
                 edits: edits(map, 1)?,
                 note: text(map, "note", 2000)?,
+                decided: decided(map)?,
+                out_of_scope: out_of_scope(map)?,
             })
         }
         "task_note" => {
@@ -331,6 +348,49 @@ fn array<'a>(value: &'a Value, field: &str, min: usize, max: usize) -> Result<&'
         return Err(format!("{field}: at most {max} items"));
     }
     Ok(items)
+}
+
+/// Milestone 9.17 decision 13's `decided`: at most `DECIDED_MAX` closed objects of a
+/// `question` (1 to 300 characters) and an `answer` (1 to 500); `None` when absent.
+fn decided(map: &Map<String, Value>) -> Result<Option<Vec<DecidedItem>>, String> {
+    let Some(value) = map.get("decided") else {
+        return Ok(None);
+    };
+    let items = array(value, "decided", 0, super::plan_frame::DECIDED_MAX)?;
+    let item = |(i, v): (usize, &Value)| {
+        let field = format!("decided[{i}]");
+        let Some(m) = v.as_object() else {
+            return Err(format!("{field}: must be an object"));
+        };
+        if let Some(key) = m
+            .keys()
+            .find(|k| !["question", "answer"].contains(&k.as_str()))
+        {
+            return Err(format!("{field}.{key}: unknown field"));
+        }
+        let one = |key: &str, max: usize| {
+            let at = format!("{field}.{key}");
+            let v = m.get(key).ok_or_else(|| format!("{at}: required"))?;
+            one_text(v, &at, max)
+        };
+        Ok(DecidedItem {
+            question: one("question", 300)?,
+            answer: one("answer", 500)?,
+        })
+    };
+    items
+        .iter()
+        .enumerate()
+        .map(item)
+        .collect::<Result<_, _>>()
+        .map(Some)
+}
+
+/// Decision 13's `out_of_scope`: at most `OUT_OF_SCOPE_ITEMS_MAX` strings of 1 to 300
+/// characters; `None` when absent.
+fn out_of_scope(map: &Map<String, Value>) -> Result<Option<Vec<String>>, String> {
+    let max = super::plan_frame::OUT_OF_SCOPE_ITEMS_MAX;
+    list(map, "out_of_scope", 0, max, 300)
 }
 
 /// `edits`: required, `min` to 60 plan edits, each within the Interfaces table's

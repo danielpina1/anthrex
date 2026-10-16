@@ -212,15 +212,15 @@ fn every_schema_is_closed_at_every_level() {
     // `into`'s plan_task and route: seven objects with the tool's own. start_goal
     // (milestone 9.3) is the orchestrator's thirteenth; milestone 9.6 adds edit_plan's
     // response item, start_brainstorm, submit_doc and its response item, and get_doc
-    // (eighteen); milestone 9.9's ask_user adds its own object: nineteen.
+    // (eighteen); 9.9's ask_user, nineteen; 9.17's decided item, twenty (planner nine).
     assert_eq!(
         counts,
         [
-            ("orchestrator", 19),
+            ("orchestrator", 20),
             ("worker", 3),
             ("reviewer", 2),
             ("scout", 4),
-            ("planner", 8),
+            ("planner", 9),
             ("decider", 0),
         ]
     );
@@ -433,7 +433,18 @@ fn edit_plan_takes_iterate() {
     assert_eq!(schema["required"], json!([]));
     let mut keys: Vec<&String> = schema["properties"].as_object().unwrap().keys().collect();
     keys.sort();
-    assert_eq!(keys, ["edits", "iterate", "responses", "submit", "summary"]);
+    assert_eq!(
+        keys,
+        [
+            "decided",
+            "edits",
+            "iterate",
+            "out_of_scope",
+            "responses",
+            "submit",
+            "summary"
+        ]
+    );
     let ops = &schema["properties"]["edits"]["items"]["properties"]["op"]["enum"];
     assert!(
         !ops.as_array().unwrap().contains(&json!("iterate")),

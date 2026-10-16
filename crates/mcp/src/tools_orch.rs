@@ -151,6 +151,9 @@ fn edit_plan() -> Tool {
                 "iterate": text(proto::GOAL_MAX_CHARS as u64),
                 // Milestone 9.6 decision 20: the answers to the plan review's findings.
                 "responses": crate::tools_design::responses(),
+                // Milestone 9.17 decision 13: the plan frame, with `submit`.
+                "decided": decided(),
+                "out_of_scope": out_of_scope(),
             }),
             &[],
         ),
@@ -203,6 +206,8 @@ fn submit_epic() -> Tool {
             json!({
                 "edits": array(object(plan_edit()), Some(1), 60),
                 "note": text(2000),
+                "decided": decided(),
+                "out_of_scope": out_of_scope(),
             }),
             &["edits"],
         ),
@@ -248,9 +253,26 @@ fn plan_edit() -> JsonObject {
             // Task M9.9.10: the five resolving ops' reason and hold.
             "reason": text(500),
             "hold": text(64),
+            // Milestone 9.17 decision 22: `add_task`'s replaced tasks.
+            "replaces": array(text(16), None, 12),
         }),
         &["op"],
     )
+}
+
+/// Milestone 9.17 decision 13: **Decided for you**, each question the goal (or the
+/// epic's brief) left open with the answer chosen.
+fn decided() -> Value {
+    let item = closed(
+        json!({"question": text(300), "answer": text(500)}),
+        &["question", "answer"],
+    );
+    array(object(item), None, 20)
+}
+
+/// Milestone 9.17 decision 13: **Out of scope**, each thing the plan will not do.
+fn out_of_scope() -> Value {
+    array(text(300), None, 20)
 }
 
 /// A task as `add_task` and `split_task` take it. `budget` is deliberately absent
@@ -348,3 +370,7 @@ fn array(items: Value, min: Option<u64>, max: u64) -> Value {
 #[cfg(test)]
 #[path = "tools_orch_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tools_orch_tests_frame.rs"]
+mod tests_frame;

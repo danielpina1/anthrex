@@ -331,6 +331,8 @@ fn parse_call_bounds_iterate() {
             summary: None,
             iterate: Some(at.clone()),
             responses: Vec::new(),
+            decided: None,
+            out_of_scope: None,
         })
     );
     let Ok(OrchCall::EditPlan { edits, iterate, .. }) =

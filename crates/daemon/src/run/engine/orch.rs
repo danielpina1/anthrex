@@ -144,6 +144,7 @@ pub(super) fn tool(
             submit,
             summary,
             responses,
+            ..
         } => {
             let alone = edits.is_empty() && !submit && summary.is_none() && responses.is_empty();
             goal_rounds::edit(run, reply, (&goal, alone), (now, pass), fx)
@@ -154,6 +155,7 @@ pub(super) fn tool(
             summary,
             iterate: None,
             responses,
+            ..
         } => {
             let call = (&edits[..], submit, summary, &responses[..]);
             edit_plan(run, reply, call, refusals, (now, pass), fx)

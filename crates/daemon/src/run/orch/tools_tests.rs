@@ -84,6 +84,8 @@ fn parse_call_for_each_tool() {
             summary: Some("All done.".into()),
             iterate: None,
             responses: Vec::new(),
+            decided: None,
+            out_of_scope: None,
         })
     );
     assert_eq!(
@@ -94,6 +96,8 @@ fn parse_call_for_each_tool() {
             summary: None,
             iterate: None,
             responses: Vec::new(),
+            decided: None,
+            out_of_scope: None,
         })
     );
     assert_eq!(
@@ -127,6 +131,8 @@ fn parse_call_for_each_tool() {
                 task_id: "a1".into()
             }],
             note: Some("needs an interface task".into()),
+            decided: None,
+            out_of_scope: None,
         })
     );
     assert_eq!(
@@ -463,5 +469,104 @@ fn ask_user_parses() {
             refused.starts_with("tool ask_user is not available"),
             "{refused}"
         );
+    }
+}
+
+/// Milestone 9.17 decision 13: a missing key is `None`, an empty list `Some(vec![])`, on
+/// both `edit_plan` and `submit_epic`.
+#[test]
+fn missing_keys_parse_as_none_and_empty_lists_as_some() {
+    let planner = |args: Value| parse_call(AgentRole::Planner, "submit_epic", &args);
+    let frame = |call: Result<OrchCall, String>| match call {
+        Ok(OrchCall::EditPlan {
+            decided,
+            out_of_scope,
+            ..
+        })
+        | Ok(OrchCall::SubmitEpic {
+            decided,
+            out_of_scope,
+            ..
+        }) => (decided, out_of_scope),
+        other => panic!("{other:?}"),
+    };
+    let edit = json!([{"op": "cancel_task", "task_id": "a1"}]);
+    assert_eq!(
+        frame(orch("edit_plan", json!({"submit": true}))),
+        (None, None)
+    );
+    assert_eq!(frame(planner(json!({"edits": edit}))), (None, None));
+    let empty = json!({"edits": edit, "decided": [], "out_of_scope": []});
+    assert_eq!(
+        frame(orch("edit_plan", empty.clone())),
+        (Some(Vec::new()), Some(Vec::new()))
+    );
+    assert_eq!(frame(planner(empty)), (Some(Vec::new()), Some(Vec::new())));
+    let full = json!({"edits": edit, "submit": true,
+        "decided": [{"question": "Which store?", "answer": "SQLite"}],
+        "out_of_scope": ["no UI"]});
+    let item = proto::DecidedItem {
+        question: "Which store?".into(),
+        answer: "SQLite".into(),
+    };
+    let want = (Some(vec![item]), Some(vec!["no UI".to_string()]));
+    assert_eq!(frame(orch("edit_plan", full.clone())), want);
+    let mut full = full;
+    full.as_object_mut().unwrap().remove("submit");
+    assert_eq!(frame(planner(full)), want);
+}
+
+/// Decision 13's bounds, checked again by the daemon: at most 20 items in each list, a
+/// question of 1 to 300 characters, an answer of 1 to 500, an item of 1 to 300.
+#[test]
+fn over_bounds_are_refused() {
+    let item = json!({"question": "q", "answer": "a"});
+    let cases = [
+        (
+            json!({"decided": vec![item.clone(); 21]}),
+            "decided: at most 20 items",
+        ),
+        (
+            json!({"out_of_scope": vec![json!("x"); 21]}),
+            "out_of_scope: at most 20 items",
+        ),
+        (
+            json!({"out_of_scope": ["x".repeat(301)]}),
+            "out_of_scope[0]: must be 1 to 300 characters",
+        ),
+        (
+            json!({"out_of_scope": [""]}),
+            "out_of_scope[0]: must be 1 to 300 characters",
+        ),
+        (
+            json!({"decided": [{"question": "q".repeat(301), "answer": "a"}]}),
+            "decided[0].question: must be 1 to 300 characters",
+        ),
+        (
+            json!({"decided": [item, {"question": "q", "answer": "a".repeat(501)}]}),
+            "decided[1].answer: must be 1 to 500 characters",
+        ),
+        (
+            json!({"decided": [{"question": "q"}]}),
+            "decided[0].answer: required",
+        ),
+        (
+            json!({"decided": [{"question": "q", "answer": "a", "why": "w"}]}),
+            "decided[0].why: unknown field",
+        ),
+        (json!({"decided": ["q"]}), "decided[0]: must be an object"),
+        (json!({"decided": "q"}), "decided: must be an array"),
+        (
+            json!({"out_of_scope": "x"}),
+            "out_of_scope: must be an array",
+        ),
+    ];
+    for (args, problem) in cases {
+        let want = Err(format!("invalid arguments: {problem}"));
+        assert_eq!(orch("edit_plan", args.clone()), want, "edit_plan {args}");
+        let mut epic = args.clone();
+        epic["edits"] = json!([{"op": "cancel_task", "task_id": "a1"}]);
+        let got = parse_call(AgentRole::Planner, "submit_epic", &epic);
+        assert_eq!(got, want, "submit_epic {epic}");
     }
 }

@@ -257,6 +257,7 @@ pub(super) fn admitted(state: RunState, call: &ToolCall) -> bool {
         summary,
         iterate,
         responses,
+        ..
     }) = parse_call(call.role, &call.tool, &call.args)
     else {
         return false;

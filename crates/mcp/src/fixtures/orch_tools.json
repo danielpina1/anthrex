@@ -1,5 +1,5 @@
 {
-  "_about": "Milestone 9 brief, Interfaces \"MCP (crates/mcp)\": every tool of the orchestrator and the sub-planner, and the worker's task_note, as the table gives them. Built from the table alone, independently of the Rust schemas it checks. Milestone 9.3 decision 29 (task M9.3.7) adds edit_plan's iterate (string, 1 to 16,384 characters) and the orchestrator's seventh tool, start_goal, from that decision's text; edit_plan requires nothing, since the daemon reads a missing edits as an empty batch (task M9.3.7's fix round 1). Milestone 9.6 (task M9.6.6, Interfaces \"MCP tools\" and decisions 17 and 20) adds plan_task's covers (at most 32 ids, each matching ^R[0-9]+$, at most 8 characters), edit_plan's responses (at most 40 {id, answer}), the orchestrator's start_brainstorm, submit_doc and get_doc, a brainstormer's submit_doc and a document reviewer's get_doc and submit_findings. Task M9.6.10 adds the document reviewer's get_doc draft (a spec's review draft, an integer of at least 1, ruling T5-1), which the orchestrator's get_doc does not take. Task M9.6.11 (ruling T11-1) adds spawn_subplanner's optional covers (as plan_task's): the requirement ids the epic owns. Milestone 9.9 (task M9.9.7, decision 15) adds the orchestrator's eleventh tool, ask_user, from that decision's text.",
+  "_about": "Milestone 9 brief, Interfaces \"MCP (crates/mcp)\": every tool of the orchestrator and the sub-planner, and the worker's task_note, as the table gives them. Built from the table alone, independently of the Rust schemas it checks. Milestone 9.3 decision 29 (task M9.3.7) adds edit_plan's iterate (string, 1 to 16,384 characters) and the orchestrator's seventh tool, start_goal, from that decision's text; edit_plan requires nothing, since the daemon reads a missing edits as an empty batch (task M9.3.7's fix round 1). Milestone 9.6 (task M9.6.6, Interfaces \"MCP tools\" and decisions 17 and 20) adds plan_task's covers (at most 32 ids, each matching ^R[0-9]+$, at most 8 characters), edit_plan's responses (at most 40 {id, answer}), the orchestrator's start_brainstorm, submit_doc and get_doc, a brainstormer's submit_doc and a document reviewer's get_doc and submit_findings. Task M9.6.10 adds the document reviewer's get_doc draft (a spec's review draft, an integer of at least 1, ruling T5-1), which the orchestrator's get_doc does not take. Task M9.6.11 (ruling T11-1) adds spawn_subplanner's optional covers (as plan_task's): the requirement ids the epic owns. Milestone 9.9 (task M9.9.7, decision 15) adds the orchestrator's eleventh tool, ask_user, from that decision's text. Milestone 9.17 (task M9.17.5, Interfaces \"mcp\") adds edit_plan's and submit_epic's decided (at most 20 objects of a question of 1 to 300 characters and an answer of 1 to 500, both required) and out_of_scope (at most 20 strings of 1 to 300 characters), and plan_edit's replaces (at most 12 strings of 1 to 16 characters).",
   "orchestrator": [
     {
       "name": "get_context",
@@ -646,6 +646,15 @@
                   "type": "string",
                   "minLength": 1,
                   "maxLength": 64
+                },
+                "replaces": {
+                  "type": "array",
+                  "maxItems": 12,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 16
+                  }
                 }
               },
               "required": [
@@ -687,6 +696,39 @@
                 "id",
                 "answer"
               ]
+            }
+          },
+          "decided": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "question": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 300
+                },
+                "answer": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                }
+              },
+              "required": [
+                "question",
+                "answer"
+              ]
+            }
+          },
+          "out_of_scope": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300
             }
           }
         },
@@ -1437,6 +1479,15 @@
                   "type": "string",
                   "minLength": 1,
                   "maxLength": 64
+                },
+                "replaces": {
+                  "type": "array",
+                  "maxItems": 12,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 16
+                  }
                 }
               },
               "required": [
@@ -1448,6 +1499,39 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 2000
+          },
+          "decided": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "question": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 300
+                },
+                "answer": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                }
+              },
+              "required": [
+                "question",
+                "answer"
+              ]
+            }
+          },
+          "out_of_scope": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300
+            }
           }
         },
         "required": [

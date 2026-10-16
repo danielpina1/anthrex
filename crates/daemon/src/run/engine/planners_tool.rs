@@ -54,7 +54,7 @@ pub(super) fn tool(
         return refuse(fx, reply, text);
     }
     match parse_call(call.role, &call.tool, &call.args) {
-        Ok(OrchCall::SubmitEpic { edits, note }) => submit_epic(
+        Ok(OrchCall::SubmitEpic { edits, note, .. }) => submit_epic(
             run,
             reply,
             (k, call.window_id),
