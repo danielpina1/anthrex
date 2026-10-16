@@ -78,6 +78,7 @@ pub mod slots;
 pub mod snapshot;
 mod snapshot_design;
 mod snapshot_detail;
+mod snapshot_frame;
 mod snapshot_orch;
 mod snapshot_patterns;
 mod snapshot_stages;
