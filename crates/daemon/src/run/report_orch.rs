@@ -13,8 +13,10 @@ use super::report_escape::{escape_heading, list_item_text, plain_text_line};
 /// `research.md`, in the run's data directory (decision 35).
 pub const RESEARCH_FILE: &str = "research.md";
 
-/// `## Research` and `## Review findings`, each only when a task has one.
+/// Milestone 9.17's `## Plan frame`, then `## Research` and `## Review findings`, each
+/// only when the run has one.
 pub(super) fn sections(run: &Run, out: &mut String) {
+    plan_frame_section(run, out);
     if let Some(research) = research_entries(run) {
         out.push_str("\n## Research\n\n");
         out.push_str(&research);
@@ -31,6 +33,38 @@ pub(super) fn sections(run: &Run, out: &mut String) {
     out.push_str("\n## Review findings\n\n");
     for task in reviews {
         review_entry(task, out);
+    }
+}
+
+/// Milestone 9.17 decision 19: every round's frame, then every epic's, each its
+/// `decided for you` and `out of scope` items, `none stated` for an empty list.
+fn plan_frame_section(run: &Run, out: &mut String) {
+    let epics = (run.orch.epics.iter()).filter_map(|e| Some((&e.epic, e.frame.as_ref()?)));
+    if run.orch.plan_frames.is_empty() && epics.clone().next().is_none() {
+        return;
+    }
+    out.push_str("\n## Plan frame\n\n");
+    let rounds = (run.orch.plan_frames.iter()).map(|f| (format!("Round {}", f.round), f));
+    let epics = epics.map(|(epic, f)| (format!("Epic {}", escape_heading(epic)), f));
+    for (heading, frame) in rounds.chain(epics) {
+        out.push_str(&format!("### {heading}\n\n"));
+        let decided = frame
+            .decided
+            .iter()
+            .map(|d| format!("{} → {}", d.question, d.answer));
+        for (label, items) in [
+            ("decided for you", decided.collect::<Vec<_>>()),
+            ("out of scope", frame.out_of_scope.clone()),
+        ] {
+            if items.is_empty() {
+                out.push_str(&format!("- {label}: none stated\n"));
+            }
+            for item in items {
+                let line = list_item_text(&format!("{label}: "), &item);
+                out.push_str(&format!("- {line}\n"));
+            }
+        }
+        out.push('\n');
     }
 }
 
@@ -132,3 +166,7 @@ fn finding_line(finding: &Finding) -> String {
     };
     list_item_text(&format!("{severity}{at}: "), &finding.text)
 }
+
+#[cfg(test)]
+#[path = "report_orch_tests.rs"]
+mod tests;
