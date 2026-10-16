@@ -219,6 +219,38 @@ Add your own with `protected` in the profile (`[orchestrator.profile]` or a plan
 - **Profile screen.** `C-b P` is one page: a status line (`Ready · verified 2h ago`, `Needs review`, `Out of date — … changed`, `Not set up — press d to set up`), then How anthrex checks your work, Your repo and Delivery, in plain labels with each key dimmed beside it, and `Advanced ▸` folded (`a` opens it). `e` edits a row: a command is checked once, then saved on ✓; on ✗ the row says why, `o` shows the output, `s` saves it anyway and `r` reverts. On the review card the same edit changes only the proposal until **Use this**. From the CLI, `anthrex profile edit <key> <value> --yes` stores an edit once its check passes, and `--anyway` stores it whatever the check finds. Edits wait while a run is live in the repository.
 - **History.** Every run is recorded. `anthrex run stats` summarises it by task class, and new runs start from what the history learned: size thresholds, concurrency and a run estimate. Settings (`C-b S`) shows and edits the models each role runs (below) and the limits.
 
+### Lessons
+
+anthrex learns from the outcomes of its own runs in a repository, and hands what it learned to the next workers as advisory notes. Everything is kept per repository in the daemon's data directory (`lessons.jsonl`, next to `history.jsonl`), never in your repository.
+
+- **What is recorded.** Every failed check or proof leaves a failure signature (a normalised fingerprint of its output) on the task's history record, with no model involved. A signature seen in at least two runs within 14 days becomes a *known failure*; it ends after five clean runs over the same files, after 90 days, or when you dismiss it. When a task recovers from a failure, ends blocked or meets a blocking review, or a run fails or is discarded, a background distiller (one decider call, off the run, at most 20 a day per repository) reads a redacted dossier of what happened and proposes up to a few lessons: an *episodic* lesson (what went wrong here) goes on trial at once; a *procedural* or *semantic* one (how to work here) waits for your approval as `proposed`. A lesson earns credit by outcome: each task that was shown it and merged (and was not reverted) counts green.
+- **Where lessons go.** Proposed lessons are never used. At the start of a run, the active lessons are frozen into it. Each worker's first turn gets at most five, chosen by how well their files match the task's `owns`, by usefulness and by recency, under the heading `Notes from earlier runs in this repository. They are advisory; your task and its acceptance criteria above take precedence.` Its reviewer gets the same ones under `Known pitfalls in this repository`. Before a review, a reviewer can also get a short risk note written from the task's brief alone (`risk_note`).
+- **Discard reason.** `anthrex run discard <run> --reason "<text>"` (or the TUI's discard form) records why you threw a run away; the reason goes on the run's history record and into the distiller's dossier.
+- **The CLI.** `anthrex lessons list [--all] [--json]` lists the repository's lessons (`--all` adds rejected and retired ones) with their status, layer and `green/outcomes`. `anthrex lessons approve <id>…`, `reject <id>…` and `forget <id>…` decide or remove lessons (a known failure is forgotten by dismissing it); each asks `y/N` per id unless `--yes`. An id may be shortened to a unique prefix of six or more characters.
+- **The Profile screen's Lessons page.** `C-b P`, then `l` (the hint says how many lessons wait for review): one row per lesson with its status glyph, layer and credit, the selected lesson's body and files below. `a` approves, `r` rejects and `d` forgets (each of the last two asks `y/n`), `t` shows rejected and retired lessons too, `Esc` goes back.
+- **The knowledge graph page.** `g` on the Lessons page draws the repository's lessons as a graph: a hub `◉` per module (from the module graph cache, else the profile's `modules`) and one `(root)` hub, a dot `•` per lesson (a hollow `○` while proposed), linked to the modules their files touch, to lessons that share files, and to the known failure they were distilled from. Arrows move the selection, `Enter` opens an inspect panel, `/` searches, `+`/`-` zoom, `hjkl` pan, `0` recentres, `a`/`r` approve or reject, `d` forgets or dismisses, and `Esc` returns to the Lessons page.
+
+The `[lessons]` table (every key optional; the daemon reads it at start):
+
+```toml
+[lessons]
+enabled = true              # lessons in worker and reviewer prompts, and distillation
+distill = true              # ask the distiller after a recovered task or a discard
+risk_note = true            # a pre-review risk note from the brief alone
+max_items = 5               # lessons per prompt (1 to 10)
+block_chars = 4000          # the prompt block's size (500 to 20000)
+item_chars = 600            # one lesson's size (100 to 2000)
+dossier_chars = 12000       # the distiller's dossier (2000 to 50000)
+episodic_trial_runs = 20    # runs an episodic lesson stays on trial
+known_min = 2               # runs a signature needs to become a known failure
+known_window_days = 14
+known_clean_runs = 5        # clean runs that end a known failure
+expiry_days = 90
+max_distills_per_day = 20   # per repository; 0 stops the distiller
+```
+
+With `enabled = false` no prompt carries a lessons block and nothing is distilled; failure signatures are still recorded, since they are history. The distiller and the risk note are decider calls, so they follow `[orchestrator] deciders` (with the deciders off, nothing is distilled).
+
 ## Configuration
 
 anthrex reads `config.toml` from `~/Library/Application Support/anthrex/` on macOS and `~/.config/anthrex/` on Linux, or from `ANTHREX_CONFIG`. Every key is optional. An invalid or unknown key is reported and keeps its default; it never stops anthrex from starting. The Settings screen (`C-b S`) edits the file and applies most changes live.
@@ -338,6 +370,7 @@ Environment variables:
 | `anthrex daemon start [--foreground] \| stop \| status` | Manage the background daemon. |
 | `anthrex profile status \| detect \| show \| use \| reject \| edit` | Detect, show, use (store; `confirm` is its alias) and correct the repository's profile; `edit --anyway` stores an edit whatever its check finds. |
 | `anthrex run <subcommand>` | Start, watch and finish orchestrated runs (below). |
+| `anthrex lessons list [--all] [--json] \| approve \| reject \| forget <ID>… [--yes]` | List the repository's lessons, approve or reject proposed ones, forget a lesson or dismiss a known failure. |
 
 `anthrex run` subcommands:
 
@@ -354,7 +387,7 @@ Environment variables:
 | `iterate RUN TEXT` | Start a new round of a complete run, which its orchestrator plans. |
 | `promote RUN` | Turn a fast-path run into a planned run with an orchestrator. |
 | `prs RUN`, `deliver`, `watch` | `pr` mode: show each stage's pull request, deliver a stage now, stop or resume watching. |
-| `accept RUN`, `discard RUN` | Merge a complete run into its base branch, or discard it. |
+| `accept RUN`, `discard RUN [--reason TEXT]` | Merge a complete run into its base branch, or discard it (the reason goes on its history record). |
 | `stats` | Summarise this repository's run history by task class. |
 
 ## Architecture

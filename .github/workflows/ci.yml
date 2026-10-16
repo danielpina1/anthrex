@@ -74,6 +74,10 @@ jobs:
       # SIGINT not to be ignored, as it would be under `nohup` or a background `&`.
       - name: cargo nextest run --workspace
         run: cargo nextest run --workspace
+        env:
+          # The ax-leak-2 fix: each task temporary directory's creator, for the leak gate
+          # (`crates/daemon/src/run/git/tmp_trace.rs`).
+          AX_TMP_TRACE: ${{ runner.temp }}/ax-tmp-trace.tsv
 
       # nextest cannot run doctests (decision 1); the workspace has none today, and this
       # keeps a future one from being skipped silently.
@@ -89,6 +93,7 @@ jobs:
           # scripts/pty_tree_smoke.py too: it has no __main__ of its own and is only
           # ever run as the stage module pty-smoke.py imports and drives.
           ANTHREX_GIT: "off"
+          AX_TMP_TRACE: ${{ runner.temp }}/ax-tmp-trace.tsv
 
       # Decision 21: after the smoke, and also when an earlier step failed, so a red suite
       # still reports the daemons, stand-ins and temporary entries it left behind. It
@@ -97,6 +102,9 @@ jobs:
       - name: leak gate
         if: always()
         run: python3 scripts/leak_gate.py check "$RUNNER_TEMP/leak-baseline.json"
+        env:
+          # Names the creator of each leaked `ax-<uid>/<hash>` from the trace above.
+          AX_TMP_TRACE: ${{ runner.temp }}/ax-tmp-trace.tsv
 
   # Decision 18: dependency advisories and a secret scan of the whole history. Both tools
   # need the network, so the job never blocks a merge; its findings are read and recorded.

@@ -524,11 +524,14 @@ pub(super) async fn run(
             root,
             worktrees,
             branch_prefix,
+            ..
         } => cleanup::discard(service, ctx, root, worktrees, branch_prefix).await,
         OpKind::Decide { request, .. } => service.decide(ctx, request).await,
         kind @ (OpKind::MeasureDiff { .. } | OpKind::AppendHistory { .. }) => {
             service.history_op(ctx, kind).await
         }
+        // Milestone 9.15 decision 10.
+        OpKind::QueueDistill { path, line, .. } => service.queue_distill(path, *line).await,
         // Milestone 9 (task M9.13).
         kind @ (OpKind::CreateOrchestrator { .. }
         | OpKind::RestartOrchestrator { .. }

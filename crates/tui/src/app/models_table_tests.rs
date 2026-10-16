@@ -216,13 +216,14 @@ fn opening_asks_for_the_catalogs_only_while_there_are_none() {
     );
 }
 
+/// Milestone 9.15 decision 32: the `distill` and `risk note` rows follow the six.
 #[test]
-fn helpers_expand_to_six_kinds_same_as_helpers_until_set() {
+fn helpers_expand_to_eight_kinds_same_as_helpers_until_set() {
     let mut app = spec();
     select_role(&mut app, Role::Helpers);
     tap(&mut app, KeyCode::Char(' '));
     let r = rows(&app);
-    assert_eq!(r.len(), 16);
+    assert_eq!(r.len(), 18);
     assert_eq!(r[9].role, "helpers ▾");
     let kinds: Vec<&str> = r[10..].iter().map(|r| r.role.as_str()).collect();
     assert_eq!(
@@ -233,7 +234,9 @@ fn helpers_expand_to_six_kinds_same_as_helpers_until_set() {
             "  size check",
             "  check summary",
             "  blocked reason",
-            "  ci summary"
+            "  ci summary",
+            "  distill",
+            "  risk note"
         ]
     );
     assert!(

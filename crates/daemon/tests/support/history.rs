@@ -30,6 +30,7 @@ pub fn file_lines(path: &Path) -> Vec<String> {
 
 pub fn run_line(outcome: &str) -> HistoryLine {
     HistoryLine::Run(RunRecord {
+        discard_reason: None,
         v: HISTORY_VERSION,
         record_id: "r".into(),
         at: 1,
@@ -76,6 +77,7 @@ pub fn merged_task(run: &str, task: &str, merge: &str) -> HistoryLine {
 /// An accepted run record of `run`, `at`, whose accept merge is `accepted`.
 pub fn accepted_run(run: &str, at: u64, accepted: &str) -> HistoryLine {
     HistoryLine::Run(RunRecord {
+        discard_reason: None,
         record_id: run.into(),
         run_id: run.into(),
         at,

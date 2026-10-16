@@ -69,11 +69,9 @@ pub const READ_BACK_HOLD_MS: &str = "500";
 pub fn harness(lines: &str) -> RunHarness {
     let mut h = RunHarness::design(lines, &[]);
     h.restart_daemon(&[("ANTHREX_TEST_DELAY_READ_BACK_MS", READ_BACK_HOLD_MS)]);
-    let log = std::fs::read_to_string(h.data().join("daemon.log")).unwrap_or_default();
-    assert!(
-        log.contains("ANTHREX_TEST_DELAY_READ_BACK_MS: holding"),
-        "the read-back hold was not armed:\n{}",
-        h.log_tail()
+    h.wait_daemon_log(
+        "the read-back hold was not armed",
+        "ANTHREX_TEST_DELAY_READ_BACK_MS: holding",
     );
     h
 }

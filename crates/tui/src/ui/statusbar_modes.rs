@@ -71,6 +71,8 @@ pub(super) fn badge(app: &App) -> Option<&'static str> {
         Some(" STATS ")
     } else if matches!(app.screen, Some(Screen::DocGate(_))) {
         Some(" REVIEW ")
+    } else if matches!(app.screen, Some(Screen::LessonsGraph(_))) {
+        Some(" LESSONS ")
     } else if app.plan_review.is_some() {
         Some(" PLAN ")
     } else if app.alerts_focus.is_some() {
@@ -149,6 +151,9 @@ pub(super) fn body(app: &App, term: ratatui::layout::Rect) -> Body {
         (crate::ui::stats::hints(), false)
     } else if let Some(Screen::DocGate(screen)) = &app.screen {
         (crate::ui::doc_gate::hints(app, screen), false)
+    } else if let Some(Screen::LessonsGraph(_)) = &app.screen {
+        // The page draws its own keys on its hint row.
+        (vec![hint("esc", "back", 9)], false)
     } else if app.plan_review.is_some() {
         (review_hints(app), false)
     } else if app.alerts_focus.is_some() {

@@ -351,6 +351,7 @@ fn every_run_request_and_reply_round_trips() {
             run_id: "run-a1b2".into(),
             action: FinishAction::Accept,
             confirm: Some("run-a1b2".into()),
+            reason: None,
         },
         RunRequest::List,
         RunRequest::Subscribe,

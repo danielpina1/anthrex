@@ -92,11 +92,14 @@ pub(super) fn merged(run: &mut Run, i: usize, from: String, commit: String, fx: 
 }
 
 /// Task `i`'s record, emitted now.
+/// Milestone 9.15 decision 10: then its distill entry, when it qualifies.
 fn record(run: &mut Run, i: usize, outcome: TaskOutcome, now: u64, fx: &mut Vec<Effect>) {
-    let line = HistoryLine::Task(task_record(run, &run.tasks[i], outcome, now));
+    let record = task_record(run, &run.tasks[i], outcome, now);
     run.tasks[i].history_written = true;
     let id = run.tasks[i].id().to_string();
-    append(run, Some(&id), line, fx);
+    let cause = super::lessons_queue::task_cause(&record);
+    append(run, Some(&id), HistoryLine::Task(record), fx);
+    super::lessons_queue::task(run, i, cause, now, fx);
 }
 
 /// `MeasureDiff`'s result for task `i`: the diff is kept, and the record appended with
@@ -144,6 +147,8 @@ pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     let line = HistoryLine::Run(run_record(run, outcome, now));
     run.run_record_written = true;
     append(run, None, line, fx);
+    // Milestone 9.15 decision 10: the run's distill entry, when it qualifies.
+    super::lessons_queue::run_line(run, outcome, now, fx);
 }
 
 /// Decision 57: tier job `op`'s `tier` line and one `flaky` line per test that passed

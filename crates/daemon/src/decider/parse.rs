@@ -138,6 +138,8 @@ pub fn parse(kind: DeciderKind, value: &Value) -> Result<DeciderAnswer, String> 
         }
         DeciderKind::CiSummary => super::ci::parse(value),
         DeciderKind::RunName => super::run_name::parse(value),
+        DeciderKind::Distill => super::distill::parse(value),
+        DeciderKind::RiskNote => super::risk_note::parse(value),
     }
 }
 

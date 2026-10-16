@@ -73,6 +73,9 @@ fn task(
         race_adopted: false,
         writer_failures: 0,
         round: 0,
+        signatures: Vec::new(),
+        owns: Vec::new(),
+        lessons_shown: Vec::new(),
     }
 }
 
@@ -107,6 +110,7 @@ fn merged(
 
 fn run(id: &str, calls: u32, fallbacks: u32) -> RunRecord {
     RunRecord {
+        discard_reason: None,
         v: HISTORY_VERSION,
         record_id: id.into(),
         at: 200,

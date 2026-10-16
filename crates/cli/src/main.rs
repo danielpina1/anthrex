@@ -4,6 +4,7 @@ mod daemon_cmd;
 mod filter_hook;
 mod filter_run;
 mod hook;
+mod lessons_cmd;
 mod ls_cmd;
 mod mcp_cmd;
 mod pre_clap;
@@ -93,6 +94,8 @@ enum Command {
     Run(run_cmd::RunArgs),
     /// Detect, show, confirm and correct this repository's profile
     Profile(profile_cmd::ProfileArgs),
+    /// List, approve, reject and forget the lessons learned in this repository
+    Lessons(lessons_cmd::LessonsArgs),
     /// Serve the anthrex MCP tools on stdin/stdout for one headless run agent
     /// (decision 4). Started by the daemon, never by hand; stdout is JSON-RPC only.
     #[command(hide = true)]
@@ -187,6 +190,7 @@ async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         None => attach(socket, resolve_dir(cli.dir)?, None).await,
         Some(Command::Run(args)) => run_cmd::main(args, socket, cli.dir).await,
         Some(Command::Profile(args)) => profile_cmd::main(args, socket, cli.dir).await,
+        Some(Command::Lessons(args)) => lessons_cmd::main(args, socket, cli.dir).await,
         Some(Command::Attach { target }) => attach(socket, resolve_dir(cli.dir)?, target).await,
         Some(Command::Daemon { action }) => daemon_cmd::daemon_command(action, socket).await,
         Some(Command::New {

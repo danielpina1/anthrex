@@ -118,11 +118,13 @@ fn reply_timeout_follows_decision_19() {
             run_id: id(),
             action: FinishAction::Accept,
             confirm: Some(id()),
+            reason: None,
         },
         RunRequest::Finish {
             run_id: id(),
             action: FinishAction::Discard,
             confirm: Some(id()),
+            reason: None,
         },
         RunRequest::Resume {
             run_id: id(),
@@ -205,4 +207,43 @@ fn a_done_for_one_id_leaves_the_other_pending() {
     });
     assert!(app.replies.contains(ids[0]));
     assert!(!app.replies.contains(ids[1]));
+}
+
+/// Milestone 9.15 decision 32 (protocol 24): a `Lessons` or `LessonsGraph` reply ends
+/// the entry its id names and is otherwise dropped, with no toast, until the Lessons
+/// page (task M9.15.12) and the graph page (M9.15.13) read them.
+#[test]
+fn lessons_replies_route_by_id_and_are_otherwise_dropped() {
+    let mut app = super::actions::gate_app();
+    let dir = std::path::PathBuf::from("/repo");
+    for (id, reply) in [
+        (
+            41,
+            RunReply::Lessons {
+                lessons: vec![],
+                message: None,
+                request_id: Some(41),
+            },
+        ),
+        (
+            42,
+            RunReply::LessonsGraph {
+                graph: Box::default(),
+                request_id: Some(42),
+            },
+        ),
+    ] {
+        let what = crate::app::replies::PendingWhat::Stats { dir: dir.clone() };
+        app.replies.insert(id, what, REPLY_TIMEOUT);
+        assert!(app.on_run_reply(reply).is_empty());
+        assert!(!app.replies.contains(id), "the entry of {id} ends");
+    }
+    let untagged = RunReply::Lessons {
+        lessons: vec![],
+        message: Some("approved 1".into()),
+        request_id: None,
+    };
+    assert!(app.on_run_reply(untagged).is_empty());
+    assert_eq!(app.toast_text(), None);
+    assert!(app.modal.is_none());
 }

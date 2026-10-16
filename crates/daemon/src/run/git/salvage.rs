@@ -258,6 +258,35 @@ pub fn remove_checkout(
     timeout: Duration,
 ) -> Result<(), String> {
     let g = Git::new(git, timeout);
+    let removed = remove_listed_or_standalone(g, root, path, repo);
+    // A linked worktree (the integration and `.full` checkouts) has no repository of
+    // its own, but its checks, proofs and the target pool's clean ran in the temporary
+    // directory named from `repo` all the same (`tier_step::step_base`,
+    // `ConfineSpec::for_checkout`): it goes with the checkout, as a standalone one's
+    // does in `checkout::remove`. Removing one already gone is not an error.
+    //
+    // It goes whether or not the removal above succeeded (the ax-leak-2 fix): that
+    // repository directory is never made, so once a `git worktree remove` or `prune`
+    // has failed nothing could name the directory again (a later reconcile finds no
+    // repository, a test's teardown no directory) and it would stay in the shared root
+    // for good. A check that runs in a kept checkout later makes it again.
+    let tmp = repo.map_or(Ok(()), super::tmp::remove);
+    removed?;
+    // No unconditional `git worktree prune` (final fix batch F1, D-12): `worktree
+    // remove` already deregisters, and a prune would also forget the user's own
+    // worktrees whose directories are merely missing.
+    crate::worktree::pinned::unpin(path);
+    tmp
+}
+
+/// [`remove_checkout`]'s removal of the checkout itself: a standalone one with its
+/// repository (`checkout::remove`), a listed one through git.
+fn remove_listed_or_standalone(
+    g: Git<'_>,
+    root: &Path,
+    path: &Path,
+    repo: Option<&Path>,
+) -> Result<(), String> {
     match listed(g, root, path)? {
         None => {
             let pin = crate::worktree::pinned::pinned(path).filter(|pin| pin.standalone);
@@ -301,10 +330,6 @@ pub fn remove_checkout(
             )?;
         }
     }
-    // No unconditional `git worktree prune` (final fix batch F1, D-12): `worktree
-    // remove` already deregisters, and a prune would also forget the user's own
-    // worktrees whose directories are merely missing.
-    crate::worktree::pinned::unpin(path);
     Ok(())
 }
 

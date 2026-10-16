@@ -89,6 +89,12 @@ pub enum PendingWhat {
         run_id: String,
     },
     DocGate(super::doc_gate_replies::GateAsk),
+    /// Milestone 9.15 decision 48: the lessons graph page's `Graph` (`graph: true`) or
+    /// `Decide`/`Forget` on `dir` (`app/lessons_graph_screen.rs`).
+    LessonsGraph {
+        dir: std::path::PathBuf,
+        graph: bool,
+    },
 }
 
 /// One request waiting for its reply.
@@ -203,6 +209,12 @@ impl App {
         if let Some(effects) = self.route_profile_reply(reply) {
             return Some(effects);
         }
+        if let Some(effects) = self.route_lessons_reply(reply) {
+            return Some(effects);
+        }
+        if let Some(effects) = self.route_lessons_graph_reply(reply) {
+            return Some(effects);
+        }
         if let Some(effects) = self.route_stats_reply(reply) {
             return Some(effects);
         }
@@ -251,6 +263,12 @@ impl App {
                     }
                     _ => return None,
                 }
+            }
+            // Milestone 9.15 decision 32: the Profile screen's own (task M9.15.12) are
+            // `route_lessons_reply`'s, the graph page's (M9.15.15)
+            // `route_lessons_graph_reply`'s; any other is dropped.
+            RunReply::Lessons { request_id, .. } | RunReply::LessonsGraph { request_id, .. } => {
+                self.replies.take(*request_id);
             }
             _ => return None,
         }
@@ -345,6 +363,7 @@ impl App {
             }
             PendingWhat::Profile { dir, ask } => self.profile_view_failed(id, dir, *ask, why),
             PendingWhat::DocShow { .. } => self.doc_show_failed(id, why),
+            PendingWhat::LessonsGraph { dir, .. } => self.lessons_graph_failed(dir, why),
             _ => false,
         }
     }
@@ -420,6 +439,15 @@ impl App {
                 true
             }
             RunRequest::ShowDoc { .. } | RunRequest::DocGate { .. } => self.doc_gate_not_sent(id),
+            // Milestone 9.15: the Profile screen's lessons requests are its to show.
+            RunRequest::Lessons(_) => match &pending {
+                Some(PendingWhat::Profile {
+                    dir,
+                    ask: ProfileAsk::Lessons { list },
+                }) => !self.lessons_failed(dir, *list, why),
+                Some(PendingWhat::LessonsGraph { dir, .. }) => !self.lessons_graph_failed(dir, why),
+                _ => true,
+            },
             _ => true,
         }
     }

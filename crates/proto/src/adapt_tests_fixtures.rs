@@ -230,6 +230,9 @@ pub(super) fn a_task_record() -> TaskRecord {
         race_adopted: false,
         writer_failures: 0,
         round: 0,
+        signatures: Vec::new(),
+        owns: Vec::new(),
+        lessons_shown: Vec::new(),
     }
 }
 

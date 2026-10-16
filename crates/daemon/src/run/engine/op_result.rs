@@ -159,6 +159,8 @@ pub enum OpResult {
     DiffMeasured(proto::DiffStats),
     /// M8b decision 33: `AppendHistory` wrote its line.
     HistoryAppended,
+    /// Milestone 9.15 decision 10: `QueueDistill`'s line is in the store.
+    DistillQueued,
     /// Milestone 9: `RestartOrchestrator` restarted the window.
     Restarted,
     /// Milestone 9.5 decision 38 (fix round 1, m1 and m2): it restarted the window with a

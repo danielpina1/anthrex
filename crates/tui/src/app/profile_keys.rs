@@ -113,6 +113,7 @@ impl App {
                 }
             }
             KeyCode::Char('x') if s.review_proposal() => s.page = Some(ProfilePage::Discard),
+            KeyCode::Char('l') => return self.open_lessons_page(),
             KeyCode::Char('d') if !card => {
                 s.page = Some(ProfilePage::Detect {
                     trust_project: false,

@@ -45,7 +45,9 @@ pub fn task_tmp(repo_dir: &Path) -> PathBuf {
         hash ^= 0xff;
         hash = hash.wrapping_mul(0x0100_0000_01b3);
     }
-    tmp_root().join(format!("{hash:016x}"))
+    let tmp = tmp_root().join(format!("{hash:016x}"));
+    super::tmp_trace::named_from(&tmp, repo_dir);
+    tmp
 }
 
 /// [`tmp_root`], made when missing (mode 0700) and checked: a real directory, not a

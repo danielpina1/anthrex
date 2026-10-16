@@ -160,9 +160,10 @@ fn settings_variants_are_appended_last() {
     // `delivery_tests.rs`), milestone 9.3 `Iterate` after `Watch` (protocol 15,
     // `rounds_tests.rs`) and milestone 9.5 `McpReady` after `Iterate` (protocol 16,
     // `tuning_tests.rs`), and milestone 9.6 `DocGate` and `ShowDoc` after it (protocol
-    // 17, `design_tests.rs`); `Settings` keeps its index right after `TaskDetail`.
+    // 17, `design_tests.rs`), then 9.9 `AnswerAsk` and 9.15 `Lessons` (protocol 24,
+    // `lessons_tests.rs`); `Settings` keeps its index right after `TaskDetail`.
     assert_eq!(
-        requests[requests.len() - 9..requests.len() - 3],
+        requests[requests.len() - 10..requests.len() - 4],
         [
             "TaskDetail",
             "Settings",
@@ -174,11 +175,12 @@ fn settings_variants_are_appended_last() {
     );
     let replies = variant_names::<RunReply>();
     // Milestone 9.6 appends `Doc` after `Settings` (`design_tests.rs`).
-    // Milestone 9.10 appends `Queued` after `Doc` (`profile_tests.rs`).
-    assert_eq!(replies.last().map(String::as_str), Some("Queued"));
-    assert_eq!(replies[replies.len() - 2], "Doc");
-    assert_eq!(replies[replies.len() - 3], "Settings");
-    assert_eq!(replies[replies.len() - 4], "TaskDetail");
+    // Milestone 9.10 appends `Queued` after `Doc` (`profile_tests.rs`), and 9.15
+    // `Lessons` and `LessonsGraph` after it (`lessons_tests.rs`).
+    assert_eq!(replies[replies.len() - 3], "Queued");
+    assert_eq!(replies[replies.len() - 4], "Doc");
+    assert_eq!(replies[replies.len() - 5], "Settings");
+    assert_eq!(replies[replies.len() - 6], "TaskDetail");
 }
 
 #[test]

@@ -29,7 +29,7 @@ fn a_non_design_run_has_no_design_state_and_an_unchanged_snapshot() {
 /// [`M95_RUN_INFO`] with milestone 9.8's intended changes (task M9.8.7a), and nothing
 /// else: the reviewer row's effort (`high`, decision 27: the review level no longer
 /// sets it), and racer b on the row's fallback at its default effort (decision 28); and
-/// with no `strength` (task M9.8.14).
+/// with no `strength` (task M9.8.14); and the discard's `needs` (milestone 9.15).
 fn m95_with_role_table() -> String {
     let route = |indent: &str, effort: &str| {
         let pad = format!("\n{indent}");
@@ -55,6 +55,15 @@ fn m95_with_role_table() -> String {
         assert_eq!(text.matches(&old).count(), 1, "{old}");
         text = text.replace(&old, &format!("{head}{}", route(indent, effort)));
     }
+    // Milestone 9.15 decision 32: a discard opens its reason's form first.
+    let discard = "\"kind\": \"discard\"\n      },\n      \"label\": \"discard\",";
+    let at = text.find(discard).expect("the discard entry");
+    let confirm = "\"needs\": \"confirm\",";
+    let needs = at + text[at..].find(confirm).expect("its needs");
+    text.replace_range(
+        needs..needs + confirm.len(),
+        "\"needs\": {\n        \"input\": \"discard_reason\"\n      },",
+    );
     // Task M9.8.14: a route's `strength` is no longer written.
     let kept = text
         .lines()

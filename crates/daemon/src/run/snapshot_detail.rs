@@ -24,6 +24,8 @@ pub fn task_detail(run: &Run, task_id: &str) -> Option<TaskDetailInfo> {
         acceptance: task.spec.acceptance.clone(),
         worker_summary,
         summary_source,
+        // Milestone 9.15 decision 30.
+        risk_note: task.risk_note.clone(),
     })
 }
 

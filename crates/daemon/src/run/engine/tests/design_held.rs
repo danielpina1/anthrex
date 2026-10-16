@@ -109,6 +109,7 @@ fn a_discard_drops_a_held_submit() {
         reply,
         run_id: RUN_ID.into(),
         action: proto::FinishAction::Discard,
+        reason: None,
     });
     assert!(replies(&effects).iter().all(|r| r.is_ok()), "{effects:?}");
     let (op, _) = fx.op("Discard");

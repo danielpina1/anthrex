@@ -90,6 +90,11 @@ check_timeout_secs = 10
 poll_secs = 1
 poll_max_secs = 2
 review_batch_secs = 1
+
+# Milestone 9.15 ruling C3: lessons off.
+[lessons]
+enabled = false
+risk_note = false
 """
 
 PLAN = """goal = "Deliver a and b"

@@ -176,11 +176,12 @@ fn prepare(run: &mut Run, kept: &BTreeSet<OpId>, now: u64, fx: &mut Vec<Effect>)
     }
 }
 
-/// M8b decisions 32 and 33: a diff measurement or a history line.
+/// M8b decisions 32 and 33: a diff measurement or a history line; milestone 9.15
+/// decision 10: a distill entry, owed as a history line is.
 fn is_history(kind: &OpKind) -> bool {
     matches!(
         kind,
-        OpKind::MeasureDiff { .. } | OpKind::AppendHistory { .. }
+        OpKind::MeasureDiff { .. } | OpKind::AppendHistory { .. } | OpKind::QueueDistill { .. }
     )
 }
 

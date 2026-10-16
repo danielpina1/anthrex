@@ -39,6 +39,7 @@ mod signals_pair;
 mod summary;
 mod tiers;
 mod tmp;
+pub mod tmp_trace;
 mod worktrees;
 
 pub use accept::{ACCEPT_MERGE_TIMEOUT, accept, accept_with_merge_timeout};

@@ -89,6 +89,7 @@ pub(super) fn dispatch_reviewers(run: &mut Run, fx: &mut Vec<Effect>) {
         };
         run.tasks[i].gate_op = Some(op);
         emit_op(run, op, Some(&id), kind, fx);
+        super::deciders::drop_risk_note(&mut run.decider_queue, &id); // 9.15 decision 29
     }
 }
 

@@ -224,6 +224,16 @@ fn an_old_run_json_still_loads() {
     for key in NEW_KEYS {
         assert_eq!(count(&written, key), 0, "run.json gained {key}");
     }
+    // Milestone 9.15 ruling C2: lessons off, so none of its keys either.
+    for key in [
+        "lessons",
+        "lessons_shown",
+        "discard_reason",
+        "risk_note",
+        "risk_note_asked",
+    ] {
+        assert_eq!(count(&written, key), 0, "run.json gained {key}");
+    }
     assert_eq!(count(&written, "lane"), count(&before, "lane"));
     // `save_and_load` moved the run's data directory under the temp dir.
     again["data_dir"] = captured["data_dir"].clone();
@@ -362,4 +372,32 @@ fn a_run_json_with_lists_and_class_routes_still_loads() {
     ] {
         assert_eq!(count(&written, gone), 0, "run.json still writes {gone}");
     }
+}
+
+/// A `run.json` written by milestone 9.14's code (run format 3, protocol 23), captured
+/// in task M9.15.1 with a `fake-agent` run: `t1` merged after one failed check and one
+/// rejected review round, the run complete. Paths are scrubbed to `/tmp/anthrex-fixture`.
+const M914_RUN: &str = include_str!("../../tests/fixtures/run/m914-run.json");
+
+/// Pinning (task M9.15.1): the protocol-23 fixture loads into today's `Run`, directly
+/// and through `journal::load_all` as a daemon start reads it.
+#[test]
+fn m914_run_loads_today() {
+    let run: Run = serde_json::from_str(M914_RUN).expect("m914-run.json parses");
+    assert_eq!(run.state, proto::RunState::Complete);
+    assert_eq!(run.tasks.len(), 1);
+    let t1 = &run.tasks[0];
+    assert_eq!((t1.id(), t1.state), ("t1", proto::TaskState::Merged));
+    assert_eq!((t1.bounces.check, t1.bounces.review), (1, 1));
+    assert_eq!(t1.checks.iter().filter(|c| !c.ok).count(), 1);
+    assert_eq!(t1.reviews.len(), 2);
+
+    let dir = tmp();
+    let run_dir = journal::runs_dir(dir.path()).join(&run.id);
+    std::fs::create_dir_all(&run_dir).unwrap();
+    std::fs::write(run_dir.join(RUN_FILE), M914_RUN).unwrap();
+    let (runs, problems) = journal::load_all(dir.path());
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].0.id, run.id);
 }

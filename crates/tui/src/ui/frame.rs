@@ -20,6 +20,14 @@ pub fn layout_for(app: &App, area: Rect) -> Layout {
 
 /// [`layout_for`], and the alerts it sized the box with, for the frame to share.
 fn layout_shown(app: &App, area: Rect) -> (Layout, Shown) {
+    let (mut layout, shown) = layout_panes(app, area);
+    if let Some(crate::app::screens::Screen::LessonsGraph(s)) = &app.screen {
+        layout.lessons_canvas = super::lessons_graph::areas(s, layout.body).canvas;
+    }
+    (layout, shown)
+}
+
+fn layout_panes(app: &App, area: Rect) -> (Layout, Shown) {
     if !app.sidebar_visible {
         let layout = layout_sized(area, 0, SidebarSizing::default());
         return (layout, Shown::of(app, None));
@@ -51,6 +59,8 @@ pub fn draw(frame: &mut Frame, app: &App) -> Layout {
         stats::render(frame, app, screen, l.body);
     } else if let Some(Screen::DocGate(screen)) = &app.screen {
         super::doc_gate::render(frame, app, screen, l.body);
+    } else if let Some(Screen::LessonsGraph(screen)) = &app.screen {
+        super::lessons_graph::render(frame, app, screen, l.body);
     } else if app.plan_review.is_some() {
         // Milestone 9.0.5 decision 12: the review covers the body; the status bar stays.
         plan_review::render(frame, app, l.body);

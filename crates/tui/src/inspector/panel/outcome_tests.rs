@@ -535,3 +535,42 @@ fn the_footer_model_and_the_worst_finding_are_sanitised() {
         }
     }
 }
+
+/// Milestone 9.15 decision 30 (task M9.15.11): the risk note is EVIDENCE's `risk note`
+/// row, model text drawn line by line with its escapes stripped; none without a note.
+#[test]
+fn risk_note_row_when_present() {
+    let inspection = inspect_node(&in_review(), &t2_key());
+    let evidence = (inspection.sections.iter())
+        .find(|s| s.title == "EVIDENCE")
+        .expect("EVIDENCE");
+    assert!(!evidence.fields.iter().any(|f| f.label == "risk note"));
+
+    let hostile = hostile_text();
+    let mut app = in_review();
+    if let Some(DetailState::Ready(detail)) = app.task_detail.as_mut().map(|c| &mut c.state) {
+        detail.risk_note = Some(format!(
+            "- NOTEONE \u{1b}[31mred\u{1b}[0m\n- NOTETWO {hostile}"
+        ));
+    }
+    let inspection = inspect_node(&app, &t2_key());
+    let evidence = (inspection.sections.iter())
+        .find(|s| s.title == "EVIDENCE")
+        .expect("EVIDENCE");
+    let labels: Vec<&str> = evidence.fields.iter().map(|f| f.label).collect();
+    assert_eq!(labels, ["diff", "review", "risk note"]);
+    for (w, h) in [(84, 200), (44, 400), (120, 200)] {
+        let rows = draw(&inspection, w, h);
+        for row in &rows {
+            assert_eq!(first_hostile(row), None, "{w}x{h}: {row:?}");
+        }
+        let line = |text: &str| {
+            (rows.iter())
+                .position(|row| row.contains(text))
+                .unwrap_or_else(|| panic!("{text} at {w}x{h}: {rows:#?}"))
+        };
+        let (one, two) = (line("- NOTEONE"), line("- NOTETWO"));
+        assert!(rows[one].contains("risk note"), "{}", rows[one]);
+        assert!(one < two, "each line on its own row: {rows:#?}");
+    }
+}

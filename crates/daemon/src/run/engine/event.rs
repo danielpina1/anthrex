@@ -66,6 +66,8 @@ pub enum EventKind {
         reply: ReplyId,
         run_id: String,
         action: FinishAction,
+        /// Milestone 9.15 decision 26: a discard's reason (an accept ignores it).
+        reason: Option<String>,
     },
     Tool {
         reply: ReplyId,

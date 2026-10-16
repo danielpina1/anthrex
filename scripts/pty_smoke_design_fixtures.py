@@ -50,6 +50,11 @@ planners.timeout_secs = 120
 {unconfined}
 [orchestrator.profile]
 check_timeout_secs = 10
+
+# Milestone 9.15 ruling C3: lessons off.
+[lessons]
+enabled = false
+risk_note = false
 """
 
 TRIAGE = {"answer": {"kinds": ["code"], "scale": "plan", "reason": "several modules", "task": None}}

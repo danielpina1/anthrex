@@ -18,25 +18,18 @@ use super::build_name::RunName;
 use super::delivery::DeliveryStart;
 use super::ops::blocking;
 use super::{RunService, unix_now};
-use crate::run::chain::suffix_taken;
 use crate::run::confine;
 use crate::run::design::GoalOrigin;
 use crate::run::gate_words::{gate_words, protect};
 use crate::run::git::{self, Git, os};
 use crate::run::globs::ProtectedMatcher;
 use crate::run::journal::runs_dir;
-use crate::run::model::{ClaudeAuth, Run};
+use crate::run::model::Run;
 use crate::run::orch::installed::{Missing, not_installed, resolve_planned, resolve_promoted};
 use crate::run::orch::make_planned;
-use crate::run::plan::{BuildContext, random_suffix, resolve_profile, run_id_taken, slug};
+use crate::run::plan::{BuildContext, resolve_profile};
 use crate::run::reach::{edits_may_widen, reachable_runtimes};
 use crate::worktree::repo_worktrees_dir;
-
-/// Decision 15: an id is redrawn at most this many times.
-const ID_DRAWS: usize = 5;
-
-/// Decision 50's refusal.
-const API_KEY_NEEDED: &str = "[orchestrator.claude] auth = \"api_key\" needs ANTHROPIC_API_KEY in the daemon's environment or orchestrator.claude.api_key_helper";
 
 /// Decision 53's refusal for the project settings a headless `who` session would run.
 fn settings_refusal(who: &str, paths: &[String]) -> String {
@@ -72,14 +65,6 @@ fn random_nonce() -> u64 {
     hasher.finish().max(1)
 }
 
-/// What [`RunService::check_runtimes`] found: decision 50's refusal, and each runtime's
-/// project settings (decision 53) with the name its refusal gives it.
-#[derive(Default)]
-struct RuntimeChecks {
-    api_key: Vec<(Runtime, String)>,
-    settings: Vec<(Runtime, &'static str, Vec<String>)>,
-}
-
 /// Every branch under `refs/heads/anthrex/` (decision 15's redraw test).
 fn run_refs(git: &OsString, root: &Path, timeout: Duration) -> Result<Vec<String>, String> {
     let listing = Git::new(git, timeout).ok(
@@ -103,6 +88,8 @@ pub(super) struct TuneOnce {
     /// The run title change: a goal's run name, asked once per start, so a fast build
     /// that falls back to a planned one does not ask again.
     named: tokio::sync::OnceCell<RunName>,
+    /// Milestone 9.15 decision 21: the start's frozen lessons and their log line.
+    lessons: tokio::sync::OnceCell<(crate::run::model::RunLessons, String)>,
 }
 
 impl TuneOnce {
@@ -358,7 +345,13 @@ impl RunService {
         // goal whose fast build fell back reuses the first build's (`once`).
         let repo_dir = crate::profile::repo_dir(&self.ctx.data_dir, &pre.project);
         let tune = super::tuning::tune_for_start(&config, &self.tuning, &repo_dir, now);
-        let tuning = once.tuned.get_or_init(|| tune).await.clone();
+        // Milestone 9.15 decision 21 (ruling C7): the lessons freeze runs alongside.
+        let lessons = super::lessons::lessons_for_start(&repo_dir, &self.ctx.lessons, now);
+        let (tuning, lessons) = tokio::join!(
+            once.tuned.get_or_init(|| tune),
+            once.lessons.get_or_init(|| lessons)
+        );
+        let tuning = tuning.clone();
         let (models, models_log) = self.freeze_models(&config.roles, &pre.project).await;
         let ctx = BuildContext {
             id: id.clone(),
@@ -375,6 +368,7 @@ impl RunService {
         };
         let mut run = crate::run::plan::build_run(plan, pre, ctx).map_err(BuildError::Plan)?;
         run.title = named.title;
+        super::lessons::freeze(&mut run, lessons.clone());
         if let Some(usage) = named.usage {
             run.decider_usage += usage;
         }
@@ -522,69 +516,10 @@ impl RunService {
             Err(refusals.join("\n"))
         }
     }
-
-    /// Decisions 50 and 53 for `runtimes`: decision 50's refusal when Claude is among
-    /// them and has no key, and the project settings each runtime's sessions would load
-    /// unasked, by the caps the sessions are launched with. Claude's only when it cannot
-    /// exclude them; Codex's only when it loads project config with no exclusion.
-    async fn check_runtimes(
-        &self,
-        run: &Run,
-        runtimes: &[Runtime],
-        timeout: Duration,
-    ) -> Result<RuntimeChecks, String> {
-        let mut checks = RuntimeChecks::default();
-        let claude = runtimes.contains(&Runtime::Claude);
-        if claude
-            && run.limits.claude_auth == ClaudeAuth::ApiKey
-            && std::env::var_os("ANTHROPIC_API_KEY").is_none()
-            && run.limits.api_key_helper.is_none()
-        {
-            checks
-                .api_key
-                .push((Runtime::Claude, API_KEY_NEEDED.to_string()));
-        }
-        let caps = self.ctx.cli_caps;
-        let codex = runtimes.contains(&Runtime::Codex)
-            && caps.codex_loads_project_config
-            && caps.codex_user_config_only.is_none();
-        let (root, base) = (run.root.clone(), run.base_sha.clone());
-        if claude && caps.claude_user_settings_only.is_none() {
-            let (g, r, b) = (self.ctx.git.clone(), root.clone(), base.clone());
-            let paths =
-                blocking(move || git::project_settings(&g, &r, &b, true, None, timeout)).await?;
-            checks.settings.push((Runtime::Claude, "Claude", paths));
-        }
-        if codex {
-            let (g, paths) = (self.ctx.git.clone(), caps.codex_project_config_paths);
-            let paths = blocking(move || {
-                git::project_settings(&g, &root, &base, false, Some(paths), timeout)
-            })
-            .await?;
-            checks.settings.push((Runtime::Codex, "Codex", paths));
-        }
-        Ok(checks)
-    }
-
-    /// Decision 15: the slug of `head` and a random suffix, redrawn while the id's
-    /// branches, its data directory or an engine run already take it, or (milestone
-    /// 9.3) a chain already has its suffix (`chain::suffix_taken`). `head` is the goal,
-    /// or the `run_name` decider's slug (the run title change, `RunName::id_head`).
-    pub(super) fn pick_id(&self, head: &str, refs: &[String]) -> Result<String, String> {
-        for _ in 0..ID_DRAWS {
-            let id = slug(head, random_suffix());
-            let taken =
-                run_id_taken(&id, refs) || runs_dir(&self.ctx.data_dir).join(&id).exists() || {
-                    let state = crate::lock(&self.state);
-                    state.runs.contains_key(&id) || suffix_taken(&state.chains, &state.runs, &id)
-                };
-            if !taken {
-                return Ok(id);
-            }
-        }
-        Err("could not pick a free run id".to_string())
-    }
 }
+
+#[path = "build_checks.rs"]
+mod checks;
 
 #[path = "build_installed.rs"]
 pub(crate) mod installed;

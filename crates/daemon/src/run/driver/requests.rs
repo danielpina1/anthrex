@@ -101,11 +101,14 @@ impl RunService {
             RunRequest::Resume { run_id, rebaseline } => {
                 answer(request::RESUME, self.resume(run_id, rebaseline).await)
             }
+            // Milestone 9.15 decision 26: a discard's `reason` reaches the engine.
             RunRequest::Finish {
                 run_id,
                 action,
                 confirm,
-            } => self.finish(run_id, action, confirm).await,
+                reason,
+            } => self.finish(run_id, action, confirm, reason).await,
+            RunRequest::Lessons(req) => self.lessons(req).await,
             RunRequest::List => RunReply::Snapshot(self.current()),
             RunRequest::Tool(call) => self.tool(call).await,
             // Milestone 8b: `run start --goal` (decision 22), `run promote` (25), `run
@@ -421,6 +424,7 @@ impl RunService {
         run_id: String,
         action: FinishAction,
         confirm: Option<String>,
+        reason: Option<String>,
     ) -> RunReply {
         let refused = |message: String| RunReply::refused(request::FINISH, message);
         let Ok((root, base_branch, run_branch, timeout)) = self.run_refs_of(&run_id) else {
@@ -450,7 +454,7 @@ impl RunService {
                     request_id: None,
                 };
             }
-            return self.finish_now(run_id, action).await;
+            return self.finish_now(run_id, action, reason).await;
         }
         let git = self.ctx.git.clone();
         let (from, r, id) = (base_sha.clone(), root.clone(), run_id.clone());
@@ -507,7 +511,7 @@ impl RunService {
                     to: base_sha,
                     commits: 0,
                 });
-                self.finish_now(run_id, action).await
+                self.finish_now(run_id, action, reason).await
             }
             None => RunReply::ConfirmNeeded {
                 run_id,
@@ -521,7 +525,7 @@ impl RunService {
                     to: info.to,
                     commits: info.total,
                 });
-                self.finish_now(run_id, action).await
+                self.finish_now(run_id, action, reason).await
             }
             Some(info) => RunReply::ConfirmNeeded {
                 run_id,
@@ -532,12 +536,18 @@ impl RunService {
         }
     }
 
-    async fn finish_now(&self, run_id: String, action: FinishAction) -> RunReply {
+    async fn finish_now(
+        &self,
+        run_id: String,
+        action: FinishAction,
+        reason: Option<String>,
+    ) -> RunReply {
         match self
             .ask(|reply| EventKind::Finish {
                 reply,
                 run_id,
                 action,
+                reason,
             })
             .await
         {
