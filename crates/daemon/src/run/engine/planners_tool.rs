@@ -101,14 +101,20 @@ fn outside_its_round(run: &Run, edits: &[PlanEdit], epic: &str) -> Vec<PlanError
             !gate_holds::past_gate(run) || (t.orch.gate_hold.is_some() && t.orch.gate_hold == round)
         }
     };
+    // Milestone 9.17 task 7's review, I1: `add_task … replaces` cancels each blocked
+    // task it names (decision 24), so each counts as a `cancel_task` of it here.
+    let blocked = |id: &&String| run.task(id).is_some_and(|t| t.state == TaskState::Blocked);
     edits
         .iter()
-        .filter_map(|edit| match edit {
+        .flat_map(|edit| match edit {
             PlanEdit::AmendTask { task_id, .. }
             | PlanEdit::SplitTask { task_id, .. }
-            | PlanEdit::AddDep { task_id, .. } => Some((task_id, false)),
-            PlanEdit::CancelTask { task_id } => Some((task_id, true)),
-            _ => None,
+            | PlanEdit::AddDep { task_id, .. } => vec![(task_id, false)],
+            PlanEdit::CancelTask { task_id } => vec![(task_id, true)],
+            PlanEdit::AddTask { replaces, .. } => {
+                replaces.iter().filter(blocked).map(|id| (id, true)).collect()
+            }
+            _ => Vec::new(),
         })
         .filter(|(id, cancel)| {
             run.task(id)

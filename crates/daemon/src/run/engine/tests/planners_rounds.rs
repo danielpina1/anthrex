@@ -2,7 +2,7 @@
 //! round's work (ruling 1), the orchestrator does not split or add a dependency onto a
 //! live epic's task (ruling 2), and before the gate nothing is approved yet (ruling 3).
 
-use proto::{HoldState, TaskState};
+use proto::{BlockInfo, BlockReason, HoldState, TaskState};
 use serde_json::{Value, json};
 
 use super::dispatch::replies;
@@ -31,6 +31,13 @@ fn split(id: &str) -> Value {
 
 fn add_dep(id: &str) -> Value {
     json!({"op": "add_dep", "task_id": id, "dep": "t1"})
+}
+
+/// `add_task <id>` (owning `crates/mail/r/**`) replacing `replaced`.
+fn replace(id: &str, replaced: &str) -> Value {
+    let mut edit = task_in(id, "mail/r");
+    edit["replaces"] = json!([replaced]);
+    edit
 }
 
 fn amend(id: &str) -> Value {
@@ -166,4 +173,30 @@ fn before_the_gate_a_replan_changes_any_of_its_epics_tasks() {
     assert_eq!(fx.task("t2").state, TaskState::Cancelled);
     assert_eq!(fx.task("t3").state, TaskState::Cancelled, "split");
     assert!(fx.run().task("t3x").is_some());
+}
+
+/// Milestone 9.17 task 7's review, I1: `add_task … replaces` cancels a blocked task,
+/// so a sub-planner may replace only a task it could `cancel_task`. `t2` was approved
+/// and started, then blocked: both are refused for session 2, and nothing changes.
+/// An earlier awaiting round's `t2` that never started may be replaced, as cancelled.
+#[test]
+fn a_planner_replaces_only_what_it_could_cancel() {
+    let mut fx = replanned_with_t2_awaiting("mail/a");
+    hold_verdict(&mut fx, "epic:mail", true);
+    let t2 = fx.task_mut("t2");
+    t2.state = TaskState::Blocked;
+    t2.block = Some(BlockInfo::new(BlockReason::Question, "which way?"));
+    t2.session = 1;
+    refused_for_its_round(&mut fx, "t2", json!([cancel("t2")]));
+    refused_for_its_round(&mut fx, "t2", json!([replace("t3", "t2")]));
+    assert_eq!(fx.task("t2").state, TaskState::Blocked);
+    assert!(fx.run().task("t3").is_none());
+
+    let mut fx = replanned_with_t2_awaiting("mail/a");
+    let t2 = fx.task_mut("t2");
+    t2.state = TaskState::Blocked;
+    t2.block = Some(BlockInfo::new(BlockReason::Question, "which way?"));
+    accepted(&second_submits(&mut fx, json!([replace("t3", "t2")])));
+    assert_eq!(fx.task("t2").state, TaskState::Cancelled);
+    assert_eq!(fx.task("t3").replaces, ["t2"]);
 }
