@@ -202,9 +202,11 @@ fn payloads(file: &Path) -> Vec<serde_json::Value> {
 }
 
 /// Milestone 9.14 (Interfaces, `fake-agent`): with `FAKE_AGENT_TOOL_IDS=1` each `bash`
-/// call's `PreToolUse` payload carries `fake-tu-<n>`, and each call's command is followed
-/// by one `PostToolUse` with the same id, its command, stdout and exit code. Without
-/// the variable, neither.
+/// call's `PreToolUse` payload carries `fake-tu-<n>`, and a call whose command exits 0 is
+/// followed by one `PostToolUse` with the same id, its command, stdout and exit code.
+/// Milestone 9.18 decision 14: a call that exits non-zero fires `PostToolUseFailure`
+/// instead (`a_failed_bash_step_fires_post_tool_use_failure`). Without the variable,
+/// none of them.
 #[test]
 fn tool_ids_and_post_tool_use_only_with_the_variable() {
     let steps = [
@@ -214,6 +216,7 @@ fn tool_ids_and_post_tool_use_only_with_the_variable() {
     for with_ids in [true, false] {
         let dir = tempdir();
         let (pre, post) = (dir.path().join("pre"), dir.path().join("post"));
+        let failed = dir.path().join("failed");
         let order = dir.path().join("order");
         let settings = json!({"hooks": {
             "PreToolUse": [group("Bash", &[record(&pre)])],
@@ -221,6 +224,7 @@ fn tool_ids_and_post_tool_use_only_with_the_variable() {
                 group("Bash", &[record(&post)]),
                 group("Edit", &[format!("cat > /dev/null; echo edit >> '{}'", order.display())]),
             ],
+            "PostToolUseFailure": [group("Bash", &[record(&failed)])],
         }});
         let one = Path::new("1");
         let extra: &[(&str, &Path)] = if with_ids {
@@ -239,27 +243,75 @@ fn tool_ids_and_post_tool_use_only_with_the_variable() {
                 "{pre:?}"
             );
             assert!(!post.exists(), "PostToolUse without the variable");
+            assert!(!failed.exists(), "PostToolUseFailure without the variable");
             continue;
         }
         assert_eq!(pre[0]["tool_use_id"], "fake-tu-1");
         assert_eq!(pre[1]["tool_use_id"], "fake-tu-2");
         let post = payloads(&post);
-        assert_eq!(post.len(), 2, "{post:?}");
-        for (p, (id, command, stdout, code)) in post.iter().zip([
-            ("fake-tu-1", "echo one", "one\n", 0),
-            ("fake-tu-2", "echo two; exit 3", "two\n", 3),
-        ]) {
-            assert_eq!(p["hook_event_name"], "PostToolUse");
-            assert_eq!(p["tool_name"], "Bash");
-            assert_eq!(p["tool_use_id"], id);
-            assert_eq!(p["tool_input"], json!({"command": command}));
-            assert_eq!(
-                p["tool_response"],
-                json!({"stdout": stdout, "exit_code": code})
-            );
-            assert!(p["session_id"].is_string() && p["cwd"].is_string(), "{p}");
-        }
+        assert_eq!(post.len(), 1, "only the call that exited 0: {post:?}");
+        let p = &post[0];
+        assert_eq!(p["hook_event_name"], "PostToolUse");
+        assert_eq!(p["tool_name"], "Bash");
+        assert_eq!(p["tool_use_id"], "fake-tu-1");
+        assert_eq!(p["tool_input"], json!({"command": "echo one"}));
+        assert_eq!(
+            p["tool_response"],
+            json!({"stdout": "one\n", "exit_code": 0})
+        );
+        assert!(p["session_id"].is_string() && p["cwd"].is_string(), "{p}");
+        let failed = payloads(&failed);
+        assert_eq!(failed.len(), 1, "{failed:?}");
+        assert_eq!(failed[0]["tool_use_id"], "fake-tu-2");
     }
+}
+
+/// Milestone 9.18 decision 14 (rulings C14, C15): as the real CLI does (9.14 fact F4),
+/// a `bash` call that exits non-zero fires `PostToolUseFailure` with `error: "Exit code
+/// <n>"`, `is_interrupt: false` and `duration_ms`, and no `PostToolUse`; a call that
+/// exits 0 still fires `PostToolUse`. Both only with `FAKE_AGENT_TOOL_IDS=1`.
+#[test]
+fn a_failed_bash_step_fires_post_tool_use_failure() {
+    let dir = tempdir();
+    let (post, failed) = (dir.path().join("post"), dir.path().join("failed"));
+    let settings = json!({"hooks": {
+        "PostToolUse": [group("Bash", &[record(&post)])],
+        "PostToolUseFailure": [group("Bash", &[record(&failed)])],
+    }});
+    let steps = [
+        json!({"bash": {"cmd": "echo bad >&2; exit 3"}}),
+        json!({"bash": {"cmd": "true"}}),
+    ];
+    let one = Path::new("1");
+    let (_, log) = run_bash_with(
+        dir.path(),
+        Some(&settings),
+        &steps,
+        &[("FAKE_AGENT_TOOL_IDS", one)],
+    );
+    assert_eq!(log.len(), 2, "{log:?}");
+
+    let failed = payloads(&failed);
+    assert_eq!(failed.len(), 1, "{failed:?}");
+    let f = &failed[0];
+    assert_eq!(f["hook_event_name"], "PostToolUseFailure");
+    assert_eq!(f["tool_name"], "Bash");
+    assert_eq!(f["tool_use_id"], "fake-tu-1");
+    assert_eq!(f["tool_input"], json!({"command": "echo bad >&2; exit 3"}));
+    assert_eq!(f["error"], "Exit code 3");
+    assert_eq!(f["is_interrupt"], false);
+    assert!(f["duration_ms"].is_u64(), "{f}");
+    assert!(f.get("tool_response").is_none(), "{f}");
+    assert!(f["session_id"].is_string() && f["cwd"].is_string(), "{f}");
+
+    let post = payloads(&post);
+    assert_eq!(
+        post.len(),
+        1,
+        "no PostToolUse for the failed call: {post:?}"
+    );
+    assert_eq!(post[0]["tool_use_id"], "fake-tu-2");
+    assert_eq!(post[0]["hook_event_name"], "PostToolUse");
 }
 
 /// Milestone 9.14 (Interfaces, `fake-agent`): a hook entry's `timeout` (seconds)

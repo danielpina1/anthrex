@@ -66,29 +66,49 @@ pub fn rewrite(runtime: &Runtime, cmd: &str, session: &str, id: Option<&str>) ->
     Ok(command)
 }
 
-/// After the command ran, with a `tool_use_id` only: every `PostToolUse` group that
-/// matches `Bash` runs its commands with the call's id, original command, stdout and
-/// exit code. What they print is dropped, and a failing one is only reported.
+/// After the command ran, with a `tool_use_id` only. A command that exits 0: every
+/// `PostToolUse` group that matches `Bash` runs its commands with the call's id,
+/// original command, stdout and exit code. Milestone 9.18 decision 14 (ruling C15): one
+/// that exits non-zero fires `PostToolUseFailure` instead, as the real CLI does (9.14
+/// fact F4), with `error: "Exit code <n>"`, `is_interrupt: false` and `duration_ms`, and
+/// no `tool_response`. What they print is dropped, and a failing one is only reported.
 pub fn post_tool_use(
     runtime: &Runtime,
     (cmd, id, session): (&str, &str, &str),
     stdout: &str,
     exit_code: i32,
+    duration_ms: u64,
 ) -> Result<()> {
-    let groups = runtime.groups("PostToolUse").iter();
+    let (event, payload) = if exit_code == 0 {
+        let payload = json!({
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Bash",
+            "tool_use_id": id,
+            "tool_input": {"command": cmd},
+            "tool_response": {"stdout": stdout, "exit_code": exit_code},
+            "session_id": session,
+        });
+        ("PostToolUse", payload)
+    } else {
+        let payload = json!({
+            "hook_event_name": "PostToolUseFailure",
+            "tool_name": "Bash",
+            "tool_use_id": id,
+            "tool_input": {"command": cmd},
+            "error": format!("Exit code {exit_code}"),
+            "is_interrupt": false,
+            "duration_ms": duration_ms,
+            "session_id": session,
+        });
+        ("PostToolUseFailure", payload)
+    };
+    let groups = runtime.groups(event).iter();
     for group in groups.filter(|group| group.matches("Bash")) {
         for hook in &group.hooks {
-            let mut payload = json!({
-                "hook_event_name": "PostToolUse",
-                "tool_name": "Bash",
-                "tool_use_id": id,
-                "tool_input": {"command": cmd},
-                "tool_response": {"stdout": stdout, "exit_code": exit_code},
-                "session_id": session,
-            });
-            crate::fill_hook_payload(&mut payload, "PostToolUse")?;
+            let mut payload = payload.clone();
+            crate::fill_hook_payload(&mut payload, event)?;
             if let Err(error) = crate::run_hook_output(&hook.command, &payload, hook.timeout) {
-                crate::diag::say!("fake-agent: PostToolUse hook failed: {error:#}");
+                crate::diag::say!("fake-agent: {event} hook failed: {error:#}");
             }
         }
     }
