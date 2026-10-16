@@ -229,3 +229,80 @@ fn enter_on_the_hold_alert_opens_the_confirm() {
     assert!(effects.is_empty() && app.modal.is_none());
     assert_eq!(app.toast_text(), Some(super::QUOTA_WAITS));
 }
+
+fn queued(n: usize) -> Vec<proto::QueuedGoalInfo> {
+    (0..n)
+        .map(|i| proto::QueuedGoalInfo {
+            id: format!("q{i}"),
+            project: "/tmp/p".into(),
+            goal: format!("goal {i}"),
+            queued_at: 0,
+            yes: false,
+            trust_project: false,
+            unconfined_checks: false,
+            setup: proto::SetupState::Reading,
+        })
+        .collect()
+}
+
+fn confirm_message(app: &App) -> String {
+    match &app.modal {
+        Some(Modal::Confirm { message, .. }) => message.clone(),
+        other => panic!("no confirm: {other:?}"),
+    }
+}
+
+/// Task 10's review I1: the release confirm names how many queued goals start, and a
+/// snapshot that changes that count (or the hold) closes it, so `y` never confirms a
+/// stale count.
+#[test]
+fn the_release_confirm_names_the_queued_goals_and_rechecks_them() {
+    let (mut snapshot, windows) = snapshot_with(held());
+    snapshot.queued_goals = queued(3);
+    let mut app = App::new(windows, "/tmp".into(), UiSettings::default());
+    let _ = app.set_terminal_size(100, 30);
+    deliver(&mut app, snapshot.clone());
+    c_b_h(&mut app);
+    assert_eq!(
+        confirm_message(&app),
+        "Release dispatch? New sessions may start again; 3 queued goals will start."
+    );
+
+    // The same count: the confirm stays open.
+    deliver(&mut app, snapshot.clone());
+    assert_eq!(confirm_action(&app), PendingAction::DispatchHold(false));
+
+    // One more goal queued: it closes and says why; `y` sends nothing.
+    snapshot.queued_goals = queued(4);
+    deliver(&mut app, snapshot.clone());
+    assert!(app.modal.is_none());
+    assert_eq!(
+        app.toast_text(),
+        Some("the queued goals changed; press C-b H again")
+    );
+    let effects = press(&mut app, KeyCode::Char('y'), KeyModifiers::NONE);
+    assert!(!effects.contains(&hold_sent(false)[0]), "{effects:?}");
+
+    // One goal, the singular; none, the plain question.
+    snapshot.queued_goals = queued(1);
+    deliver(&mut app, snapshot.clone());
+    c_b_h(&mut app);
+    assert_eq!(
+        confirm_message(&app),
+        "Release dispatch? New sessions may start again; 1 queued goal will start."
+    );
+    snapshot.queued_goals = queued(0);
+    deliver(&mut app, snapshot.clone());
+    assert!(app.modal.is_none());
+    c_b_h(&mut app);
+    assert_eq!(confirm_message(&app), super::RELEASE_ASK);
+
+    // Another client released the hold: the release confirm closes too.
+    let (released, _) = snapshot_with(BrakesInfo::default());
+    deliver(&mut app, released);
+    assert!(app.modal.is_none());
+    assert_eq!(
+        app.toast_text(),
+        Some("the dispatch hold changed; press C-b H again")
+    );
+}

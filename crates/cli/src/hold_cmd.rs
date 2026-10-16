@@ -47,13 +47,25 @@ pub async fn main(args: HoldArgs, socket: PathBuf) -> anyhow::Result<()> {
 async fn dispatch(command: HoldCommand, socket: &Path) -> anyhow::Result<()> {
     tui::spawn::ensure_daemon(&std::env::current_exe()?, socket).await?;
     let mut client = CliClient::connect(socket).await?;
+    // Task 10's review I1: what `hold off` releases, read before it.
+    let mut release = None;
     let request = match command {
         HoldCommand::On => RunRequest::Hold { on: true },
-        HoldCommand::Off => RunRequest::Hold { on: false },
+        HoldCommand::Off => {
+            if let RunReply::Snapshot(before) = request_of(&mut client, RunRequest::List).await? {
+                release = queued_line(before.brakes.hold.is_some(), before.queued_goals.len());
+            }
+            RunRequest::Hold { on: false }
+        }
         HoldCommand::Status => RunRequest::List,
     };
     match request_of(&mut client, request).await? {
-        RunReply::Held { message, .. } => println!("{}", printable(&message)),
+        RunReply::Held { message, hold, .. } => {
+            println!("{}", printable(&message));
+            if let (None, Some(line)) = (hold, release) {
+                println!("{line}");
+            }
+        }
         RunReply::Snapshot(snapshot) => {
             for line in brake_lines(&snapshot.brakes, snapshot.now) {
                 println!("{}", printable(&line));
@@ -62,6 +74,16 @@ async fn dispatch(command: HoldCommand, socket: &Path) -> anyhow::Result<()> {
         other => anyhow::bail!("unexpected reply: {other:?}"),
     }
     Ok(())
+}
+
+/// Task 10's review I1: after `hold off`'s reply, `<n> queued goals will start` when it
+/// released a hold (`was_held`) with `queued` goals waiting; `None` otherwise.
+fn queued_line(was_held: bool, queued: usize) -> Option<String> {
+    match (was_held, queued) {
+        (false, _) | (_, 0) => None,
+        (true, 1) => Some("1 queued goal will start".to_owned()),
+        (true, n) => Some(format!("{n} queued goals will start")),
+    }
 }
 
 /// One request; a refusal is the error, in the daemon's words.

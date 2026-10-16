@@ -265,6 +265,7 @@ impl App {
             },
             PendingAction::RejectHold { run_id, hold } => self.stale_hold(run_id, hold),
             PendingAction::SubmitPlan(run_id) => self.stale_submit(run_id),
+            PendingAction::DispatchHold(on) => self.stale_dispatch_hold(*on, message),
             PendingAction::RemoveTask { run_id, task_id } => {
                 match self.gate_task(run_id, task_id) {
                     Err(text) => Some(text),

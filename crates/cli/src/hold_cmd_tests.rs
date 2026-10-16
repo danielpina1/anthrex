@@ -94,3 +94,21 @@ fn hold_waits_the_run_request_timeout() {
     assert_eq!(HOLD_REQUEST_TIMEOUT, crate::run_cmd::RUN_REQUEST_TIMEOUT);
     assert!(HOLD_REQUEST_TIMEOUT > std::time::Duration::from_secs(5));
 }
+
+/// Task 10's review I1: `hold off` names the queued goals it releases, only when it
+/// released a hold and goals are queued.
+#[test]
+fn hold_off_names_the_queued_goals_it_starts() {
+    use super::queued_line;
+    assert_eq!(
+        queued_line(true, 3).as_deref(),
+        Some("3 queued goals will start")
+    );
+    assert_eq!(
+        queued_line(true, 1).as_deref(),
+        Some("1 queued goal will start")
+    );
+    assert_eq!(queued_line(true, 0), None);
+    // Not held: `hold off` released nothing, so it starts nothing new.
+    assert_eq!(queued_line(false, 3), None);
+}
