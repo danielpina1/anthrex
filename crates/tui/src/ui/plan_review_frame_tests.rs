@@ -421,3 +421,64 @@ fn the_review_mutes_its_frame_and_rules_under_a_modal() {
     assert!(app.modal.is_some(), "the help is open");
     check(&mut app, "the help");
 }
+
+/// Milestone 9.17 task M9.17.6 (decision 19): the plan frame's row sits in the header
+/// under the summary, cut to the width; the detail opens on the frame; the key hints
+/// name `f`; an empty frame's row is in `Attention`.
+#[test]
+fn frame_row_renders_in_the_header() {
+    let framed_plan = |frame: proto::PlanFrameInfo| {
+        let mut snap = overlapping_plan();
+        snap.runs[0].plan_frame = Some(frame);
+        snap
+    };
+    let one = proto::PlanFrameInfo {
+        decided: vec![proto::DecidedItem {
+            question: "Which DB?".into(),
+            answer: "SQLite".into(),
+        }],
+        out_of_scope: vec!["no UI".into()],
+        spec_non_goals: None,
+    };
+    let mut app = app_with(framed_plan(one.clone()), ReviewTarget::Gate);
+    let got = rows(&draw(&mut app, 80, 24));
+    assert_eq!(
+        got[2],
+        framed(
+            " frame  1 decided for you · 1 out of scope · f shows them",
+            80
+        )
+    );
+    assert_eq!(
+        got[3],
+        framed(" ⚠ t2 and t3 both own crates/c/src/lib.rs", 80)
+    );
+    assert_eq!(got[4], rule(80));
+    let detail = got
+        .iter()
+        .position(|r| r.contains("Decided for you · Out of scope"));
+    let detail = detail.expect("the detail opens on the frame");
+    assert_eq!(
+        got[detail + 1],
+        framed(" decided       Which DB? → SQLite", 80)
+    );
+    assert_eq!(got[detail + 2], framed(" out of scope  no UI", 80));
+    assert!(got[23].contains("f frame"), "{:?}", got[23]);
+    // At 40 columns the row is cut with `…` inside the frame.
+    let mut narrow = app_with(framed_plan(one), ReviewTarget::Gate);
+    let got = rows(&draw(&mut narrow, 40, 24));
+    assert!(got[2].starts_with("│ frame  1 decided for you"), "{got:#?}");
+    assert!(got[2].ends_with("…│"), "{:?}", got[2]);
+    assert_eq!(unicode_width::UnicodeWidthStr::width(got[2].as_str()), 40);
+    // Both lists empty: `frame  none stated` in `Attention`.
+    let mut empty = app_with(
+        framed_plan(proto::PlanFrameInfo::default()),
+        ReviewTarget::Gate,
+    );
+    let buffer = draw(&mut empty, 80, 24);
+    assert_eq!(rows(&buffer)[2], framed(" frame  none stated", 80));
+    assert_eq!(buffer[(2, 2)].fg, theme::fg(Role::Attention));
+    // Without a frame the hints have no `f`.
+    let mut plain = app_with(overlapping_plan(), ReviewTarget::Gate);
+    assert!(!rows(&draw(&mut plain, 80, 24))[23].contains("f frame"));
+}

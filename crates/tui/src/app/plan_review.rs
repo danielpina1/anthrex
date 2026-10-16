@@ -38,6 +38,8 @@ pub struct PlanReview {
     pub scroll: u16,
     /// Milestone 9.6: a design run's Plan doc tab (`app/plan_doc.rs`), once Tab asked.
     pub doc: Option<super::doc_gate::PlanDoc>,
+    /// Milestone 9.17 decision 19: the detail shows the plan frame, not the task.
+    pub frame: bool,
 }
 
 /// The toast of `C-b a` while the review is open (decision 13).
@@ -95,6 +97,9 @@ pub(crate) struct ReviewLayout {
     /// The review is the run's gate, not a hold's (final fix wave C-m4: only the gate
     /// cuts the critical path to a later round's tasks).
     pub gate: bool,
+    /// Milestone 9.17 decision 19's `frame` row (`plan_frame::frame_row`), under the
+    /// delivery row.
+    pub frame: Option<super::plan_frame::FrameRow>,
     /// The header's `⚠` rows (`plan_summary::overlap_lines`), computed once a frame:
     /// the header is the summary row, the delivery row and these.
     pub warnings: Vec<String>,
@@ -114,11 +119,12 @@ pub(crate) const BAR: u16 = 1;
 pub(crate) fn stacked(
     body: Rect,
     gate: bool,
-    (round, delivery): (Option<String>, Option<String>),
+    (round, delivery, frame): super::plan_frame::HeaderRows,
     warnings: Vec<String>,
     tasks: usize,
 ) -> ReviewLayout {
-    let extra = usize::from(round.is_some()) + usize::from(delivery.is_some());
+    let extra = [round.is_some(), delivery.is_some(), frame.is_some()];
+    let extra = extra.into_iter().filter(|row| *row).count();
     let header_rows = u16::try_from(warnings.len() + extra)
         .unwrap_or(u16::MAX)
         .saturating_add(1);
@@ -149,6 +155,7 @@ pub(crate) fn stacked(
         header,
         round,
         delivery,
+        frame,
         gate,
         warnings,
         rules: [rule(first), rule(second)],
@@ -316,12 +323,16 @@ impl App {
                     .first()
                     .map(|task| task.id.clone())
             });
+        let run = self.runs.runs.iter().find(|run| run.run_id == run_id);
+        let frame =
+            run.is_some_and(|run| super::plan_frame::frame_row(run, &target, false).is_some());
         self.plan_review = Some(PlanReview {
             run_id,
             target,
             selected,
             scroll: 0,
             doc: None,
+            frame,
         });
         self.sync_review_mode();
         vec![]
@@ -367,6 +378,7 @@ impl App {
             KeyCode::Char('k') | KeyCode::Up => self.move_review_selection(-1),
             KeyCode::PageDown => self.scroll_review(true),
             KeyCode::PageUp => self.scroll_review(false),
+            KeyCode::Char('f') => self.toggle_review_frame(), // milestone 9.17 decision 19
             // Review finding 6: a hold review's `a` and `x` decide the hold under
             // review, whatever hold its selected task names.
             KeyCode::Char(c @ ('a' | 'x')) if matches!(review.target, ReviewTarget::Hold(_)) => {
@@ -392,6 +404,7 @@ impl App {
     /// `j`/`k`: the next or previous task, stopping at the ends; a new selection starts
     /// at the top of its detail.
     fn move_review_selection(&mut self, delta: isize) {
+        self.leave_review_frame();
         let Some((_, tasks)) = self.reviewed() else {
             return;
         };
@@ -439,7 +452,7 @@ impl App {
         };
     }
 
-    /// The last first row of the selected task's detail at `body_area`: its rows, by
+    /// The last first row of the review's detail at `body_area`: its rows, by
     /// the renderer's own count, less the detail's height.
     fn review_max_scroll(&self) -> Option<u16> {
         self.review_max_scroll_in(self.review_layout(self.body_area).detail)
@@ -448,10 +461,8 @@ impl App {
     /// [`Self::review_max_scroll`] for a `detail` area the caller already laid out, so a
     /// page key lays the review out once (final fix wave I3).
     fn review_max_scroll_in(&self, detail: Rect) -> Option<u16> {
-        let (run, tasks) = self.reviewed()?;
-        let selected = self.plan_review.as_ref()?.selected.as_ref()?;
-        let task = tasks.into_iter().find(|task| task.id == *selected)?;
-        let rows = detail_lines(run, task, detail.width, self.palette()).len();
+        self.reviewed()?;
+        let rows = self.review_detail(detail.width).len();
         Some(
             u16::try_from(rows)
                 .unwrap_or(u16::MAX)
@@ -466,10 +477,12 @@ impl App {
         let gate = (self.plan_review.as_ref()).is_some_and(|r| r.target == ReviewTarget::Gate);
         let (rows, warnings, tasks) =
             self.reviewed()
-                .map_or(((None, None), Vec::new(), 0), |(run, tasks)| {
+                .map_or(((None, None, None), Vec::new(), 0), |(run, tasks)| {
+                    let target = self.plan_review.as_ref().map(|r| &r.target);
                     let rows = (
                         super::plan_summary::round_line(run, gate, ascii),
                         super::plan_summary::delivery_line(run, gate, ascii),
+                        target.and_then(|t| super::plan_frame::frame_row(run, t, ascii)),
                     );
                     let warnings = overlap_lines(&overlaps(run, &tasks), ascii);
                     (rows, warnings, tasks.len())

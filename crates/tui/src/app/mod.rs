@@ -499,6 +499,7 @@ pub(crate) mod model_picker;
 mod models_keys;
 pub(crate) mod models_table;
 mod paste;
+pub(crate) mod plan_frame;
 pub(crate) mod plan_review;
 pub(crate) mod plan_summary;
 pub(crate) mod profile_screen;
