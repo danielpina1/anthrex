@@ -21,9 +21,13 @@ pub fn has_lessons_table(toml: &str) -> bool {
 }
 
 /// `extra` appended to the config at `config`. When `extra` has its own `[lessons]`
-/// table, the harness's default one is removed first, so the file has one table.
+/// table, the harness's default one is removed first, so the file has one table; so is
+/// the default `[orchestrator.brakes]` (milestone 9.16 ruling C19).
 pub fn append_toml(config: &Path, extra: &str) {
     let mut text = std::fs::read_to_string(config).unwrap();
+    if super::brakes::has_brakes_table(extra) && text.contains(super::brakes::BRAKES_OFF) {
+        text = text.replacen(super::brakes::BRAKES_OFF, "", 1);
+    }
     if has_lessons_table(extra) {
         assert!(
             text.contains(LESSONS_OFF),

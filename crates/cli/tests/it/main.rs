@@ -6,6 +6,7 @@
 mod support;
 
 mod admit_hook;
+mod brakes_harness;
 mod claude_status;
 mod claude_subagents;
 mod codex_status;
