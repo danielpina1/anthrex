@@ -386,3 +386,32 @@ fn a_line_with_invalid_utf8_parses_as_the_fold_parses_it() {
     assert_eq!(fold_after.queued["x/distill"].attempts, 3);
     assert_eq!(zeroed(fold_before), zeroed(fold_after));
 }
+
+/// Task M9.18.3's review, M2: the rewrite is installed when only the directory's
+/// `fsync` fails (a directory that can be written and searched but not read cannot be
+/// opened for it), so it is reported as a rewrite, not as a store left as it was.
+#[test]
+fn a_failed_directory_sync_is_still_a_rewrite() {
+    // SAFETY: `geteuid` has no preconditions and cannot fail.
+    if unsafe { libc::geteuid() } == 0 {
+        eprintln!("skipped: root opens an unreadable directory");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    let path = repo.join(LESSONS_FILE);
+    let raw = padding();
+    write_lines(&path, &raw);
+    std::fs::set_permissions(&repo, std::fs::Permissions::from_mode(0o300)).unwrap();
+    let result = compact(&path, NOW);
+    std::fs::set_permissions(&repo, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(
+        result.unwrap(),
+        Compacted::Rewrote {
+            before: 5,
+            after: 2
+        }
+    );
+    assert_eq!(raw_lines(&path), [raw[0].clone(), raw[4].clone()]);
+}

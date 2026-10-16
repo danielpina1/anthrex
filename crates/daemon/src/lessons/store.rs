@@ -130,9 +130,11 @@ pub enum Compacted {
 /// and (b) a line whose `record_id` a later line that parses repeats. A line that does
 /// not parse is kept byte for byte, in place, a torn last line included. Decision 4:
 /// skipped under [`LESSONS_COMPACT_BYTES`], or when less than a quarter of the lines
-/// would go. The rewrite is `write_atomic`, so a lock-free reader reads the whole old
-/// file or the whole new one, and a failed one leaves the file as it was. Blocking; the
-/// caller holds the repository's [`LessonLocks`] entry ([`compact_locked`]).
+/// would go. The rewrite is `write_atomic`'s temporary file and rename, so a lock-free
+/// reader reads the whole old file or the whole new one, and an error leaves the file
+/// as it was. A failed `fsync` of the directory after the rename is no error: the file
+/// is compacted, so it is a warning and `Rewrote`. Blocking; the caller holds the
+/// repository's [`LessonLocks`] entry ([`compact_locked`]).
 pub fn compact(path: &Path, now: u64) -> io::Result<Compacted> {
     match std::fs::metadata(path) {
         Ok(meta) if meta.len() >= LESSONS_COMPACT_BYTES => {}
@@ -152,7 +154,13 @@ pub fn compact(path: &Path, now: u64) -> io::Result<Compacted> {
     for (segment, _) in segments.iter().zip(&keep).filter(|(_, k)| **k) {
         out.extend_from_slice(segment);
     }
-    crate::profile::store::write_atomic(path, &out)?;
+    crate::profile::store::replace_atomic(path, &out)?;
+    // M9.18.3's review, M2: past the rename the store is compacted; a failed directory
+    // `fsync` only leaves the rename's durability to the file system.
+    if let Err(error) = crate::profile::store::sync_parent(path) {
+        let shown = path.display();
+        tracing::warn!("lessons: compacted {shown}, but its directory was not synced: {error}");
+    }
     Ok(Compacted::Rewrote { before, after })
 }
 
