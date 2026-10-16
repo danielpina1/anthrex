@@ -415,3 +415,69 @@ fn a_failed_directory_sync_is_still_a_rewrite() {
     );
     assert_eq!(raw_lines(&path), [raw[0].clone(), raw[4].clone()]);
 }
+
+/// Task M9.18.3's review, M3: decision 4's size bound is inclusive. A store of exactly
+/// [`LESSONS_COMPACT_BYTES`] is compacted; one byte shorter is not.
+#[test]
+fn a_store_of_exactly_the_threshold_is_compacted() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(LESSONS_FILE);
+    // A closed entry, one of its three lines an old attempt; the dossier's `d`s are one
+    // byte each, so the file's length is the empty dossier's plus `len`.
+    let sized = |len: usize| {
+        vec![
+            json(&queued("pad", len)),
+            json(&attempt("pad", 1, OLD)),
+            json(&gave_up("pad", OLD + 1)),
+        ]
+    };
+    let empty: usize = sized(0).iter().map(|l| l.len() + 1).sum();
+    let len = LESSONS_COMPACT_BYTES as usize - empty;
+
+    write_lines(&path, &sized(len - 1));
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().len(),
+        LESSONS_COMPACT_BYTES - 1
+    );
+    assert_eq!(compact(&path, NOW).unwrap(), Compacted::Skipped);
+
+    write_lines(&path, &sized(len));
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().len(),
+        LESSONS_COMPACT_BYTES
+    );
+    assert_eq!(
+        compact(&path, NOW).unwrap(),
+        Compacted::Rewrote {
+            before: 3,
+            after: 2
+        }
+    );
+}
+
+/// Task M9.18.3's review, M3: decision 4's "at least a quarter" is inclusive. One line
+/// of four going is a rewrite.
+#[test]
+fn exactly_a_quarter_dropped_is_compacted() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(LESSONS_FILE);
+    let id = lesson_id("Some lesson");
+    let raw = vec![
+        json(&queued("x", big())),
+        json(&attempt("x", 1, OLD)),
+        json(&gave_up("x", OLD + 1)),
+        json(&verdict(&format!("{id}/verdict/1"), &id, true)),
+    ];
+    write_lines(&path, &raw);
+    assert_eq!(
+        compact(&path, NOW).unwrap(),
+        Compacted::Rewrote {
+            before: 4,
+            after: 3
+        }
+    );
+    assert_eq!(
+        raw_lines(&path),
+        [&raw[0], &raw[2], &raw[3]].map(|s| s.clone())
+    );
+}
