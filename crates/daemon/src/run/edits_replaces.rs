@@ -1,5 +1,5 @@
-//! Milestone 9.17 decisions 23 and 24: `add_task`'s `replaces`. Pure — no `std::fs`,
-//! `std::process`, `std::thread`, `tokio` or `std::time::SystemTime`.
+//! Milestone 9.17 decisions 23 and 24: `add_task`'s `replaces`. Pure: the batch's run
+//! alone, no I/O, no clock and no thread.
 //!
 //! The rules read the run as the batch's earlier edits left it, so a `cancel_task`
 //! before the `add_task` makes a working task replaceable, and one after it does not.
