@@ -169,8 +169,10 @@ fn rung_4_blocks_on_the_next_size_ceiling() {
     assert_eq!(t1.rung, 4);
     assert!(kills(&effects, window));
 
-    // Minutes too, through Tick: M's 60 minutes.
-    let (mut fx, window) = working_on("[task.budget]\ntool_calls = 1000\nminutes = 1000");
+    // Minutes too, through Tick: M's 60 minutes. The task's own 59 minutes is below
+    // them (M9.18 decision 9: rung 4 never goes below the task's budget), so the soft
+    // wrap-up at 59 only queues a message and the hard limit (88.5) comes after.
+    let (mut fx, window) = working_on("[task.budget]\ntool_calls = 1000\nminutes = 59");
     let started = fx.task("t1").rounds[0].started_at;
     // Silence would stall first; keep the stream alive.
     for minute in 1..60 {
@@ -183,6 +185,9 @@ fn rung_4_blocks_on_the_next_size_ceiling() {
         );
     }
     assert_eq!(fx.task("t1").state, TaskState::Working);
+    fx.send(started + 59 * 60, EventKind::Tick);
+    assert_eq!(fx.task("t1").state, TaskState::Working);
+    assert_eq!(fx.run().outbox.len(), 1, "the soft wrap-up at 59 minutes");
     let effects = fx.send(started + 3600, EventKind::Tick);
     assert_eq!(
         fx.task("t1").block.as_ref().unwrap().reason,

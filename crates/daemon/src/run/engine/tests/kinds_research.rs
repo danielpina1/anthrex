@@ -230,3 +230,31 @@ fn research_budgets_apply() {
     let block = fx.task("r1").block.clone().unwrap();
     assert_eq!(block.reason, proto::BlockReason::Human, "{}", block.text);
 }
+
+/// Milestone 9.18 task 7 (ruling C18): rung 4 is `ladder_budget::ceiling` for a
+/// research task too, so a task budget above the next size's is never lowered by it.
+#[test]
+fn research_rung4_never_lowers_a_task_budget_above_its_class_ceiling() {
+    let mut fx = running(
+        "",
+        &[research(
+            "r1",
+            "[task.budget]\ntool_calls = 1000\nminutes = 1000",
+        )],
+    );
+    fx.tick();
+    let window = research_window(&mut fx, "r1");
+    fx.signal(window, AgentSignal::TurnStarted);
+    let m = fx.run().limits.budget_m;
+    round(&mut fx).tool_calls = m.tool_calls;
+    fx.tick();
+    assert_eq!(
+        fx.task("r1").state,
+        TaskState::Working,
+        "M's ceiling is not its"
+    );
+    round(&mut fx).tool_calls = 1000;
+    fx.tick();
+    let block = fx.task("r1").block.clone().unwrap();
+    assert_eq!(block.reason, BlockReason::Human, "{}", block.text);
+}

@@ -315,10 +315,10 @@ fn fail(machine: &mut ScoutMachine, reason: String, kill: bool) -> Vec<ScoutEffe
 }
 
 fn add(total: &mut TokenUsage, usage: &TokenUsage) {
-    total.input += usage.input;
-    total.output += usage.output;
-    total.cache_read += usage.cache_read;
-    total.cache_write += usage.cache_write;
+    total.input = total.input.saturating_add(usage.input);
+    total.output = total.output.saturating_add(usage.output);
+    total.cache_read = total.cache_read.saturating_add(usage.cache_read);
+    total.cache_write = total.cache_write.saturating_add(usage.cache_write);
 }
 
 /// The machine's event for one session event of a scout's process `pid`, or `None`

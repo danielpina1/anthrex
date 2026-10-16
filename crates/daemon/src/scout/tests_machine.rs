@@ -432,3 +432,22 @@ fn a_tool_result_from_a_broken_sandbox_becomes_a_machine_event() {
     assert_eq!(event(&result("all fine", false)), None);
     assert_eq!(event(&result(text, true)), None);
 }
+
+/// Milestone 9.18 task 7 (decision 9): the machine's usage saturates field-wise.
+#[test]
+fn scout_machine_saturates_a_huge_usage() {
+    let l = limits(120);
+    let huge = TokenUsage {
+        input: u64::MAX - 1,
+        output: 5,
+        ..TokenUsage::default()
+    };
+    let mut machine = started(&l);
+    for _ in 0..2 {
+        let event = ScoutEvent::TurnEnded { usage: Some(huge) };
+        machine = step(machine, event, &l).0;
+    }
+    assert_eq!(machine.usage.input, u64::MAX);
+    assert_eq!(machine.usage.output, 10);
+    assert_eq!(machine.usage.billable(), u64::MAX);
+}

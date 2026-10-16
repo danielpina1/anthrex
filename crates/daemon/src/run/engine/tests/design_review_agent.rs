@@ -306,3 +306,16 @@ fn the_approved_spec_is_read_back_and_a_failed_read_reopens_its_gate() {
         .collect();
     assert_eq!(failed, [logged]);
 }
+
+/// Milestone 9.18 task 7 (decision 9): the reviewer's tokens saturate, over one report
+/// and a second.
+#[test]
+fn design_reviewer_saturates_a_huge_usage() {
+    let mut fx = specifying();
+    reviewed(&mut fx, REVIEWER, three_findings());
+    let tokens = |fx: &Fixture| design(fx).reviewer.as_ref().unwrap().tokens;
+    super::design_agents::ended_huge(&mut fx, AgentRole::DocReviewer, "spec-r1", 1);
+    assert_eq!(tokens(&fx), u64::MAX);
+    super::design_agents::ended_huge(&mut fx, AgentRole::DocReviewer, "spec-r1", 1);
+    assert_eq!(tokens(&fx), u64::MAX);
+}

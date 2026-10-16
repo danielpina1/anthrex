@@ -91,7 +91,10 @@ pub(super) fn session_ended(
         route: agent.route.clone(),
         sessions: 0,
         calls,
-        tokens: usage.input + usage.output + usage.cache_read + usage.cache_write,
+        tokens: (usage.input)
+            .saturating_add(usage.output)
+            .saturating_add(usage.cache_read)
+            .saturating_add(usage.cache_write),
         secs,
         outcome,
     };
