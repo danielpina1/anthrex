@@ -31,6 +31,12 @@ pub const TUNING_START_BOUND: Duration = Duration::from_secs(10);
 pub const LESSONS_START_BOUND: Duration = Duration::from_secs(5);
 const _: () = assert!(LESSONS_START_BOUND.as_secs() <= TUNING_START_BOUND.as_secs());
 
+/// Milestone 9.18 decision 11: how long `lessons graph`'s profile fallback may walk the
+/// checkout for its module directories; past it the graph has no modules (the daemon's
+/// `run::driver::lessons_requests::modules_at`). It is checked between `read_dir`
+/// calls, so a single hung one is not bounded.
+pub const GRAPH_MODULES_BOUND: Duration = Duration::from_secs(2);
+
 /// How long the probe may take. It stats two paths; only a hung file system is slower.
 /// A goal start's triage waits for it before the decider call (`docs/timing-budgets.md`).
 pub const INSTALLED_PROBE_TIMEOUT: Duration = Duration::from_secs(5);

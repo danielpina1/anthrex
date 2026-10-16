@@ -431,6 +431,59 @@ fn module_source_prefers_cache_then_profile_then_none() {
     assert_eq!(modules_at(&repo_dir, &checkout).1, ModuleSource::Profile);
 }
 
+/// Milestone 9.18 decision 11 (task M9.18.9): a deadline already past.
+fn past() -> std::time::Instant {
+    let now = std::time::Instant::now();
+    now.checked_sub(Duration::from_secs(1)).unwrap_or(now)
+}
+
+#[test]
+fn a_slow_profile_walk_falls_back_to_no_modules() {
+    let (_tmp, checkout, project, repo_dir) = git_repo();
+    let seeded = repo();
+    for file in [LESSONS_FILE, HISTORY_FILE] {
+        std::fs::copy(seeded.path().join(file), repo_dir.join(file)).unwrap();
+    }
+    write_profile(&repo_dir, &["crates/*"]);
+    assert_eq!(
+        modules_at_until(&repo_dir, &checkout, past()),
+        (Vec::new(), ModuleSource::None)
+    );
+    // The graph is still built, with its lessons and no module of the profile's.
+    let graph = graph_at_until(&repo_dir, &checkout, project.clone(), NOW, &cfg(), past());
+    assert_eq!(graph.project, project);
+    assert_eq!(graph.module_source, ModuleSource::None);
+    assert!(!graph.nodes.iter().any(|n| n.id == "m:a" || n.id == "m:b"));
+    let drawn: Vec<&str> = graph.lessons.iter().map(|l| l.id.as_str()).collect();
+    let (kf, alpha, beta) = (format!("kf-{FP}"), id(ALPHA), id(BETA));
+    assert_eq!(drawn, [kf.as_str(), alpha.as_str(), beta.as_str()]);
+    // Within the bound, the profile's modules are drawn as before.
+    assert_eq!(modules_at(&repo_dir, &checkout).1, ModuleSource::Profile);
+}
+
+#[test]
+fn the_graph_cache_still_wins() {
+    let (_tmp, checkout, _, repo_dir) = git_repo();
+    write_profile(&repo_dir, &["crates/*"]);
+    let cache = repo_dir.join(super::super::graph::GRAPH_CACHE_FILE);
+    super::super::graph::cache_put(
+        &cache,
+        "0000000000000001",
+        &module_graph(&[("anthrex-tui", Some("crates/tui"))]),
+    );
+    for deadline in [
+        past(),
+        std::time::Instant::now() + Duration::from_secs(3600),
+    ] {
+        let (modules, source) = modules_at_until(&repo_dir, &checkout, deadline);
+        assert_eq!(source, ModuleSource::CargoCache);
+        assert_eq!(
+            modules,
+            vec![("anthrex-tui".to_string(), Some("crates/tui".to_string()))]
+        );
+    }
+}
+
 #[tokio::test]
 async fn graph_is_answered() {
     let (tmp, checkout, project, repo_dir) = git_repo();

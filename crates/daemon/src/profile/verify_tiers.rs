@@ -13,7 +13,7 @@ use std::io::{self, Read};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use proto::{ModuleNames, ProfileVerification, RepoProfile};
 
@@ -110,6 +110,25 @@ fn graph_file(tmp: &Path, nanos: u128) -> io::Result<(PathBuf, File)> {
 
 /// The directories under `dir` that match a `modules` pattern, relative, sorted.
 pub(crate) fn module_dirs(dir: &Path, modules: &[String]) -> Vec<String> {
+    walk(dir, modules, None).unwrap_or_default()
+}
+
+/// [`module_dirs`], or `None` once `deadline` has passed: milestone 9.18 decision 11,
+/// for the lessons graph's profile fallback. The deadline is checked before each
+/// `read_dir`, so one `read_dir` that hangs (a stalled network checkout) is still
+/// unbounded; the graph request already runs on `spawn_blocking`, so it holds a
+/// blocking thread, never a tokio worker.
+pub(crate) fn module_dirs_until(
+    dir: &Path,
+    modules: &[String],
+    deadline: Instant,
+) -> Option<Vec<String>> {
+    walk(dir, modules, Some(deadline))
+}
+
+/// Ruling C17: the one walk behind [`module_dirs`] (no deadline, so the tier path is
+/// unchanged) and [`module_dirs_until`].
+fn walk(dir: &Path, modules: &[String], deadline: Option<Instant>) -> Option<Vec<String>> {
     let mut found = Vec::new();
     for pattern in modules {
         let mut current = vec![String::new()];
@@ -120,6 +139,9 @@ pub(crate) fn module_dirs(dir: &Path, modules: &[String]) -> Vec<String> {
             let wildcard = component == "*";
             let mut next = Vec::new();
             for base in &current {
+                if deadline.is_some_and(|d| Instant::now() >= d) {
+                    return None;
+                }
                 let Ok(entries) = std::fs::read_dir(dir.join(base)) else {
                     continue;
                 };
@@ -150,7 +172,7 @@ pub(crate) fn module_dirs(dir: &Path, modules: &[String]) -> Vec<String> {
     }
     found.sort();
     found.dedup();
-    found
+    Some(found)
 }
 
 /// The module names decision 10 gives, sorted: from the graph with `cargo` names (so

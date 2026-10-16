@@ -18,8 +18,9 @@
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use common::bounds::GRAPH_MODULES_BOUND;
 use proto::run_wire::request;
 use proto::{
     DismissedLine, HistoryLine, LESSONS_VERSION, LessonGraph, LessonInfo, LessonLine, LessonOrigin,
@@ -165,11 +166,24 @@ pub fn graph_at(
     now: u64,
     cfg: &config::Lessons,
 ) -> LessonGraph {
+    let deadline = Instant::now() + GRAPH_MODULES_BOUND;
+    graph_at_until(repo_dir, checkout, project, now, cfg, deadline)
+}
+
+/// [`graph_at`] with its module walk's deadline (the tests' seam).
+fn graph_at_until(
+    repo_dir: &Path,
+    checkout: &Path,
+    project: PathBuf,
+    now: u64,
+    cfg: &config::Lessons,
+    deadline: Instant,
+) -> LessonGraph {
     let (lines, _) = read_store(&repo_dir.join(LESSONS_FILE));
     let store = fold(&lines);
     let (history, _): (Vec<HistoryLine>, _) = read_history(&repo_dir.join(HISTORY_FILE));
     let lessons = consolidate(&store, &history, now, cfg);
-    let (modules, source) = modules_at(repo_dir, checkout);
+    let (modules, source) = modules_at_until(repo_dir, checkout, deadline);
     LessonGraph {
         project,
         ..build(&store, &lessons, &modules, source)
@@ -179,10 +193,23 @@ pub fn graph_at(
 /// Decision 41's modules, as `(name, directory)`: the newest entry of `repo_dir`'s
 /// module graph cache (ruling C17), else the stored profile's `modules` patterns
 /// matched in `checkout` (each named by its last component, or by its whole directory
-/// when two share one), else none. Nothing is run. Blocking.
+/// when two share one), else none. Nothing is run. Blocking, for at most
+/// [`GRAPH_MODULES_BOUND`] of walking ([`modules_at_until`]).
 pub fn modules_at(
     repo_dir: &Path,
     checkout: &Path,
+) -> (Vec<(String, Option<String>)>, ModuleSource) {
+    modules_at_until(repo_dir, checkout, Instant::now() + GRAPH_MODULES_BOUND)
+}
+
+/// [`modules_at`] with the profile walk's deadline: milestone 9.18 decision 11. Past
+/// it the source is [`ModuleSource::None`] with no modules, as with no profile; the
+/// module graph cache is read whatever the deadline. Ruling C17: one `read_dir` that
+/// hangs is still unbounded (the request is on `spawn_blocking`).
+pub(crate) fn modules_at_until(
+    repo_dir: &Path,
+    checkout: &Path,
+    deadline: Instant,
 ) -> (Vec<(String, Option<String>)>, ModuleSource) {
     if let Some(graph) = super::graph::cache_newest(&repo_dir.join(super::graph::GRAPH_CACHE_FILE))
     {
@@ -199,7 +226,11 @@ pub fn modules_at(
     if profile.modules.is_empty() {
         return (Vec::new(), ModuleSource::None);
     }
-    let dirs = crate::profile::verify_tiers::module_dirs(checkout, &profile.modules);
+    let Some(dirs) =
+        crate::profile::verify_tiers::module_dirs_until(checkout, &profile.modules, deadline)
+    else {
+        return (Vec::new(), ModuleSource::None);
+    };
     let last = |dir: &str| dir.rsplit('/').next().unwrap_or(dir).to_string();
     let modules = (dirs.iter())
         .map(|dir| {
