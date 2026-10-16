@@ -346,3 +346,30 @@ fn a_later_round_repeating_a_brief_finding_adds_nothing() {
     crate::run::engine::review_brief::record(fx.run_mut(), i, 2, &[minor], now);
     assert_eq!(brief_notes(&fx, "t1").len(), 2);
 }
+
+/// Task 4 review M1: the digest's `review` counts `code` findings by severity, then the
+/// round's `brief` findings apart, so a brief-only round never reads as a critical one.
+#[test]
+fn digest_review_counts_brief_findings_apart() {
+    let review_of = |fx: &Fixture| {
+        let digest = crate::run::orch::digest::digest(fx.run(), fx.now);
+        let tasks = digest["tasks"].as_array().unwrap().clone();
+        let t1 = tasks.into_iter().find(|t| t["id"] == "t1").unwrap();
+        t1["review"].clone()
+    };
+    let (mut fx, window, rwindow) = reviewed(PROFILE, "");
+    fx.turn_completed(window);
+    let findings = vec![brief("critical", "the brief asks for the wrong table")];
+    submit(&mut fx, rwindow, verdict("changes", findings));
+    assert_eq!(review_of(&fx), json!("r1 changes (1 brief)"));
+
+    let (mut fx, window, rwindow) = reviewed(PROFILE, "");
+    fx.turn_completed(window);
+    let findings = vec![
+        finding("important", json!({"file": "crates/a/src/x.rs", "line": 3})),
+        brief("critical", "one"),
+        brief("minor", "two"),
+    ];
+    submit(&mut fx, rwindow, verdict("changes", findings));
+    assert_eq!(review_of(&fx), json!("r1 changes (1 important, 2 brief)"));
+}
