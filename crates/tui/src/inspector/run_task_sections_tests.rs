@@ -53,6 +53,7 @@ fn with_detail(app: &mut App, brief: &str, summary: Option<(&str, SummarySource)
             acceptance: vec!["hooks map".into(), "stop marks idle".into()],
             worker_summary: summary.map(|(text, _)| text.to_owned()),
             summary_source: summary.map(|(_, source)| source),
+            risk_note: None,
         })),
     });
 }

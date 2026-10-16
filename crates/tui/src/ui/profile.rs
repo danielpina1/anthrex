@@ -108,6 +108,12 @@ pub(crate) fn hints(s: &ProfileScreen) -> Vec<Hint> {
     if !rows.iter().any(|r| r.key == ADVANCED_ROW) {
         list.retain(|(k, _)| *k != "a");
     }
+    // Milestone 9.15 decision 36: the Lessons page, first so it outlasts a narrow line.
+    let lessons = match s.to_review {
+        0 => "lessons".to_string(),
+        n => format!("lessons · {n} to review"),
+    };
+    list.insert(0, ("l", lessons.as_str()));
     if failed_selected(s) {
         list.extend([("s", "save anyway"), ("r", "revert")]);
     }
@@ -513,6 +519,8 @@ mod card;
 #[path = "profile_status.rs"]
 mod status;
 use status::{footer, status_line};
+#[path = "profile_lessons.rs"]
+mod lessons;
 #[path = "profile_pages.rs"]
 mod pages;
 pub(crate) use pages::list_width;
@@ -535,3 +543,7 @@ mod rows_tests;
 #[cfg(test)]
 #[path = "profile_pages_tests.rs"]
 mod pages_tests;
+
+#[cfg(test)]
+#[path = "profile_lessons_tests.rs"]
+mod profile_lessons_tests;

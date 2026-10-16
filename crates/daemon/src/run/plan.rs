@@ -523,6 +523,9 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         last_step_at: 0,
         // Set by the driver from the `run_name` decider (`driver/build_name.rs`).
         title: String::new(),
+        // Milestone 9.15: frozen by the driver's start (`driver/lessons.rs`).
+        lessons: None,
+        discard_reason: None,
     })
 }
 

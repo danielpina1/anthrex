@@ -16,6 +16,7 @@ fn a_detail(source: Option<SummarySource>) -> TaskDetailInfo {
         acceptance: vec!["mean and median print".into(), "tests pass".into()],
         worker_summary: source.map(|_| "stats: mean, median; tests added".into()),
         summary_source: source,
+        risk_note: None,
     }
 }
 
@@ -168,6 +169,8 @@ fn appended_variants_keep_their_indices() {
     expected.extend(["DocGate", "ShowDoc"]);
     // Milestone 9.9 appends `AnswerAsk` after `ShowDoc` (`orch_first_tests.rs`).
     expected.push("AnswerAsk");
+    // Milestone 9.15 appends `Lessons` after `AnswerAsk` (`lessons_tests.rs`).
+    expected.push("Lessons");
     assert_eq!(variant_names::<RunRequest>(), expected);
     assert_eq!(
         variant_at::<RunRequest>(
@@ -198,6 +201,8 @@ fn appended_variants_keep_their_indices() {
     expected.push("Doc");
     // Milestone 9.10 appends `Queued` after `Doc` (`profile_tests.rs`).
     expected.push("Queued");
+    // Milestone 9.15 appends `Lessons` and `LessonsGraph` after `Queued`.
+    expected.extend(["Lessons", "LessonsGraph"]);
     assert_eq!(variant_names::<RunReply>(), expected);
     let detail = a_detail(None);
     assert_eq!(

@@ -32,4 +32,8 @@ pub struct TaskDetailInfo {
     /// (`safe_text::multi_line`); `None` until the task has one.
     pub worker_summary: Option<String>,
     pub summary_source: Option<SummarySource>,
+    /// Milestone 9.15 decision 30: the reviewer's risk note, written from the brief
+    /// alone. Left out while `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub risk_note: Option<String>,
 }

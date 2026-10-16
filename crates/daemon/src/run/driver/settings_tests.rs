@@ -405,9 +405,10 @@ fn live_runs_in_lists_the_projects_unfinished_runs() {
 }
 
 /// Decision 29: the onboarding scouts `profile::service::wire` builds read the run
-/// service's live roster, so a save reaches the next scout without a restart.
-#[test]
-fn the_wired_scouts_read_the_live_roster() {
+/// service's live roster, so a save reaches the next scout without a restart. Inside
+/// a runtime, as the daemon calls `wire`: since M9.15.10 it starts the lesson worker.
+#[tokio::test]
+async fn the_wired_scouts_read_the_live_roster() {
     let dir = tempfile::tempdir().unwrap();
     let s = service(&dir.path().join("config.toml"), None);
     let (data, socket) = (dir.path().join("data"), dir.path().join("d.sock"));

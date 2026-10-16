@@ -269,12 +269,22 @@ fn check(
         // M8b decision 32: a diff is only read, and simply measured again.
         OpKind::MeasureDiff { .. } => Ok(Reconciled::NotStarted),
         // M8b decision 33: a history line is appended again unless the file holds its
-        // record already.
+        // record already, as a line that parses (a torn one is no record).
         OpKind::AppendHistory {
             path, record_id, ..
-        } => super::history_io::contains_record(path, record_id)
+        } => super::history_io::holds_record(path, record_id)
             .map(|found| match found {
                 true => Reconciled::Replay(OpResult::HistoryAppended),
+                false => Reconciled::NotStarted,
+            })
+            .map_err(|error| error.to_string()),
+        // Milestone 9.15 decision 10: so is a distill entry, by a line of the store
+        // that parses.
+        OpKind::QueueDistill {
+            path, record_id, ..
+        } => crate::lessons::store::holds_record(path, record_id)
+            .map(|found| match found {
+                true => Reconciled::Replay(OpResult::DistillQueued),
                 false => Reconciled::NotStarted,
             })
             .map_err(|error| error.to_string()),

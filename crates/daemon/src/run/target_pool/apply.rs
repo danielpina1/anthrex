@@ -77,7 +77,8 @@ fn envs(kind: &mut OpKind) -> Vec<(PathBuf, &mut Env)> {
         | OpKind::ResolveTarget { .. }
         | OpKind::Host { .. }
         | OpKind::CrownRacer { .. }
-        | OpKind::CommitDesignDocs(_) => {}
+        | OpKind::CommitDesignDocs(_)
+        | OpKind::QueueDistill { .. } => {}
     }
     out
 }

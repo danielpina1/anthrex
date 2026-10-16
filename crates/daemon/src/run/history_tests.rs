@@ -21,6 +21,8 @@ use fixtures::*;
 mod patterns;
 #[path = "history_tests_routing.rs"]
 mod routing;
+#[path = "history_tests_signatures.rs"]
+mod signatures;
 
 /// M9.8.14: the checked-in milestone-9 history (its routes carry `strength`) still
 /// decodes with `HISTORY_VERSION` 5; the key is ignored and never written back.
@@ -259,6 +261,11 @@ fn task_record_from_a_merged_task() {
         writer_failures: 0,
         // Task M9.5.21: the round that added the task (round 1 for a plan's task).
         round: 1,
+        // Task M9.15.2: its one failed check has an empty tail, so no signature.
+        signatures: Vec::new(),
+        owns: vec!["crates/t1/**".into()],
+        // Task M9.15.4 adds the field; task M9.15.6 fills it.
+        lessons_shown: Vec::new(),
     };
     assert_eq!(record, want);
     assert_eq!(task_record_id(&run.id, "t1"), want.record_id);

@@ -233,6 +233,8 @@ fn confirm_page_renders_destructive_in_failed() {
         Some(ActionKind::Discard),
     );
     press(&mut app, KeyCode::Enter);
+    // Milestone 9.15 decision 40: the reason's form first; Enter leaves it blank.
+    press(&mut app, KeyCode::Enter);
     for (w, h) in [(80, 24), (120, 40)] {
         let buffer = draw(&app, w, h);
         let rows = dialog_rows(&buffer, w, h);
@@ -251,6 +253,7 @@ fn confirm_page_renders_destructive_in_failed() {
                 "         anthrex/add-mul-0723/* branches",
                 "keeps    main unchanged · uncommitted work under",
                 "         refs/anthrex/salvage/add-mul-0723/",
+                "reason   (none)",
                 "",
                 "y discard · esc back",
             ],
@@ -261,7 +264,8 @@ fn confirm_page_renders_destructive_in_failed() {
         let failed = role(Role::Failed, app.palette()).fg.unwrap();
         // The title, the `y` and the verb draw in `Failed`.
         assert_eq!(buffer[(x0 + 2, y0)].fg, failed);
-        let hints = y0 + 10;
+        // Ten rows down, one more for milestone 9.15's `reason` row.
+        let hints = y0 + 11;
         assert_eq!(buffer[(x0 + 2, hints)].symbol(), "y");
         assert_eq!(buffer[(x0 + 2, hints)].fg, failed);
         assert_eq!(buffer[(x0 + 4, hints)].fg, failed);

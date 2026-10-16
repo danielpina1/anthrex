@@ -92,6 +92,7 @@ pub(super) fn detail(brief: &str, request_id: u64) -> RunReply {
             acceptance: vec![],
             worker_summary: None,
             summary_source: None,
+            risk_note: None,
         }),
         request_id: Some(request_id),
     }

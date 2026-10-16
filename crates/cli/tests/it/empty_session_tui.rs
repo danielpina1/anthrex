@@ -97,9 +97,14 @@ fn an_empty_session_reaches_the_goal_form_and_shows_the_daemons_refusal() {
         "y discards and closes the form"
     );
 
-    // `C-b P`: the screen's three requests, each refused by the daemon the same way.
+    // `C-b P`: the screen's three profile requests and, since milestone 9.15 (changed
+    // expectation), its Lessons page's list; each refused by the daemon the same way.
     let sent = tagged(&prefixed(&mut app, 'P'));
-    assert_eq!(sent.len(), 3, "{sent:?}");
+    assert_eq!(sent.len(), 4, "{sent:?}");
+    assert!(
+        matches!(sent[3].1, RunRequest::Lessons(_)),
+        "the lessons list goes last: {sent:?}"
+    );
     assert!(app.screen.is_some());
     for (id, request) in sent {
         let reply = h.tagged(id, request.clone(), REQUEST_WAIT);
@@ -107,6 +112,10 @@ fn an_empty_session_reaches_the_goal_form_and_shows_the_daemons_refusal() {
             RunReply::Profile { reply: answer, .. } => assert!(
                 matches!(&**answer, ProfileReply::Refused { message } if *message == want),
                 "{request:?}: {answer:?}"
+            ),
+            RunReply::Refused { message, .. } => assert!(
+                matches!(request, RunRequest::Lessons(_)) && *message == want,
+                "{request:?}: {message}"
             ),
             other => panic!("{request:?}: {other:?}"),
         }

@@ -146,6 +146,7 @@ impl Rig {
             profiles,
             scouts: scouts.clone(),
             deciders,
+            lessons: None,
         });
         tokio::spawn(serve(
             listener,

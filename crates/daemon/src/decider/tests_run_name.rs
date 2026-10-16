@@ -25,7 +25,7 @@ fn named(value: Value) -> Result<(String, String), String> {
 
 #[test]
 fn the_kind_is_appended_last_as_run_name() {
-    assert_eq!(DeciderKind::ALL.len(), 6);
+    assert_eq!(DeciderKind::ALL.len(), 8);
     assert_eq!(DeciderKind::ALL[5], DeciderKind::RunName);
     assert_eq!(DeciderKind::RunName.label(), "run_name");
     assert_eq!(request("x").kind(), DeciderKind::RunName);

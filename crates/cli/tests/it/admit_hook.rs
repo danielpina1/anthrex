@@ -42,7 +42,13 @@ impl Rig {
     fn with_slots(slots: u32) -> Rig {
         let config = tempdir();
         let path = config.path().join("config.toml");
-        std::fs::write(&path, format!("[testing]\ntest_slots = {slots}\n")).unwrap();
+        // Ruling C3: this config replaces `TestDaemon`'s, so it keeps lessons off too.
+        let lessons = crate::support::lessons::LESSONS_OFF;
+        std::fs::write(
+            &path,
+            format!("{lessons}\n[testing]\ntest_slots = {slots}\n"),
+        )
+        .unwrap();
         let daemon = TestDaemon::start_configured(&[json!({"read_line": true})], |command| {
             command
                 .env("ANTHREX_CONFIG", &path)

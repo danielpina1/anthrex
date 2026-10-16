@@ -18,6 +18,8 @@ pub mod goal_editor;
 pub mod help;
 pub mod idle_menu;
 pub mod kit;
+pub mod lessons_graph;
+pub mod lessons_graph_panel;
 pub mod modal;
 pub mod model_picker;
 pub mod models_table;
@@ -64,6 +66,9 @@ pub struct Layout {
     /// review's area (milestone 9.0.5 decision 12).
     pub body: Rect,
     pub statusbar: Rect,
+    /// Milestone 9.15 (ruling C17): the lessons graph page's canvas while it is open,
+    /// which `App::on_click` hit-tests; empty otherwise.
+    pub lessons_canvas: Rect,
 }
 
 fn inset(r: Rect) -> Rect {
@@ -158,6 +163,7 @@ pub fn layout_sized(area: Rect, sidebar_width: u16, sizing: SidebarSizing) -> La
         main_inner: inset(main),
         body,
         statusbar,
+        lessons_canvas: Rect::default(),
     }
 }
 

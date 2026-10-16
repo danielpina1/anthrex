@@ -271,7 +271,10 @@ impl App {
             | RunReply::Profile { .. }
             | RunReply::Settings { .. }
             // Milestone 9.6: the gate screen asks for documents from task M9.6.17.
-            | RunReply::Doc { .. } => {}
+            | RunReply::Doc { .. }
+            // Milestone 9.15: routed by id in `app/replies.rs`, never here.
+            | RunReply::Lessons { .. }
+            | RunReply::LessonsGraph { .. } => {}
             RunReply::TaskDetail { detail, request_id } => self.on_task_detail(detail, request_id),
         }
         vec![]

@@ -330,6 +330,7 @@ fn a_paused_run_refuses_tools_and_most_requests() {
             reply,
             run_id: RUN_ID.into(),
             action,
+            reason: None,
         });
         assert_eq!(
             one_reply(&effects),

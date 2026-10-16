@@ -51,6 +51,8 @@ pub struct RunContext {
     /// Milestone 9.14 decision 2 (C27): the daemon's `[target_pool]` table, read once at
     /// start; the run service builds its pool from it.
     pub target_pool: config::TargetPool,
+    /// Milestone 9.15 (C9): the daemon's `[lessons]` table, read once at start.
+    pub lessons: config::Lessons,
 }
 
 /// One git read's budget: a deadline for all its calls, and a cap on each call's own
@@ -99,6 +101,7 @@ impl RunContext {
             host_cap: None,
             continue_cap: None,
             target_pool: config::TargetPool::default(),
+            lessons: config::Lessons::default(),
         }
     }
 
@@ -121,6 +124,13 @@ impl RunContext {
             .with_testing(config.testing.clone())
             .with_delivery(config.delivery.clone())
             .with_target_pool(config.target_pool.clone())
+            .with_lessons(config.lessons.clone())
+    }
+
+    /// This context with the daemon's `[lessons]` table (the defaults otherwise).
+    pub fn with_lessons(mut self, lessons: config::Lessons) -> Self {
+        self.lessons = lessons;
+        self
     }
 
     /// This context with the daemon's `[target_pool]` table (the defaults otherwise).

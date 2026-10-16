@@ -247,12 +247,13 @@ fn appended_variants_keep_their_indices() {
 
     let names = variant_names::<RunRequest>();
     assert_eq!(
-        names[names.len() - 4..names.len() - 1],
+        names[names.len() - 5..names.len() - 2],
         ["McpReady", "DocGate", "ShowDoc"],
         "{names:?}"
     );
     // Milestone 9.9 appends `AnswerAsk` after `ShowDoc` (`orch_first_tests.rs`).
-    let n = names.len() as u8 - 1;
+    // Milestone 9.15 appends `Lessons` after `AnswerAsk` (`lessons_tests.rs`).
+    let n = names.len() as u8 - 2;
     assert_eq!(
         variant_at::<RunRequest>(
             n - 2,
@@ -283,13 +284,14 @@ fn appended_variants_keep_their_indices() {
     );
 
     let names = variant_names::<RunReply>();
-    // Milestone 9.10 appends `Queued` after `Doc` (`profile_tests.rs`).
+    // Milestone 9.10 appends `Queued` after `Doc` (`profile_tests.rs`), and 9.15
+    // `Lessons` and `LessonsGraph` after it (`lessons_tests.rs`).
     assert_eq!(
-        names[names.len() - 3..],
+        names[names.len() - 5..names.len() - 2],
         ["Settings", "Doc", "Queued"],
         "{names:?}"
     );
-    let n = names.len() as u8 - 1;
+    let n = names.len() as u8 - 3;
     let doc = serde_json::to_value(a_doc_view()).unwrap();
     assert_eq!(
         variant_at::<RunReply>(n - 1, &json!({"doc": doc, "request_id": 4})),

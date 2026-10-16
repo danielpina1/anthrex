@@ -116,9 +116,7 @@ impl RunHarness {
         extra_toml: &str,
     ) -> Self {
         let harness = Self::unstarted(orchestrator, env, true, files);
-        let config = harness.dir.path().join("config.toml");
-        let text = std::fs::read_to_string(&config).unwrap();
-        std::fs::write(&config, format!("{text}\n{extra_toml}\n")).unwrap();
+        super::lessons::append_toml(&harness.dir.path().join("config.toml"), extra_toml);
         if let Err(error) = harness.start_daemon(DAEMON_START_WAIT) {
             panic!("the daemon did not start: {error}\n{}", harness.log_tail());
         }
@@ -173,10 +171,17 @@ impl RunHarness {
         let cache = dir.path().join("cache");
         std::fs::create_dir_all(&cache).unwrap();
         let repo_key = repo.canonicalize().unwrap_or_else(|_| repo.clone());
+        // Milestone 9.15 ruling C3: lessons off unless the test's own `[lessons]` table
+        // replaces this one (`lessons::append_toml`).
+        let lessons = if super::lessons::has_lessons_table(&orchestrator) {
+            ""
+        } else {
+            super::lessons::LESSONS_OFF
+        };
         std::fs::write(
             &config,
             format!(
-                "[orchestrator]\ngit_timeout_secs = {GIT_TIMEOUT_SECS}\n{orchestrator}\n\n                 [orchestrator.cache_dirs]\n{:?} = [{:?}]\n\n                 [orchestrator.profile]\ncheck_timeout_secs = {CHECK_TIMEOUT_SECS}\n",
+                "{lessons}\n[orchestrator]\ngit_timeout_secs = {GIT_TIMEOUT_SECS}\n{orchestrator}\n\n                 [orchestrator.cache_dirs]\n{:?} = [{:?}]\n\n                 [orchestrator.profile]\ncheck_timeout_secs = {CHECK_TIMEOUT_SECS}\n",
                 repo_key.display().to_string(),
                 cache.display().to_string(),
             ),
@@ -372,15 +377,24 @@ impl RunHarness {
 
     /// One raw run request on a fresh connection, and its reply.
     pub fn request(&self, request: RunRequest) -> RunReply {
-        let socket = self.socket();
         let wait = request_wait(&request);
+        self.request_within(request, wait)
+    }
+
+    /// [`Self::request`] bounded by `wait`, the handshake included: a daemon that
+    /// accepts the connection and never sends its `Welcome` (a stalled connection loop)
+    /// fails the request at `wait`, as a silent reply does, instead of holding the test
+    /// until nextest kills it, which skips `Drop` and leaks the daemon.
+    pub fn request_within(&self, request: RunRequest, wait: Duration) -> RunReply {
+        let socket = self.socket();
+        let what = format!("{request:?}");
         let rt = runtime();
-        rt.block_on(async move {
-            let mut stream = connect(&socket).await;
-            proto::write_frame(&mut stream, &ClientMsg::Run(request))
-                .await
-                .unwrap();
-            tokio::time::timeout(wait, async {
+        let reply = rt.block_on(async move {
+            tokio::time::timeout(wait, async move {
+                let mut stream = connect(&socket).await;
+                proto::write_frame(&mut stream, &ClientMsg::Run(request))
+                    .await
+                    .unwrap();
                 loop {
                     match proto::read_frame::<_, DaemonMsg>(&mut stream).await {
                         Ok(Some(DaemonMsg::Run(reply))) => return reply,
@@ -391,7 +405,13 @@ impl RunHarness {
                 }
             })
             .await
-            .expect("run request timed out")
+        });
+        reply.unwrap_or_else(|_| {
+            let what: String = what.chars().take(200).collect();
+            panic!(
+                "run request timed out: no handshake and reply within {wait:?} for {what}\n--- daemon.log:\n{}",
+                self.log_tail()
+            )
         })
     }
 
@@ -476,6 +496,17 @@ impl RunHarness {
 
     /// Polls `List` until run `id` satisfies `pred`, for at most `wait`.
     pub fn wait_run(&self, id: &str, pred: impl Fn(&RunInfo) -> bool, wait: Duration) -> RunInfo {
+        self.wait_run_for("", id, pred, wait)
+    }
+
+    /// [`Self::wait_run`], whose failure names `what` it waited for.
+    pub fn wait_run_for(
+        &self,
+        what: &str,
+        id: &str,
+        pred: impl Fn(&RunInfo) -> bool,
+        wait: Duration,
+    ) -> RunInfo {
         let deadline = Instant::now() + wait;
         let mut last = None;
         loop {
@@ -486,8 +517,12 @@ impl RunHarness {
                 last = Some(run);
             }
             if Instant::now() >= deadline {
+                let what = match what {
+                    "" => String::new(),
+                    what => format!(" ({what})"),
+                };
                 panic!(
-                    "run {id} did not get there within {wait:?}; last snapshot:\n{}\n--- daemon.log:\n{}\n--- daemon.out:\n{}\n{}",
+                    "run {id} did not get there{what} within {wait:?}; last snapshot:\n{}\n--- daemon.log:\n{}\n--- daemon.out:\n{}\n{}",
                     serde_json::to_string_pretty(&last).unwrap(),
                     self.log_tail(),
                     self.out_tail(),

@@ -334,6 +334,22 @@ mod tuning {
         assert!(repo_dir.join("tuning.toml").exists());
     }
 
+    /// Milestone 9.15 decision 21: a start freezes the repository's lessons (none here)
+    /// with its limits and time, and logs one `lessons:` line after the tuning lines
+    /// (ruling C25).
+    #[tokio::test]
+    async fn a_start_freezes_the_repositorys_lessons() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (work, _repo_dir, service) = rig(tmp.path());
+        let run = start(&service, &work, false, planned(true)).await;
+        let lessons = run.lessons.as_ref().expect("the start froze lessons");
+        assert!(lessons.items.is_empty());
+        assert_eq!(lessons.limits, crate::run::model::LessonLimits::default());
+        assert_eq!(lessons.frozen_at, run.created_at);
+        assert_eq!(log(&run).last(), Some(&"lessons: none"));
+        assert_eq!(log(&run)[..3], [REFIT_S, WEIGHTS, BUDGET_S]);
+    }
+
     /// Ruling T9-5: a build given a start's settings read (`TuneOnce::with_config`, a
     /// goal's, shared by its fast build and its fallback) builds and tunes with it, not
     /// with a second read of the live settings.

@@ -465,6 +465,49 @@ fn a_slow_starting_daemon_does_not_outlive_its_harness() {
     );
 }
 
+/// A daemon that accepts a connection and never sends its `Welcome` fails a request at
+/// the request's bound: the handshake is inside it. Before, the harness waited for the
+/// `Welcome` with no bound, so a stalled connection loop held the test until nextest
+/// killed it, which skips `Drop` and leaks the daemon (main CI, bac2aa9e). The real
+/// daemon's socket is moved aside (it keeps listening on the renamed path) for a
+/// listener that never answers, and put back before the harness stops the daemon.
+#[test]
+fn a_daemon_that_never_welcomes_fails_the_request_at_its_bound() {
+    let h = std::sync::Arc::new(RunHarness::new(""));
+    let aside = h.dir.path().join("d.sock.aside");
+    std::fs::rename(h.socket(), &aside).unwrap();
+    let silent = std::os::unix::net::UnixListener::bind(h.socket()).unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let started = Instant::now();
+    let asker = {
+        let h = h.clone();
+        std::thread::spawn(move || {
+            let bound = Duration::from_secs(2);
+            let asked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                h.request_within(RunRequest::List, bound)
+            }));
+            let text = asked.err().map(|e| match e.downcast::<String>() {
+                Ok(text) => *text,
+                Err(e) => e.downcast_ref::<&str>().unwrap_or(&"").to_string(),
+            });
+            let _ = tx.send(text);
+        })
+    };
+    // A hang guard well past the 2 s bound; a request still waiting after it is the bug.
+    let outcome = rx.recv_timeout(Duration::from_secs(30));
+    let elapsed = started.elapsed();
+    // Closing the silent listener ends a request still waiting; then the real socket
+    // goes back, so the harness stops its daemon either way.
+    drop(silent);
+    std::fs::remove_file(h.socket()).unwrap();
+    std::fs::rename(&aside, h.socket()).unwrap();
+    asker.join().unwrap();
+    let text = outcome.unwrap_or_else(|_| panic!("the request still waits after {elapsed:?}"));
+    let text = text.expect("the request to a silent daemon returned a reply");
+    assert!(text.contains("run request timed out"), "{text}");
+    assert!(elapsed < Duration::from_secs(30), "{elapsed:?}");
+}
+
 /// Whether process `pid` (one pid, never a scan) is a daemon of `data`: its environment
 /// names that data directory.
 fn daemon_of(pid: u32, data: &std::path::Path) -> bool {

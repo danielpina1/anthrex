@@ -122,8 +122,10 @@ fn pairs(s: &ProfileScreen) -> Vec<(String, String)> {
 /// Decision 29's order, by view; they drop from the right (`esc` last of all).
 #[test]
 fn hints_follow_the_view() {
+    // Milestone 9.15 decision 36: `l lessons` leads every view's list.
     let words = |list: &[(&str, &str)]| -> Vec<(String, String)> {
-        list.iter()
+        std::iter::once(&("l", "lessons"))
+            .chain(list.iter())
             .map(|(k, w)| (k.to_string(), w.to_string()))
             .collect()
     };
@@ -443,8 +445,10 @@ fn a_profile_saved_failing_its_check_is_not_plain_ready() {
 /// refused. M2: the changes card has no Advanced line, so no `a`.
 #[test]
 fn hints_offer_only_what_works() {
+    // Milestone 9.15 decision 36: `l lessons` leads every view's list.
     let words = |list: &[(&str, &str)]| -> Vec<(String, String)> {
-        list.iter()
+        std::iter::once(&("l", "lessons"))
+            .chain(list.iter())
             .map(|(k, w)| (k.to_string(), w.to_string()))
             .collect()
     };

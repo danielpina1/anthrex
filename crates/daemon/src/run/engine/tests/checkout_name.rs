@@ -144,6 +144,7 @@ fn finished_worktrees(
         reply,
         run_id: RUN_ID.into(),
         action,
+        reason: None,
     });
     let worktrees = match action {
         FinishAction::Discard => match fx.op("Discard").1 {

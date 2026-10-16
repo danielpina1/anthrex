@@ -325,6 +325,15 @@ mod tests {
             kind("[anthrex decider] run_name v1\nYou name a coding run"),
             Some("run_name".into())
         );
+        // Milestone 9.15's kinds (pinning: any `[a-z_]+` label is a scripted kind).
+        assert_eq!(
+            kind("[anthrex decider] distill v1\nYou turn one finished coding task"),
+            Some("distill".into())
+        );
+        assert_eq!(
+            kind("[anthrex decider] risk_note v1\nYou read a coding task"),
+            Some("risk_note".into())
+        );
         for prompt in [
             "",
             "hello",

@@ -264,9 +264,17 @@ fn discard_keeps_salvage_refs() {
     );
     assert_eq!(h.run(&id).unwrap().state, RunState::Complete);
 
-    // The scripted form (ruling T23-I3).
+    // The scripted form (ruling T23-I3), with milestone 9.15's reason (decision 26).
     let suffix = &id[id.len() - 4..];
-    ok(&run(&h, &["discard", suffix, "--confirm", &id], ""));
+    let reason = [
+        "discard",
+        suffix,
+        "--confirm",
+        &id,
+        "--reason",
+        " too big\nsplit it ",
+    ];
+    ok(&run(&h, &reason, ""));
     let run_info = h.run(&id).unwrap();
     assert_eq!(run_info.state, RunState::Discarded);
     assert!(no_run_branches(&h.repo));
@@ -283,6 +291,17 @@ fn discard_keeps_salvage_refs() {
         "left behind"
     );
     assert!(run_info.report_path.exists(), "the run's data is kept");
+    // The run record carries the reason on one line.
+    let deadline = std::time::Instant::now() + RUN_WAIT;
+    let record = loop {
+        if let Some(line) = h.history_lines("run").pop() {
+            break line;
+        }
+        assert!(std::time::Instant::now() < deadline, "no run record");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
+    assert_eq!(record["outcome"], "discarded");
+    assert_eq!(record["discard_reason"], "too big split it");
 }
 
 #[test]

@@ -327,6 +327,7 @@ fn a_read_only_stats_writes_nothing() {
     let accept = git_in(repo, &["rev-parse", "HEAD"]);
     git_in(repo, &["revert", "-m", "1", "--no-edit", &accept]);
     let run = HistoryLine::Run(RunRecord {
+        discard_reason: None,
         v: HISTORY_VERSION,
         record_id: "x1".into(),
         at: now(),

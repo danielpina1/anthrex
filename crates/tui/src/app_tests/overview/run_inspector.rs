@@ -310,6 +310,7 @@ fn with_t2_detail(app: &mut App) {
             acceptance: vec!["every event maps".into(), "stop marks idle".into()],
             worker_summary: None,
             summary_source: None,
+            risk_note: None,
         })),
     });
 }

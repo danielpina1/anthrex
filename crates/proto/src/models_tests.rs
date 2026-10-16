@@ -179,7 +179,8 @@ fn repository_requests_round_trip() {
 #[test]
 fn roles_print_and_parse_their_keys() {
     let all: Vec<Role> = Role::all().collect();
-    assert_eq!(all.len(), 15);
+    // Milestone 9.15 adds the `distill` and `risk_note` helper rows (15 before).
+    assert_eq!(all.len(), 17);
     for role in all {
         assert_eq!(Role::parse_key(&role.key()), Some(role), "{role:?}");
     }
@@ -189,6 +190,15 @@ fn roles_print_and_parse_their_keys() {
         "helpers.ci_summary"
     );
     assert_eq!(Role::parse_key("helpers.nope"), None);
+    // Milestone 9.15 decision 33.
+    assert_eq!(
+        Role::parse_key("helpers.distill"),
+        Some(Role::Helper(HelperKind::Distill))
+    );
+    assert_eq!(
+        Role::parse_key("helpers.risk_note"),
+        Some(Role::Helper(HelperKind::RiskNote))
+    );
 }
 
 #[test]

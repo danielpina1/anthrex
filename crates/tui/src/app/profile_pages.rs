@@ -77,6 +77,9 @@ impl App {
         let Some(s) = self.profile_screen_mut() else {
             return vec![];
         };
+        if matches!(s.page, Some(ProfilePage::Lessons(_))) {
+            return self.on_lessons_page_key(key);
+        }
         if key.code == KeyCode::Esc {
             s.page = None;
             return vec![];
@@ -158,6 +161,7 @@ impl App {
                 scroll_by(scroll, key.code, tail_lines);
                 None
             }
+            Some(ProfilePage::Lessons(_)) | None => None,
             Some(ProfilePage::Edit(editor)) => {
                 if !enter {
                     on_editor_key(editor, key, width);
@@ -174,7 +178,6 @@ impl App {
                     }
                 }
             }
-            None => None,
         };
         if let Some(text) = warn {
             self.toast_at(ToastLevel::Warn, text);

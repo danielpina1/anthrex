@@ -127,6 +127,15 @@ fn launch(
         }
         false => crate::run::routing::record_worker(run, i, now),
     }
+    // Milestone 9.15 decision 24: the lessons this worker's first turn shows, once each
+    // (a test writer is shown none, ruling C28).
+    if !writer {
+        for id in crate::run::contract_lessons::shown_ids(run, &run.tasks[i]) {
+            if !run.tasks[i].lessons_shown.contains(&id) {
+                run.tasks[i].lessons_shown.push(id);
+            }
+        }
+    }
     let task = &run.tasks[i];
     let racer = (task.race.iter().flat_map(|r| &r.lanes)).find(|l| Some(l.lane) == task.lane_view);
     let spec = match (writer, racer) {

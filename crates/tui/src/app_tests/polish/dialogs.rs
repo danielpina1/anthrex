@@ -222,7 +222,7 @@ fn an_empty_session_uses_the_start_directory() {
     tap(&mut app, KeyCode::Char('y'));
     assert_eq!(app.modal, None);
 
-    // `C-b P`: the Profile screen on it, with its three requests.
+    // `C-b P`: the Profile screen on it, with its four requests.
     prefix(&mut app);
     let effects = tap(&mut app, KeyCode::Char('P'));
     let asked: Vec<RunRequest> = (effects.iter())
@@ -243,6 +243,10 @@ fn an_empty_session_uses_the_start_directory() {
             profile(proto::ProfileRequest::Show {
                 dir: repo.clone(),
                 proposed: true,
+            }),
+            RunRequest::Lessons(proto::LessonsRequest::List {
+                dir: repo.clone(),
+                all: false,
             }),
         ]
     );

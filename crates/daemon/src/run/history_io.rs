@@ -11,19 +11,26 @@ use std::path::Path;
 use std::time::Duration;
 
 use proto::{DiffStats, HISTORY_VERSION, HistoryLine, HistoryStats, RevertRecord};
+use serde::Serialize;
 
 use super::git::{DIFF_FLAGS, Git, os, read_ref};
 
-/// Appends `line` as one JSON line, then `sync_all`. The file and its directory are
+/// Appends `line` as one JSON line through [`append_json`].
+pub fn append_line(path: &Path, line: &HistoryLine) -> std::io::Result<()> {
+    append_json(path, line)
+}
+
+/// Appends `value` as one JSON line, then `sync_all`. The file and its directory are
 /// created when missing. The line is written with one `write_all` of the whole line,
 /// so a reader sees it whole or torn at its end, never interleaved. A file whose last
 /// line was torn (a crash or a full disk mid-append) gets a `\n` in front of the line,
 /// in the same write, so the torn line cannot swallow it (M8b.17 review, m7).
-pub fn append_line(path: &Path, line: &HistoryLine) -> std::io::Result<()> {
+/// Milestone 9.15 decision 3 generalised it from history lines to any `Serialize`.
+pub fn append_json<T: Serialize + ?Sized>(path: &Path, value: &T) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    let mut text = serde_json::to_string(line).map_err(std::io::Error::other)?;
+    let mut text = serde_json::to_string(value).map_err(std::io::Error::other)?;
     text.push('\n');
     let mut file = std::fs::OpenOptions::new()
         .create(true)
@@ -40,11 +47,38 @@ pub fn append_line(path: &Path, line: &HistoryLine) -> std::io::Result<()> {
 /// Milestone 9 decision 43, for a record the driver writes itself (pre-run triage's):
 /// `line` appended with [`append_line`] unless the file holds its record already.
 /// True when it was appended. Blocking: the driver calls it on `spawn_blocking`.
+///
+/// "Holds" means a line that parses (the coordinator's ruling, as the lessons store's
+/// `append_once` since task 3's review, I1): a line torn by a crash or a full disk
+/// carries the record's id in its first bytes but is no record, so it must not stop
+/// the record from being written whole. An unreadable file is an error.
 pub fn append_once(path: &Path, line: &HistoryLine) -> std::io::Result<bool> {
-    if contains_record(path, record_id(line))? {
+    if holds_record(path, record_id(line))? {
         return Ok(false);
     }
     append_line(path, line).map(|()| true)
+}
+
+/// Whether a line of the file that parses as a history line is a record of
+/// `record_id`. No file holds nothing. [`append_once`]'s test, and the `AppendHistory`
+/// reconcile row's (the controller's ruling at task M9.15.6: a torn line is no record).
+pub fn holds_record(path: &Path, id: &str) -> std::io::Result<bool> {
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    let needle = needle(id);
+    for raw in std::io::BufReader::new(file).split(b'\n') {
+        let text = String::from_utf8_lossy(&raw?).into_owned();
+        // The needle first: most lines are not this record, and need no parse.
+        if text.contains(&needle)
+            && serde_json::from_str::<HistoryLine>(&text).is_ok_and(|l| record_id(&l) == id)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Whether `file` is non-empty and its last byte is not `\n`.
@@ -69,8 +103,9 @@ fn needle(record_id: &str) -> String {
     format!("\"record_id\":{id}")
 }
 
-/// Whether the file holds a line of `record_id` (decision 33's reconcile row). No
-/// file holds nothing.
+/// Whether the file holds a line carrying `record_id`'s needle, whatever its format;
+/// a torn line counts. No file holds nothing. A history file's "already written" is
+/// [`holds_record`]'s, which parses.
 pub fn contains_record(path: &Path, record_id: &str) -> std::io::Result<bool> {
     let file = match std::fs::File::open(path) {
         Ok(file) => file,

@@ -48,6 +48,7 @@ from pty_smoke_tiers import tiers_stage
 from pty_smoke_pr import pr_stage
 from pty_smoke_keep_going import keep_going_stage
 from pty_smoke_tuning import tuning_stage
+from pty_smoke_lessons import lessons_stage
 from pty_smoke_design import design_stage
 from pty_smoke_profile import profile_stage
 from pty_smoke_run_view import run_view_stage
@@ -1037,7 +1038,9 @@ def run_resume_stage():
         with open(ANTHREX_CONFIG_PATH, "w", encoding="utf-8") as handle:
             handle.write(
                 f"[runtimes.claude]\ncommand = {json.dumps(script_path)}\n\n"
-                f"[runtimes.codex]\ncommand = {json.dumps(script_path)}\n"
+                f"[runtimes.codex]\ncommand = {json.dumps(script_path)}\n\n"
+                # Milestone 9.15 ruling C3: lessons off, as every stage.
+                "[lessons]\nenabled = false\nrisk_note = false\n"
             )
 
         resume_env = dict(ENV)
@@ -1332,7 +1335,11 @@ def run_conversation_view_stage():
 # Settings save edits this file and then removes its directory (so stage 11t's `rmtree`
 # deletes this design-off table; no planned goal runs after 11t), as 12b does its own;
 # the module's `finally` removes the directory only when this run wrote the table.
-DESIGN_OFF_CONFIG = '[orchestrator.design]\ndefault = "off"\n'
+# Milestone 9.15 ruling C3: lessons off too (no background distill or risk-note call).
+DESIGN_OFF_CONFIG = (
+    '[orchestrator.design]\ndefault = "off"\n\n'
+    "[lessons]\nenabled = false\nrisk_note = false\n"
+)
 WROTE_DESIGN_OFF_CONFIG = False
 
 
@@ -1806,6 +1813,7 @@ def main():
     pr_stage(PtyProc, BIN, run_cmd, fail, ENV)
     keep_going_stage(PtyProc, BIN, run_cmd, fail, ENV)
     tuning_stage(PtyProc, BIN, run_cmd, fail, ENV)
+    lessons_stage(PtyProc, BIN, run_cmd, fail, ENV)
     design_stage(PtyProc, BIN, run_cmd, fail, ENV)
     profile_stage(PtyProc, BIN, run_cmd, fail, ENV)
     tui_stage(PtyProc, BIN, run_cmd, fail, ANTHREX_CONFIG_PATH)
@@ -1867,14 +1875,16 @@ def main():
 
 def only(stage):
     """`ANTHREX_SMOKE_ONLY=<stage>`: runs that one stage alone, for a stage that needs
-    nothing the stages before it set up. Only `11g`, `11i`, `11j` and `11k` qualify: each runs its own
-    daemon (`scripts/pty_smoke_tuning.py`, `scripts/pty_smoke_pr.py`,
-    `scripts/pty_smoke_keep_going.py`, `scripts/pty_smoke_design.py`). The merge gate is the whole script, without it."""
+    nothing the stages before it set up. Only `11g`, `11i`, `11j`, `11k` and `11n` qualify: each runs
+    its own daemon (`scripts/pty_smoke_tuning.py`, `scripts/pty_smoke_pr.py`,
+    `scripts/pty_smoke_keep_going.py`, `scripts/pty_smoke_design.py`,
+    `scripts/pty_smoke_lessons.py`). The merge gate is the whole script, without it."""
     stages = {
         "11i": lambda: pr_stage(PtyProc, BIN, run_cmd, fail, ENV),
         "11j": lambda: keep_going_stage(PtyProc, BIN, run_cmd, fail, ENV),
         "11g": lambda: tuning_stage(PtyProc, BIN, run_cmd, fail, ENV),
         "11k": lambda: design_stage(PtyProc, BIN, run_cmd, fail, ENV),
+        "11n": lambda: lessons_stage(PtyProc, BIN, run_cmd, fail, ENV),
     }
     if stage not in stages:
         fail(f"ANTHREX_SMOKE_ONLY={stage!r}: only {sorted(stages)} can run alone")

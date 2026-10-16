@@ -81,6 +81,7 @@ mod integration;
 mod kinds;
 pub(crate) mod ladder;
 mod ladder_budget;
+mod lessons_queue;
 mod merge;
 mod op_result;
 mod ops;
@@ -107,6 +108,7 @@ mod restore_lost;
 mod results;
 mod review;
 mod review_session;
+mod risk_note;
 mod rounds;
 mod run_scouts;
 pub(crate) mod schedule;
@@ -228,7 +230,8 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
             reply,
             run_id,
             action,
-        } => complete::finish(&mut state, reply, &run_id, action, now, &mut fx),
+            reason,
+        } => complete::finish(&mut state, reply, &run_id, action, reason, now, &mut fx),
         EventKind::Tool { reply, call } => done::tool(&mut state, reply, call, now, &mut fx),
         EventKind::Promote {
             reply,

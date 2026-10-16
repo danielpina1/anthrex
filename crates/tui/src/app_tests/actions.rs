@@ -321,6 +321,8 @@ fn a_destructive_page_ignores_enter() {
         Some(ActionKind::Discard),
     );
     tap(&mut app, KeyCode::Enter);
+    // Milestone 9.15 decision 40: the reason's form first; Enter leaves it blank.
+    tap(&mut app, KeyCode::Enter);
     let ActionStep::Confirm(page) = &flow(&app).step else {
         panic!("not a page");
     };

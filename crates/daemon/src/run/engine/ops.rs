@@ -301,6 +301,11 @@ pub enum OpKind {
         root: PathBuf,
         worktrees: Vec<(PathBuf, String)>,
         branch_prefix: String,
+        /// Milestone 9.15 decision 26 (review I1 of M9.15.7): `run discard`'s cleaned
+        /// reason, set on the run only when the discard succeeds. Left out while
+        /// `None`, so a pending discard from before it decodes.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
     },
     /// M8b decision 18: one decider call, holding a reader slot while it runs.
     /// **Executor contract:** `decider::call::decide` with the adaptation's
@@ -415,6 +420,18 @@ pub enum OpKind {
     /// commit of this tree on the run head is that commit. Reconciled `NotStarted`.
     /// Results: `DocsCommitted`, `DocsThroughSymlink`, `Failed`.
     CommitDesignDocs(Box<crate::run::design::commit::DocsCommitSpec>),
+    /// Milestone 9.15 decision 10: one `queued` line of `<repo_dir>/lessons.jsonl`, its
+    /// dossier built and redacted by the engine (`engine/lessons_queue.rs`).
+    /// **Executor contract** (`driver/adapt_history.rs`): `lessons::store::append_once`
+    /// under the daemon's `LessonLocks`, then the distill worker's `wake` once it
+    /// exists; the result is `DistillQueued` (written now or before), or `Failed`.
+    /// Reconciled by a parsed line of its `record_id` (replayed) or re-issued.
+    QueueDistill {
+        path: PathBuf,
+        record_id: String,
+        /// Boxed as `AppendHistory`'s line is.
+        line: Box<proto::LessonLine>,
+    },
 }
 
 impl OpKind {
@@ -455,6 +472,7 @@ impl OpKind {
             OpKind::CrownRacer { .. } => "CrownRacer",
             OpKind::StartDesignAgent { .. } => "StartDesignAgent",
             OpKind::CommitDesignDocs(_) => "CommitDesignDocs",
+            OpKind::QueueDistill { .. } => "QueueDistill",
         }
     }
 }

@@ -177,6 +177,7 @@ fn history_lines_are_tagged() {
     assert_eq!(back, HistoryLine::Task(record));
 
     let run = HistoryLine::Run(RunRecord {
+        discard_reason: None,
         v: HISTORY_VERSION,
         record_id: "run-a1b2".into(),
         at: 1_700_001_000,

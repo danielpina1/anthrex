@@ -7,6 +7,7 @@
 use crate::support;
 
 use std::collections::BTreeMap;
+use std::time::{Duration, Instant};
 
 use proto::{Budget, RunInfo, RunState, TaskInfo, TaskState};
 use serde_json::{Value, json};
@@ -140,16 +141,36 @@ fn past_check(task: &TaskInfo) -> bool {
     )
 }
 
+/// The longest the rate-limit scenario may wait in all, counted from its start. nextest
+/// ends a test at 600 s (`.config/nextest.toml`) with a signal, so nothing unwinds: no
+/// `Drop` runs, and the harness's daemon (in its own process group) and its sessions
+/// outlive the test, as on main's macOS CI (bac2aa9e). A wait that can outlast 600 s is
+/// no deadline at all: it fails with no message and leaks. Every wait here ends by this
+/// one: 600 s, less the teardown's worst case (`daemon stop` within `REQUEST_WAIT`, 75 s,
+/// then `DAEMON_EXIT_WAIT`, 30 s), less one poll's request begun just before a deadline
+/// (`REQUEST_WAIT`), less 10 s: 410 s, so 400 s (`docs/timing-budgets.md`).
+const SCENARIO_WAIT: Duration = Duration::from_secs(400);
+
+/// What is left of `wait` before `deadline`.
+fn within(wait: Duration, deadline: Instant) -> Duration {
+    wait.min(deadline.saturating_duration_since(Instant::now()))
+}
+
 #[test]
 fn e2e_a_rate_limit_halves_writers_for_that_runtime() {
+    let deadline = Instant::now() + SCENARIO_WAIT;
     let h = RunHarness::tuning("", "", &[]);
     let watcher = h.subscribe();
     // On Claude by their row (milestone 9.8 decision 31: a plan's route is ignored).
     let claude = "";
+    // t1 is held twice: before its rate limit, until t2 holds a writer slot, and after
+    // it, until t2 works. No hold waits for anything a hold keeps from happening.
     h.script(
         "worker-t1-1",
         &[
+            h.wait_release("t1-limit"),
             json!({"api_retry": {"error": "rate_limit", "delay_ms": 100, "times": 1}}),
+            h.wait_release("t1"),
             commit("a.txt", "a\n"),
             done("added a"),
         ],
@@ -173,11 +194,41 @@ fn e2e_a_rate_limit_halves_writers_for_that_runtime() {
     ];
     let id = h.start(&format!("max_writers = 2\n{}", plan_of(&tasks)), true);
 
-    // t1's rate limit halves Claude's writers.
+    // t2 holds its writer slot before t1's rate limit (a preparing task holds one,
+    // decision 41), so the halved cap can never keep it queued behind t1's held slot:
+    // 428a284b's synchronisation let t1 rate-limit at once and released it only once
+    // t2 worked, which nothing but the dispatch pass's order kept from deadlocking.
+    let slot = |r: &RunInfo| matches!(t(r, "t2").state, TaskState::Preparing | TaskState::Working);
+    let run = h.wait_run_for(
+        "t2 holds a writer slot before t1's rate limit",
+        &id,
+        slot,
+        within(RUN_WAIT, deadline),
+    );
+    assert!(run.writer_caps.is_empty(), "{:?}", run.writer_caps);
+    h.release("t1-limit");
+
+    // t1's rate limit halves Claude's writers, and t1 waits after it until t2 works:
+    // nothing else orders t2's launch before t1's merge, and on Ubuntu CI t1 merged
+    // while t2 was still `Preparing`.
     let capped = BTreeMap::from([("claude".to_string(), 1u8)]);
-    h.wait_run(&id, |r| r.writer_caps == capped, RUN_WAIT);
+    let working = |r: &RunInfo| r.writer_caps == capped && t(r, "t2").state == TaskState::Working;
+    let run = h.wait_run_for(
+        "Claude's writers capped at one and t2 working",
+        &id,
+        working,
+        within(RUN_WAIT, deadline),
+    );
+    assert_eq!(
+        t(&run, "t3").state,
+        TaskState::Queued,
+        "{:?}",
+        t(&run, "t3")
+    );
     // t1 merges while t2 holds Claude's one writer: t3 waits.
-    let run = h.wait_run(&id, |r| t(r, "t1").state == TaskState::Merged, RUN_WAIT);
+    h.release("t1");
+    let merged = |r: &RunInfo| t(r, "t1").state == TaskState::Merged;
+    let run = h.wait_run_for("t1 merged", &id, merged, within(RUN_WAIT, deadline));
     assert_eq!(
         t(&run, "t3").state,
         TaskState::Queued,
@@ -187,13 +238,19 @@ fn e2e_a_rate_limit_halves_writers_for_that_runtime() {
     assert_eq!(t(&run, "t2").state, TaskState::Working);
     assert_eq!(run.writer_caps, capped);
     h.release("t2");
-    let run = h.wait_run(&id, complete, 3 * RUN_WAIT);
+    let run = h.wait_run_for(
+        "the run complete",
+        &id,
+        complete,
+        within(3 * RUN_WAIT, deadline),
+    );
     for id in ["t1", "t2", "t3"] {
         assert_eq!(t(&run, id).state, TaskState::Merged, "{id}");
     }
     assert_eq!(run.rate_limits.get("claude"), Some(&1));
 
-    // Every snapshot from t1's merge until t2 was past its check had t3 queued.
+    // Every snapshot from t1's merge until t2 was past its check had t3 queued, and the
+    // window holds t2 working: the writer t3 waited for.
     // One read of the watcher: it keeps receiving snapshots after the run completes, so
     // three separate reads (one per task) could see lists of different lengths.
     let snapshots: Vec<(TaskInfo, TaskInfo, TaskInfo)> = (watcher.snapshots().into_iter())
@@ -204,15 +261,15 @@ fn e2e_a_rate_limit_halves_writers_for_that_runtime() {
             Some((find("t1")?, find("t2")?, find("t3")?))
         })
         .collect();
-    let window: Vec<&TaskInfo> = (snapshots.iter())
+    let window: Vec<(&TaskInfo, &TaskInfo)> = (snapshots.iter())
         .filter(|(t1, t2, _)| t1.state == TaskState::Merged && !past_check(t2))
-        .map(|(_, _, t3)| t3)
+        .map(|(_, t2, t3)| (t2, t3))
         .collect();
     assert!(
-        !window.is_empty(),
-        "no snapshot between t1's merge and t2's check"
+        window.iter().any(|(t2, _)| t2.state == TaskState::Working),
+        "no snapshot with t1 merged and t2 working"
     );
-    for t3 in window {
+    for (_, t3) in window {
         assert_eq!(t3.state, TaskState::Queued, "{t3:?}");
     }
     report_with(&run, "rate limit on claude: writers 2 → 1");

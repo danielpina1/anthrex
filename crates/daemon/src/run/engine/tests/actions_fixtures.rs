@@ -366,6 +366,7 @@ fn finishing() -> Fixture {
         reply,
         run_id: RUN_ID.into(),
         action: FinishAction::Accept,
+        reason: None,
     });
     assert!(!pending(&fx, "Accept", None).is_empty());
     fx

@@ -242,6 +242,7 @@ pub(super) fn reject_run(run: &mut Run, note: &str, now: u64, fx: &mut Vec<Effec
         root: run.root.clone(),
         worktrees,
         branch_prefix: format!("anthrex/{run_id}/"),
+        reason: None,
     };
     emit_op(run, op, None, kind, fx);
     log(run, now, "rejected by the user; discarding");

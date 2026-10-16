@@ -23,7 +23,13 @@ pub enum Screen {
     Stats(Box<super::stats::StatsScreen>),
     /// Milestone 9.6 decision 34: a run's brainstorm or spec gate (`app/doc_gate.rs`).
     DocGate(Box<super::doc_gate::DocGateScreen>),
+    /// Milestone 9.15 decision 49: the lessons knowledge graph page
+    /// (`app/lessons_graph_screen.rs`), over the Profile screen it keeps.
+    LessonsGraph(Box<lessons_graph::LessonsGraphScreen>),
 }
+
+#[path = "lessons_graph_screen.rs"]
+pub(crate) mod lessons_graph;
 
 impl App {
     /// Opens `screen` over the body; the keymap's screen mode follows.
@@ -43,6 +49,7 @@ impl App {
             Some(Screen::Settings(_)) => LEAVE_SETTINGS_FIRST,
             Some(Screen::Stats(_)) => super::stats::LEAVE_STATS_FIRST,
             Some(Screen::DocGate(_)) => super::doc_gate::LEAVE_DOC_FIRST,
+            Some(Screen::LessonsGraph(_)) => lessons_graph::LEAVE_GRAPH_FIRST,
             None => return false,
         };
         let text = match (&self.screen, cmd) {
@@ -61,6 +68,7 @@ impl App {
             Some(Screen::Settings(_)) => self.on_settings_key(key),
             Some(Screen::Stats(_)) => self.on_stats_key(key),
             Some(Screen::DocGate(_)) => self.on_doc_gate_key(key),
+            Some(Screen::LessonsGraph(_)) => self.on_lessons_graph_key(key),
             None => vec![],
         }
     }
@@ -74,6 +82,7 @@ impl App {
             Some(Screen::Settings(_)) => self.settings_tick(),
             Some(Screen::Stats(_)) => self.stats_tick(),
             Some(Screen::DocGate(_)) => self.doc_gate_tick(),
+            Some(Screen::LessonsGraph(_)) => vec![],
             // Milestone 9.6: the plan review's Plan doc tab, over no screen.
             None => self.plan_doc_tick(),
         }

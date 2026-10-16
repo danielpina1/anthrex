@@ -196,8 +196,8 @@ fn enter_runs_the_preselection() {
     view_on(&mut app, &AlertKey::Proposal("/r/shop".into()));
     assert_eq!(
         tap(&mut app, KeyCode::Enter).len(),
-        3,
-        "status and both shows"
+        4,
+        "status, both shows and the lessons list"
     );
     assert!(app.screen.is_some());
     assert_eq!(app.alerts_focus, None);
@@ -325,7 +325,7 @@ fn o_opens_the_run_view_on_the_task() {
     // A proposal: the Profile screen, as Enter.
     let mut app = every_app();
     view_on(&mut app, &AlertKey::Proposal("/r/shop".into()));
-    assert_eq!(tap(&mut app, KeyCode::Char('o')).len(), 3);
+    assert_eq!(tap(&mut app, KeyCode::Char('o')).len(), 4);
     assert!(app.screen.is_some());
     assert_eq!(app.alerts_focus, None);
     assert_eq!(app.run_view, None);

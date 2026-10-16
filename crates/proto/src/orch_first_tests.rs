@@ -96,10 +96,9 @@ fn the_five_ops_are_appended_last() {
         ),
         "{names}"
     );
-    assert_eq!(
-        variant_names::<RunRequest>().last().map(String::as_str),
-        Some("AnswerAsk")
-    );
+    // Milestone 9.15 appends `Lessons` after `AnswerAsk` (`lessons_tests.rs`).
+    let requests = variant_names::<RunRequest>();
+    assert_eq!(requests[requests.len() - 2], "AnswerAsk");
 }
 
 fn route() -> Route {

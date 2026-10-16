@@ -16,6 +16,7 @@ fn accept(h: &RunHarness, id: &str, confirm: Option<String>) -> RunReply {
         run_id: id.to_string(),
         action: FinishAction::Accept,
         confirm,
+        reason: None,
     })
 }
 

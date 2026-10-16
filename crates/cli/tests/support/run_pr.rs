@@ -448,8 +448,7 @@ fn build(
     let lines = deciders.map_or(String::new(), |mode| with_deciders(mode, Path::new("/")).0);
     let mut harness = RunHarness::unstarted(&format!("{lines}{orchestrator}"), &[], true, files);
     let config = harness.dir.path().join("config.toml");
-    let text = std::fs::read_to_string(&config).unwrap();
-    std::fs::write(&config, format!("{text}\n{DELIVERY_TOML}{extra_toml}\n")).unwrap();
+    super::lessons::append_toml(&config, &format!("{DELIVERY_TOML}{extra_toml}"));
     if let Some(mode) = deciders {
         let dir = harness.dir.path().join("deciders");
         std::fs::create_dir_all(&dir).unwrap();
