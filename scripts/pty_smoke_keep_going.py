@@ -149,13 +149,13 @@ def _edit(edits, **more):
 # never comes, so its window stays live until the stage's daemon stops.
 ORCHESTRATOR = [
     {"hook": "UserPromptSubmit", "payload": {"prompt": "plan"}},
-    _edit([_task("t1", "a.txt", 1)], submit=True),
+    _edit([_task("t1", "a.txt", 1)], submit=True, decided=[], out_of_scope=[]),
     _until("/gate/state", "approved", RUN_WAIT),
     _until("/run/complete", True, RUN_WAIT),
     _edit([], summary=SUMMARY_1),
     _until("/run/round", 2, ITERATE_WAIT),
     {"read_message": {"expect": "the user asks for round 2 of run "}},
-    _edit([_task("t2", "b.txt", 2)], submit=True),
+    _edit([_task("t2", "b.txt", 2)], submit=True, decided=[], out_of_scope=[]),
     _until("/run/complete", True, SUMMARY_WAIT + RUN_WAIT),
     _edit([], summary=SUMMARY_2),
     _until("/run/state", "accepted", ACCEPT_WAIT),
