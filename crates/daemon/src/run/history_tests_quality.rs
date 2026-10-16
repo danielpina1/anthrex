@@ -1,7 +1,7 @@
 //! Milestone 9.17 (decision 11, rulings C10 and C14): a task record counts its `brief`
 //! findings apart from the code findings. Pure.
 
-use proto::{FindingTarget, Severity, SeverityTally, TaskOutcome, Verdict};
+use proto::{FindingTarget, Severity, SeverityTally, TaskOutcome, TaskState, Verdict};
 
 use super::task_record;
 use super::tests::fixtures::{finding, review, run_of};
@@ -62,17 +62,24 @@ fn brief_only_changes_round_is_not_rejected() {
 }
 
 /// Decision 26: a replacement's record names the tasks it replaces, from
-/// `Task.replaces`; a task that replaces nothing records an empty list.
+/// `Task.replaces`; a task that replaces nothing records an empty list. The run is
+/// one validation allows (task 8 review m2): only a cancelled or blocked task is
+/// replaced, so `t1` and `t2` are cancelled, `t3` replaced `t1` and was cancelled in
+/// turn, and `t4` replaces `t2` and `t3` and merges.
 #[test]
 fn replacement_record_names_what_it_replaces() {
-    let mut run = run_of(&["t1", "t2", "t3"]);
-    run.tasks[1].replaces = vec!["t1".to_string()];
-    run.tasks[2].replaces = vec!["t1".to_string(), "t2".to_string()];
-    let record = |i: usize| {
+    let mut run = run_of(&["t1", "t2", "t3", "t4"]);
+    for i in 0..3 {
+        run.tasks[i].state = TaskState::Cancelled;
+    }
+    run.tasks[3].state = TaskState::Merged;
+    run.tasks[2].replaces = vec!["t1".to_string()];
+    run.tasks[3].replaces = vec!["t2".to_string(), "t3".to_string()];
+    let record = |i: usize, outcome: TaskOutcome| {
         let task = run.tasks[i].clone();
-        task_record(&run, &task, TaskOutcome::Merged, 1_000)
+        task_record(&run, &task, outcome, 1_000)
     };
-    assert!(record(0).replaces.is_empty());
-    assert_eq!(record(1).replaces, ["t1"]);
-    assert_eq!(record(2).replaces, ["t1", "t2"]);
+    assert!(record(0, TaskOutcome::Cancelled).replaces.is_empty());
+    assert_eq!(record(2, TaskOutcome::Cancelled).replaces, ["t1"]);
+    assert_eq!(record(3, TaskOutcome::Merged).replaces, ["t2", "t3"]);
 }
