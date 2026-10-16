@@ -30,6 +30,16 @@ pub fn frame_for(run: &Run, round: u32) -> Option<&PlanFrame> {
     run.orch.plan_frames.iter().find(|f| f.round == round)
 }
 
+/// Decision 18: a frame text as stored. A line break or tab becomes a space, any other
+/// control character is dropped, and the ends are trimmed. The parser
+/// refuses an item this leaves empty (task 5 review M2).
+pub fn clean(text: &str) -> String {
+    let kept: String = (text.chars())
+        .filter(|&c| !(c.is_control() && !c.is_whitespace()))
+        .collect();
+    crate::run::messages::one_line(&kept).trim().to_string()
+}
+
 #[cfg(test)]
 #[path = "plan_frame_tests.rs"]
 mod tests;

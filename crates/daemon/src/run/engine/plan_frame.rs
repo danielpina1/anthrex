@@ -9,7 +9,7 @@ use proto::{DecidedItem, RunState};
 
 use super::{design, gate_holds};
 use crate::run::model::Run;
-use crate::run::orch::plan_frame::{PlanFrame, frame_for};
+use crate::run::orch::plan_frame::{PlanFrame, clean, frame_for};
 
 /// Decision 14: an orchestrator's submit without the frame.
 pub(crate) const PLAN_FRAME_MISSING: &str = "submit needs decided (each question the goal left open, with the answer you chose) and out_of_scope (what this run will not do); send both with submit, as empty lists if there are none";
@@ -101,32 +101,22 @@ pub(super) fn store_epic(run: &mut Run, k: usize, frame: Frame, now: u64) {
     }
 }
 
-/// The frame of `round`, every text on one line, its control characters dropped;
+/// The frame of `round`, every text [`clean`]ed;
 /// `None` unless both keys were sent.
 fn cleaned(round: u32, (decided, out_of_scope): Frame, at: u64) -> Option<PlanFrame> {
     let (decided, out_of_scope) = (decided?, out_of_scope?);
     let decided = decided
         .into_iter()
         .map(|d| DecidedItem {
-            question: one_line(&d.question),
-            answer: one_line(&d.answer),
+            question: clean(&d.question),
+            answer: clean(&d.answer),
         })
         .collect();
-    let out_of_scope = out_of_scope.iter().map(|t| one_line(t)).collect();
+    let out_of_scope = out_of_scope.iter().map(|t| clean(t)).collect();
     Some(PlanFrame {
         round,
         decided,
         out_of_scope,
         at,
     })
-}
-
-/// A line break or tab becomes a space, any other control character is dropped, and
-/// the ends are trimmed.
-fn one_line(text: &str) -> String {
-    let kept: String = text
-        .chars()
-        .filter(|c| !c.is_control() || c.is_whitespace())
-        .collect();
-    crate::run::messages::one_line(&kept).trim().to_string()
 }

@@ -371,7 +371,7 @@ fn decided(map: &Map<String, Value>) -> Result<Option<Vec<DecidedItem>>, String>
         let one = |key: &str, max: usize| {
             let at = format!("{field}.{key}");
             let v = m.get(key).ok_or_else(|| format!("{at}: required"))?;
-            one_text(v, &at, max)
+            frame_text(v, &at, max)
         };
         Ok(DecidedItem {
             question: one("question", 300)?,
@@ -389,8 +389,34 @@ fn decided(map: &Map<String, Value>) -> Result<Option<Vec<DecidedItem>>, String>
 /// Decision 13's `out_of_scope`: at most `OUT_OF_SCOPE_ITEMS_MAX` strings of 1 to 300
 /// characters; `None` when absent.
 fn out_of_scope(map: &Map<String, Value>) -> Result<Option<Vec<String>>, String> {
-    let max = super::plan_frame::OUT_OF_SCOPE_ITEMS_MAX;
-    list(map, "out_of_scope", 0, max, 300)
+    let Some(value) = map.get("out_of_scope") else {
+        return Ok(None);
+    };
+    let items = array(
+        value,
+        "out_of_scope",
+        0,
+        super::plan_frame::OUT_OF_SCOPE_ITEMS_MAX,
+    )?;
+    let item = |(i, v): (usize, &Value)| frame_text(v, &format!("out_of_scope[{i}]"), 300);
+    items
+        .iter()
+        .enumerate()
+        .map(item)
+        .collect::<Result<_, _>>()
+        .map(Some)
+}
+
+/// A frame item's text: 1 to `max` characters, and not empty once stored (task 5
+/// review M2: spaces, control or format characters only).
+fn frame_text(value: &Value, field: &str, max: usize) -> Result<String, String> {
+    let text = one_text(value, field, max)?;
+    if super::plan_frame::clean(&text).is_empty() {
+        return Err(format!(
+            "{field}: must have text, not only spaces, control or format characters"
+        ));
+    }
+    Ok(text)
 }
 
 /// `edits`: required, `min` to 60 plan edits, each within the Interfaces table's
