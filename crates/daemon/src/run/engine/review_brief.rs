@@ -16,7 +16,8 @@ use crate::run::orch::{WorkerNote, add_worker_note};
 pub(super) const BRIEF_NOTES_PER_TASK: usize = 5;
 
 /// Decision 8: records round `round`'s `brief` findings of task `i` as notes, in their
-/// order. A note equal to one the task already has is not added again; past
+/// order. A finding whose severity and text a `brief` note of the task already holds,
+/// from this round or an earlier one, is not added again (task 4 review I1); past
 /// [`BRIEF_NOTES_PER_TASK`] a finding is dropped with the history line
 /// `brief finding dropped: 5 already noted`. Each added note logs
 /// `brief finding: <first 120 characters>` and wakes the orchestrator (decision 9),
@@ -24,13 +25,17 @@ pub(super) const BRIEF_NOTES_PER_TASK: usize = 5;
 pub(super) fn record(run: &mut Run, i: usize, round: u32, findings: &[Finding], now: u64) {
     for finding in findings.iter().filter(|f| !f.target.is_code()) {
         let severity = label(&finding.severity);
-        let text = one_line(&format!(
-            "review round {round} ({severity}): {}",
-            finding.text
-        ));
+        // `(<severity>): <text>`, what a later round repeating itself repeats.
+        let said = one_line(&format!("({severity}): {}", finding.text));
+        let text = format!("review round {round} {said}");
         let task = &run.tasks[i];
         let notes = &task.orch.worker_notes;
-        if notes.iter().any(|n| n.text == text) {
+        let repeats = |n: &WorkerNote| {
+            let rest = n.text.strip_prefix("review round ");
+            let rest = rest.and_then(|r| r.split_once(' ')).map(|(_, rest)| rest);
+            n.kind == TaskNoteKind::Brief && rest == Some(said.as_str())
+        };
+        if notes.iter().any(repeats) {
             continue;
         }
         let briefs = notes.iter().filter(|n| n.kind == TaskNoteKind::Brief);

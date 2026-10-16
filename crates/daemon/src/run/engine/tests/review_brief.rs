@@ -311,3 +311,38 @@ fn report_attributes_brief_notes_to_the_reviewer() {
     );
     assert!(!section.contains("(brief, from the worker)"), "{section}");
 }
+
+/// Task 4 review I1: decision 8's dedup is on the finding's severity and text, so a
+/// later round repeating an earlier round's brief finding adds no note, no history line
+/// and no wake; a new severity or text is a new note.
+#[test]
+fn a_later_round_repeating_a_brief_finding_adds_nothing() {
+    let (mut fx, _, _) = reviewed(PROFILE, "");
+    fx.run_mut().orch.orchestrator = Some(orchestrator());
+    let i = fx.run().tasks.iter().position(|t| t.id() == "t1").unwrap();
+    let f = |severity: Severity, text: &str| proto::Finding {
+        severity,
+        file: None,
+        line: None,
+        input: None,
+        text: text.into(),
+        target: proto::FindingTarget::Brief,
+    };
+    let now = fx.now;
+    let wrong = f(Severity::Critical, "the brief asks for the wrong table");
+    crate::run::engine::review_brief::record(fx.run_mut(), i, 1, std::slice::from_ref(&wrong), now);
+    let history = fx.task("t1").history.len();
+    let wakes = fx.run().orch.orchestrator.as_ref().unwrap().notes.len();
+    crate::run::engine::review_brief::record(fx.run_mut(), i, 2, &[wrong], now);
+    assert_eq!(
+        brief_notes(&fx, "t1"),
+        ["review round 1 (critical): the brief asks for the wrong table"]
+    );
+    assert_eq!(fx.task("t1").history.len(), history);
+    let notes = &fx.run().orch.orchestrator.as_ref().unwrap().notes;
+    assert_eq!(notes.len(), wakes, "{notes:?}");
+    // Another severity of the same text is another finding.
+    let minor = f(Severity::Minor, "the brief asks for the wrong table");
+    crate::run::engine::review_brief::record(fx.run_mut(), i, 2, &[minor], now);
+    assert_eq!(brief_notes(&fx, "t1").len(), 2);
+}
