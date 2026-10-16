@@ -2,7 +2,9 @@
 //! never carry. Its scope is the brief's: PEM private keys, prefixed tokens, JWTs,
 //! bearer credentials, and a URL's user information (as `host::remote::redact` does).
 //! Portuguese IBAN/NIF and daemon tokens are not ported. Pure; the patterns compile
-//! once.
+//! once. Milestone 9.18 decision 6 adds Stripe's `sk_live_`/`sk_test_` here, and AWS
+//! secret access keys, `Basic` credentials and encoded URL user information in
+//! `redact_more.rs`.
 //!
 //! The text it sees may already have been clipped (a check's tail, a signature's
 //! headline, decision 5) or rewritten by decision 5's normaliser, so each pattern also
@@ -30,12 +32,18 @@ use std::sync::LazyLock;
 use proto::safe_text::is_hidden_format;
 use regex::{Captures, Regex};
 
+/// Milestone 9.18 decision 6's rules, beside these (task M9.18.4).
+#[path = "redact_more.rs"]
+mod more;
+
 /// What a private key block becomes.
 pub const PRIVATE_KEY: &str = "[redacted private key]";
 /// What a prefixed token or a JWT becomes.
 pub const TOKEN: &str = "[redacted token]";
 /// What a bearer credential becomes, with its scheme.
 pub const BEARER: &str = "Bearer [redacted]";
+/// What a basic credential becomes, with its scheme (milestone 9.18 decision 6).
+pub const BASIC: &str = "Basic [redacted]";
 /// A URL's user information.
 const USERINFO: &str = "***";
 
@@ -112,10 +120,11 @@ static JWT: LazyLock<Regex> =
 /// 10's review, I1: OpenAI's `sk-proj-`, `sk-svcacct-` and `sk-admin-`. A clipped or
 /// placeholder-split token of these prefixes is [`PREFIXED`]'s. The controller's
 /// ruling after task 13's fix: a body with no uppercase letter and no digit is a word
-/// ([`unambiguous`]).
+/// ([`unambiguous`]). Milestone 9.18 decision 6: Stripe's `sk_live_` and `sk_test_`,
+/// their body base62.
 static UNAMBIGUOUS: LazyLock<Regex> = LazyLock::new(|| {
     re(
-        r"(?:github_pat_|gh[pousr]_|glpat-|sk-ant-|sk-proj-|sk-svcacct-|sk-admin-|xox[abprs]-)([A-Za-z0-9_-]{16,})|AKIA[0-9A-Z]{16}[A-Za-z0-9_-]*",
+        r"(?:github_pat_|gh[pousr]_|glpat-|sk-ant-|sk-proj-|sk-svcacct-|sk-admin-|xox[abprs]-)([A-Za-z0-9_-]{16,})|AKIA[0-9A-Z]{16}[A-Za-z0-9_-]*|sk_(?:live|test)_([A-Za-z0-9]{16,})",
     )
 });
 /// Task 12's review, I2 and M7 (the controller's ruling): the ambiguous `sk-` (any
@@ -137,7 +146,9 @@ pub const UNAMBIGUOUS_BODY_MIN: usize = 4;
 /// `^[[31m`, `\33[31m`, `&#27;[31m`, `%1b%5B31m` each end in a letter). [`prefixed`]
 /// reads its body.
 static PREFIXED: LazyLock<Regex> = LazyLock::new(|| {
-    re(r"github_pat_|gh[pousr]_|glpat-|sk-ant-|sk-proj-|sk-svcacct-|sk-admin-|xox[abprs]-|AKIA")
+    re(
+        r"github_pat_|gh[pousr]_|glpat-|sk-ant-|sk-proj-|sk-svcacct-|sk-admin-|xox[abprs]-|AKIA|sk_live_|sk_test_",
+    )
 });
 /// A real escape sequence at the start of the text, in [`ESCAPE`]'s forms.
 static ESCAPE_HERE: LazyLock<Regex> = LazyLock::new(|| {
@@ -154,20 +165,18 @@ const PLACEHOLDERS: [&str; 8] = [
 /// The end of an unambiguous token's body that starts at `start`, how many body
 /// characters it holds, and whether it holds an uppercase letter, a digit or a
 /// placeholder (the controller's ruling after task 13's fix: real token bodies are
-/// random base62; a placeholder stands for normalised digits or hex): the prefix's own alphabet (`AKIA`'s is `[0-9A-Z]`, the others'
-/// `[A-Za-z0-9_-]`) and decision 5's placeholders count; a real escape sequence (which
+/// random base62; a placeholder stands for normalised digits or hex): the prefix's own alphabet (`body`: `AKIA`'s is `[0-9A-Z]`,
+/// Stripe's `[A-Za-z0-9]`, the others' `[A-Za-z0-9_-]`) and decision 5's placeholders count; a real escape sequence (which
 /// [`scrub`] strips) and a hidden format character (which `multi_line` and `one_line`
 /// drop) are read through without counting, so a token they split is replaced whole and
 /// leaves no remainder once they are gone. One pass; each character is read once.
-fn body_end(text: &str, start: usize, aws: bool) -> (usize, usize, bool) {
+fn body_end(text: &str, start: usize, body: fn(char) -> bool) -> (usize, usize, bool) {
     let mut at = start;
     let mut count = 0;
     let mut strong = false;
     while let Some(c) = text[at..].chars().next() {
         let rest = &text[at..];
-        let step = if (aws && (c.is_ascii_uppercase() || c.is_ascii_digit()))
-            || (!aws && (c.is_ascii_alphanumeric() || c == '_' || c == '-'))
-        {
+        let step = if body(c) {
             count += 1;
             strong |= c.is_ascii_uppercase() || c.is_ascii_digit();
             1
@@ -200,7 +209,13 @@ fn prefixed(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut from = 0;
     while let Some(m) = PREFIXED.find_at(text, from) {
-        let (end, count, strong) = body_end(text, m.end(), m.as_str() == "AKIA");
+        let body: fn(char) -> bool = match m.as_str() {
+            "AKIA" => |c| c.is_ascii_uppercase() || c.is_ascii_digit(),
+            // Milestone 9.18 decision 6: Stripe's body is base62.
+            "sk_live_" | "sk_test_" => |c| c.is_ascii_alphanumeric(),
+            _ => |c| c.is_ascii_alphanumeric() || c == '_' || c == '-',
+        };
+        let (end, count, strong) = body_end(text, m.end(), body);
         out.push_str(&text[from..m.start()]);
         if count >= UNAMBIGUOUS_BODY_MIN && strong {
             out.push_str(TOKEN);
@@ -224,7 +239,7 @@ fn has_digit(body: &str) -> bool {
 /// a digit (`AKIA`'s always does); an all-lowercase one is a word.
 fn unambiguous(text: &str) -> String {
     UNAMBIGUOUS
-        .replace_all(text, |c: &Captures| match c.get(1) {
+        .replace_all(text, |c: &Captures| match c.get(1).or_else(|| c.get(2)) {
             Some(body)
                 if !body
                     .as_str()
@@ -286,9 +301,14 @@ pub fn redact(text: &str) -> String {
     let text = PEM_BEGIN.replace_all(&text, PRIVATE_KEY);
     let text = PEM_END.replace_all(&text, PRIVATE_KEY);
     let text = URL_USERINFO.replace_all(&text, format!("${{1}}{USERINFO}@"));
+    let text = more::encoded_userinfo(&text);
     let text = url_cut(&text);
     let text = bearer(&text);
+    let text = more::basic(&text);
     let text = jwt(&text);
+    let text = more::aws_named(&text);
+    // Ruling C5: before `unambiguous`, which replaces the key id.
+    let text = more::aws_beside_id(&text);
     let text = unambiguous(&text);
     let text = ambiguous(&text);
     prefixed(&text)
@@ -356,7 +376,7 @@ static ESCAPE: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// `text` without its escape sequences ([`ESCAPE`]). An ESC right before a redaction's
-/// placeholder (`[redacted …]`, `Bearer [redacted]`, which a redaction before the strip
+/// placeholder (`[redacted …]`, `Bearer [redacted]`, `Basic [redacted]`, which a redaction before the strip
 /// leaves) goes alone, so the strip cannot eat the placeholder's first characters.
 fn strip_escapes(text: &str) -> String {
     ESCAPE
@@ -365,7 +385,11 @@ fn strip_escapes(text: &str) -> String {
             // ESC is one byte, the single-byte CSI two.
             let lead = m.as_str().chars().next().map_or(1, char::len_utf8);
             let after = &text[m.start() + lead..];
-            if after.starts_with("[redacted") || after.starts_with("Bearer [redacted") {
+            // Ruling C8: `Basic [redacted]` too.
+            if ["[redacted", "Bearer [redacted", "Basic [redacted"]
+                .iter()
+                .any(|p| after.starts_with(p))
+            {
                 m.as_str()[lead..].to_string()
             } else {
                 String::new()
@@ -398,3 +422,7 @@ mod scrub_tests_spellings;
 #[cfg(test)]
 #[path = "scrub_tests_unambiguous.rs"]
 mod scrub_tests_unambiguous;
+
+#[cfg(test)]
+#[path = "scrub_tests_residuals.rs"]
+mod scrub_tests_residuals;
