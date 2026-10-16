@@ -380,6 +380,10 @@ fn a_blank_frame_item_is_refused() {
     let blanks = [
         (json!([{"question": " \u{7} ", "answer": "a"}]), json!([])),
         (json!([{"question": "q", "answer": "\u{1b}\t"}]), json!([])),
+        (
+            json!([{"question": "q", "answer": "\u{200B}\u{202E}"}]),
+            json!([]),
+        ),
         (json!([]), json!(["   "])),
     ];
     for (decided, out) in blanks {
@@ -394,4 +398,26 @@ fn a_blank_frame_item_is_refused() {
         assert!(fx.run().tasks.is_empty());
         assert!(fx.run().orch.plan_frames.is_empty());
     }
+}
+
+/// Task 5 review M3 (security): format characters (bidi overrides, zero-width
+/// characters) are dropped on storage, as control characters are.
+#[test]
+fn frame_texts_drop_format_characters_on_storage() {
+    let mut fx = launched(false);
+    let args = framed(
+        json!({"edits": [add("t1", "auth")], "submit": true}),
+        json!([{"question": "Which\u{202E} store?", "answer": "SQ\u{200B}Lite\u{2066}"}]),
+        json!(["no\u{FEFF} UI\u{600}"]),
+    );
+    assert!(answer(&edit_plan(&mut fx, args)).0);
+    let frame = stored(&fx, 1).unwrap();
+    assert_eq!(
+        frame.decided,
+        [DecidedItem {
+            question: "Which store?".into(),
+            answer: "SQLite".into(),
+        }]
+    );
+    assert_eq!(frame.out_of_scope, ["no UI"]);
 }

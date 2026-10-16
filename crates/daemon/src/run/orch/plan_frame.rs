@@ -31,13 +31,32 @@ pub fn frame_for(run: &Run, round: u32) -> Option<&PlanFrame> {
 }
 
 /// Decision 18: a frame text as stored. A line break or tab becomes a space, any other
-/// control character is dropped, and the ends are trimmed. The parser
+/// control character and every format character (`Cf`: bidi controls, zero-width
+/// characters; task 5 review M3) is dropped, and the ends are trimmed. The parser
 /// refuses an item this leaves empty (task 5 review M2).
 pub fn clean(text: &str) -> String {
     let kept: String = (text.chars())
-        .filter(|&c| !(c.is_control() && !c.is_whitespace()))
+        .filter(|&c| !(c.is_control() && !c.is_whitespace()) && !is_format(c))
         .collect();
     crate::run::messages::one_line(&kept).trim().to_string()
+}
+
+/// Unicode's `Cf` (format) characters, with `proto::safe_text::is_hidden_format`'s
+/// other invisible ones.
+fn is_format(c: char) -> bool {
+    proto::safe_text::is_hidden_format(c)
+        || matches!(
+            c,
+            '\u{0600}'..='\u{0605}'
+                | '\u{06DD}'
+                | '\u{070F}'
+                | '\u{0890}'..='\u{0891}'
+                | '\u{08E2}'
+                | '\u{110BD}'
+                | '\u{110CD}'
+                | '\u{13430}'..='\u{1343F}'
+                | '\u{1BCA0}'..='\u{1BCA3}'
+        )
 }
 
 #[cfg(test)]
