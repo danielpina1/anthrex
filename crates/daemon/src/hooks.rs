@@ -57,6 +57,11 @@ pub struct ParsedHook {
     /// `resume` means the session's transcript already holds its earlier turns (task
     /// M6.5.10 fix round 2, N1/N2).
     pub session_source: Option<String>,
+    /// `PostToolUseFailure`'s `error` (milestone 9.14 fact F4: `"Exit code 1"` for a
+    /// failed `false`). Milestone 9.18 decision 13.
+    pub error: Option<String>,
+    /// `PostToolUseFailure`'s `is_interrupt`: the user stopped the call (fact F4).
+    pub is_interrupt: Option<bool>,
 }
 
 pub fn accepts(runtime: Runtime, source: HookSource) -> bool {
@@ -120,6 +125,8 @@ pub fn parse(source: HookSource, payload: &Value) -> Option<ParsedHook> {
         tool_result_stringified: boolean("tool_result_stringified"),
         prompt: string("prompt"),
         session_source: string("source"),
+        error: string("error"),
+        is_interrupt: boolean("is_interrupt"),
     })
 }
 
@@ -181,6 +188,29 @@ mod tests {
             crate::admit::release_for(&hook),
             crate::admit::Release::One("toolu_9".into())
         );
+    }
+
+    /// Milestone 9.18 decision 13: `PostToolUseFailure`'s `error` and `is_interrupt`
+    /// (fact F4) are read beside its `tool_use_id` and `tool_name`; a payload without
+    /// them parses with `None`.
+    #[test]
+    fn parses_a_claude_post_tool_use_failure_payload() {
+        let payload = json!({"hook_event_name": "PostToolUseFailure", "session_id": "s1",
+            "tool_use_id": "toolu_4", "tool_name": "Bash", "error": "Exit code 1",
+            "is_interrupt": true, "duration_ms": 30});
+        let hook = parse(HookSource::Claude, &payload).expect("PostToolUseFailure parsed");
+        assert_eq!(hook.error.as_deref(), Some("Exit code 1"));
+        assert_eq!(hook.is_interrupt, Some(true));
+        assert_eq!(hook.tool_use_id.as_deref(), Some("toolu_4"));
+        assert_eq!(hook.tool_name.as_deref(), Some("Bash"));
+
+        let bare = json!({"hook_event_name": "PostToolUseFailure"});
+        let hook = parse(HookSource::Claude, &bare).expect("a bare failure parsed");
+        assert_eq!(hook.kind, HookKind::PostToolUseFailure);
+        assert_eq!(hook.error, None);
+        assert_eq!(hook.is_interrupt, None);
+        assert_eq!(hook.tool_use_id, None);
+        assert_eq!(hook.tool_name, None);
     }
 
     #[test]
@@ -253,6 +283,8 @@ mod tests {
                 tool_result_stringified: Some(false),
                 prompt: Some("refactor the parser".into()),
                 session_source: None,
+                error: None,
+                is_interrupt: None,
             })
         );
     }
@@ -355,6 +387,8 @@ mod tests {
                 tool_result_stringified: None,
                 prompt: None,
                 session_source: None,
+                error: None,
+                is_interrupt: None,
             })
         );
     }
@@ -434,6 +468,8 @@ mod tests {
             tool_result_stringified: None,
             prompt: None,
             session_source: None,
+            error: None,
+            is_interrupt: None,
         }
     }
 }
