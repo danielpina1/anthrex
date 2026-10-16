@@ -60,3 +60,19 @@ fn brief_only_changes_round_is_not_rejected() {
     assert_eq!(record.gates.reviews_rejected, 2, "rounds 3 and 4 only");
     assert_eq!(record.brief_findings, 2);
 }
+
+/// Decision 26: a replacement's record names the tasks it replaces, from
+/// `Task.replaces`; a task that replaces nothing records an empty list.
+#[test]
+fn replacement_record_names_what_it_replaces() {
+    let mut run = run_of(&["t1", "t2", "t3"]);
+    run.tasks[1].replaces = vec!["t1".to_string()];
+    run.tasks[2].replaces = vec!["t1".to_string(), "t2".to_string()];
+    let record = |i: usize| {
+        let task = run.tasks[i].clone();
+        task_record(&run, &task, TaskOutcome::Merged, 1_000)
+    };
+    assert!(record(0).replaces.is_empty());
+    assert_eq!(record(1).replaces, ["t1"]);
+    assert_eq!(record(2).replaces, ["t1", "t2"]);
+}
