@@ -161,7 +161,7 @@ fn the_help_renders_at_80x24_and_120x40() {
     for (k, w) in &group(&help_groups("C-b"), "global")[..19] {
         body.push(row_text(k, w));
     }
-    body.push("↓ 97 more".into());
+    body.push("↓ 98 more".into());
     body.push("j/k scroll · tab group · esc close".into());
     for line in &body {
         want.push(format!("│ {line:<60} │"));
@@ -201,7 +201,7 @@ fn the_help_renders_at_80x24_and_120x40() {
             .iter()
             .map(|(k, w)| row_text(k, w)),
     );
-    body.push("↓ 81 more".into());
+    body.push("↓ 82 more".into());
     body.push("j/k scroll · tab group · esc close".into());
     for line in &body {
         want.push(format!("│ {line:<60} │"));
@@ -285,7 +285,7 @@ fn help_in_ascii() {
     }
     let rows = drawn(&app, 80, 24).join("\n");
     assert!(rows.contains("+ keys ---"), "{rows}");
-    assert!(rows.contains("^ 97 more"), "{rows}");
+    assert!(rows.contains("^ 98 more"), "{rows}");
     assert!(
         rows.contains("  <- / ->      scope: everywhere / this repo"),
         "{rows}"
@@ -416,6 +416,17 @@ fn the_plan_review_group_lists_the_design_gate_keys() {
     for key in ["tab", "c", "b"] {
         assert!(review.iter().any(|(k, _)| k == key), "{key}: {review:?}");
     }
+}
+
+/// Milestone 9.17 decision 19: the plan review's `f` flips the detail between the plan
+/// frame and the selected task, and its group lists it.
+#[test]
+fn the_plan_review_group_lists_f() {
+    let review = group(&help_groups("C-b"), "plan review");
+    assert!(
+        review.contains(&("f".to_string(), "the frame / the selected task".to_string())),
+        "{review:?}"
+    );
 }
 
 /// Final fix wave FW-76 (WB-D m2, 9.0.7 decision 34): the document gate screen has its

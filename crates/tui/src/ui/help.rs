@@ -115,6 +115,7 @@ pub fn help_groups(prefix_label: &str) -> Vec<HelpGroup> {
                 ("PgUp / PgDn", "scroll"),
                 ("a / x", "approve / reject"),
                 ("e / d", "edit / drop a task (gate)"),
+                ("f", "the frame / the selected task"),
                 ("tab", "the plan / the tasks (design run)"),
                 ("c", "ask for changes (design run)"),
                 ("b", "back to the spec (design run)"),
