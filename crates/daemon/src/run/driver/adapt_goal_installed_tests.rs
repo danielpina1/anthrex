@@ -20,6 +20,12 @@ use crate::run::model::Run;
 use crate::run::orch::launch::planner_route;
 use crate::run::plan::parse_plan;
 
+#[path = "adapt_goal_promote_teardown.rs"]
+mod promote_teardown;
+use promote_teardown::{
+    HOLD_MAX, PREPARE, ended_ops, has_ended, hold_write_turn, teardown, wait_ended,
+};
+
 /// Claude's configured binary on a machine that has only Codex.
 const NO_CLAUDE: &str = "/nonexistent/ax-claude";
 
@@ -298,10 +304,21 @@ async fn promoting_to_a_missing_runtime_is_refused_without_side_effects() {
 /// its installed check found (`OrchEvent::Installed`, sent before `Promote`); the
 /// promoted run's sub-planners take its Codex planner row. The launch gate stays closed:
 /// the promoted orchestrator's window is never started.
+///
+/// The leak of main 636f0a40 (Ubuntu CI's leak gate found `/tmp/ax-<uid>/<hash>`, named
+/// from this run's `tasks/t1`): the promoted run's first op makes the task's checkout
+/// (`PrepareWorktree`, `checkout::ensure`), which makes the checkout's task temporary
+/// directory. The test used to end on `shutdown.cancel()` with that op still running,
+/// so a checkout made after `TestDir`'s sweep was left in the shared root. The op is
+/// forced in flight here by holding the project's write turn until the teardown has
+/// begun, and the teardown must outlive it.
 #[tokio::test(flavor = "multi_thread")]
 async fn run_promote_records_what_its_check_found() {
     let tmp = crate::run::git::TestDir::new();
-    let root = tmp.path().join("repo");
+    // The repository in a directory of its own, kept to the end, so a checkout op still
+    // running after `tmp` goes gets past its reads of the repository, as on CI.
+    let source = crate::run::git::TestDir::new();
+    let root = source.path().join("repo");
     plain_repo(&root);
     let data = tmp.path().join("data");
     let mut config = ManagerConfig::for_tests("/tmp/ax-unused.sock".into(), "/bin/sh".into());
@@ -318,6 +335,7 @@ async fn run_promote_records_what_its_check_found() {
         Arc::new(NoRoots),
     );
     let service = RunService::new(manager, ctx);
+    let ended = ended_ops(&service);
     let plan = parse_plan(&one_task_plan()).unwrap();
     let mut run = match service
         .build_plan(plan, root.clone(), true, false, true, Shape::Fast)
@@ -329,9 +347,14 @@ async fn run_promote_records_what_its_check_found() {
     run.path = Some(proto::RunPath::Fast);
     run.state = proto::RunState::Running;
     let id = run.id.clone();
+    // The task checkout's repository, from whose path its task temporary directory is
+    // named (`tmp::task_tmp`).
+    let task_repo = run.data_dir.join("tasks").join("t1");
+    let project = run.project.clone();
     crate::lock(&service.state).runs.insert(id.clone(), run);
+    let (release_tx, holder) = hold_write_turn(&service, project).await;
     let shutdown = tokio_util::sync::CancellationToken::new();
-    service.spawn(shutdown.clone());
+    let run_loop = service.spawn(shutdown.clone());
 
     let codex = OrchestratorChoice {
         runtime: Runtime::Codex,
@@ -342,22 +365,64 @@ async fn run_promote_records_what_its_check_found() {
     let reply = tokio::time::timeout(std::time::Duration::from_secs(30), promote)
         .await
         .expect("the engine answered");
-    shutdown.cancel();
     assert!(
         !matches!(reply, RunReply::Refused { .. }),
         "refused: {reply:?}"
     );
-    let state = crate::lock(&service.state);
-    let run = &state.runs[&id];
-    assert_eq!(
-        run.orch.installed,
-        [("claude".to_string(), false), ("codex".to_string(), true)].into()
+    {
+        let state = crate::lock(&service.state);
+        let run = &state.runs[&id];
+        assert_eq!(
+            run.orch.installed,
+            [("claude".to_string(), false), ("codex".to_string(), true)].into()
+        );
+        let planner = planner_route(run).expect("promoted");
+        assert_eq!(
+            (planner.runtime, planner.model.as_str()),
+            (Runtime::Codex, "")
+        );
+    }
+    let deadline = std::time::Instant::now() + HOLD_MAX;
+    while service.queue.waiters() == 0 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the promoted run's checkout op never waited for the write turn"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+
+    // The teardown is polled first, and the turn released once it waits: the checkout
+    // op runs only after the teardown has begun.
+    let tearing = async {
+        teardown(&service, run_loop, shutdown, &ended, tmp).await;
+        has_ended(&ended, PREPARE)
+    };
+    let release = async {
+        let _ = release_tx.send(());
+        holder.await.unwrap().unwrap();
+    };
+    let (outlived, ()) = tokio::join!(tearing, release);
+    // Whatever the teardown did, the checkout op is let end before the shared root is
+    // read, so a leak is seen, never raced.
+    wait_ended(&ended, PREPARE).await;
+    let leaked = crate::run::git::task_tmp(&task_repo);
+    let left = std::fs::symlink_metadata(&leaked).is_ok();
+    crate::run::git::remove_task_tmp(&task_repo).unwrap();
+    assert!(
+        !left,
+        "{} (the checkout of {}) outlived the test",
+        leaked.display(),
+        task_repo.display()
     );
-    let planner = planner_route(run).expect("promoted");
-    assert_eq!(
-        (planner.runtime, planner.model.as_str()),
-        (Runtime::Codex, "")
+    assert!(
+        outlived,
+        "the test's directory went while its checkout op was still running"
     );
+    assert!(
+        !has_ended(&ended, "CreateOrchestrator"),
+        "the orchestrator's launch passed the closed gate"
+    );
+    drop(source);
 }
 
 /// Whole-branch review, item 1: a run's scouts are among the runtimes its start checks.
