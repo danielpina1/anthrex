@@ -17,19 +17,24 @@ const CHAIN: &str = "o-3f9a";
 const NEXT: &str = "next-goal-4c1d";
 
 /// The rig's run, `first`, accepted, and [`NEXT`], a copy of it running as its
-/// chain's current run, with the same orchestrator window.
-fn two_runs(rig: &Rig) {
-    let mut state = crate::lock(&rig.runs.state);
-    let first = state.runs.get_mut(&rig.run_id).unwrap();
-    first.chain = Some(CHAIN.into());
-    let mut next = first.clone();
-    first.state = RunState::Accepted;
-    next.id = NEXT.into();
-    next.created_at += 1;
-    next.orch.digest_fp = crate::run::orch::digest::fingerprint(&next);
-    state.runs.insert(NEXT.into(), next);
-    state.chains = rebuild(&state.runs);
-    assert_eq!(state.chains[CHAIN].runs, [rig.run_id.as_str(), NEXT]);
+/// chain's current run, with the same orchestrator window. The change is made behind
+/// the rig's loop, so the loop is settled after it ([`Rig::settled`]): a push the loop
+/// built before it (without [`NEXT`]) would end a long poll on [`NEXT`] at once.
+async fn two_runs(rig: &Rig) {
+    {
+        let mut state = crate::lock(&rig.runs.state);
+        let first = state.runs.get_mut(&rig.run_id).unwrap();
+        first.chain = Some(CHAIN.into());
+        let mut next = first.clone();
+        first.state = RunState::Accepted;
+        next.id = NEXT.into();
+        next.created_at += 1;
+        next.orch.digest_fp = crate::run::orch::digest::fingerprint(&next);
+        state.runs.insert(NEXT.into(), next);
+        state.chains = rebuild(&state.runs);
+        assert_eq!(state.chains[CHAIN].runs, [rig.run_id.as_str(), NEXT]);
+    }
+    rig.settled().await;
 }
 
 /// The rig's run, accepted, as its chain's last run: the chain is idle, its window
@@ -72,7 +77,7 @@ async fn cancel_t1(rig: &Rig, run_id: &str) {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_chained_call_reaches_the_current_run() {
     let rig = Rig::new(|_, _| {}).await;
-    two_runs(&rig);
+    two_runs(&rig).await;
     let first = rig.run_id.clone();
     let (ok, digest) = chained(&rig, (&first, CHAIN), "run_status", json!({})).await;
     assert!(ok, "{digest}");
@@ -220,7 +225,7 @@ async fn an_idle_orchestrator_may_read_but_not_edit() {
 #[tokio::test(flavor = "multi_thread")]
 async fn resolution_holds_no_lock_across_the_read() {
     let rig = Arc::new(Rig::new(|_, _| {}).await);
-    two_runs(&rig);
+    two_runs(&rig).await;
     let rev = crate::lock(&rig.runs.state).runs[NEXT].orch.digest_rev;
     let receivers = rig.runs.pushes.receiver_count();
     let waiting = rig.clone();
@@ -243,6 +248,105 @@ async fn resolution_holds_no_lock_across_the_read() {
     let reply = rig.request(RunRequest::List).await;
     assert!(matches!(reply, RunReply::Snapshot(_)), "{reply:?}");
     assert!(started.elapsed() < Duration::from_secs(2));
+    cancel_t1(&rig, NEXT).await;
+    let (ok, digest) = tokio::time::timeout(ANSWER, wait).await.unwrap().unwrap();
+    assert!(ok, "{digest}");
+    assert_eq!(digest["run"]["id"], json!(NEXT));
+    assert!(digest["revision"].as_u64().unwrap() > rev, "{digest}");
+    rig.stop().await;
+}
+
+/// The flake of the test above (macOS CI, 0.67 s), forced. The rig's first step (it
+/// changes the rig's run) builds its snapshot under the engine lock and publishes it
+/// only after its `run.json` save. When that step ran before `two_runs`, its push has
+/// no [`NEXT`], and a long poll that subscribed before the push went out read it as
+/// [`NEXT`] gone and answered at once. Here the loop is held at that push until the
+/// fixture asks the loop to settle, or a call subscribes, whichever comes first; the
+/// call must see it, if at all, as a push older than its own read, and keep waiting.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_push_built_before_the_fixture_does_not_end_the_wait() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::mpsc;
+
+    use crate::run::driver::effects::Ready;
+
+    let (held_tx, held) = mpsc::channel::<()>();
+    let (release, released) = mpsc::channel::<()>();
+    let once = AtomicBool::new(false);
+    let rig = Arc::new(
+        Rig::hooked(Box::new(move |item: &Ready| {
+            let Ready::Publish(snap) = item else { return };
+            if snap.runs.iter().all(|r| r.run_id != NEXT) && !once.swap(true, Ordering::SeqCst) {
+                let _ = held_tx.send(());
+                let _ = released.recv_timeout(ANSWER);
+            }
+        }))
+        .await,
+    );
+    held.recv_timeout(ANSWER)
+        .expect("the rig's first step publishes its run");
+    // The loop is held with a push of the state before the fixture in hand.
+    let base = rig.runs.pushes.receiver_count();
+    let mut probe = rig.runs.pushes();
+    let runs = rig.runs.clone();
+    let releaser = std::thread::spawn(move || {
+        let deadline = Instant::now() + ANSWER;
+        while runs.pushes.receiver_count() <= base + 1
+            && crate::lock(&runs.replies).is_empty()
+            && Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let _ = release.send(());
+    });
+
+    two_runs(&rig).await;
+    let rev = crate::lock(&rig.runs.state).runs[NEXT].orch.digest_rev;
+    let waiting = rig.clone();
+    let first = rig.run_id.clone();
+    let wait = tokio::spawn(async move {
+        let args = json!({"since": rev, "wait_secs": 10});
+        chained(&waiting, (&first, CHAIN), "run_status", args).await
+    });
+    let deadline = Instant::now() + ANSWER;
+    while rig.runs.pushes.receiver_count() <= base + 1 {
+        assert!(!wait.is_finished(), "the resolved call did not wait");
+        assert!(Instant::now() < deadline, "the resolved call never waited");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    releaser.join().unwrap();
+    let stale = tokio::time::timeout(ANSWER, probe.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        stale.runs.iter().all(|r| r.run_id != NEXT),
+        "the held push predates the fixture"
+    );
+    // Then a push of the state as it is. Once the call has received both, or dropped
+    // its receiver (which counts it out before it releases what it had not read), the
+    // channel holds nothing.
+    let current = Arc::new(rig.runs.current());
+    rig.runs.pushes.send(current.clone()).unwrap();
+    loop {
+        let push = tokio::time::timeout(ANSWER, probe.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if Arc::ptr_eq(&push, &current) {
+            break;
+        }
+    }
+    drop(probe);
+    let deadline = Instant::now() + ANSWER;
+    while !rig.runs.pushes.is_empty() {
+        assert!(Instant::now() < deadline, "the call never read the pushes");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(
+        rig.runs.pushes.receiver_count() > base && !wait.is_finished(),
+        "a push built before the fixture ended the wait"
+    );
     cancel_t1(&rig, NEXT).await;
     let (ok, digest) = tokio::time::timeout(ANSWER, wait).await.unwrap().unwrap();
     assert!(ok, "{digest}");
@@ -330,7 +434,7 @@ async fn a_long_poll_resolved_before_an_adopt_answers_for_the_new_run() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_dropped_chains_window_reads_its_newest_run_and_starts_no_goal() {
     let rig = Rig::new(|_, _| {}).await;
-    two_runs(&rig);
+    two_runs(&rig).await;
     {
         let mut state = crate::lock(&rig.runs.state);
         state.runs.get_mut(NEXT).unwrap().state = RunState::Failed;
