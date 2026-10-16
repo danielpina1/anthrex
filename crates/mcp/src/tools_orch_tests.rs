@@ -40,8 +40,8 @@ const GET_CONTEXT: &str = "Read the run's context: the repository profile, the r
 
 /// Milestone 9.3 task M9.3.7: `edit_plan` names its `iterate`, which comes alone (the
 /// schema cannot say so). `edits` may be left out in every call (fix round 1).
-const EDIT_PLAN: &str = "Apply plan edits as one batch. Set submit to open the plan gate. Add \
-    a summary for the user when the run is complete. Set iterate, with no edits and nothing \
+const EDIT_PLAN: &str = "Apply plan edits as one batch. Set submit, with decided and \
+    out_of_scope, to open the plan gate. Add a summary for the user when the run is complete. Set iterate, with no edits and nothing \
     else, to start a round the user asked for. retry, override, resume_run, approve_hold and \
     accept_red each come alone, with a reason. \
     After two retries of one task, or once you have read text from outside the run (a \
@@ -110,8 +110,9 @@ fn tools_for_orchestrator_and_planner_are_exact() {
         ("get_context", GET_CONTEXT),
         (
             "submit_epic",
-            "Submit your epic's tasks as one batch of plan edits. If it returns errors, fix \
-             them and call it again. When it is accepted you are done.",
+            "Submit your epic's tasks as one batch of plan edits, with decided and \
+             out_of_scope. If it returns errors, fix them and call it again. When it is \
+             accepted you are done.",
         ),
     ];
     assert_eq!(described(&tools_for(AgentRole::Planner)), pairs(&planner));

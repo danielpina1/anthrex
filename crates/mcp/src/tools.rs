@@ -102,7 +102,8 @@ fn submit_review() -> Tool {
     );
     Tool::new(
         SUBMIT_REVIEW,
-        "Submit your verdict and findings for this review round. Call it once.",
+        "Submit your verdict and findings for this review round. Call it once. A finding \
+         about the brief rather than the code has target brief.",
         closed(
             json!({
                 "verdict": one_of(&["approve", "changes"]),
@@ -210,7 +211,10 @@ mod tests {
             tool(AgentRole::Reviewer, "submit_review")
                 .description
                 .as_deref(),
-            Some("Submit your verdict and findings for this review round. Call it once.")
+            Some(
+                "Submit your verdict and findings for this review round. Call it once. A \
+                 finding about the brief rather than the code has target brief."
+            )
         );
         let review = schema(AgentRole::Reviewer, "submit_review");
         assert_eq!(
