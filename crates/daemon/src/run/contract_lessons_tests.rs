@@ -37,11 +37,13 @@ fn prompts(run: &Run) -> [String; 3] {
     ]
 }
 
-/// Today's prompts for [`prompt_run`] (captured before task M9.15.6, at 6ef4b71d).
+/// Today's prompts for [`prompt_run`] (captured before task M9.15.6, at 6ef4b71d; the
+/// reviewer's gained `Run goal: Test goal` as its line 2 in milestone 9.17, task
+/// M9.17.3, decision 1).
 const GOLDENS: [&str; 3] = [
     "[anthrex] Task t1: Title t1\nRun goal: Test goal\nWorktree: /tmp/wt/runs/add-password-reset-3f9a/t1\nBranch: anthrex/add-password-reset-3f9a/t1\nStart commit: 0123456\nSize: S\nTest mode: tdd\nTest to write: a::expires\nSingle-test command: cargo test -- --exact {test}\nCheck command: cargo test\n\nThis task owns:\n- crates/a/src/x.rs\n- crates/a/tests/**\nAcceptance criteria:\n- Accept t1\n\nScout report s1:\n  Summary one\nFiles: crates/a/src/x.rs\n\nNotes from the orchestrator:\n- 13:07 (change, from orchestrator) use the v2 token API\n\nBrief t1",
     "[anthrex] Task t1: Title t1\nRun goal: Test goal\nWorktree: /tmp/wt/runs/add-password-reset-3f9a/t1\nBranch: anthrex/add-password-reset-3f9a/t1\nStart commit: 0123456\nSize: S\nTest mode: tdd\nTest to write: a::expires\nSingle-test command: cargo test -- --exact {test}\nCheck command: cargo test\n\nThis task owns:\n- crates/a/src/x.rs\n- crates/a/tests/**\nAcceptance criteria:\n- Accept t1\n\nScout report s1:\n  Summary one\nFiles: crates/a/src/x.rs\n\nNotes from the orchestrator:\n- 13:07 (change, from orchestrator) use the v2 token API\n\nBrief t1\n\nThis is session 0 of this task.\nWhy a new session: rung 2\nYour branch already has the earlier sessions' work. Changes so far (git diff --stat 0123456..HEAD):\n 1 file\nDiff so far:\n+x",
-    "[anthrex] Review task t1 \"Title t1\", round 1, level small.\nBase: ccccccc\nHead: ddddddd\nTest mode: tdd\nLook first for tests that were weakened or made trivial to pass.\nReview the diff only.\nAcceptance criteria:\n- Accept t1\nDiff (ccccccc..ddddddd):\n+x\nMessages the worker received:\n- 13:07 (change) use the v2 token API\n\nBrief t1",
+    "[anthrex] Review task t1 \"Title t1\", round 1, level small.\nRun goal: Test goal\nBase: ccccccc\nHead: ddddddd\nTest mode: tdd\nLook first for tests that were weakened or made trivial to pass.\nReview the diff only.\nAcceptance criteria:\n- Accept t1\nDiff (ccccccc..ddddddd):\n+x\nMessages the worker received:\n- 13:07 (change) use the v2 token API\n\nBrief t1",
 ];
 
 /// Pinning (Review focus 3): with no lessons, every prompt is byte-identical to

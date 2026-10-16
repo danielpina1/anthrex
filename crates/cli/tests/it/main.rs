@@ -79,6 +79,7 @@ mod run_e2e_orch_ops;
 mod run_e2e_orch_wake;
 mod run_e2e_pair;
 mod run_e2e_patterns;
+mod run_e2e_plan_quality;
 mod run_e2e_pool;
 mod run_e2e_pr;
 mod run_e2e_pr_ci;

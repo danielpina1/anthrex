@@ -177,6 +177,7 @@ fn notes_findings_and_history_do_not_forge_real_markdown_structure() {
             line: Some(1),
             input: None,
             text: format!("finding first line\n{HOSTILE_LINES}"),
+            target: proto::FindingTarget::Code,
         }],
         lane: None,
     });
@@ -267,6 +268,7 @@ fn finding_file_with_a_leading_hash_does_not_forge_a_heading_n3() {
             line: Some(1),
             input: None,
             text: "unrelated finding text".to_string(),
+            target: proto::FindingTarget::Code,
         }],
         lane: None,
     });

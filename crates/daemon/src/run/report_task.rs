@@ -6,13 +6,24 @@ use proto::{DeciderSource, Effort, LaneInfo, LaneState, PairPhase, Route, Runtim
 use super::contract::{mode_label, sha7, size_label};
 use super::engine::{epoch_spend, ladder, race_cost};
 use super::history::writer_failures;
-use super::model::{SizeCheckState, Task};
+use super::model::{Run, SizeCheckState, Task};
 use super::report::{format_utc, verdict_label};
 use super::report_escape::{
     code_span, escape_cell, escape_heading, fenced, list_item_text, plain_text_line,
 };
 
-pub(super) fn render_task(task: &Task, now: u64, out: &mut String) {
+/// A task's state as the report writes it: milestone 9.17 decision 26 names a replaced
+/// task's replacements, `cancelled (replaced by t9, t10)`.
+pub(super) fn state_text(run: &Run, task: &Task) -> String {
+    let by = super::snapshot_plan::replaced_by(run, task.id());
+    if by.is_empty() {
+        task.state.label().to_string()
+    } else {
+        format!("{} (replaced by {})", task.state.label(), by.join(", "))
+    }
+}
+
+pub(super) fn render_task(run: &Run, task: &Task, now: u64, out: &mut String) {
     out.push_str(&format!(
         "## {}: {}\n\n",
         task.spec.id,
@@ -20,7 +31,7 @@ pub(super) fn render_task(task: &Task, now: u64, out: &mut String) {
     ));
     out.push_str(&format!(
         "State: {} (size {}, {} mode, rung {})\n",
-        task.state.label(),
+        state_text(run, task),
         size_label(task.size),
         mode_label(task.test_mode),
         task.rung
@@ -44,7 +55,12 @@ pub(super) fn render_task(task: &Task, now: u64, out: &mut String) {
         // Milestone 9 decision 42i: the worker's own `task_note`s follow.
         for note in &task.orch.worker_notes {
             let kind = crate::run::orch::json::label(&note.kind);
-            let prefix = format!("{} ({kind}, from the worker) ", format_utc(note.at));
+            // Milestone 9.17 ruling C12: a `brief` note is the reviewer's.
+            let from = match note.kind {
+                proto::TaskNoteKind::Brief => "the reviewer",
+                _ => "the worker",
+            };
+            let prefix = format!("{} ({kind}, from {from}) ", format_utc(note.at));
             out.push_str(&format!("- {}\n", list_item_text(&prefix, &note.text)));
         }
         // A blank line closes the list: without it, CommonMark's lazy continuation

@@ -126,7 +126,7 @@ fn planned(h: &RunHarness, flags: &[&str]) -> Seen {
         prompt(),
         edit_plan(
             vec![add(plan_task("t1", &["a.txt"], json!({})))],
-            json!({"submit": true}),
+            json!({"submit": true, "decided": [], "out_of_scope": []}),
         ),
         until("/gate/state", json!("approved"), ORCH_WAIT),
         until("/run/complete", json!(true), RUN_WAIT),

@@ -2,7 +2,7 @@
 //! round's work (ruling 1), the orchestrator does not split or add a dependency onto a
 //! live epic's task (ruling 2), and before the gate nothing is approved yet (ruling 3).
 
-use proto::{HoldState, TaskState};
+use proto::{BlockInfo, BlockReason, HoldState, TaskState};
 use serde_json::{Value, json};
 
 use super::dispatch::replies;
@@ -31,6 +31,13 @@ fn split(id: &str) -> Value {
 
 fn add_dep(id: &str) -> Value {
     json!({"op": "add_dep", "task_id": id, "dep": "t1"})
+}
+
+/// `add_task <id>` (owning `crates/mail/r/**`) replacing `replaced`.
+fn replace(id: &str, replaced: &str) -> Value {
+    let mut edit = task_in(id, "mail/r");
+    edit["replaces"] = json!([replaced]);
+    edit
 }
 
 fn amend(id: &str) -> Value {
@@ -166,4 +173,59 @@ fn before_the_gate_a_replan_changes_any_of_its_epics_tasks() {
     assert_eq!(fx.task("t2").state, TaskState::Cancelled);
     assert_eq!(fx.task("t3").state, TaskState::Cancelled, "split");
     assert!(fx.run().task("t3x").is_some());
+}
+
+/// Milestone 9.17 task 7's review, I1: `add_task … replaces` cancels a blocked task,
+/// so a sub-planner may replace only a task it could `cancel_task`. `t2` was approved
+/// and started, then blocked: both are refused for session 2, and nothing changes.
+/// An earlier awaiting round's `t2` that never started may be replaced, as cancelled.
+#[test]
+fn a_planner_replaces_only_what_it_could_cancel() {
+    let mut fx = replanned_with_t2_awaiting("mail/a");
+    hold_verdict(&mut fx, "epic:mail", true);
+    let t2 = fx.task_mut("t2");
+    t2.state = TaskState::Blocked;
+    t2.block = Some(BlockInfo::new(BlockReason::Question, "which way?"));
+    t2.session = 1;
+    refused_for_its_round(&mut fx, "t2", json!([cancel("t2")]));
+    refused_for_its_round(&mut fx, "t2", json!([replace("t3", "t2")]));
+    assert_eq!(fx.task("t2").state, TaskState::Blocked);
+    assert!(fx.run().task("t3").is_none());
+
+    let mut fx = replanned_with_t2_awaiting("mail/a");
+    let t2 = fx.task_mut("t2");
+    t2.state = TaskState::Blocked;
+    t2.block = Some(BlockInfo::new(BlockReason::Question, "which way?"));
+    accepted(&second_submits(&mut fx, json!([replace("t3", "t2")])));
+    assert_eq!(fx.task("t2").state, TaskState::Cancelled);
+    assert_eq!(fx.task("t3").replaces, ["t2"]);
+}
+
+/// Milestone 9.17 task 9's review, M1: a task blocked earlier in the same batch is no
+/// way round I1. `t5` of `mail` was approved and is working, and depends on `t2`, an
+/// earlier awaiting round's task session 2 may cancel. Cancelling `t2` blocks `t5`
+/// (`dep_cancelled`), and a later `replaces ["t5"]` would cancel it: the batch is
+/// refused as a whole, and nothing changes.
+#[test]
+fn a_planner_cannot_replace_what_its_own_batch_blocked() {
+    let mut fx = replanned_with_t2_awaiting("mail/a");
+    let mut t5 = fx.task("t2").clone();
+    t5.spec.id = "t5".to_string();
+    t5.spec.owns = vec!["crates/mail/e/**".to_string()];
+    t5.spec.deps = vec!["t2".to_string()];
+    t5.orch.gate_hold = None;
+    t5.state = TaskState::Working;
+    t5.session = 1;
+    fx.run_mut().tasks.push(t5);
+    let before = tasks(&fx);
+    let (ok, text) = reply(&second_submits(
+        &mut fx,
+        json!([cancel("t2"), replace("t3", "t5")]),
+    ));
+    assert!(!ok, "{text}");
+    assert!(text.contains(&format!("task t5: {OWN_ROUND}")), "{text}");
+    assert_eq!(tasks(&fx), before, "the run is unchanged");
+    assert_eq!(fx.task("t5").state, TaskState::Working);
+    assert_ne!(fx.task("t2").state, TaskState::Cancelled);
+    assert!(fx.run().task("t3").is_none());
 }

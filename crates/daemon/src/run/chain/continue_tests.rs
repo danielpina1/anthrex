@@ -265,6 +265,9 @@ fn a_delivered_runs_idle_orchestrator_may_still_edit_its_plan() {
             false,
         ),
         (json!({"edits": [], "summary": 7}), false),
+        // Milestone 9.17 ruling C6: a plan frame key makes the call more than bare.
+        (json!({"summary": "done", "decided": []}), false),
+        (json!({"iterate": "more", "out_of_scope": []}), false),
     ] {
         let expected = if allowed { None } else { refused.clone() };
         let got = idle_refusal(&idle, &delivered, "edit_plan", &args);

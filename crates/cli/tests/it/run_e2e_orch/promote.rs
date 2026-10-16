@@ -32,7 +32,7 @@ fn e2e_promote_starts_an_orchestrator_and_holds_its_tasks() {
             call("run_status", json!({})),
             edit_plan(
                 vec![add(plan_task("t2", &["b.txt"], json!({})))],
-                json!({"submit": true}),
+                json!({"submit": true, "decided": [], "out_of_scope": []}),
             ),
             expect("/held", json!("promotion")),
             expect("/awaiting_approval", json!(true)),
@@ -95,7 +95,7 @@ fn e2e_wake_does_not_collide_with_typing() {
         prompt(),
         edit_plan(
             vec![add(plan_task("t1", &["a.txt"], json!({})))],
-            json!({"submit": true}),
+            json!({"submit": true, "decided": [], "out_of_scope": []}),
         ),
         until("/gate/state", json!("approved"), ORCH_WAIT),
         read(None),

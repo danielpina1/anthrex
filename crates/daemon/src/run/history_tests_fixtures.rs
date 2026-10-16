@@ -12,7 +12,7 @@ use crate::run::test_support::{PROFILE, build_with, plan_with, show, task_toml};
 pub(super) const STANDARD: &str =
     "[models.implementer.small]\nmodel = \"claude:claude-sonnet-5\"\neffort = \"medium\"\n";
 
-pub(super) fn run_of(tasks: &[&str]) -> Run {
+pub(crate) fn run_of(tasks: &[&str]) -> Run {
     let tasks: Vec<String> = tasks
         .iter()
         .map(|id| task_toml(id, "S", &format!("[\"crates/{id}/**\"]"), ""))
@@ -96,17 +96,18 @@ pub(super) fn passed_proof(at: u64) -> ProofRecord {
     }
 }
 
-pub(super) fn finding(severity: Severity) -> Finding {
+pub(crate) fn finding(severity: Severity) -> Finding {
     Finding {
         severity,
         file: None,
         line: None,
         input: None,
         text: "x".into(),
+        target: proto::FindingTarget::Code,
     }
 }
 
-pub(super) fn review(round: u32, verdict: Verdict, findings: Vec<Finding>) -> ReviewRecord {
+pub(crate) fn review(round: u32, verdict: Verdict, findings: Vec<Finding>) -> ReviewRecord {
     ReviewRecord {
         round,
         route: route(Runtime::Codex, "", Effort::LOW),

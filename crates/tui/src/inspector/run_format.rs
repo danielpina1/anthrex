@@ -293,8 +293,12 @@ pub(super) fn rank(severity: Severity) -> u8 {
     }
 }
 
+/// The most severe `code` finding: what is being fixed (milestone 9.17 decision 12; a
+/// `brief` finding goes to the planner).
 pub(super) fn most_severe(findings: &[Finding]) -> Option<&Finding> {
-    findings.iter().min_by_key(|finding| rank(finding.severity))
+    (findings.iter())
+        .filter(|finding| finding.target.is_code())
+        .min_by_key(|finding| rank(finding.severity))
 }
 
 /// `{file name}:{line}`, or the finding's `input` when it names no file.
@@ -314,15 +318,23 @@ pub(super) fn location(finding: &Finding) -> Option<String> {
     }
 }
 
-/// `{location} {severity} — {text}`, as `fixing` and `findings` show a finding.
+/// `{location} {severity} — {text}`, as `fixing` and `findings` show a finding; a
+/// `brief` one is `brief {severity} — {text}` (milestone 9.17 decision 12).
 pub(super) fn finding_text(finding: &Finding) -> String {
     let rest = format!(
         "{} — {}",
         severity_text(finding.severity),
         clean(&finding.text)
     );
+    if !finding.target.is_code() {
+        return format!("brief {rest}");
+    }
     match location(finding) {
         Some(place) => format!("{place} {rest}"),
         None => rest,
     }
 }
+
+#[cfg(test)]
+#[path = "run_format_tests.rs"]
+mod tests;

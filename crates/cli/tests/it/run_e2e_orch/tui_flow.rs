@@ -102,7 +102,7 @@ fn e2e_tui_goal_plan_approve_answer_accept() {
                     add(plan_task("t1", &["a.txt"], json!({}))),
                     add(plan_task("t2", &["b.txt"], json!({}))),
                 ],
-                json!({"submit": true}),
+                json!({"submit": true, "decided": [], "out_of_scope": []}),
             ),
             until("/run/complete", json!(true), RUN_WAIT * 2),
             marker(),

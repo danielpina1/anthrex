@@ -164,6 +164,7 @@ pub(super) fn dropped(run: &mut Run) {
     design.approved_spec = round.spec_before;
     design.goal_section = round.goal_before;
     design.interfaces_section = round.interfaces_before;
+    design.non_goals_section = round.non_goals_before;
     design.gate = None;
     design.phase_started = None;
     design.commit_due = false;

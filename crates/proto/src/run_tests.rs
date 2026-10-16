@@ -160,9 +160,7 @@ fn minimal_task(id: &str) -> PlanTask {
 #[test]
 fn plan_edits_parse_from_an_edit_file() {
     let edits = vec![
-        PlanEdit::AddTask {
-            task: minimal_task("t9"),
-        },
+        PlanEdit::add_task(minimal_task("t9")),
         PlanEdit::SplitTask {
             task_id: "t1".into(),
             into: vec![minimal_task("t1a"), minimal_task("t1b")],

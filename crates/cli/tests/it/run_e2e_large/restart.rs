@@ -56,7 +56,7 @@ fn e2e_restart_resumes_the_orchestrator_with_its_role_flags() {
         prompt(),
         edit_plan(
             vec![add(plan_task("t1", &["a.txt"], json!({})))],
-            json!({"submit": true}),
+            json!({"submit": true, "decided": [], "out_of_scope": []}),
         ),
         until("/gate/state", json!("approved"), ORCH_WAIT),
         read(Some("the daemon restarted")),

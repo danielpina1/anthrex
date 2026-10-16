@@ -27,6 +27,7 @@ fn review(round: &AgentRoundInfo, verdict: Verdict, blocking: bool) -> ReviewInf
             line: None,
             input: None,
             text: "a finding".into(),
+            target: proto::FindingTarget::Code,
         }],
         blocking,
         lane: None,

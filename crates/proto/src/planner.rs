@@ -37,4 +37,8 @@ pub struct PlannerInfo {
     /// (`spawn_subplanner`'s `covers`). Left out while empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub covers: Vec<String>,
+    /// Milestone 9.17 decision 20: the epic's plan frame, filled only while the plan
+    /// text is shown; left out while `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame: Option<crate::orch::PlanFrameInfo>,
 }

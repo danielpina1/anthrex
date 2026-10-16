@@ -463,9 +463,7 @@ fn a_lost_abort_is_sent_again_at_the_restore() {
     edit(
         &mut fx,
         vec![
-            proto::PlanEdit::AddTask {
-                task: super::holds::plan_task("t3", "[\"crates/c/**\"]"),
-            },
+            proto::PlanEdit::add_task(super::holds::plan_task("t3", "[\"crates/c/**\"]")),
             super::holds::add_dep("t1", "t3"),
         ],
     );

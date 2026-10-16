@@ -72,7 +72,7 @@ fn resume_of_awaiting_approval_restarts_a_dormant_orchestrator_without_changing_
     let mut fx = launched(false);
     edit_plan(
         &mut fx,
-        json!({"edits": [add("t1", "auth")], "submit": true}),
+        json!({"edits": [add("t1", "auth")], "submit": true, "decided": [], "out_of_scope": []}),
     );
     restart(&mut fx);
     assert_eq!(

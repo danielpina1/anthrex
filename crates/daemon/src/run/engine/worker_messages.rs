@@ -338,7 +338,9 @@ pub(super) fn task_note(
         Err(e) => return answer(fx, Err(format!("invalid arguments: {e}"))),
     };
     let limit = run.limits.orch.note_max_per_task as usize;
-    if task.orch.worker_notes.len() >= limit {
+    // Milestone 9.17 decision 8: a reviewer's `brief` notes use none of the allowance.
+    let own = (task.orch.worker_notes.iter()).filter(|n| n.kind != TaskNoteKind::Brief);
+    if own.count() >= limit {
         return answer(fx, Err(NOTE_LIMIT.into()));
     }
     // M9.13a review, item 5: a note reaches the report, the history, the reviewer's

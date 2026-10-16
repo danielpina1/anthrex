@@ -52,6 +52,12 @@ fn promoted_from(mut fx: Fixture) -> Fixture {
     fx
 }
 
+/// The orchestrator's submit with no edits, its plan frame written out (milestone 9.17
+/// decision 15; one literal so this file stays under 600 lines).
+fn empty_submit() -> serde_json::Value {
+    json!({"edits": [], "submit": true, "decided": [], "out_of_scope": []})
+}
+
 #[test]
 fn promote_creates_an_orchestrator_and_leaves_t1_running() {
     let mut fx = fast();
@@ -145,9 +151,10 @@ fn tasks_added_before_submit_after_promote_carry_the_promotion_hold() {
     // refused as a fast-path addition).
     let effects = super::dispatch::edit(
         &mut fx,
-        vec![proto::PlanEdit::AddTask {
-            task: super::holds::plan_task("t4", "[\"crates/log/**\"]"),
-        }],
+        vec![proto::PlanEdit::add_task(super::holds::plan_task(
+            "t4",
+            "[\"crates/log/**\"]",
+        ))],
     );
     assert_eq!(replies(&effects), vec![Ok("applied 1 edit".to_string())]);
     assert_eq!(fx.task("t4").orch.gate_hold, None);
@@ -157,7 +164,7 @@ fn tasks_added_before_submit_after_promote_carry_the_promotion_hold() {
 fn promotion_hold_is_awaiting_after_submit() {
     let mut fx = promoted();
     edit_plan(&mut fx, json!({"edits": [add("t2", "mail")]}));
-    let (ok, value) = answer(&edit_plan(&mut fx, json!({"edits": [], "submit": true})));
+    let (ok, value) = answer(&edit_plan(&mut fx, empty_submit()));
     assert!(ok, "{value}");
     let run = fx.run();
     assert_eq!(run.orch.gate_holds[0].state, HoldState::Awaiting);
@@ -263,7 +270,7 @@ fn a_promoted_run_with_no_approval_time_holds_its_additions() {
     fx.tick();
     assert_eq!(fx.task("t2").state, TaskState::Queued);
     assert!(!prepared(&fx, "t2"), "t2 is not dispatched");
-    let (ok, value) = answer(&edit_plan(&mut fx, json!({"edits": [], "submit": true})));
+    let (ok, value) = answer(&edit_plan(&mut fx, empty_submit()));
     assert!(ok, "{value}");
     fx.tick();
     assert!(!prepared(&fx, "t2"), "the hold awaits the user");
@@ -282,7 +289,7 @@ fn child(id: &str, module: &str) -> serde_json::Value {
 fn split_children_of_a_promotion_held_task_stay_held() {
     let mut fx = promoted();
     edit_plan(&mut fx, json!({"edits": [add("t2", "mail")]}));
-    edit_plan(&mut fx, json!({"edits": [], "submit": true}));
+    edit_plan(&mut fx, empty_submit());
     let split = json!({"op": "split_task", "task_id": "t2",
         "into": [child("t2a", "mail_a"), child("t2b", "mail_b")]});
     let (ok, value) = answer(&edit_plan(&mut fx, json!({"edits": [split]})));
@@ -315,7 +322,7 @@ fn split_children_of_a_promotion_held_task_stay_held() {
 #[test]
 fn an_empty_submit_after_promote_holds_later_additions_until_approval() {
     let mut fx = promoted();
-    let (ok, value) = answer(&edit_plan(&mut fx, json!({"edits": [], "submit": true})));
+    let (ok, value) = answer(&edit_plan(&mut fx, empty_submit()));
     assert!(ok, "{value}");
     assert_eq!(value["held"], serde_json::Value::Null);
     let hold = fx.run().orch.gate_holds[0].clone();
@@ -349,7 +356,7 @@ fn additions_after_submit_join_the_awaiting_promotion_hold() {
     // Room for t1 to t4 at once, so a task left queued is one that was held.
     fx.run_mut().limits.max_writers = 4;
     edit_plan(&mut fx, json!({"edits": [add("t2", "mail")]}));
-    edit_plan(&mut fx, json!({"edits": [], "submit": true}));
+    edit_plan(&mut fx, empty_submit());
     assert_eq!(fx.run().orch.gate_holds[0].state, HoldState::Awaiting);
     let (ok, value) = answer(&edit_plan(&mut fx, json!({"edits": [add("t3", "sms")]})));
     assert!(ok, "{value}");
@@ -388,7 +395,7 @@ fn a_promoted_m8b_run_holds_a_new_epic_after_submit() {
     let mut fx = fast();
     fx.run_mut().approved_at = None;
     let mut fx = promoted_from(fx);
-    edit_plan(&mut fx, json!({"edits": [], "submit": true}));
+    edit_plan(&mut fx, empty_submit());
     let effects = hold_verdict(&mut fx, "promotion", true);
     assert!(replies(&effects)[0].is_ok(), "{effects:?}");
     assert_eq!(fx.run().approved_at, None);
@@ -410,7 +417,7 @@ fn a_promoted_m8b_run_holds_a_new_epic_after_submit() {
 fn after_a_rejected_promotion_additions_open_a_new_round() {
     let mut fx = promoted();
     edit_plan(&mut fx, json!({"edits": [add("t2", "mail")]}));
-    edit_plan(&mut fx, json!({"edits": [], "submit": true}));
+    edit_plan(&mut fx, empty_submit());
     let effects = hold_verdict(&mut fx, "promotion", false);
     assert!(replies(&effects)[0].is_ok(), "{effects:?}");
     let (ok, value) = answer(&edit_plan(&mut fx, json!({"edits": [add("t3", "sms")]})));
@@ -428,7 +435,7 @@ fn after_a_rejected_promotion_additions_open_a_new_round() {
     );
     fx.tick();
     assert!(!prepared(&fx, "t3"), "t3 waits for the new round");
-    edit_plan(&mut fx, json!({"edits": [], "submit": true}));
+    edit_plan(&mut fx, empty_submit());
     fx.tick();
     assert!(!prepared(&fx, "t3"), "the new round awaits the user");
     let effects = hold_verdict(&mut fx, "promotion-2", true);
@@ -441,9 +448,9 @@ fn after_a_rejected_promotion_additions_open_a_new_round() {
 #[test]
 fn after_a_rejected_promotion_an_empty_submit_opens_an_awaiting_round() {
     let mut fx = promoted();
-    edit_plan(&mut fx, json!({"edits": [], "submit": true}));
+    edit_plan(&mut fx, empty_submit());
     hold_verdict(&mut fx, "promotion", false);
-    let (ok, value) = answer(&edit_plan(&mut fx, json!({"edits": [], "submit": true})));
+    let (ok, value) = answer(&edit_plan(&mut fx, empty_submit()));
     assert!(ok, "{value}");
     let round = fx.run().orch.gate_holds[1].clone();
     assert_eq!(
@@ -489,7 +496,7 @@ fn epic_spawned_before_submit_stays_held() {
     let mut fx = promoted();
     // Ruling 9.1: the epic has its own round, even inside the promotion window.
     assert_eq!(spawn(&mut fx, "mail")["hold"], "epic:mail");
-    let effects = edit_plan(&mut fx, json!({"edits": [], "submit": true}));
+    let effects = edit_plan(&mut fx, empty_submit());
     assert_eq!(
         super::orch::error(&effects),
         "sub-planner mail is still planning; submit when every sub-planner has finished"
@@ -499,7 +506,7 @@ fn epic_spawned_before_submit_stays_held() {
         "nothing submitted"
     );
     assert_eq!(add_to_epic(&mut fx, "t7", "mail")["held"], "epic:mail");
-    let (ok, value) = answer(&edit_plan(&mut fx, json!({"edits": [], "submit": true})));
+    let (ok, value) = answer(&edit_plan(&mut fx, empty_submit()));
     assert!(ok, "{value}");
     hold_verdict(&mut fx, "promotion", true);
     fx.tick();
@@ -520,7 +527,7 @@ fn epic_spawned_before_submit_stays_held() {
 fn epic_spawned_while_promotion_awaits_stays_held() {
     let mut fx = promoted();
     edit_plan(&mut fx, json!({"edits": [add("t2", "mail")]}));
-    edit_plan(&mut fx, json!({"edits": [], "submit": true}));
+    edit_plan(&mut fx, empty_submit());
     assert_eq!(spawn(&mut fx, "web")["hold"], "epic:web");
     assert_eq!(add_to_epic(&mut fx, "t7", "web")["held"], "epic:web");
     hold_verdict(&mut fx, "promotion", true);
@@ -541,10 +548,10 @@ fn epic_spawned_while_promotion_awaits_stays_held() {
 #[test]
 fn after_the_promotion_is_approved_a_submit_with_a_live_planner_is_accepted() {
     let mut fx = promoted();
-    edit_plan(&mut fx, json!({"edits": [], "submit": true}));
+    edit_plan(&mut fx, empty_submit());
     hold_verdict(&mut fx, "promotion", true);
     spawn(&mut fx, "web");
-    let (ok, value) = answer(&edit_plan(&mut fx, json!({"edits": [], "submit": true})));
+    let (ok, value) = answer(&edit_plan(&mut fx, empty_submit()));
     assert!(ok, "{value}");
 }
 
@@ -553,7 +560,7 @@ fn after_the_promotion_is_approved_a_submit_with_a_live_planner_is_accepted() {
 #[test]
 fn rejected_epic_replanned_stays_held() {
     let mut fx = promoted();
-    edit_plan(&mut fx, json!({"edits": [], "submit": true}));
+    edit_plan(&mut fx, empty_submit());
     hold_verdict(&mut fx, "promotion", true);
     assert_eq!(spawn(&mut fx, "mail")["hold"], "epic:mail");
     assert_eq!(add_to_epic(&mut fx, "t5", "mail")["held"], "epic:mail");
@@ -578,8 +585,8 @@ fn rejected_epic_replanned_stays_held() {
 fn a_resubmit_while_the_promotion_round_awaits_submits_nothing() {
     let mut fx = promoted();
     edit_plan(&mut fx, json!({"edits": [add("t2", "mail")]}));
-    edit_plan(&mut fx, json!({"edits": [], "submit": true}));
-    let (ok, value) = answer(&edit_plan(&mut fx, json!({"edits": [], "submit": true})));
+    edit_plan(&mut fx, empty_submit());
+    let (ok, value) = answer(&edit_plan(&mut fx, empty_submit()));
     assert!(ok, "{value}");
     let submits = fx
         .run()

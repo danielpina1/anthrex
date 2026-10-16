@@ -55,11 +55,17 @@ fn started(steps: &[Value]) -> (RunHarness, PrRig, String) {
 fn round_steps(wait_for_round: Duration) -> Vec<Value> {
     vec![
         prompt(),
-        edit_plan(vec![staged("t1", "a.txt", 1)], json!({"submit": true})),
+        edit_plan(
+            vec![staged("t1", "a.txt", 1)],
+            json!({"submit": true, "decided": [], "out_of_scope": []}),
+        ),
         until("/gate/state", json!("approved"), ORCH_WAIT),
         until("/run/round", json!(2), wait_for_round),
         read(Some("the user asks for round 2 of run ")),
-        edit_plan(vec![staged("t2", "b.txt", 2)], json!({"submit": true})),
+        edit_plan(
+            vec![staged("t2", "b.txt", 2)],
+            json!({"submit": true, "decided": [], "out_of_scope": []}),
+        ),
         marker(),
         read(None),
     ]
@@ -191,7 +197,10 @@ fn e2e_pr_round_after_every_pr_landed_starts_from_the_fetched_base() {
 fn e2e_a_delivered_pr_runs_orchestrator_continues_with_the_next_goal() {
     let steps = [
         prompt(),
-        edit_plan(vec![staged("t1", "a.txt", 1)], json!({"submit": true})),
+        edit_plan(
+            vec![staged("t1", "a.txt", 1)],
+            json!({"submit": true, "decided": [], "out_of_scope": []}),
+        ),
         until("/gate/state", json!("approved"), ORCH_WAIT),
         until(
             "/run/state",

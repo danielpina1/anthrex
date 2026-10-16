@@ -38,7 +38,7 @@ pub(super) fn replanned_with_t2_awaiting(module: &str) -> Fixture {
 }
 
 pub(super) fn second_submits(fx: &mut Fixture, edits: serde_json::Value) -> Vec<Effect> {
-    let args = json!({"edits": edits});
+    let args = json!({"edits": edits, "decided": [], "out_of_scope": []});
     planner_tool(fx, (SECOND, "mail"), "submit_epic", args)
 }
 
@@ -69,7 +69,10 @@ fn a_replan_never_joins_an_awaiting_round() {
 #[test]
 fn a_replan_opens_a_round_past_an_orchestrator_round_awaiting_the_user() {
     let mut fx = held(false);
-    edit_plan(&mut fx, json!({"edits": [], "submit": true}));
+    edit_plan(
+        &mut fx,
+        json!({"edits": [], "submit": true, "decided": [], "out_of_scope": []}),
+    );
     assert_eq!(hold_state(&fx, "epic:mail"), Some(HoldState::Awaiting));
     assert_eq!(spawn(&mut fx, "mail")["hold"], "epic:mail.2");
     planner_started(&mut fx, SECOND);

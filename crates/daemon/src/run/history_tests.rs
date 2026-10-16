@@ -15,7 +15,7 @@ use crate::run::routing::{record_reviewer, record_worker};
 use crate::run::test_support::{escalated, set_row, with_efforts};
 
 #[path = "history_tests_fixtures.rs"]
-mod fixtures;
+pub(super) mod fixtures;
 use fixtures::*;
 #[path = "history_tests_patterns.rs"]
 mod patterns;
@@ -266,6 +266,8 @@ fn task_record_from_a_merged_task() {
         owns: vec!["crates/t1/**".into()],
         // Task M9.15.4 adds the field; task M9.15.6 fills it.
         lessons_shown: Vec::new(),
+        replaces: Vec::new(),
+        brief_findings: 0,
     };
     assert_eq!(record, want);
     assert_eq!(task_record_id(&run.id, "t1"), want.record_id);

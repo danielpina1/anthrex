@@ -94,7 +94,10 @@ fn e2e_iterate_from_stdin_and_its_refusal_while_running() {
     h.script("reviewer-t1-1", &[support::run_plans::approve()]);
     let steps = [
         prompt(),
-        edit_plan(vec![staged("t1", "a.txt", 1)], json!({"submit": true})),
+        edit_plan(
+            vec![staged("t1", "a.txt", 1)],
+            json!({"submit": true, "decided": [], "out_of_scope": []}),
+        ),
         until("/gate/state", json!("approved"), ORCH_WAIT),
         until("/run/complete", json!(true), HELD_PATH_WAIT),
         edit_plan(vec![], json!({"summary": SUMMARY_1})),

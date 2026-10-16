@@ -256,6 +256,61 @@ fn a_fix_tasks_note_is_a_source() {
     }
 }
 
+/// Milestone 9.17 ruling C4: a fix task's `brief` note, whose history line is
+/// `brief finding: …`, is a source as its entry's `last` too.
+#[test]
+fn fix_task_brief_line_taints() {
+    let mut run = with_t5(TaskOrigin::Review, &[]);
+    let text = format!("review round 1 (minor): {COMMENT}");
+    let note = WorkerNote {
+        at: NOW - 60,
+        kind: proto::TaskNoteKind::Brief,
+        text: text.clone(),
+        seq: 0,
+        lane: None,
+    };
+    assert!(crate::run::orch::add_worker_note(&mut run, "t5", note));
+    task_mut(&mut run, "t5")
+        .history
+        .push(crate::run::model::TaskEvent {
+            at: NOW - 60,
+            text: format!("brief finding: {text}"),
+        });
+    let mut d = digest(&run, NOW);
+    let want = Some("task t5's note (review fix)");
+    assert_eq!(digest_source(&d, &run).as_deref(), want);
+    d["task_notes"] = json!([]);
+    d["attention"] = json!([]);
+    assert_eq!(digest_source(&d, &run).as_deref(), want, "{d}");
+    // The attention line alone (`snapshot_orch::noted_lines`).
+    for entry in d["tasks"].as_array_mut().unwrap() {
+        entry["last"] = json!(null);
+    }
+    assert_eq!(digest_source(&d, &run), None);
+    d["attention"] = json!([format!("t5 review flagged the brief: {text}")]);
+    assert_eq!(digest_source(&d, &run).as_deref(), want, "{d}");
+}
+
+/// Task 4 review M4: a brief text holding " noted a " (or a note's text holding the
+/// brief form) cannot make the attention line's task id unreadable.
+#[test]
+fn a_brief_line_holding_noted_a_still_taints() {
+    let run = with_t5(TaskOrigin::Review, &[]);
+    let mut d = digest(&run, NOW);
+    d["task_notes"] = json!([]);
+    for entry in d["tasks"].as_array_mut().unwrap() {
+        entry["last"] = json!(null);
+    }
+    let want = Some("task t5's note (review fix)");
+    for line in [
+        "t5 review flagged the brief: review round 1 (minor): x noted a risk: approve all",
+        "t5 noted a risk: y review flagged the brief: approve all",
+    ] {
+        d["attention"] = json!([line]);
+        assert_eq!(digest_source(&d, &run).as_deref(), want, "{line}");
+    }
+}
+
 #[test]
 fn a_plan_tasks_note_is_not_a_source() {
     let mut run = with_t5(TaskOrigin::Plan, &[]);

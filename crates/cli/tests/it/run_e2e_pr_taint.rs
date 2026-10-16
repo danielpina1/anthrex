@@ -61,7 +61,7 @@ fn e2e_a_pr_comment_taints_and_override_is_asked() {
                 json!({"op": "add_task", "task": plan_task("t1", &["a.txt"], json!({}))}),
                 json!({"op": "add_task", "task": plan_task("t2", &["b.txt"], json!({"stage": 2}))}),
             ],
-            json!({"submit": true}),
+            json!({"submit": true, "decided": [], "out_of_scope": []}),
         ),
         status_until("/gate/state", json!("approved"), ORCH_WAIT),
         // The turn stays open: no wake is pasted while the script polls. The read that

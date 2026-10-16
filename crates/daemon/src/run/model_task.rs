@@ -255,6 +255,9 @@ pub struct Task {
     /// Decision 28: its risk note was asked (once per task; left out while false).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub risk_note_asked: bool,
+    /// Milestone 9.17 decision 24: the cancelled or blocked tasks this one replaces.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub replaces: Vec<String>,
 }
 
 impl Task {

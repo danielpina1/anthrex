@@ -174,7 +174,7 @@ fn add_task_is_validated_like_a_plan_task() {
     );
 
     let run = run_ok(&plan_with(PROFILE, &base));
-    let from_edit = rejected(&run, vec![PlanEdit::AddTask { task: spec(&bad) }]);
+    let from_edit = rejected(&run, vec![PlanEdit::add_task(spec(&bad))]);
     assert_eq!(from_edit, from_plan);
 
     // A valid task is resolved exactly as the plan resolves it: spanning two modules
@@ -188,7 +188,7 @@ fn add_task_is_validated_like_a_plan_task() {
     let mut plan_tasks = base.to_vec();
     plan_tasks.push(good.clone());
     let planned = run_ok(&plan_with(PROFILE, &plan_tasks));
-    let (edited, consequences) = applied(&run, vec![PlanEdit::AddTask { task: spec(&good) }]);
+    let (edited, consequences) = applied(&run, vec![PlanEdit::add_task(spec(&good))]);
     assert_eq!(consequences, vec![]);
     assert_eq!(ids(&edited), vec!["t1", "t2", "t8"]);
     let mut added = task(&edited, "t8").clone();

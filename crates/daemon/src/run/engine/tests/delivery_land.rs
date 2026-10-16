@@ -405,7 +405,7 @@ fn a_paused_stage_whose_tasks_are_cancelled_counts_as_skipped() {
         }
         let text = plan_with(PROFILE, &[doc_task("t4", "stage = 2")]);
         let task = crate::run::plan::parse_plan(&text).unwrap().tasks.remove(0);
-        let effects = edit(&mut fx, vec![PlanEdit::AddTask { task }]);
+        let effects = edit(&mut fx, vec![PlanEdit::add_task(task)]);
         assert!(replies(&effects)[0].is_ok(), "{effects:#?}");
         assert!(!fx.run().delivery.stage(2).unwrap().skipped);
         assert!(logged(

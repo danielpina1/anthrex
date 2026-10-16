@@ -132,7 +132,7 @@ fn a_run_entering_complete_in_a_step_drops_its_question() {
     let mut fx = launched(false);
     edit_plan(
         &mut fx,
-        json!({"edits": [add("t1", "auth")], "submit": true}),
+        json!({"edits": [add("t1", "auth")], "submit": true, "decided": [], "out_of_scope": []}),
     );
     fx.approve();
     merge_real(&mut fx, "t1", C1);

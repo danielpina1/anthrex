@@ -43,7 +43,7 @@ pub fn subplanner(epic: &str, area: &[&str]) -> Value {
 pub fn submit_epic(tasks: Vec<Value>) -> Value {
     call(
         "submit_epic",
-        json!({"edits": tasks.into_iter().map(add).collect::<Vec<_>>()}),
+        json!({"edits": tasks.into_iter().map(add).collect::<Vec<_>>(), "decided": [], "out_of_scope": []}),
     )
 }
 
@@ -51,7 +51,7 @@ pub fn submit_epic(tasks: Vec<Value>) -> Value {
 pub fn submit_epic_err(tasks: Vec<Value>) -> Value {
     call_err(
         "submit_epic",
-        json!({"edits": tasks.into_iter().map(add).collect::<Vec<_>>()}),
+        json!({"edits": tasks.into_iter().map(add).collect::<Vec<_>>(), "decided": [], "out_of_scope": []}),
     )
 }
 

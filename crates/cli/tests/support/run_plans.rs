@@ -141,6 +141,12 @@ pub fn finding(severity: &str, file: &str, line: u32, text: &str) -> Value {
     json!({"severity": severity, "file": file, "line": line, "text": text})
 }
 
+/// Milestone 9.17 decision 6: one review finding about the brief, not the code; it
+/// needs no file or line.
+pub fn brief_finding(severity: &str, text: &str) -> Value {
+    json!({"severity": severity, "target": "brief", "text": text})
+}
+
 /// `submit_review` with `verdict` `changes` and `findings`.
 pub fn changes(findings: &[Value]) -> Value {
     json!({"mcp_call": {"tool": "submit_review", "args": {"verdict": "changes", "summary": "needs work", "findings": findings}}})

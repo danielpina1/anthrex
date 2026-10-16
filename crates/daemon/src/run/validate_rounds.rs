@@ -36,7 +36,7 @@ pub(crate) fn earlier_round(run: &Run, edits: &[PlanEdit]) -> Option<PlanError> 
     };
     edits.iter().find_map(|edit| {
         let (named, live_ok): (Vec<&str>, bool) = match edit {
-            PlanEdit::AddTask { task } if task.stage < first => {
+            PlanEdit::AddTask { task, .. } if task.stage < first => {
                 return refuse(Some(&task.id), task.stage);
             }
             // Fix round 1 (I3): nor is a task moved into an earlier round's stage.

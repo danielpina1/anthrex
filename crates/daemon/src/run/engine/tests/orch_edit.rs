@@ -17,7 +17,10 @@ use crate::run::orch::{EpicRecord, PlannerPhase};
 fn submit_with_no_tasks_is_refused() {
     let mut fx = launched(false);
     let before = fx.run().clone();
-    let effects = edit_plan(&mut fx, json!({"edits": [], "submit": true}));
+    let effects = edit_plan(
+        &mut fx,
+        json!({"edits": [], "submit": true, "decided": [], "out_of_scope": []}),
+    );
     assert_eq!(
         error(&effects),
         "the plan has no tasks yet; add tasks before submitting"
@@ -35,7 +38,7 @@ fn submit_while_a_planner_is_live_is_refused() {
     let before = fx.run().clone();
     let effects = edit_plan(
         &mut fx,
-        json!({"edits": [add("t1", "mail")], "submit": true}),
+        json!({"edits": [add("t1", "mail")], "submit": true, "decided": [], "out_of_scope": []}),
     );
     assert_eq!(
         error(&effects),
@@ -50,7 +53,7 @@ fn submit_while_a_planner_is_live_is_refused() {
     fx.run_mut().orch.epics[0].phase = PlannerPhase::Finished;
     let (ok, _) = answer(&edit_plan(
         &mut fx,
-        json!({"edits": [add("t1", "mail")], "submit": true}),
+        json!({"edits": [add("t1", "mail")], "submit": true, "decided": [], "out_of_scope": []}),
     ));
     assert!(ok);
 }
@@ -60,7 +63,7 @@ fn submit_opens_the_gate() {
     let mut fx = launched(false);
     let effects = edit_plan(
         &mut fx,
-        json!({"edits": [add("t1", "auth")], "submit": true}),
+        json!({"edits": [add("t1", "auth")], "submit": true, "decided": [], "out_of_scope": []}),
     );
     let (ok, value) = answer(&effects);
     assert!(ok, "{value}");
@@ -79,7 +82,7 @@ fn submit_with_yes_runs_at_once_and_records_approved_by() {
     let mut fx = launched(true);
     let effects = edit_plan(
         &mut fx,
-        json!({"edits": [add("t1", "auth")], "submit": true}),
+        json!({"edits": [add("t1", "auth")], "submit": true, "decided": [], "out_of_scope": []}),
     );
     let (ok, value) = answer(&effects);
     assert!(ok, "{value}");
@@ -96,10 +99,13 @@ fn resubmit_in_awaiting_approval_changes_nothing() {
     let mut fx = launched(false);
     edit_plan(
         &mut fx,
-        json!({"edits": [add("t1", "auth")], "submit": true}),
+        json!({"edits": [add("t1", "auth")], "submit": true, "decided": [], "out_of_scope": []}),
     );
     let before = fx.run().clone();
-    let (ok, value) = answer(&edit_plan(&mut fx, json!({"edits": [], "submit": true})));
+    let (ok, value) = answer(&edit_plan(
+        &mut fx,
+        json!({"edits": [], "submit": true, "decided": [], "out_of_scope": []}),
+    ));
     assert!(ok, "{value}");
     assert_eq!(value["awaiting_approval"], true);
     assert_eq!(*fx.run(), before);
@@ -110,7 +116,7 @@ fn spawn_subplanner_in_awaiting_approval_returns_to_planning() {
     let mut fx = launched(false);
     edit_plan(
         &mut fx,
-        json!({"edits": [add("t1", "auth")], "submit": true}),
+        json!({"edits": [add("t1", "auth")], "submit": true, "decided": [], "out_of_scope": []}),
     );
     fx.complete_prepares();
     assert!(fx.task("t1").prewarmed);
@@ -138,7 +144,7 @@ fn edit_plan_is_one_batch() {
     let before = fx.run().clone();
     // The second edit names an unknown task: the first is not applied either.
     let batch = json!({"edits": [add("t2", "mail"),
-        {"op": "add_dep", "task_id": "t2", "dep": "ghost"}], "submit": true,
+        {"op": "add_dep", "task_id": "t2", "dep": "ghost"}], "submit": true, "decided": [], "out_of_scope": [],
         "summary": "not yet"});
     let (ok, value) = answer(&edit_plan(&mut fx, batch));
     assert!(!ok);
@@ -260,9 +266,7 @@ fn user_edit(fx: &mut Fixture, edits: Vec<proto::PlanEdit>, submit: bool) -> Vec
 #[test]
 fn a_user_submit_while_planning_opens_the_gate() {
     let mut fx = launched(false);
-    let t1 = proto::PlanEdit::AddTask {
-        task: super::holds::plan_task("t1", "[\"crates/auth/**\"]"),
-    };
+    let t1 = proto::PlanEdit::add_task(super::holds::plan_task("t1", "[\"crates/auth/**\"]"));
     let effects = user_edit(&mut fx, vec![t1], true);
     assert_eq!(
         replies(&effects),
@@ -297,13 +301,11 @@ fn a_user_submit_is_refused_in_any_other_state() {
     let mut fx = launched(false);
     edit_plan(
         &mut fx,
-        json!({"edits": [add("t1", "auth")], "submit": true}),
+        json!({"edits": [add("t1", "auth")], "submit": true, "decided": [], "out_of_scope": []}),
     );
     let refused = |fx: &mut Fixture| {
         let before = fx.run().clone();
-        let t9 = proto::PlanEdit::AddTask {
-            task: super::holds::plan_task("t9", "[\"crates/t9/**\"]"),
-        };
+        let t9 = proto::PlanEdit::add_task(super::holds::plan_task("t9", "[\"crates/t9/**\"]"));
         let effects = user_edit(fx, vec![t9], true);
         assert_eq!(*fx.run(), before, "nothing is applied");
         replies(&effects).remove(0).unwrap_err()
@@ -331,7 +333,10 @@ fn a_submit_while_the_run_is_being_discarded_is_refused() {
         run_id: RUN_ID.into(),
     });
     let before = but_the_stall(fx.run());
-    let effects = edit_plan(&mut fx, json!({"edits": [], "submit": true}));
+    let effects = edit_plan(
+        &mut fx,
+        json!({"edits": [], "submit": true, "decided": [], "out_of_scope": []}),
+    );
     assert_eq!(error(&effects), format!("run {RUN_ID} is being discarded"));
     assert_eq!(but_the_stall(fx.run()), before);
     let reply = fx.reply();
@@ -352,7 +357,7 @@ fn a_submit_while_the_run_is_being_discarded_is_refused() {
 
 /// Milestone 9.3 task M9.3.7 fix round 1 (ruling: option (b)): an `edit_plan` with no
 /// `edits` is an empty batch. `{}` changes nothing but the edit log, as `{"edits": []}`
-/// does; `{"submit": true}` is refused on an empty plan and submits one that has
+/// does; `{"submit": true, "decided": [], "out_of_scope": []}` is refused on an empty plan and submits one that has
 /// tasks; `{}` on a complete run gets the complete run's refusal, and a summary alone
 /// is accepted there.
 #[test]
@@ -365,13 +370,19 @@ fn an_edit_plan_without_edits_is_an_empty_batch() {
     assert_eq!(but_the_log(fx.run()), but_the_log(&before));
     assert_eq!(fx.run().state, RunState::Planning);
 
-    let effects = edit_plan(&mut fx, json!({"submit": true}));
+    let effects = edit_plan(
+        &mut fx,
+        json!({"submit": true, "decided": [], "out_of_scope": []}),
+    );
     assert_eq!(
         error(&effects),
         "the plan has no tasks yet; add tasks before submitting"
     );
     edit_plan(&mut fx, json!({"edits": [add("t1", "auth")]}));
-    let (ok, value) = answer(&edit_plan(&mut fx, json!({"submit": true})));
+    let (ok, value) = answer(&edit_plan(
+        &mut fx,
+        json!({"submit": true, "decided": [], "out_of_scope": []}),
+    ));
     assert!(ok, "{value}");
     assert_eq!(value["awaiting_approval"], true);
     assert_eq!(fx.run().state, RunState::AwaitingApproval);
@@ -497,7 +508,7 @@ fn a_draft_naming_a_protected_file_before_the_gate_is_accepted() {
     fx.run_mut().protected_files = vec![".github/workflows/ci.yml".into()];
     let (ok, value) = answer(&edit_plan(
         &mut fx,
-        json!({"edits": [add_owning("t1", &[".github/workflows/ci.yml"])], "submit": true}),
+        json!({"edits": [add_owning("t1", &[".github/workflows/ci.yml"])], "submit": true, "decided": [], "out_of_scope": []}),
     ));
     assert!(ok, "{value}");
     let note = "t1: owns names protected .github/workflows/ci.yml; the user approves this grant with the plan";

@@ -68,6 +68,21 @@ pub(super) fn messages_text(task: &TaskInfo) -> Option<String> {
     Some(text)
 }
 
+/// Milestone 9.17 decision 26: the `replaces` row, the tasks this one replaces.
+pub(super) fn replaces_text(task: &TaskInfo) -> Option<String> {
+    ids_text(&task.replaces)
+}
+
+/// Decision 26: the `replaced by` row, the tasks that replace this one.
+pub(super) fn replaced_by_text(task: &TaskInfo) -> Option<String> {
+    ids_text(&task.replaced_by)
+}
+
+fn ids_text(ids: &[String]) -> Option<String> {
+    let ids: Vec<String> = ids.iter().map(|id| clean(id)).collect();
+    (!ids.is_empty()).then(|| ids.join(", "))
+}
+
 /// Decision 42i: the task's `discovery` and `risk` notes, newest first, each with its
 /// local time and the task it came from; `progress` notes are the history's.
 pub(super) fn notes_text(task: &TaskInfo, app: &App) -> Option<String> {
@@ -78,6 +93,7 @@ pub(super) fn notes_text(task: &TaskInfo, app: &App) -> Option<String> {
                 TaskNoteKind::Discovery => "discovery",
                 TaskNoteKind::Risk => "risk",
                 TaskNoteKind::Progress => "progress",
+                TaskNoteKind::Brief => "brief",
             };
             format!(
                 "{} {kind} from {}: {}",

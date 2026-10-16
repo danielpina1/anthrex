@@ -515,6 +515,7 @@ fn new_task(
         lessons_shown: Vec::new(),
         risk_note: None,
         risk_note_asked: false,
+        replaces: Vec::new(),
     }
 }
 

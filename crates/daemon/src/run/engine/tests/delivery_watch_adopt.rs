@@ -125,7 +125,7 @@ pub(super) fn add(fx: &mut Fixture, ids: &[&str]) -> Vec<(String, u32)> {
         .map(|id| {
             let text = plan_with(PROFILE, &[doc_task(id, "")]);
             let task = crate::run::plan::parse_plan(&text).unwrap().tasks.remove(0);
-            PlanEdit::AddTask { task }
+            PlanEdit::add_task(task)
         })
         .collect();
     let effects = edit(fx, edits);

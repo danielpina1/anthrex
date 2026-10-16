@@ -190,7 +190,7 @@ fn touched_unstarted(edited: &Run, edits: &[PlanEdit]) -> Vec<String> {
     let mut touched: Vec<&str> = Vec::new();
     for edit in edits {
         match edit {
-            PlanEdit::AddTask { task } => touched.push(&task.id),
+            PlanEdit::AddTask { task, .. } => touched.push(&task.id),
             PlanEdit::SplitTask { into, .. } => touched.extend(into.iter().map(|t| t.id.as_str())),
             PlanEdit::AmendTask { task_id, .. } | PlanEdit::AddDep { task_id, .. } => {
                 touched.push(task_id)

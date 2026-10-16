@@ -253,6 +253,8 @@ fn the_state_survives_save_and_load() {
         // Task M9.6.11: its Interfaces section, a failed read-back (ruling T10-3) and
         // a plan revision's note kept for its next version.
         interfaces_section: "`reset(token)`".into(),
+        // Milestone 9.17 decision 5: its Non-goals section.
+        non_goals_section: "SSO.".into(),
         spec_unread: true,
         plan_revision: Some("Add mail.".into()),
         plan_fingerprint: None,
@@ -289,6 +291,7 @@ fn the_state_survives_save_and_load() {
             spec_before: Some(1),
             goal_before: "Reset.".into(),
             interfaces_before: String::new(),
+            non_goals_before: String::new(),
             versions_before: [1, 1, 1],
             rethinks_before: 2,
             packs_before: 0,

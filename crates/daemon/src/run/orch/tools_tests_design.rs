@@ -58,7 +58,10 @@ fn covers_and_responses_parse_and_are_bounded() {
         panic!("{call:?}");
     };
     match &edits[..] {
-        [PlanEdit::AddTask { task }, PlanEdit::SplitTask { into, .. }] => {
+        [
+            PlanEdit::AddTask { task, .. },
+            PlanEdit::SplitTask { into, .. },
+        ] => {
             assert_eq!(task.covers, covers);
             assert_eq!(into[0].covers, ["R1234567"]);
         }
@@ -82,7 +85,7 @@ fn covers_and_responses_parse_and_are_bounded() {
         panic!("a plain edit_plan parses");
     };
     assert!(responses.is_empty());
-    let PlanEdit::AddTask { task: plain } = &edits[0] else {
+    let PlanEdit::AddTask { task: plain, .. } = &edits[0] else {
         panic!("{edits:?}");
     };
     assert!(plain.covers.is_empty());

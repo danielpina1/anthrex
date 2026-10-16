@@ -19,6 +19,10 @@ use crate::run::{PlanTask, RouteSpec, Size, TestMode};
 pub enum PlanEdit {
     AddTask {
         task: PlanTask,
+        /// Milestone 9.17 decision 22: the cancelled or blocked tasks whose work this
+        /// one takes over; left out while empty.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        replaces: Vec<String>,
     },
     SplitTask {
         task_id: String,
@@ -118,6 +122,16 @@ pub enum PlanEdit {
         stage: u16,
         reason: String,
     },
+}
+
+impl PlanEdit {
+    /// An `add_task` edit that replaces nothing (milestone 9.17 decision 22).
+    pub fn add_task(task: PlanTask) -> PlanEdit {
+        PlanEdit::AddTask {
+            task,
+            replaces: Vec::new(),
+        }
+    }
 }
 
 /// A batch of edits, the shape `anthrex run edit --file` reads.

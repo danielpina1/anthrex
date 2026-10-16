@@ -25,7 +25,7 @@ fn users_tasks(tasks: &[String]) -> Result<crate::run::model::Run, Vec<PlanError
     ));
     let plan = parse_plan(&plan_with(PROFILE, tasks)).expect("the tasks parse");
     let edits: Vec<proto::PlanEdit> = (plan.tasks.into_iter())
-        .map(|task| proto::PlanEdit::AddTask { task })
+        .map(proto::PlanEdit::add_task)
         .collect();
     apply_edits(&run, &edits, &EditScope::Run, &EditSource::User, 2_000).map(|(run, _)| run)
 }

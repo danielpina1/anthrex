@@ -160,6 +160,7 @@ pub(super) fn a_stats() -> HistoryStats {
         rounds: 0,
         iterated_runs: 0,
         tuning: None,
+        replaced: 0,
     }
 }
 
@@ -233,6 +234,8 @@ pub(super) fn a_task_record() -> TaskRecord {
         signatures: Vec::new(),
         owns: Vec::new(),
         lessons_shown: Vec::new(),
+        replaces: Vec::new(),
+        brief_findings: 0,
     }
 }
 

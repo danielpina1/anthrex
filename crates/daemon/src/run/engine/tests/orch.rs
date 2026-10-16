@@ -306,7 +306,7 @@ fn rejected_plan_is_seen_by_run_status() {
     let mut fx = launched(false);
     edit_plan(
         &mut fx,
-        json!({"edits": [add("t1", "auth")], "submit": true}),
+        json!({"edits": [add("t1", "auth")], "submit": true, "decided": [], "out_of_scope": []}),
     );
     assert_eq!(fx.run().state, RunState::AwaitingApproval);
     reject(&mut fx);
@@ -391,7 +391,7 @@ fn orchestrator_tools_cannot_approve_a_plan() {
     let mut fx = launched(false);
     edit_plan(
         &mut fx,
-        json!({"edits": [add("t1", "auth")], "submit": true}),
+        json!({"edits": [add("t1", "auth")], "submit": true, "decided": [], "out_of_scope": []}),
     );
     let tasks = fx.run().tasks.clone();
     let before = norm(fx.run());
@@ -425,7 +425,10 @@ fn orchestrator_tools_cannot_approve_a_plan() {
         );
     }
     // Submitting again at the gate approves nothing.
-    edit_plan(&mut fx, json!({"edits": [], "submit": true}));
+    edit_plan(
+        &mut fx,
+        json!({"edits": [], "submit": true, "decided": [], "out_of_scope": []}),
+    );
     assert_eq!(norm(fx.run()), before);
     assert_eq!(fx.run().state, RunState::AwaitingApproval);
     assert_eq!(fx.run().approved_by, None);

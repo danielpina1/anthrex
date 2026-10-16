@@ -89,7 +89,10 @@ fn stage_and_fix_ids_are_reserved_for_every_source() {
 
     // The orchestrator's plan, submitted at the gate (its `submit_plan`).
     let mut fx = launched(false);
-    let effects = edit_plan(&mut fx, json!({"edits": edits(), "submit": true}));
+    let effects = edit_plan(
+        &mut fx,
+        json!({"edits": edits(), "submit": true, "decided": [], "out_of_scope": []}),
+    );
     assert_eq!(errors(&effects), expected(), "submit");
     assert_eq!(fx.run().state, RunState::Planning);
 
@@ -97,7 +100,7 @@ fn stage_and_fix_ids_are_reserved_for_every_source() {
     let mut fx = launched(false);
     accepted(&edit_plan(
         &mut fx,
-        json!({"edits": [add("t1", "auth")], "submit": true}),
+        json!({"edits": [add("t1", "auth")], "submit": true, "decided": [], "out_of_scope": []}),
     ));
     fx.approve();
     assert_eq!(fx.run().state, RunState::Running);
@@ -136,7 +139,7 @@ fn stage_and_fix_ids_are_reserved_for_every_source() {
     let mut fx = launched(false);
     accepted(&edit_plan(
         &mut fx,
-        json!({"edits": [add("fixture", "a"), add("stage", "b")], "submit": true}),
+        json!({"edits": [add("fixture", "a"), add("stage", "b")], "submit": true, "decided": [], "out_of_scope": []}),
     ));
     let mut fx = launched(false);
     accepted(&edit_plan(&mut fx, json!({"edits": [add("t1", "auth")]})));
@@ -158,7 +161,7 @@ fn stage_and_atomic_reach_edit_plan_and_submit_epic() {
             add("t1", "auth"),
             add_with("t2", "proto", atomic),
             add_with("t3", "mail", json!({"stage": 2})),
-        ], "submit": true}),
+        ], "submit": true, "decided": [], "out_of_scope": []}),
     ));
     let t2 = fx.task("t2");
     assert_eq!(

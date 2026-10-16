@@ -39,6 +39,7 @@ fn a_stats() -> HistoryStats {
         rounds: 0,
         iterated_runs: 0,
         tuning: None,
+        replaced: 0,
     }
 }
 

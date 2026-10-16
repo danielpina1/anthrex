@@ -176,7 +176,16 @@
 /// field is defaulted (and left out while empty or `None`, bar `SettingsDoc.brakes`), so
 /// a protocol-24 snapshot, `run.json` and history still load (`HISTORY_VERSION` stays 5).
 /// Derivation: 24 at `lib.rs:170` before this change (milestone 9.15); 24 + 1 = 25.
-pub const PROTO_VERSION: u32 = 25;
+///
+/// Milestone 9.17 task M9.17.2 bumps this to 26: `TaskNoteKind::Brief`, appended last,
+/// `Finding.target` with the `FindingTarget` type, `PlanEdit::AddTask.replaces`, the
+/// `DecidedItem` and `PlanFrameInfo` types, `RunInfo.plan_frame`, `PlannerInfo.frame`,
+/// `TaskInfo.{replaces, replaced_by}`, and the history fields `TaskRecord.{replaces,
+/// brief_findings}` and `HistoryStats.replaced`. Every new field is defaulted and left
+/// out while empty, `None`, zero or `Code`, so a protocol-25 snapshot, `run.json`, plan
+/// edit and history still load (`HISTORY_VERSION` stays 5). Derivation: 25 at
+/// `lib.rs:179` before this change (milestone 9.16); 25 + 1 = 26.
+pub const PROTO_VERSION: u32 = 26;
 
 /// `skip_serializing_if` for a `u32` count that is left out while zero.
 pub(crate) fn is_zero_u32(n: &u32) -> bool {
@@ -266,9 +275,9 @@ pub use models::{
     canonical_id, valid_effort,
 };
 pub use orch::{
-    AskInfo, HandledInfo, HoldInfo, HoldKind, HoldState, IntegrationInfo, IntegrationState,
-    MessageKind, MessageTarget, OrchestratorChoice, OrchestratorInfo, OrchestratorStuck,
-    TaskNoteInfo, TaskNoteKind, UntrustedInfo,
+    AskInfo, DecidedItem, HandledInfo, HoldInfo, HoldKind, HoldState, IntegrationInfo,
+    IntegrationState, MessageKind, MessageTarget, OrchestratorChoice, OrchestratorInfo,
+    OrchestratorStuck, PlanFrameInfo, TaskNoteInfo, TaskNoteKind, UntrustedInfo,
 };
 // Re-exported by name, never by glob (C20): a glob re-export of `run` or `run_wire`
 // could silently shadow an existing root name (for instance `run_wire::request` beside
@@ -283,9 +292,9 @@ pub use profile::{
 };
 pub use rounds::*;
 pub use run::{
-    AgentRole, BlockReason, Budget, DoneSignal, EditFile, Effort, Finding, FinishAction,
-    GateCounts, GateKind, Plan, PlanEdit, PlanTask, ProfileSpec, Route, RouteSpec, RunRef,
-    RunState, STAGES_MAX, Severity, Size, TaskKind, TaskState, TestMode, Verdict,
+    AgentRole, BlockReason, Budget, DoneSignal, EditFile, Effort, Finding, FindingTarget,
+    FinishAction, GateCounts, GateKind, Plan, PlanEdit, PlanTask, ProfileSpec, Route, RouteSpec,
+    RunRef, RunState, STAGES_MAX, Severity, Size, TaskKind, TaskState, TestMode, Verdict,
 };
 pub use run_info::{
     AgentRoundInfo, BaseMovedInfo, BlockInfo, CheckInfo, PlanEditInfo, ProofInfo, ReviewInfo,
@@ -368,8 +377,8 @@ mod brakes_tests;
 #[cfg(test)]
 mod tests {
     #[test]
-    fn proto_version_is_twenty_five() {
-        assert_eq!(super::PROTO_VERSION, 25);
+    fn proto_version_is_twenty_six() {
+        assert_eq!(super::PROTO_VERSION, 26);
     }
 
     #[test]

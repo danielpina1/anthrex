@@ -83,6 +83,9 @@ mod plan_review;
 #[path = "../app_tests/plan_review_edges.rs"]
 mod plan_review_edges;
 
+#[path = "../app_tests/plan_frame.rs"]
+mod plan_frame;
+
 #[path = "../app_tests/alerts.rs"]
 mod alerts;
 

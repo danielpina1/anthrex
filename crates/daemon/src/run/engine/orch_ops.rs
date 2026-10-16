@@ -257,6 +257,8 @@ pub(super) fn admitted(state: RunState, call: &ToolCall) -> bool {
         summary,
         iterate,
         responses,
+        decided,
+        out_of_scope,
     }) = parse_call(call.role, &call.tool, &call.args)
     else {
         return false;
@@ -266,6 +268,9 @@ pub(super) fn admitted(state: RunState, call: &ToolCall) -> bool {
         && summary.is_none()
         && iterate.is_none()
         && responses.is_empty()
+        // Milestone 9.17 ruling C6: no plan frame key either.
+        && decided.is_none()
+        && out_of_scope.is_none()
 }
 
 /// The orchestrator's refusal on a halted run it may not act on (final review I-3): it

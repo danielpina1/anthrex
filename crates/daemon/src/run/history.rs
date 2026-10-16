@@ -11,7 +11,7 @@ use proto::{
 use super::contract::generated_files_message;
 use super::design::spend::phase_name;
 use super::design::state::gate_doc;
-use super::model::{Run, SizeCheckState, Task, writes_task};
+use super::model::{ReviewRecord, Run, SizeCheckState, Task, writes_task};
 use super::phases::phase_mut;
 
 /// A run record keeps the goal's first 200 characters.
@@ -125,7 +125,7 @@ pub(crate) fn gates(task: &Task) -> GateTally {
         reviews_rejected: count(
             task.reviews
                 .iter()
-                .filter(|r| r.verdict == Some(Verdict::Changes))
+                .filter(|r| r.verdict == Some(Verdict::Changes) && !brief_only(r))
                 .count(),
         ),
         candidates_red: count(
@@ -143,9 +143,19 @@ pub(crate) fn gates(task: &Task) -> GateTally {
     }
 }
 
+/// Milestone 9.17 ruling C10: a round whose critical and important findings are all
+/// `brief` (at least one) asked the planner, not the worker, for changes.
+fn brief_only(review: &ReviewRecord) -> bool {
+    let serious = || (review.findings.iter()).filter(|f| f.severity != Severity::Minor);
+    serious().next().is_some() && serious().all(|f| !f.target.is_code())
+}
+
+/// Every `code` finding of every round by severity (milestone 9.17 decision 11: the
+/// `brief` ones are counted apart, [`brief_findings`]).
 fn severities(task: &Task) -> SeverityTally {
     let mut tally = SeverityTally::default();
-    for finding in task.reviews.iter().flat_map(|r| r.findings.iter()) {
+    let findings = task.reviews.iter().flat_map(|r| r.findings.iter());
+    for finding in findings.filter(|f| f.target.is_code()) {
         let slot = match finding.severity {
             Severity::Critical => &mut tally.critical,
             Severity::Important => &mut tally.important,
@@ -154,6 +164,12 @@ fn severities(task: &Task) -> SeverityTally {
         *slot += 1;
     }
     tally
+}
+
+/// Milestone 9.17 decision 11: the task's `brief` findings over all rounds.
+fn brief_findings(task: &Task) -> u32 {
+    let findings = task.reviews.iter().flat_map(|r| r.findings.iter());
+    u32::try_from(findings.filter(|f| !f.target.is_code()).count()).unwrap_or(u32::MAX)
 }
 
 /// The record of a finished task, or, at the run's end, of an unfinished one. Its
@@ -251,6 +267,9 @@ pub fn task_record(run: &Run, task: &Task, outcome: TaskOutcome, now: u64) -> Ta
         owns: task.spec.owns.clone(),
         // Decision 24: the lessons its worker launches showed.
         lessons_shown: task.lessons_shown.clone(),
+        // Decision 26: statistics judge the replaced tasks by this one.
+        replaces: task.replaces.clone(),
+        brief_findings: brief_findings(task),
     }
 }
 
@@ -311,3 +330,7 @@ pub fn phase_record(run: &Run, (kind, n): (DocGateKind, u32), now: u64) -> Optio
 #[cfg(test)]
 #[path = "history_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "history_tests_quality.rs"]
+mod tests_quality;

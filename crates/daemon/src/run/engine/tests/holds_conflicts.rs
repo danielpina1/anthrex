@@ -35,9 +35,7 @@ fn add_t3_as_dep(fx: &mut Fixture) {
     let effects = edit(
         fx,
         vec![
-            PlanEdit::AddTask {
-                task: plan_task("t3", "[\"crates/c/**\"]"),
-            },
+            PlanEdit::add_task(plan_task("t3", "[\"crates/c/**\"]")),
             add_dep("t1", "t3"),
         ],
     );
@@ -379,9 +377,7 @@ fn an_untold_conflict_is_aborted_when_the_task_is_held_again() {
     let effects = edit(
         &mut fx,
         vec![
-            PlanEdit::AddTask {
-                task: plan_task("t3", "[\"crates/c/**\"]"),
-            },
+            PlanEdit::add_task(plan_task("t3", "[\"crates/c/**\"]")),
             add_dep("t1", "t3"),
         ],
     );

@@ -102,7 +102,10 @@ fn e2e_role_history_for_large_and_triage_paths() {
     }
     steps.extend(until_planners_finished(2));
     steps.extend([
-        edit_plan(vec![], json!({"submit": true})),
+        edit_plan(
+            vec![],
+            json!({"submit": true, "decided": [], "out_of_scope": []}),
+        ),
         expect("/awaiting_approval", json!(true)),
         marker(),
         read(None),

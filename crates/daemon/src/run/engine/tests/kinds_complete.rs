@@ -105,7 +105,7 @@ fn completes_unless(blocker: impl FnOnce(&mut crate::run::model::Run)) -> usize 
     let mut fx = launched(true);
     edit_plan(
         &mut fx,
-        json!({"edits": [add("t1", "auth")], "submit": true}),
+        json!({"edits": [add("t1", "auth")], "submit": true, "decided": [], "out_of_scope": []}),
     );
     assert_eq!(fx.run().state, RunState::Running);
     blocker(fx.run_mut());

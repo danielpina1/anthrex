@@ -5,7 +5,10 @@
 use proto::{MAX_FRAME, RunState};
 
 use super::*;
+use crate::run::engine::EngineState;
+use crate::run::model::Run;
 use crate::run::orch::test_support::*;
+use crate::run::snapshot::{TERMINAL_RUNS_SHOWN, snapshot};
 use crate::run::test_support::{PROFILE, build_with, plan_with, show, task_toml};
 use crate::run::validate::PLAN_BRIEFS_MAX_BYTES;
 

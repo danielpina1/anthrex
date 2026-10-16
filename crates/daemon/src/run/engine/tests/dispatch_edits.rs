@@ -227,9 +227,7 @@ fn a_started_task_is_always_the_one_waited_for() {
                     plan_task("t1b", "[\"crates/z/**\"]"),
                 ],
             },
-            PlanEdit::AddTask {
-                task: plan_task("t9", "[\"crates/a/src/x.rs\"]"),
-            },
+            PlanEdit::add_task(plan_task("t9", "[\"crates/a/src/x.rs\"]")),
         ],
     );
     assert!(replies(&effects)[0].is_ok(), "{effects:#?}");
@@ -289,9 +287,7 @@ fn a_prewarmed_task_that_gains_a_dependency_releases_its_prewarm_place() {
     let effects = edit(
         &mut fx,
         vec![
-            PlanEdit::AddTask {
-                task: plan_task("t0", "[\"crates/z/**\"]"),
-            },
+            PlanEdit::add_task(plan_task("t0", "[\"crates/z/**\"]")),
             PlanEdit::AddDep {
                 task_id: "t1".into(),
                 dep: "t0".into(),
@@ -370,7 +366,7 @@ fn an_edit_that_reaches_an_unchecked_runtime_is_refused() {
     let effects = fx.next(crate::run::engine::EventKind::Edit {
         reply,
         run_id: RUN_ID.into(),
-        edits: vec![PlanEdit::AddTask { task: on_codex }],
+        edits: vec![PlanEdit::add_task(on_codex)],
         scope: crate::run::validate::EditScope::Run,
         refusals: vec![(Runtime::Codex, refusal.clone())],
         submit: false,
@@ -382,9 +378,7 @@ fn an_edit_that_reaches_an_unchecked_runtime_is_refused() {
     let effects = fx.next(crate::run::engine::EventKind::Edit {
         reply,
         run_id: RUN_ID.into(),
-        edits: vec![PlanEdit::AddTask {
-            task: plan_task("t2", "[\"docs/c.md\"]"),
-        }],
+        edits: vec![PlanEdit::add_task(plan_task("t2", "[\"docs/c.md\"]"))],
         scope: crate::run::validate::EditScope::Run,
         refusals: vec![(Runtime::Codex, refusal)],
         submit: false,

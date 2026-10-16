@@ -158,6 +158,7 @@ fn approve_and_minor_only_changes_both_go_to_the_merge_queue() {
                 line: Some(9),
                 input: None,
                 text: "minor text".into(),
+                target: proto::FindingTarget::Code,
             }]
         );
         assert_eq!(review.summary, "looked");

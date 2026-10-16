@@ -421,3 +421,97 @@ fn the_review_mutes_its_frame_and_rules_under_a_modal() {
     assert!(app.modal.is_some(), "the help is open");
     check(&mut app, "the help");
 }
+
+/// Milestone 9.17 task M9.17.6 (decision 19): the plan frame's row sits in the header
+/// under the summary, cut to the width; the detail opens on the frame; the key hints
+/// name `f`; an empty frame's row is in `Attention`.
+#[test]
+fn frame_row_renders_in_the_header() {
+    let framed_plan = |frame: proto::PlanFrameInfo| {
+        let mut snap = overlapping_plan();
+        snap.runs[0].plan_frame = Some(frame);
+        snap
+    };
+    let one = proto::PlanFrameInfo {
+        decided: vec![proto::DecidedItem {
+            question: "Which DB?".into(),
+            answer: "SQLite".into(),
+        }],
+        out_of_scope: vec!["no UI".into()],
+        spec_non_goals: None,
+    };
+    let mut app = app_with(framed_plan(one.clone()), ReviewTarget::Gate);
+    let got = rows(&draw(&mut app, 80, 24));
+    assert_eq!(
+        got[2],
+        framed(
+            " frame  1 decided for you · 1 out of scope · f shows them",
+            80
+        )
+    );
+    assert_eq!(
+        got[3],
+        framed(" ⚠ t2 and t3 both own crates/c/src/lib.rs", 80)
+    );
+    assert_eq!(got[4], rule(80));
+    let detail = got
+        .iter()
+        .position(|r| r.contains("Decided for you · Out of scope"));
+    let detail = detail.expect("the detail opens on the frame");
+    assert_eq!(
+        got[detail + 1],
+        framed(" decided       Which DB? → SQLite", 80)
+    );
+    assert_eq!(got[detail + 2], framed(" out of scope  no UI", 80));
+    assert!(got[23].contains("f frame"), "{:?}", got[23]);
+    // At 40 columns the row is cut with `…` inside the frame.
+    let mut narrow = app_with(framed_plan(one), ReviewTarget::Gate);
+    let got = rows(&draw(&mut narrow, 40, 24));
+    assert!(got[2].starts_with("│ frame  1 decided for you"), "{got:#?}");
+    assert!(got[2].ends_with("…│"), "{:?}", got[2]);
+    assert_eq!(unicode_width::UnicodeWidthStr::width(got[2].as_str()), 40);
+    // Both lists empty: `frame  none stated` in `Attention`.
+    let mut empty = app_with(
+        framed_plan(proto::PlanFrameInfo::default()),
+        ReviewTarget::Gate,
+    );
+    let buffer = draw(&mut empty, 80, 24);
+    assert_eq!(rows(&buffer)[2], framed(" frame  none stated", 80));
+    assert_eq!(buffer[(2, 2)].fg, theme::fg(Role::Attention));
+    // Without a frame the hints have no `f`.
+    let mut plain = app_with(overlapping_plan(), ReviewTarget::Gate);
+    assert!(!rows(&draw(&mut plain, 80, 24))[23].contains("f frame"));
+}
+
+/// Task 6 review m3: at a design run's plan gate the status bar shows `f frame` on
+/// the task list while a frame exists (the approved spec's Non-goals), and not on the
+/// Plan doc tab, where `f` does nothing (ruling C20).
+#[test]
+fn design_gate_hints_f_frame_on_the_task_list_only() {
+    use crate::app::doc_gate::plan_doc::tests::{PLAN, on_tab, plan_run, reviewing};
+    let framed_run = || {
+        let mut run = plan_run(1);
+        run.plan_frame = Some(proto::PlanFrameInfo {
+            spec_non_goals: Some("- no app".into()),
+            ..proto::PlanFrameInfo::default()
+        });
+        run
+    };
+    for (w, h) in [(120, 40), (160, 40)] {
+        let mut list = reviewing(framed_run(), w, h);
+        assert!(list.plan_doc().is_none());
+        let bar = rows(&draw(&mut list, w, h))[usize::from(h) - 1].clone();
+        assert!(bar.contains("f frame"), "{w}x{h}: {bar:?}");
+        assert!(bar.contains("tab plan doc"), "{w}x{h}: {bar:?}");
+
+        let mut doc = on_tab(framed_run(), PLAN, w, h);
+        assert!(doc.plan_doc().is_some());
+        let bar = rows(&draw(&mut doc, w, h))[usize::from(h) - 1].clone();
+        assert!(!bar.contains("f frame"), "{w}x{h}: {bar:?}");
+        assert!(bar.contains("tab tasks"), "{w}x{h}: {bar:?}");
+
+        let mut plain = reviewing(plan_run(1), w, h);
+        let bar = rows(&draw(&mut plain, w, h))[usize::from(h) - 1].clone();
+        assert!(!bar.contains("f frame"), "{w}x{h}: {bar:?}");
+    }
+}

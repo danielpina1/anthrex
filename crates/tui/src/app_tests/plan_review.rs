@@ -96,6 +96,7 @@ fn open_from_the_run_view_at_the_gate_selects_the_first_task() {
             selected: Some("t1".into()),
             scroll: 0,
             doc: None,
+            frame: false,
         })
     );
     assert!(app.keymap.review_mode());

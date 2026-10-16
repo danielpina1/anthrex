@@ -89,10 +89,7 @@ fn a_users_edit_never_logs_it() {
         model: Some("claude-opus-5-5".into()),
         ..Default::default()
     };
-    let effects = edit(
-        &mut fx,
-        vec![proto::PlanEdit::AddTask { task: spec.clone() }],
-    );
+    let effects = edit(&mut fx, vec![proto::PlanEdit::add_task(spec.clone())]);
     assert!(replies(&effects)[0].is_ok(), "{effects:#?}");
     assert_eq!(ignored(&fx), 0);
     assert_eq!(fx.task("t2").spec.route, spec.route);

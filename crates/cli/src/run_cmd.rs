@@ -9,6 +9,7 @@ mod finish;
 mod orch;
 mod rounds;
 mod status;
+mod status_frame;
 mod status_orch;
 
 pub(crate) use status::printable;

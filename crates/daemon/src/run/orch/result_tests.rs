@@ -108,7 +108,8 @@ fn git() -> TaskGit {
 
 #[test]
 fn task_result_carries_every_field() {
-    let run = full_run();
+    let mut run = full_run();
+    task_mut(&mut run, "t2").replaces = vec!["t1".into()];
     let task = run.task("t2").unwrap();
     let r = task_result(&run, task, Some(&Ok(git())));
     let keys: Vec<&str> = r["task"]
@@ -128,6 +129,7 @@ fn task_result_carries_every_field() {
         "test_mode_reason",
         "owns",
         "deps",
+        "replaces",
         "implicit_deps",
         "route",
         "race",
@@ -152,6 +154,8 @@ fn task_result_carries_every_field() {
     expected.sort();
     assert_eq!(keys, expected);
     assert_eq!(r["task"]["state"], "blocked");
+    // Milestone 9.17 decision 26.
+    assert_eq!(r["task"]["replaces"], json!(["t1"]));
     assert_eq!(
         r["task"]["block"],
         json!({"reason": "question", "text": "which endpoint?"})
@@ -320,6 +324,7 @@ fn the_cap_holds_at_the_schema_maxima() {
                         line: Some(1),
                         input: Some(text(2000)),
                         text: text(2000),
+                        target: proto::FindingTarget::Code,
                     })
                     .collect();
                 r

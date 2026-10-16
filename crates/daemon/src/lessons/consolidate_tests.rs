@@ -119,6 +119,8 @@ fn task(run: &str, id: &str, at: u64, outcome: TaskOutcome) -> TaskRecord {
         signatures: Vec::new(),
         owns: vec!["crates/a/**".into()],
         lessons_shown: Vec::new(),
+        replaces: Vec::new(),
+        brief_findings: 0,
     }
 }
 

@@ -110,7 +110,7 @@ fn e2e_pr_review_batch_goes_to_the_orchestrator_then_fix_and_reply() {
         prompt(),
         edit_plan(
             vec![add(plan_task("t1", &["a.txt"], json!({})))],
-            json!({"submit": true}),
+            json!({"submit": true, "decided": [], "out_of_scope": []}),
         ),
         status_until("/gate/state", json!("approved"), ORCH_WAIT),
         // Idle until the batch's wake line; then the threads, from run_status.

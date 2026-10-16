@@ -168,6 +168,8 @@ fn reviews(task: &Task) -> Block {
         ));
         let serious = (review.findings.iter())
             .filter(|f| matches!(f.severity, Severity::Critical | Severity::Important))
+            // Milestone 9.17 ruling C11: a `brief` finding is the planner's, not a lesson's.
+            .filter(|f| f.target.is_code())
             .take(FINDINGS_PER_ROUND);
         lines.extend(serious.map(|f| one_line(&finding_line(f))));
     }

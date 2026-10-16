@@ -3,7 +3,7 @@
 //! caller to have. Problems read `<field>: <problem>`, and the caller prefixes
 //! `invalid arguments: `. Pure (design decision 2).
 
-use proto::{Finding, Severity, Verdict};
+use proto::{Finding, FindingTarget, Severity, Verdict};
 use serde_json::{Map, Value};
 
 /// `task_done { summary, test?, red? }`.
@@ -76,7 +76,7 @@ pub(super) fn parse_blocked(args: &Value) -> Result<(Option<&'static str>, Strin
 
 /// `submit_review { verdict, summary, findings }` (decision 35): the verdict, the
 /// summary and the findings, each checked against the MCP schema. A critical or
-/// important finding must carry `file` and `line`, or `input`.
+/// important `code` finding must carry `file` and `line`, or `input`.
 pub(super) fn parse_review(args: &Value) -> Result<(Verdict, String, Vec<Finding>), String> {
     let map = object(args, &["verdict", "summary", "findings"])?;
     let verdict = match map.get("verdict") {
@@ -102,7 +102,7 @@ pub(super) fn parse_review(args: &Value) -> Result<(Verdict, String, Vec<Finding
 
 /// One finding; a problem reads `.<field>: <problem>`, or `: <problem>` for the whole.
 fn parse_finding(item: &Value) -> Result<Finding, String> {
-    let fields = ["severity", "file", "line", "input", "text"];
+    let fields = ["severity", "file", "line", "input", "text", "target"];
     let map = object(item, &fields).map_err(|e| format!(".{e}"))?;
     let severity = match map.get("severity") {
         None => return Err(".severity: required".into()),
@@ -123,8 +123,16 @@ fn parse_finding(item: &Value) -> Result<Finding, String> {
     let text = text(map, "text", 2000, true)
         .map_err(|e| format!(".{e}"))?
         .unwrap_or_default();
+    // Milestone 9.17 decision 6: a `brief` finding is about the brief, so it needs no
+    // location; the location rule is for `code` findings.
+    let target = match map.get("target") {
+        None => FindingTarget::Code,
+        Some(Value::String(s)) if s == "code" => FindingTarget::Code,
+        Some(Value::String(s)) if s == "brief" => FindingTarget::Brief,
+        Some(_) => return Err(".target: must be one of code, brief".into()),
+    };
     let located = (file.is_some() && line.is_some()) || input.is_some();
-    if severity != Severity::Minor && !located {
+    if target.is_code() && severity != Severity::Minor && !located {
         return Err(": a critical or important finding needs file and line, or input".into());
     }
     Ok(Finding {
@@ -133,5 +141,10 @@ fn parse_finding(item: &Value) -> Result<Finding, String> {
         line,
         input,
         text,
+        target,
     })
 }
+
+#[cfg(test)]
+#[path = "tools_tests.rs"]
+mod tests;

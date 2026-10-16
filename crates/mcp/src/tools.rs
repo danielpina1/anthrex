@@ -95,12 +95,15 @@ fn submit_review() -> Tool {
             "line": {"type": "integer", "minimum": 1},
             "input": text(2000),
             "text": text(2000),
+            // Milestone 9.17 decision 6: a finding about the brief, not the code.
+            "target": one_of(&["code", "brief"]),
         }),
         &["severity", "text"],
     );
     Tool::new(
         SUBMIT_REVIEW,
-        "Submit your verdict and findings for this review round. Call it once.",
+        "Submit your verdict and findings for this review round. Call it once. A finding \
+         about the brief rather than the code has target brief.",
         closed(
             json!({
                 "verdict": one_of(&["approve", "changes"]),
@@ -208,7 +211,10 @@ mod tests {
             tool(AgentRole::Reviewer, "submit_review")
                 .description
                 .as_deref(),
-            Some("Submit your verdict and findings for this review round. Call it once.")
+            Some(
+                "Submit your verdict and findings for this review round. Call it once. A \
+                 finding about the brief rather than the code has target brief."
+            )
         );
         let review = schema(AgentRole::Reviewer, "submit_review");
         assert_eq!(
@@ -219,6 +225,15 @@ mod tests {
             review["properties"]["findings"]["items"]["required"],
             json!(["severity", "text"])
         );
+    }
+
+    /// Milestone 9.17 decision 6: a finding may name its target, `code` or `brief`.
+    #[test]
+    fn submit_review_finding_has_optional_target() {
+        let review = schema(AgentRole::Reviewer, "submit_review");
+        let item = &review["properties"]["findings"]["items"];
+        assert_eq!(item["properties"]["target"], one_of(&["code", "brief"]));
+        assert_eq!(item["required"], json!(["severity", "text"]));
     }
 
     /// M9.2 review ruling 2: a decider is never given an anthrex tool.

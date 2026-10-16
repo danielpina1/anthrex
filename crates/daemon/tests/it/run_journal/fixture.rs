@@ -385,6 +385,7 @@ pub fn full_run(data_dir: &Path) -> Run {
             line: Some(3),
             input: None,
             text: "wrong".into(),
+            target: proto::FindingTarget::Code,
         }],
         lane: None,
     });

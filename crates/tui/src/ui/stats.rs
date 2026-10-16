@@ -152,6 +152,14 @@ fn ready_lines(stats: &HistoryStats, width: usize, p: Palette) -> Vec<Line<'stat
         ),
         plain,
     ));
+    // Milestone 9.17 decision 26: only once a record was replaced.
+    if stats.replaced > 0 {
+        let n = stats.replaced;
+        out.push(line(
+            format!("replaced {n} (judged by their replacements)"),
+            plain,
+        ));
+    }
     out.push(Line::default());
     out.push(line(
         format!(
@@ -315,3 +323,7 @@ pub fn render(frame: &mut Frame, app: &App, s: &StatsScreen, area: Rect) {
 #[cfg(test)]
 #[path = "stats_tests.rs"]
 pub(crate) mod tests;
+
+#[cfg(test)]
+#[path = "stats_tests_replaced.rs"]
+mod replaced_tests;

@@ -343,6 +343,7 @@ fn a_paused_run_keeps_the_step_of_the_phase_it_paused_in() {
 /// 9.9's rules 2, 24, 26, 37, 40, 41 and 42 (task M9.9.10; 9.8's was `b888a5a5…ffaf`),
 /// and rule 26's promotion-hold sentence (final review I-2; T10's was `c6e792fd…ef86`),
 /// and milestone 9.13's rule 26 retry, override and hold sentences (task M9.13.10,
-/// decision 24; 9.9's was `f82c973c…9c2e`).
+/// decision 24; 9.9's was `f82c973c…9c2e`), and milestone 9.17's appends to rules 6,
+/// 17, 25 and 30 (task M9.17.9, decision 27; 9.13's was `ca1ca24e…d3b5`).
 const NINE_FIVE_CONTRACT_SHA256: &str =
-    "ca1ca24e06b7df82d0612876cc2b27505cb45480a1861f4a4ef6db30f5c5d3b5";
+    "212d0b1f677be7f917335c11ebc7bf162164efa4bfdeda526ae59f2b5291e031";

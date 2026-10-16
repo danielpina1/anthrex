@@ -1,0 +1,89 @@
+//! Milestone 9.17 decision 18: a submitted plan's frame, what the orchestrator (per
+//! round) or a sub-planner (per epic) decided for the user and what the plan leaves
+//! out. Pure: types and lookups only. Milestone 9.17's task M9.17.5 writes them; task
+//! M9.17.3 adds the types, which nothing writes yet, and the reviewer prompt reads them
+//! (`contract_scope::out_of_scope_block`).
+
+use proto::{DecidedItem, PlanFrameInfo};
+use serde::{Deserialize, Serialize};
+
+use crate::run::model::Run;
+
+/// Decision 13: at most this many `decided` items in one submit.
+pub const DECIDED_MAX: usize = 20;
+/// Decision 13: at most this many `out_of_scope` items in one submit.
+pub const OUT_OF_SCOPE_ITEMS_MAX: usize = 20;
+
+/// One plan's frame (decision 18). `RunOrch.plan_frames` holds at most one per round;
+/// `EpicRecord.frame` holds its epic's latest. Every text is stored one line, its
+/// control characters dropped.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlanFrame {
+    pub round: u32,
+    pub decided: Vec<DecidedItem>,
+    pub out_of_scope: Vec<String>,
+    pub at: u64,
+}
+
+/// The frame of `round`'s plan, if its submit carried one.
+pub fn frame_for(run: &Run, round: u32) -> Option<&PlanFrame> {
+    run.orch.plan_frames.iter().find(|f| f.round == round)
+}
+
+/// Decision 18: a frame text as stored. A line break or tab becomes a space, any other
+/// control character and every format character (`Cf`: bidi controls, zero-width
+/// characters; task 5 review M3) is dropped, and the ends are trimmed. The parser
+/// refuses an item this leaves empty (task 5 review M2).
+pub fn clean(text: &str) -> String {
+    let kept: String = (text.chars())
+        .filter(|&c| !(c.is_control() && !c.is_whitespace()) && !is_format(c))
+        .collect();
+    crate::run::messages::one_line(&kept).trim().to_string()
+}
+
+/// Unicode's `Cf` (format) characters, with `proto::safe_text::is_hidden_format`'s
+/// other invisible ones.
+fn is_format(c: char) -> bool {
+    proto::safe_text::is_hidden_format(c)
+        || matches!(
+            c,
+            '\u{0600}'..='\u{0605}'
+                | '\u{06DD}'
+                | '\u{070F}'
+                | '\u{0890}'..='\u{0891}'
+                | '\u{08E2}'
+                | '\u{110BD}'
+                | '\u{110CD}'
+                | '\u{13430}'..='\u{1343F}'
+                | '\u{1BCA0}'..='\u{1BCA3}'
+        )
+}
+
+/// Decision 20: a spec's Non-goals as published, at most this many bytes.
+pub const SPEC_NON_GOALS_MAX: usize = 2048;
+
+/// Decision 20: `frame` and a design run's approved Non-goals as a client shows them at
+/// the plan gate; `None` when there is neither.
+pub fn info(frame: Option<&PlanFrame>, spec_non_goals: Option<&str>) -> Option<PlanFrameInfo> {
+    let goals = spec_non_goals
+        .map(str::trim)
+        .filter(|text| !text.is_empty());
+    if frame.is_none() && goals.is_none() {
+        return None;
+    }
+    Some(PlanFrameInfo {
+        decided: frame.map(|f| f.decided.clone()).unwrap_or_default(),
+        out_of_scope: frame.map(|f| f.out_of_scope.clone()).unwrap_or_default(),
+        spec_non_goals: goals.map(|text| {
+            let mut end = text.len().min(SPEC_NON_GOALS_MAX);
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            text[..end].to_string()
+        }),
+    })
+}
+
+#[cfg(test)]
+#[path = "plan_frame_tests.rs"]
+mod tests;

@@ -214,7 +214,7 @@ fn message_to_a_review_task_is_refused_for_it_alone() {
 
     // The orchestrator's reply lists both.
     let mut fx = launched(true);
-    let submit = json!({"edits": [add("t1", "a"), add("t2", "b")], "submit": true});
+    let submit = json!({"edits": [add("t1", "a"), add("t2", "b")], "submit": true, "decided": [], "out_of_scope": []});
     assert!(answer(&edit_plan(&mut fx, submit)).0);
     fx.launch_all();
     fx.task_mut("t2").state = TaskState::Review;
@@ -278,14 +278,15 @@ fn message_mixed_with_a_plan_edit_is_refused_without_effect() {
 
     // The orchestrator: with another edit, with `submit`, with `summary`.
     let mut fx = launched(true);
-    let submit = json!({"edits": [add("t1", "a")], "submit": true});
+    let submit =
+        json!({"edits": [add("t1", "a")], "submit": true, "decided": [], "out_of_scope": []});
     assert!(answer(&edit_plan(&mut fx, submit)).0);
     fx.launch_all();
     let message = json!({"op": "message", "to": ["t1"], "kind": "info", "text": "hi"});
     let before = fx.run().clone();
     for call in [
         json!({"edits": [message.clone(), add("t2", "b")]}),
-        json!({"edits": [message.clone()], "submit": true}),
+        json!({"edits": [message.clone()], "submit": true, "decided": [], "out_of_scope": []}),
         json!({"edits": [message.clone()], "summary": "so far"}),
         json!({"edits": [{"op": "refresh", "task_id": "t1"}], "summary": "so far"}),
     ] {

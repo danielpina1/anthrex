@@ -1,0 +1,982 @@
+{
+  "format": 5,
+  "id": "engine-test-3f9a",
+  "goal": "Engine test",
+  "root": "/tmp/x",
+  "project": "/tmp/p",
+  "git_common_dir": "/tmp/p/.git",
+  "wt_dir": "/tmp/wt",
+  "data_dir": "/tmp/anthrex-fixture/data/runs/engine-test-3f9a",
+  "base_branch": "main",
+  "base_sha": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+  "run_head": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+  "last_green_candidate": null,
+  "base_moved": null,
+  "state": "running",
+  "paused_from": null,
+  "halted_reason": null,
+  "approved_by": "--yes",
+  "profile": {
+    "modules": [
+      "crates/*"
+    ],
+    "hub": [
+      "crates/proto/**"
+    ],
+    "source": [
+      "crates/*/src/**"
+    ],
+    "check": "cargo test",
+    "check_timeout_secs": 1800,
+    "single_test": "cargo test -- --exact {test}",
+    "test_passed": null,
+    "setup": "make deps",
+    "generated": [],
+    "protected": [
+      ".claude/**",
+      ".mcp.json",
+      ".codex/**",
+      "**/CLAUDE.md",
+      "**/AGENTS.md",
+      "**/AGENTS.override.md",
+      "**/CLAUDE.local.md",
+      ".agents/**",
+      ".github/workflows/**",
+      ".github/actions/**",
+      ".gitlab-ci.yml",
+      ".circleci/**",
+      ".buildkite/**",
+      "Jenkinsfile",
+      "azure-pipelines.yml",
+      ".githooks/**",
+      ".husky/**",
+      ".pre-commit-config.yaml",
+      "**/.cargo/**",
+      "**/rust-toolchain",
+      "**/rust-toolchain.toml"
+    ],
+    "env": {
+      "TARGET": "{worktree}/target"
+    },
+    "cache_dirs": [],
+    "confined_network": false,
+    "confined_unix_sockets": [],
+    "confined_localhost_ports": [],
+    "tiers": {
+      "build_check": null,
+      "module_test": null,
+      "module_tests": null,
+      "module_graph": "none",
+      "module_names": "dir",
+      "full_triggers": [],
+      "slow_tests": null,
+      "timing_tests": null,
+      "skip_markers": [],
+      "test_paths": [],
+      "full_shards": 1,
+      "toolchain_id": null
+    },
+    "manifests": []
+  },
+  "limits": {
+    "max_writers": 3,
+    "max_readers": 3,
+    "max_bounces": 2,
+    "max_tasks": 50,
+    "max_windows": 60,
+    "default_runtime": "claude",
+    "review_small": true,
+    "budget_s": {
+      "tool_calls": 40,
+      "minutes": 15,
+      "tokens": null
+    },
+    "budget_m": {
+      "tool_calls": 150,
+      "minutes": 60,
+      "tokens": null
+    },
+    "budget_l": {
+      "tool_calls": 300,
+      "minutes": 120,
+      "tokens": null
+    },
+    "stall_after_secs": 600,
+    "rate_limit_retry_secs": 300,
+    "denials_before_block": 3,
+    "git_timeout_secs": 60,
+    "worker_permission_mode": "acceptEdits",
+    "worker_allowed_tools": [
+      "Bash",
+      "Edit",
+      "Write",
+      "Read",
+      "Glob",
+      "Grep",
+      "Agent",
+      "TodoWrite"
+    ],
+    "worker_codex_sandbox": "workspace-write",
+    "worker_sandbox": true,
+    "unconfined_checks": false,
+    "claude_auth": "login",
+    "api_key_helper": null,
+    "decider_mode": "off",
+    "decider_slot_wait_secs": 30,
+    "orch": {
+      "planner_task_cap": 12,
+      "max_scouts": 12,
+      "wake_orchestrator": true,
+      "wake_quiet_secs": 5,
+      "message_max_per_turn": 3,
+      "note_max_per_task": 10,
+      "planners": {
+        "runtime": null,
+        "effort": "high",
+        "max_tool_calls": 200,
+        "timeout_secs": 2400,
+        "max_rejections": 5
+      },
+      "agent": {
+        "runtime": null,
+        "model": "",
+        "effort": "high"
+      }
+    },
+    "testing": {
+      "full_idle_secs": 120,
+      "bisect_fix_max": 2,
+      "flaky_quarantine_after": 3,
+      "flaky_window_days": 14,
+      "admit_wait_secs": 300
+    },
+    "adaptive_concurrency": true,
+    "recover_after_secs": 600,
+    "halve_hold_secs": 60,
+    "race_slot_wait_secs": 120,
+    "models": {
+      "rows": {
+        "orchestrator": {
+          "model": "claude:claude-opus-5-5",
+          "effort": "high"
+        },
+        "planner": {
+          "model": "claude:claude-opus-5-5",
+          "effort": "high"
+        },
+        "implementer.small": {
+          "model": "claude:claude-sonnet-5",
+          "effort": "low"
+        },
+        "implementer.medium": {
+          "model": "claude:claude-sonnet-5",
+          "effort": "medium"
+        },
+        "implementer.hub": {
+          "model": "claude:claude-opus-5-5",
+          "effort": "high"
+        },
+        "test_writer": {
+          "model": "codex:default",
+          "effort": "medium"
+        },
+        "reviewer": {
+          "model": "codex:default",
+          "effort": "high",
+          "fallback": "claude:claude-opus-5-5"
+        },
+        "research": {
+          "model": "claude:claude-haiku-4-5"
+        },
+        "helpers": {
+          "model": "claude:claude-haiku-4-5"
+        },
+        "helpers.run_name": {
+          "model": "claude:claude-haiku-4-5"
+        },
+        "helpers.triage": {
+          "model": "claude:claude-haiku-4-5"
+        },
+        "helpers.size_check": {
+          "model": "claude:claude-haiku-4-5"
+        },
+        "helpers.check_summary": {
+          "model": "claude:claude-haiku-4-5"
+        },
+        "helpers.blocked_reason": {
+          "model": "claude:claude-haiku-4-5"
+        },
+        "helpers.ci_summary": {
+          "model": "claude:claude-haiku-4-5"
+        },
+        "helpers.distill": {
+          "model": "claude:claude-haiku-4-5"
+        },
+        "helpers.risk_note": {
+          "model": "claude:claude-haiku-4-5"
+        }
+      },
+      "brainstorm": {
+        "first": "claude:claude-opus-5-5",
+        "second": "codex:default",
+        "effort": "high"
+      }
+    }
+  },
+  "tasks": [
+    {
+      "spec": {
+        "id": "t1",
+        "title": "Title t1",
+        "epic": null,
+        "kind": "code",
+        "size": "S",
+        "interface_change": false,
+        "test_mode": null,
+        "test_mode_reason": null,
+        "owns": [
+          "crates/a/**"
+        ],
+        "deps": [],
+        "priority": 0,
+        "brief": "Brief t1",
+        "acceptance": [
+          "Accept t1"
+        ],
+        "test_to_write": null,
+        "scout_refs": [],
+        "route": {
+          "runtime": null,
+          "model": null,
+          "effort": null
+        },
+        "budget": null,
+        "review_target": null,
+        "stage": 1,
+        "atomic": false,
+        "atomic_reason": null
+      },
+      "size": "S",
+      "hub": false,
+      "test_mode": "tdd",
+      "notes": [
+        "the profile has no test_passed: the test proof will require the test's name in the single-test command's output (rule 8.1)"
+      ],
+      "review_level": "small",
+      "route": {
+        "runtime": "claude",
+        "model": "claude-sonnet-5",
+        "effort": "low"
+      },
+      "review_route": {
+        "runtime": "codex",
+        "model": "",
+        "effort": "high"
+      },
+      "budget": {
+        "tool_calls": 40,
+        "minutes": 15,
+        "tokens": null
+      },
+      "implicit_deps": [],
+      "state": "working",
+      "block": null,
+      "rung": 0,
+      "raised_size": null,
+      "failures": 0,
+      "bounces": {
+        "done": 0,
+        "proof": 0,
+        "check": 0,
+        "review": 0,
+        "merge": 0
+      },
+      "stalls": 0,
+      "budget_exceeded": 0,
+      "conflicts": 0,
+      "session": 1,
+      "spent_total": {
+        "tool_calls": 0,
+        "secs": 0,
+        "tokens": 0
+      },
+      "branch": "anthrex/engine-test-3f9a/t1",
+      "worktree": "/tmp/wt/runs/engine-test-3f9a/t1",
+      "prewarmed": false,
+      "worktree_live": true,
+      "awaiting_deps": false,
+      "held_answered": false,
+      "gate_op": null,
+      "review_misses": 0,
+      "merge_op": null,
+      "cancel_deferred": false,
+      "ready_from": null,
+      "resolving": false,
+      "handback_due": false,
+      "gates_after_handback": false,
+      "resolution": null,
+      "override_count": null,
+      "clock": {
+        "stopped": null,
+        "restarted": 0
+      },
+      "epoch": null,
+      "start_commit": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+      "head": null,
+      "done": null,
+      "claim": null,
+      "fresh_session": null,
+      "rounds": [
+        {
+          "role": "worker",
+          "session": 1,
+          "round": 1,
+          "window_id": 1,
+          "route": {
+            "runtime": "claude",
+            "model": "claude-sonnet-5",
+            "effort": "low"
+          },
+          "launch_op": 4,
+          "session_id": "228eec7f-56f4-4e38-8892-b3a69d32c8c6",
+          "pid": null,
+          "ended": false,
+          "started_at": 2003,
+          "ended_at": null,
+          "turn_open": true,
+          "turns": 1,
+          "turn_had_task_done": false,
+          "last_event": 2003,
+          "tool_calls": 0,
+          "rate_limited_until": null,
+          "in_retry_streak": false,
+          "open_subagents": [],
+          "denials": 0,
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cache_read": 0,
+            "cache_write": 0
+          },
+          "deaths": 0,
+          "fallback": "None",
+          "stall": "Watching",
+          "failed_turn": "None",
+          "review_nudged": false,
+          "wrap_up_sent": false,
+          "retiring": false,
+          "delivery_failures": 0,
+          "delivery_retry_at": null,
+          "turn_denied": [],
+          "excused_secs": 0,
+          "last_denial": null,
+          "fallback_waiting": false,
+          "carried": [],
+          "failed_error": null,
+          "resume_op": null,
+          "count_op": null,
+          "count_failures": 0,
+          "count_retry_at": null,
+          "count_turn": 0,
+          "interrupted": false,
+          "relaunch": null,
+          "closed_pid": null,
+          "exited_pid": null,
+          "rate_limited_since": null,
+          "sent_back_at": [],
+          "activity": null,
+          "last_text": null
+        }
+      ],
+      "reviews": [],
+      "checks": [],
+      "proofs": [],
+      "handed_back": false,
+      "merge_commit": null,
+      "merged_without_approval": null,
+      "salvage_refs": [],
+      "failure_log": [],
+      "history": [
+        {
+          "at": 2002,
+          "text": "dispatched"
+        },
+        {
+          "at": 2003,
+          "text": "worker session 1 starting"
+        }
+      ],
+      "pending_failure": null,
+      "pending_classification": null,
+      "block_source": null,
+      "decider_usage": {
+        "input": 0,
+        "output": 0,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "size_check": null,
+      "phases": {
+        "queued": 1,
+        "preparing": 3,
+        "working": 0,
+        "proof": 0,
+        "check": 0,
+        "review": 0,
+        "merge": 0,
+        "blocked": 0
+      },
+      "phase_since": 2005,
+      "max_rung": 0,
+      "diff": null,
+      "history_written": false,
+      "routing_decisions": [
+        {
+          "seq": 1,
+          "at": 2003,
+          "role": "worker",
+          "session": 1,
+          "round": null,
+          "lane": null,
+          "trigger": "initial",
+          "source": "role_table",
+          "policy_version": "m9.8-roles-v1",
+          "pick_policy": null,
+          "input": {
+            "title": "Title t1",
+            "brief": "Brief t1",
+            "acceptance": [
+              "Accept t1"
+            ],
+            "owns": [
+              "crates/a/**"
+            ],
+            "kind": "code",
+            "size": "S",
+            "hub": false,
+            "interface_change": false,
+            "test_mode": "tdd",
+            "languages": []
+          },
+          "chosen": {
+            "runtime": "claude",
+            "model": "claude-sonnet-5",
+            "effort": "low"
+          },
+          "selected_index": 0,
+          "candidates": [
+            {
+              "route": {
+                "runtime": "claude",
+                "model": "claude-sonnet-5",
+                "effort": "low"
+              },
+              "skipped_reason": null
+            }
+          ]
+        }
+      ],
+      "escalated_from": null,
+      "orch": {
+        "gate_hold": null,
+        "research": null,
+        "review_range": null,
+        "integration_of": null,
+        "messages": [],
+        "worker_notes": [],
+        "refresh": null,
+        "refresh_merges": [],
+        "refresh_targets": [],
+        "rewrite_restarts": 0,
+        "research_append": null
+      },
+      "origin": "plan",
+      "fixes": null,
+      "signals": [],
+      "signals_more": 0,
+      "signal_refusals": 0,
+      "sync": null,
+      "round": 1
+    },
+    {
+      "spec": {
+        "id": "t2",
+        "title": "Title t2",
+        "epic": null,
+        "kind": "code",
+        "size": "S",
+        "interface_change": false,
+        "test_mode": null,
+        "test_mode_reason": null,
+        "owns": [
+          "crates/b/**"
+        ],
+        "deps": [],
+        "priority": 0,
+        "brief": "Brief t2",
+        "acceptance": [
+          "Accept t2"
+        ],
+        "test_to_write": null,
+        "scout_refs": [],
+        "route": {
+          "runtime": null,
+          "model": null,
+          "effort": null
+        },
+        "budget": null,
+        "review_target": null,
+        "stage": 1,
+        "atomic": false,
+        "atomic_reason": null
+      },
+      "size": "S",
+      "hub": false,
+      "test_mode": "tdd",
+      "notes": [
+        "the profile has no test_passed: the test proof will require the test's name in the single-test command's output (rule 8.1)"
+      ],
+      "review_level": "small",
+      "route": {
+        "runtime": "claude",
+        "model": "claude-sonnet-5",
+        "effort": "low"
+      },
+      "review_route": {
+        "runtime": "codex",
+        "model": "",
+        "effort": "high"
+      },
+      "budget": {
+        "tool_calls": 40,
+        "minutes": 15,
+        "tokens": null
+      },
+      "implicit_deps": [],
+      "state": "working",
+      "block": null,
+      "rung": 0,
+      "raised_size": null,
+      "failures": 0,
+      "bounces": {
+        "done": 0,
+        "proof": 0,
+        "check": 0,
+        "review": 0,
+        "merge": 0
+      },
+      "stalls": 0,
+      "budget_exceeded": 0,
+      "conflicts": 0,
+      "session": 1,
+      "spent_total": {
+        "tool_calls": 0,
+        "secs": 0,
+        "tokens": 0
+      },
+      "branch": "anthrex/engine-test-3f9a/t2",
+      "worktree": "/tmp/wt/runs/engine-test-3f9a/t2",
+      "prewarmed": false,
+      "worktree_live": true,
+      "awaiting_deps": false,
+      "held_answered": false,
+      "gate_op": null,
+      "review_misses": 0,
+      "merge_op": null,
+      "cancel_deferred": false,
+      "ready_from": null,
+      "resolving": false,
+      "handback_due": false,
+      "gates_after_handback": false,
+      "resolution": null,
+      "override_count": null,
+      "clock": {
+        "stopped": null,
+        "restarted": 0
+      },
+      "epoch": null,
+      "start_commit": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+      "head": null,
+      "done": null,
+      "claim": null,
+      "fresh_session": null,
+      "rounds": [
+        {
+          "role": "worker",
+          "session": 1,
+          "round": 1,
+          "window_id": 2,
+          "route": {
+            "runtime": "claude",
+            "model": "claude-sonnet-5",
+            "effort": "low"
+          },
+          "launch_op": 5,
+          "session_id": "8f22d921-c257-424b-9431-2190b0c79213",
+          "pid": null,
+          "ended": false,
+          "started_at": 2004,
+          "ended_at": null,
+          "turn_open": true,
+          "turns": 1,
+          "turn_had_task_done": false,
+          "last_event": 2004,
+          "tool_calls": 0,
+          "rate_limited_until": null,
+          "in_retry_streak": false,
+          "open_subagents": [],
+          "denials": 0,
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cache_read": 0,
+            "cache_write": 0
+          },
+          "deaths": 0,
+          "fallback": "None",
+          "stall": "Watching",
+          "failed_turn": "None",
+          "review_nudged": false,
+          "wrap_up_sent": false,
+          "retiring": false,
+          "delivery_failures": 0,
+          "delivery_retry_at": null,
+          "turn_denied": [],
+          "excused_secs": 0,
+          "last_denial": null,
+          "fallback_waiting": false,
+          "carried": [],
+          "failed_error": null,
+          "resume_op": null,
+          "count_op": null,
+          "count_failures": 0,
+          "count_retry_at": null,
+          "count_turn": 0,
+          "interrupted": false,
+          "relaunch": null,
+          "closed_pid": null,
+          "exited_pid": null,
+          "rate_limited_since": null,
+          "sent_back_at": [],
+          "activity": null,
+          "last_text": null
+        }
+      ],
+      "reviews": [],
+      "checks": [],
+      "proofs": [],
+      "handed_back": false,
+      "merge_commit": null,
+      "merged_without_approval": null,
+      "salvage_refs": [],
+      "failure_log": [],
+      "history": [
+        {
+          "at": 2002,
+          "text": "dispatched"
+        },
+        {
+          "at": 2004,
+          "text": "worker session 1 starting"
+        }
+      ],
+      "pending_failure": null,
+      "pending_classification": null,
+      "block_source": null,
+      "decider_usage": {
+        "input": 0,
+        "output": 0,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "size_check": null,
+      "phases": {
+        "queued": 1,
+        "preparing": 4,
+        "working": 0,
+        "proof": 0,
+        "check": 0,
+        "review": 0,
+        "merge": 0,
+        "blocked": 0
+      },
+      "phase_since": 2006,
+      "max_rung": 0,
+      "diff": null,
+      "history_written": false,
+      "routing_decisions": [
+        {
+          "seq": 1,
+          "at": 2004,
+          "role": "worker",
+          "session": 1,
+          "round": null,
+          "lane": null,
+          "trigger": "initial",
+          "source": "role_table",
+          "policy_version": "m9.8-roles-v1",
+          "pick_policy": null,
+          "input": {
+            "title": "Title t2",
+            "brief": "Brief t2",
+            "acceptance": [
+              "Accept t2"
+            ],
+            "owns": [
+              "crates/b/**"
+            ],
+            "kind": "code",
+            "size": "S",
+            "hub": false,
+            "interface_change": false,
+            "test_mode": "tdd",
+            "languages": []
+          },
+          "chosen": {
+            "runtime": "claude",
+            "model": "claude-sonnet-5",
+            "effort": "low"
+          },
+          "selected_index": 0,
+          "candidates": [
+            {
+              "route": {
+                "runtime": "claude",
+                "model": "claude-sonnet-5",
+                "effort": "low"
+              },
+              "skipped_reason": null
+            }
+          ]
+        }
+      ],
+      "escalated_from": null,
+      "orch": {
+        "gate_hold": null,
+        "research": null,
+        "review_range": null,
+        "integration_of": null,
+        "messages": [],
+        "worker_notes": [],
+        "refresh": null,
+        "refresh_merges": [],
+        "refresh_targets": [],
+        "rewrite_restarts": 0,
+        "research_append": null
+      },
+      "origin": "plan",
+      "fixes": null,
+      "signals": [],
+      "signals_more": 0,
+      "signal_refusals": 0,
+      "sync": null,
+      "round": 1
+    }
+  ],
+  "merge_queue": [],
+  "outbox": [],
+  "next_message": 1,
+  "pending_ops": {},
+  "next_op": 6,
+  "windows_created": 2,
+  "revision": 6,
+  "unverified": false,
+  "final_check_failed": false,
+  "trusted_project": [],
+  "trust_project": false,
+  "protected_files": [],
+  "rate_limits": {},
+  "outcome": null,
+  "log": [
+    {
+      "at": 2001,
+      "text": "started; approved by --yes"
+    },
+    {
+      "at": 2002,
+      "text": "integration worktree ready"
+    }
+  ],
+  "created_at": 1000,
+  "finish_edit": false,
+  "finish_reply": null,
+  "cancelled": false,
+  "verify_failures": 0,
+  "halt_retryable": false,
+  "restored": null,
+  "session_nonce": 0,
+  "codex_project_config": null,
+  "codex_config_base": [],
+  "profile_source": null,
+  "output_filter": "failures-only",
+  "filter_prefixes": [],
+  "repo_dir": "",
+  "stale_profile": [],
+  "decider_queue": [],
+  "next_decider": 0,
+  "decider_calls": 0,
+  "decider_fallbacks": 0,
+  "decider_usage": {
+    "input": 0,
+    "output": 0,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "scout_reports": [],
+  "onboarding_report": null,
+  "path": null,
+  "triage": null,
+  "triage_usage": {
+    "input": 0,
+    "output": 0,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "scout_usage": {
+    "input": 0,
+    "output": 0,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "orchestrator_usage": {
+    "input": 0,
+    "output": 0,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "promote_requested_at": null,
+  "run_record_written": false,
+  "profile_languages": [],
+  "role_routing_decisions": [],
+  "history": true,
+  "approved_at": 2001,
+  "plan_edits": [],
+  "plan_edits_since_approval": 0,
+  "orch": {
+    "orchestrator": null,
+    "epics": [],
+    "gate_holds": [],
+    "run_scouts": [],
+    "digest_rev": 3,
+    "digest_fp": 11366120820304198938,
+    "digest_read_at": null,
+    "installed": {},
+    "yes": false,
+    "research_report": null,
+    "planner_usage": {
+      "input": 0,
+      "output": 0,
+      "cache_read": 0,
+      "cache_write": 0
+    },
+    "note_seq": 0
+  },
+  "profile_hash": "466f85010d50a2cf",
+  "toolchain": null,
+  "graph_note": null,
+  "test_slots": 0,
+  "stage_layout": "single",
+  "stages": [
+    {
+      "n": 1,
+      "branch": "anthrex/engine-test-3f9a/integration",
+      "head": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+      "created_from": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+      "created_at": 1000,
+      "merges": [],
+      "floor": null,
+      "tasks_in": [],
+      "synced_from": null,
+      "last_green_candidate": null,
+      "full": {
+        "green_at": null,
+        "red_at": null,
+        "bisect_fixes": 0,
+        "last": null,
+        "note": null,
+        "infra": null,
+        "bisects": 0,
+        "ended": [],
+        "runs": 0
+      },
+      "bisect": null,
+      "propagate_red": null,
+      "propagate_note": null,
+      "round": 1
+    }
+  ],
+  "full_op": null,
+  "queue_idle_since": null,
+  "fix_seq": 0,
+  "propagate_due": [],
+  "delivery": {
+    "mode": "local",
+    "repo": null,
+    "limits": {
+      "poll_secs": 60,
+      "poll_max_secs": 300,
+      "ci_log_max_bytes": 2097152,
+      "ci_fix_max": 2,
+      "review_fix_max": 3,
+      "review_batch_secs": 120,
+      "reviewers": [],
+      "reply_to_comments": true,
+      "sync": "on_conflict",
+      "delete_merged_branches": false,
+      "stage_target_lines": [
+        300,
+        800
+      ]
+    },
+    "watching": false,
+    "poll_base_secs": 0,
+    "stages": [],
+    "permissions": {},
+    "base_synced": null,
+    "base_sync_due": {},
+    "failures": {},
+    "alerts": {},
+    "permission_retry_at": null,
+    "base_fetch_due": false,
+    "base_fetch_retry_at": null,
+    "remote_seal": null
+  },
+  "rounds": [
+    {
+      "n": 1,
+      "goal": "Engine test",
+      "origin": "user",
+      "started_at": 1000,
+      "ended_at": null,
+      "outcome": null,
+      "summary": null,
+      "first_stage": 1,
+      "windows_before": 0,
+      "scouts_before": 0
+    }
+  ],
+  "last_step_at": 2006,
+  "failovers": [
+    {
+      "who": "t1",
+      "from": {
+        "runtime": "claude",
+        "model": "claude-sonnet-5",
+        "effort": ""
+      },
+      "to": {
+        "runtime": "codex",
+        "model": "gpt-6-sol",
+        "effort": ""
+      },
+      "at": 1800000100
+    }
+  ],
+  "handoff": {
+    "from_run": "a1b2",
+    "from_window": 41,
+    "fill_tokens": 180000,
+    "window_tokens": 200000,
+    "at": 1800000000
+  }
+}

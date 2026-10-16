@@ -315,8 +315,12 @@ fn summary_or_iterate(args: &Value) -> bool {
             summary,
             iterate,
             responses,
+            decided,
+            out_of_scope,
         }) => {
             let bare = edits.is_empty() && !submit && responses.is_empty();
+            // Milestone 9.17 ruling C6: no plan frame key either.
+            let bare = bare && decided.is_none() && out_of_scope.is_none();
             bare && (summary.is_some() != iterate.is_some())
         }
         _ => false,

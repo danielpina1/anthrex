@@ -44,7 +44,10 @@ fn a_split_child_naming_a_rejected_epic_opens_its_next_round() {
     assert!(ok, "{value}");
     assert_eq!(fx.task("t2a").orch.gate_hold.as_deref(), Some("epic:web.2"));
     assert_eq!(fx.task("t2b").orch.gate_hold.as_deref(), Some("promotion"));
-    edit_plan(&mut fx, json!({"edits": [], "submit": true}));
+    edit_plan(
+        &mut fx,
+        json!({"edits": [], "submit": true, "decided": [], "out_of_scope": []}),
+    );
     hold_verdict(&mut fx, "promotion", true);
     fx.tick();
     assert!(prepared(&fx, "t2b"), "the promotion's own work runs");

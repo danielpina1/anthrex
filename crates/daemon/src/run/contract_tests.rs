@@ -20,7 +20,30 @@ fn contracts_round_trip_through_toml_string() {
     }
     assert!(WORKER_CONTRACT.ends_with("Do not try to fix it or change git settings."));
     assert_eq!(WORKER_CONTRACT.lines().count(), 13);
-    assert_eq!(REVIEWER_CONTRACT.lines().count(), 7);
+    assert_eq!(REVIEWER_CONTRACT.lines().count(), 8);
+}
+
+/// Milestone 9.17 decision 27: reviewer rule 7, exact.
+#[test]
+fn reviewer_rule_7_judges_the_brief() {
+    assert!(REVIEWER_CONTRACT.ends_with("\n7. Judge the brief too. If the change does what its brief says but the brief is wrong for the run goal, asks for something out of scope, or leaves out something the goal needs, add a finding with target brief: it goes to whoever planned the task, not to the worker, and never blocks this change, so a change that must not merge also needs a code finding. A brief finding needs no file or line. Every other finding is about the code (target code, the default)."));
+}
+
+/// Milestone 9.17 decision 12: `- [<severity>] brief: <text>`, whatever it locates.
+#[test]
+fn finding_line_writes_a_brief_finding() {
+    let brief = Finding {
+        severity: Severity::Critical,
+        file: Some("a.rs".into()),
+        line: Some(3),
+        input: None,
+        text: "the brief is wrong".into(),
+        target: proto::FindingTarget::Brief,
+    };
+    assert_eq!(
+        finding_line(&brief),
+        "- [critical] brief: the brief is wrong"
+    );
 }
 
 fn prompt_run(profile: &str, extra: &str) -> Run {
@@ -332,8 +355,9 @@ fn an_interface_change_reviewer_checks_the_old_interface() {
     for (multi, tiered) in [(true, false), (false, true), (true, true)] {
         let prompt = interface_prompt(true, multi, tiered);
         let lines: Vec<&str> = prompt.lines().collect();
+        // Line 5 since milestone 9.17's `Run goal:` line 2 (task M9.17.3, decision 1).
         assert_eq!(
-            lines[4], INTERFACE_LINE,
+            lines[5], INTERFACE_LINE,
             "multi={multi} tiered={tiered}\n{prompt}"
         );
         assert_eq!(prompt.matches(INTERFACE_LINE).count(), 1, "{prompt}");

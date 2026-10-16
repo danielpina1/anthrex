@@ -219,7 +219,7 @@ fn e2e_red_tier3_without_a_culprit_wakes_the_orchestrator() {
                 add(plan_task("t1", &["mods/a/PAIR"], json!({}))),
                 add(plan_task("t2", &["mods/c/PAIR"], json!({"deps": ["t1"]}))),
             ],
-            json!({"submit": true}),
+            json!({"submit": true, "decided": [], "out_of_scope": []}),
         ),
         status_until("/gate/state", json!("approved"), long),
         // Idle, it is woken with the note (a `run_status` call would have shown the

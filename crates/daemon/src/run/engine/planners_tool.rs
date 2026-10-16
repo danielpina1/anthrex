@@ -10,7 +10,7 @@ use super::brakes::Gate;
 use super::orch::{refuse, rejected, settle};
 use super::planners::{EPIC_RECORDED, fail};
 use super::requests::log;
-use super::{Effect, ReplyId, gate_holds, history, kinds, wake};
+use super::{Effect, ReplyId, gate_holds, history, kinds, plan_frame, wake};
 use crate::run::edits_orch::planner_confinement;
 use crate::run::model::Run;
 use crate::run::orch::contract_rounds::ITERATE_BY_PLANNER;
@@ -54,11 +54,16 @@ pub(super) fn tool(
         return refuse(fx, reply, text);
     }
     match parse_call(call.role, &call.tool, &call.args) {
-        Ok(OrchCall::SubmitEpic { edits, note }) => submit_epic(
+        Ok(OrchCall::SubmitEpic {
+            edits,
+            note,
+            decided,
+            out_of_scope,
+        }) => submit_epic(
             run,
             reply,
             (k, call.window_id),
-            (&edits, note),
+            (&edits, note, (decided, out_of_scope)),
             (refusals, gate),
             now,
             fx,
@@ -96,14 +101,29 @@ fn outside_its_round(run: &Run, edits: &[PlanEdit], epic: &str) -> Vec<PlanError
             !gate_holds::past_gate(run) || (t.orch.gate_hold.is_some() && t.orch.gate_hold == round)
         }
     };
+    // Milestone 9.17 task 7's review, I1: `add_task … replaces` cancels each blocked
+    // task it names (decision 24), so each counts as a `cancel_task` of it here. Task
+    // 9's review, M1: this reads the run before the batch, as `cancel_task`'s check
+    // does, and an earlier edit of the batch may block a task (a `cancel_task` of its
+    // dependency), so every named task not already cancelled counts. One not blocked
+    // by the time the edit applies is refused by rule (b) anyway.
+    let uncancelled = |id: &&String| {
+        run.task(id)
+            .is_some_and(|t| t.state != TaskState::Cancelled)
+    };
     edits
         .iter()
-        .filter_map(|edit| match edit {
+        .flat_map(|edit| match edit {
             PlanEdit::AmendTask { task_id, .. }
             | PlanEdit::SplitTask { task_id, .. }
-            | PlanEdit::AddDep { task_id, .. } => Some((task_id, false)),
-            PlanEdit::CancelTask { task_id } => Some((task_id, true)),
-            _ => None,
+            | PlanEdit::AddDep { task_id, .. } => vec![(task_id, false)],
+            PlanEdit::CancelTask { task_id } => vec![(task_id, true)],
+            PlanEdit::AddTask { replaces, .. } => replaces
+                .iter()
+                .filter(uncancelled)
+                .map(|id| (id, true))
+                .collect(),
+            _ => Vec::new(),
         })
         .filter(|(id, cancel)| {
             run.task(id)
@@ -147,13 +167,19 @@ fn submit_epic(
     run: &mut Run,
     reply: ReplyId,
     (k, window): (usize, u32),
-    (edits, note): (&[PlanEdit], Option<String>),
+    (edits, note, frame): (&[PlanEdit], Option<String>, plan_frame::Frame),
     (refusals, gate): (&[(Runtime, String)], &mut Gate),
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
     let epic = run.orch.epics[k].epic.clone();
     let source = EditSource::Planner { epic: epic.clone() };
+    // Milestone 9.17 ruling C5: the frame first, a counted rejection.
+    if let Err(text) = plan_frame::check_epic(&frame) {
+        record_rejected(run, edits, &source, text.into(), now);
+        let errors = [PlanError::new(None, "decided", "frame", text)];
+        return reject(run, reply, (k, window), &errors, now, fx);
+    }
     let refused = edits
         .iter()
         .find_map(forbidden)
@@ -202,6 +228,8 @@ fn submit_epic(
     if note.is_some() {
         record.note = note;
     }
+    plan_frame::store_epic(&mut edited, k, frame, now);
+    let record = &mut edited.orch.epics[k];
     if let Some(session) = record.sessions.last_mut() {
         session.ended_at = Some(now);
     }

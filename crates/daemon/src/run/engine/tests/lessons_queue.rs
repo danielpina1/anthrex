@@ -165,6 +165,7 @@ fn review(task: &Task, verdict: Verdict, findings: &[Severity]) -> ReviewRecord 
                 line: None,
                 input: None,
                 text: "a finding".into(),
+                target: proto::FindingTarget::Code,
             })
             .collect(),
         lane: None,

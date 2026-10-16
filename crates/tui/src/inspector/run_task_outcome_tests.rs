@@ -8,10 +8,10 @@ use super::{Inspection, Section};
 use crate::app::App;
 use crate::app::task_detail::{DetailState, TaskDetailCache, detail_key};
 use crate::tree::NodeKey;
-use crate::tree::run_fixtures::{GEMINI_NOW, gemini_fixture};
+use crate::tree::run_fixtures::{GEMINI_NOW, finding, gemini_fixture};
 use crate::tree::stage_fixtures::stage;
 use proto::{
-    CheckInfo, Finding, ReviewInfo, RunInfo, RunsSnapshot, Severity, SummarySource, TaskDetailInfo,
+    CheckInfo, ReviewInfo, RunInfo, RunsSnapshot, Severity, SummarySource, TaskDetailInfo,
     TaskInfo, TaskOrigin, TaskState, TestMode, Verdict, WindowInfo,
 };
 
@@ -280,13 +280,7 @@ fn review_rows_read_decision_12() {
     assert_eq!(review_row(&task), "r1 ✗ changes · one pairing bug");
     // A non-blocking review with findings is an approval with them.
     task.reviews[0] = approving();
-    task.reviews[0].findings = vec![Finding {
-        severity: Severity::Minor,
-        file: Some("src/a.rs".into()),
-        line: Some(3),
-        input: None,
-        text: "naming".into(),
-    }];
+    task.reviews[0].findings = vec![finding(Severity::Minor, "src/a.rs", 3, "naming")];
     assert_eq!(review_row(&task), "r2 ✓ approve · looks right");
     // A review route and nothing judged yet; no review route at all.
     task.reviews.clear();

@@ -78,7 +78,7 @@ fn amend_deps(task_id: &str, deps: &[&str]) -> PlanEdit {
 }
 
 fn add(table: &str) -> PlanEdit {
-    PlanEdit::AddTask { task: spec(table) }
+    PlanEdit::add_task(spec(table))
 }
 
 fn split(task_id: &str, into: &[&str]) -> PlanEdit {

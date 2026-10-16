@@ -34,7 +34,10 @@ fn e2e_integration_review_asks_for_changes_and_a_fix_task_closes_it() {
     let mut steps = vec![prompt(), subplanner("a", &["src/a/**"])];
     steps.extend(until_planners_finished(1));
     steps.extend([
-        edit_plan(vec![], json!({"submit": true})),
+        edit_plan(
+            vec![],
+            json!({"submit": true, "decided": [], "out_of_scope": []}),
+        ),
         until("/gate/state", json!("approved"), ORCH_WAIT),
         // The wake-up of decision 39, pasted once the verdict is in.
         read(Some(
@@ -98,7 +101,10 @@ fn reader_task(id: &str, kind: &str, more: Value) -> Value {
 fn one_task_plan(task: Value) -> Vec<Value> {
     vec![
         prompt(),
-        edit_plan(vec![add(task)], json!({"submit": true})),
+        edit_plan(
+            vec![add(task)],
+            json!({"submit": true, "decided": [], "out_of_scope": []}),
+        ),
         until("/run/complete", json!(true), RUN_WAIT),
         marker(),
         read(None),

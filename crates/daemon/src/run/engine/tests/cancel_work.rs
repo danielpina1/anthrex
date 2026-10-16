@@ -43,7 +43,7 @@ fn yes_run() -> Fixture {
     let mut fx = launched(true);
     let effects = edit_plan(
         &mut fx,
-        json!({"edits": [add("t1", "auth")], "submit": true}),
+        json!({"edits": [add("t1", "auth")], "submit": true, "decided": [], "out_of_scope": []}),
     );
     assert!(matches!(&replies(&effects)[..], [Ok(_)]), "{effects:#?}");
     fx
@@ -62,7 +62,10 @@ fn a_cancelled_run_refuses_the_orchestrators_new_work() {
     cancel(&mut fx);
     let effects = edit_plan(&mut fx, json!({"edits": [add("t2", "mail")]}));
     assert_eq!(error_of(&effects), cancelled_text());
-    let effects = edit_plan(&mut fx, json!({"edits": [], "submit": true}));
+    let effects = edit_plan(
+        &mut fx,
+        json!({"edits": [], "submit": true, "decided": [], "out_of_scope": []}),
+    );
     assert_eq!(error_of(&effects), cancelled_text());
     fx.tick();
     assert!(fx.run().task("t2").is_none());
@@ -100,7 +103,7 @@ fn a_cancelled_run_refuses_new_scouts_and_planners() {
     // A live sub-planner's `submit_epic` after the cancel.
     let mut fx = planning_mail(true);
     cancel(&mut fx);
-    let edits = json!({"edits": [task_in("m1", "mail")]});
+    let edits = json!({"edits": [task_in("m1", "mail")], "decided": [], "out_of_scope": []});
     let effects = planner_tool(&mut fx, (PLANNER, "mail"), "submit_epic", edits);
     assert_eq!(error_of(&effects), cancelled_text());
     assert!(fx.run().task("m1").is_none());
@@ -134,7 +137,7 @@ fn the_users_edit_of_a_cancelled_run_only_removes_work() {
         .unwrap()
         .tasks[0]
         .clone();
-    let effects = user_edit(&mut fx, vec![PlanEdit::AddTask { task: spec }], false);
+    let effects = user_edit(&mut fx, vec![PlanEdit::add_task(spec)], false);
     assert_eq!(replies(&effects), vec![Err(cancelled_text())]);
     let effects = user_edit(&mut fx, Vec::new(), true);
     assert_eq!(replies(&effects), vec![Err(cancelled_text())]);
@@ -161,7 +164,7 @@ fn the_ref_guard_does_not_complete_a_run_with_an_unfinished_task() {
         .unwrap()
         .tasks[0]
         .clone();
-    let effects = user_edit(&mut fx, vec![PlanEdit::AddTask { task: spec }], false);
+    let effects = user_edit(&mut fx, vec![PlanEdit::add_task(spec)], false);
     assert!(matches!(&replies(&effects)[..], [Ok(_)]), "{effects:#?}");
     fx.done(refs, crate::run::engine::OpResult::RefsOk);
     assert_eq!(fx.run().state, RunState::Running);
@@ -205,7 +208,10 @@ fn a_stall_in_the_step_of_the_orchestrators_edit_is_noted() {
     let mut r1 = add("r1", "auth");
     r1["task"]["kind"] = json!("research");
     r1["task"]["owns"] = json!([]);
-    edit_plan(&mut fx, json!({"edits": [r1], "submit": true}));
+    edit_plan(
+        &mut fx,
+        json!({"edits": [r1], "submit": true, "decided": [], "out_of_scope": []}),
+    );
     fx.tick();
     super::kinds::research_window(&mut fx, "r1");
     clear(&mut fx);

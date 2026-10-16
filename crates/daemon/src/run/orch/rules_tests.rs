@@ -58,9 +58,7 @@ const BUDGET_ERROR: &str =
 /// One task added through `apply_edits` from `source`, parsed from a `[[task]]` table.
 fn add(run: &Run, table: &str, source: &EditSource) -> Result<Run, Vec<String>> {
     let mut plan = parse_plan(&plan_with(PROFILE, &[table.to_string()])).unwrap();
-    let edit = PlanEdit::AddTask {
-        task: plan.tasks.pop().unwrap(),
-    };
+    let edit = PlanEdit::add_task(plan.tasks.pop().unwrap());
     apply_edits(run, &[edit], &EditScope::Run, source, 7)
         .map(|(run, _)| run)
         .map_err(shown)

@@ -217,7 +217,7 @@ fn e2e_pr_closed_without_merging_pauses_the_stages_above() {
                 add(plan_task("t1", &["a.txt"], json!({}))),
                 add(plan_task("t2", &["b.txt"], json!({"stage": 2}))),
             ],
-            json!({"submit": true}),
+            json!({"submit": true, "decided": [], "out_of_scope": []}),
         ),
         status_until("/gate/state", json!("approved"), ORCH_WAIT),
         read_message(Some(closed)),

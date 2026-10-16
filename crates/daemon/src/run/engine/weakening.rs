@@ -184,8 +184,9 @@ pub(super) fn check_review(
     verdict: &mut Verdict,
     findings: &mut Vec<Finding>,
 ) -> Result<(), String> {
+    // Milestone 9.17 decision 7: only a `code` finding answers a signal.
     let missing: Vec<usize> = (0..task.signals.len())
-        .filter(|&n| !findings.iter().any(|f| answers(&f.text, &id(n))))
+        .filter(|&n| !(findings.iter()).any(|f| f.target.is_code() && answers(&f.text, &id(n))))
         .collect();
     if missing.is_empty() {
         return Ok(());
@@ -203,6 +204,7 @@ pub(super) fn check_review(
             line,
             input: None,
             text: signal_unjustified(&id(n), path, line),
+            target: proto::FindingTarget::Code,
         });
     }
     *verdict = Verdict::Changes;
@@ -232,7 +234,7 @@ pub(crate) fn signal_infos(task: &Task) -> Vec<SignalInfo> {
             // A finding that is only the id, with no reason, answers nothing.
             let answered = review.and_then(|r| {
                 (r.findings.iter())
-                    .filter(|f| answers(&f.text, &id))
+                    .filter(|f| f.target.is_code() && answers(&f.text, &id))
                     .map(|f| answer_text(f, &id, path, line))
                     .find(|answer| !answer.is_empty())
             });

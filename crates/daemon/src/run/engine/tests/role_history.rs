@@ -371,7 +371,7 @@ fn decider_fallback_is_recorded_as_fallback() {
 #[test]
 fn session_end_appends_one_line_with_the_outcome() {
     let mut fx = running();
-    let args = json!({"edits": [task_in("t2", "mail")]});
+    let args = json!({"edits": [task_in("t2", "mail")], "decided": [], "out_of_scope": []});
     let submitted = super::planners::planner_tool(&mut fx, (PLANNER, "mail"), "submit_epic", args);
     assert!(
         role_lines(&submitted).is_empty(),
@@ -467,7 +467,7 @@ fn a_run_never_attributes_its_outcome_to_one_role() {
     with_history(&mut fx);
     edit_plan(
         &mut fx,
-        json!({"edits": [add("t1", "auth")], "submit": true}),
+        json!({"edits": [add("t1", "auth")], "submit": true, "decided": [], "out_of_scope": []}),
     );
     // The user rejects the plan: the run is discarded.
     let reply = fx.reply();

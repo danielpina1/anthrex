@@ -41,7 +41,7 @@ pub(super) fn planning_mail(yes: bool) -> Fixture {
     let mut fx = launched(yes);
     edit_plan(
         &mut fx,
-        json!({"edits": [add("t1", "auth")], "submit": true}),
+        json!({"edits": [add("t1", "auth")], "submit": true, "decided": [], "out_of_scope": []}),
     );
     if !yes {
         fx.approve();
@@ -84,7 +84,7 @@ pub(super) fn submit_epic(fx: &mut Fixture, edits: Value) -> Vec<Effect> {
         fx,
         (PLANNER, "mail"),
         "submit_epic",
-        json!({"edits": edits}),
+        json!({"edits": edits, "decided": [], "out_of_scope": []}),
     )
 }
 
@@ -243,7 +243,7 @@ fn accepted_submit_finishes_and_retires() {
     let mut fx = planning_mail(false);
     let edits = json!([task_in("t2", "mail")]);
     let note = "mail needs the auth token interface";
-    let args = json!({"edits": edits, "note": note});
+    let args = json!({"edits": edits, "note": note, "decided": [], "out_of_scope": []});
     let effects = planner_tool(&mut fx, (PLANNER, "mail"), "submit_epic", args);
     assert_eq!(replies(&effects), vec![Ok(EPIC_RECORDED.to_string())]);
     assert!(
@@ -284,7 +284,7 @@ fn submit_epic_for_another_epic_is_refused() {
     spawn(&mut fx, "web");
     planner_started(&mut fx, PLANNER + 1);
     // `mail`'s window naming `web`, and `web`'s naming `mail`.
-    let args = json!({"edits": [task_in("w1", "web")]});
+    let args = json!({"edits": [task_in("w1", "web")], "decided": [], "out_of_scope": []});
     let effects = planner_tool(&mut fx, (PLANNER, "web"), "submit_epic", args.clone());
     assert_eq!(
         error(&effects),

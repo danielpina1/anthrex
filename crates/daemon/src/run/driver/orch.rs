@@ -268,6 +268,7 @@ impl RunService {
             summary,
             iterate,
             responses,
+            ..
         }) = parse_call(call.role, &call.tool, &call.args)
             && self.looked_up(&call, |_| ()).is_ok()
         {

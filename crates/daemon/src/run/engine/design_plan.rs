@@ -136,7 +136,7 @@ pub(in crate::run::engine) fn submit(
         _ => "the orchestrator",
     };
     // Task M9.6.15: a round with the design flow off is 9.3's.
-    if run.orch.design.as_ref().is_none_or(|d| d.round_off()) {
+    if submits_as_9_5(run) {
         return submit_plan(run, who, now);
     }
     if let Some((DocKind::Plan, k)) = reviewer::in_progress(run) {
@@ -152,6 +152,12 @@ pub(in crate::run::engine) fn submit(
     submit_plan(run, who, now)?;
     opened(run, author, opening, now, fx);
     Ok(())
+}
+
+/// Whether `run`'s plan submit goes 9.5's way: no design flow, or the flow off for this
+/// round (task M9.6.15). Milestone 9.17's plan frame asks the same (ruling C6).
+pub(in crate::run::engine) fn submits_as_9_5(run: &Run) -> bool {
+    run.orch.design.as_ref().is_none_or(|d| d.round_off())
 }
 
 /// Decision 20: the orchestrator's first passing submit in planning, before the plan's

@@ -55,6 +55,7 @@ fn finding(file: Option<String>, text: String) -> Finding {
         line: Some(1),
         input: None,
         text,
+        target: proto::FindingTarget::Code,
     }
 }
 

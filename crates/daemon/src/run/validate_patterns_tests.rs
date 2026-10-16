@@ -28,9 +28,7 @@ fn amend(task_id: &str, field: &str, on: bool) -> PlanEdit {
 fn add(table: &str) -> PlanEdit {
     let mut plan = crate::run::plan::parse_plan(&plan_with(PROFILE, &[table.to_string()]))
         .unwrap_or_else(|e| panic!("fixture task must parse: {e}"));
-    PlanEdit::AddTask {
-        task: plan.tasks.pop().expect("one task"),
-    }
+    PlanEdit::add_task(plan.tasks.pop().expect("one task"))
 }
 
 fn apply(run: &Run, edits: Vec<PlanEdit>) -> Result<Run, Vec<String>> {

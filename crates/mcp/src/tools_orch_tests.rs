@@ -40,8 +40,8 @@ const GET_CONTEXT: &str = "Read the run's context: the repository profile, the r
 
 /// Milestone 9.3 task M9.3.7: `edit_plan` names its `iterate`, which comes alone (the
 /// schema cannot say so). `edits` may be left out in every call (fix round 1).
-const EDIT_PLAN: &str = "Apply plan edits as one batch. Set submit to open the plan gate. Add \
-    a summary for the user when the run is complete. Set iterate, with no edits and nothing \
+const EDIT_PLAN: &str = "Apply plan edits as one batch. Set submit, with decided and \
+    out_of_scope, to open the plan gate. Add a summary for the user when the run is complete. Set iterate, with no edits and nothing \
     else, to start a round the user asked for. retry, override, resume_run, approve_hold and \
     accept_red each come alone, with a reason. \
     After two retries of one task, or once you have read text from outside the run (a \
@@ -110,8 +110,9 @@ fn tools_for_orchestrator_and_planner_are_exact() {
         ("get_context", GET_CONTEXT),
         (
             "submit_epic",
-            "Submit your epic's tasks as one batch of plan edits. If it returns errors, fix \
-             them and call it again. When it is accepted you are done.",
+            "Submit your epic's tasks as one batch of plan edits, with decided and \
+             out_of_scope. If it returns errors, fix them and call it again. When it is \
+             accepted you are done.",
         ),
     ];
     assert_eq!(described(&tools_for(AgentRole::Planner)), pairs(&planner));
@@ -212,15 +213,15 @@ fn every_schema_is_closed_at_every_level() {
     // `into`'s plan_task and route: seven objects with the tool's own. start_goal
     // (milestone 9.3) is the orchestrator's thirteenth; milestone 9.6 adds edit_plan's
     // response item, start_brainstorm, submit_doc and its response item, and get_doc
-    // (eighteen); milestone 9.9's ask_user adds its own object: nineteen.
+    // (eighteen); 9.9's ask_user, nineteen; 9.17's decided item, twenty (planner nine).
     assert_eq!(
         counts,
         [
-            ("orchestrator", 19),
+            ("orchestrator", 20),
             ("worker", 3),
             ("reviewer", 2),
             ("scout", 4),
-            ("planner", 8),
+            ("planner", 9),
             ("decider", 0),
         ]
     );
@@ -433,7 +434,18 @@ fn edit_plan_takes_iterate() {
     assert_eq!(schema["required"], json!([]));
     let mut keys: Vec<&String> = schema["properties"].as_object().unwrap().keys().collect();
     keys.sort();
-    assert_eq!(keys, ["edits", "iterate", "responses", "submit", "summary"]);
+    assert_eq!(
+        keys,
+        [
+            "decided",
+            "edits",
+            "iterate",
+            "out_of_scope",
+            "responses",
+            "submit",
+            "summary"
+        ]
+    );
     let ops = &schema["properties"]["edits"]["items"]["properties"]["op"]["enum"];
     assert!(
         !ops.as_array().unwrap().contains(&json!("iterate")),

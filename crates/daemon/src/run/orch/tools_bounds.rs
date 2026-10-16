@@ -60,6 +60,9 @@ const EDIT: &[(&str, Rule)] = &[
     // Milestone 9.5 decision 32: `amend_task`'s `race` and `pair`.
     ("race", Rule::Serde),
     ("pair", Rule::Serde),
+    // Milestone 9.17 decision 22: `add_task`'s `replaces`, the schema's
+    // `array(text(16), None, 12)`; serde refuses it on any other op.
+    ("replaces", Rule::List(0, 12, 16)),
 ];
 
 const TASK: &[(&str, Rule)] = &[

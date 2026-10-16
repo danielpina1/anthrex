@@ -355,11 +355,21 @@ pub(super) fn pair_text(task: &Task) -> Option<String> {
     })
 }
 
-/// `r<round> <verdict>`, with its blocking findings counted: `r1 changes (1 critical)`.
+/// `r<round> <verdict>`, with its `code` findings counted by severity and its `brief`
+/// findings apart (milestone 9.17, task 4 review M1): `r1 changes (1 critical, 1 brief)`.
 fn review_text(task: &Task) -> Option<String> {
     let review = task.reviews.iter().rev().find(|r| r.verdict.is_some())?;
     let verdict = label(&review.verdict?);
-    let findings = findings_text(&review.findings, false);
+    let mut findings = findings_text(&review.findings, false);
+    let briefs = review
+        .findings
+        .iter()
+        .filter(|f| !f.target.is_code())
+        .count();
+    if briefs > 0 {
+        let sep = if findings.is_empty() { "" } else { ", " };
+        findings = format!("{findings}{sep}{briefs} brief");
+    }
     Some(if findings.is_empty() {
         format!("r{} {verdict}", review.round)
     } else {
@@ -367,12 +377,14 @@ fn review_text(task: &Task) -> Option<String> {
     })
 }
 
-/// `1 critical, 2 important`: every severity with findings, or with `all` the critical
-/// and important counts even when zero.
+/// `1 critical, 2 important`: every severity with `code` findings, or with `all` the
+/// critical and important counts even when zero. A `brief` finding is never counted
+/// here (milestone 9.17 decision 7: it never blocks).
 fn findings_text(findings: &[proto::Finding], all: bool) -> String {
     let mut parts = Vec::new();
     for severity in [Severity::Critical, Severity::Important, Severity::Minor] {
-        let n = findings.iter().filter(|f| f.severity == severity).count();
+        let code = |f: &&proto::Finding| f.target.is_code() && f.severity == severity;
+        let n = findings.iter().filter(code).count();
         if n > 0 || (all && severity != Severity::Minor) {
             parts.push(format!("{n} {}", label(&severity)));
         }

@@ -34,6 +34,7 @@ pub mod installed;
 pub(crate) mod json;
 pub mod launch;
 mod limits;
+pub mod plan_frame;
 pub mod result;
 pub mod roles;
 pub mod rules;
@@ -158,6 +159,9 @@ pub struct RunOrch {
     /// last measured context fill, for its attention line.
     #[serde(skip)]
     pub fill: Option<crate::transcript::fill::Fill>,
+    /// Milestone 9.17 decision 18: each round's plan frame, at most one per round.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub plan_frames: Vec<plan_frame::PlanFrame>,
 }
 
 /// Milestone 9.9 decision 15: a question the orchestrator put to the user. The text is

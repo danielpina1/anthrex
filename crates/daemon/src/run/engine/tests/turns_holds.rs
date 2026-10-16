@@ -157,9 +157,7 @@ fn a_conflict_being_delivered_is_not_undone_when_the_task_is_held_again() {
     let effects = edit(
         &mut fx,
         vec![
-            PlanEdit::AddTask {
-                task: plan_task("t3", "[\"crates/c/**\"]"),
-            },
+            PlanEdit::add_task(plan_task("t3", "[\"crates/c/**\"]")),
             add_dep("t1", "t3"),
         ],
     );

@@ -210,7 +210,8 @@ fn a_plan_citing_a_requirement_only_in_an_unapproved_spec_version_is_refused() {
 #[test]
 fn a_non_design_run_submits_as_in_9_5() {
     let mut fx = launched(false);
-    let args = json!({"edits": [add("t1", "auth")], "submit": true});
+    let args =
+        json!({"edits": [add("t1", "auth")], "submit": true, "decided": [], "out_of_scope": []});
     let effects = orch_tool(&mut fx, ORCH, "edit_plan", args);
     assert_eq!(
         replies(&effects),

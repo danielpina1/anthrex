@@ -269,7 +269,7 @@ fn a_launch_in_flight_at_cancel_is_stopped_when_it_starts() {
     let mut fx = super::orch::launched(true);
     super::orch::edit_plan(
         &mut fx,
-        json!({"edits": [super::orch::add("t1", "auth")], "submit": true}),
+        json!({"edits": [super::orch::add("t1", "auth")], "submit": true, "decided": [], "out_of_scope": []}),
     );
     super::planners::spawn(&mut fx, "mail");
     let (op, _) = fx.op("StartPlanner");

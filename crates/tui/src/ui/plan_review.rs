@@ -12,7 +12,7 @@
 
 use crate::app::App;
 use crate::app::plan_review::review_tasks;
-use crate::app::plan_review::{BAR, PlanReview, ReviewLayout, ReviewTarget, detail_lines};
+use crate::app::plan_review::{BAR, PlanReview, ReviewLayout, ReviewTarget};
 use crate::app::plan_summary::{Cells, Fit, GAP, columns, header_line};
 use crate::app::region::KeyRegion;
 use crate::theme::{self, Glyph, Palette, Role, role};
@@ -173,6 +173,18 @@ fn render_header(
         lines.push(Line::raw(truncate_in(delivery, width, p.ascii)));
     }
     let warn = role(Role::Attention, p);
+    // Milestone 9.17 decision 19: the plan frame's row, `Attention` when it says nothing.
+    if let Some(frame) = &layout.frame {
+        let text = truncate_in(&frame.text, width, p.ascii);
+        lines.push(Line::styled(
+            text,
+            if frame.attention {
+                warn
+            } else {
+                Style::default()
+            },
+        ));
+    }
     lines.extend(
         layout
             .warnings
@@ -326,9 +338,10 @@ fn is_mark(line: &Line<'_>) -> bool {
     count.is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
 }
 
-/// Decision 25's detail: `detail_lines` from `scroll`, clamped to the content.
-fn render_detail(out: &mut Vec<Placed>, app: &App, area: Rect, run: &RunInfo, task: &TaskInfo) {
-    let lines = detail_lines(run, task, area.width, app.palette());
+/// Decision 25's detail (the task's, or milestone 9.17's frame) from `scroll`, clamped
+/// to the content.
+fn render_detail(out: &mut Vec<Placed>, app: &App, area: Rect) {
+    let lines = app.review_detail(area.width);
     let height = usize::from(area.height);
     let max = lines.len().saturating_sub(height);
     let scroll = usize::from(app.plan_review.as_ref().map_or(0, |r| r.scroll)).min(max);
@@ -357,9 +370,7 @@ pub(crate) fn placed(app: &App, body: Rect) -> Vec<Placed> {
     render_rules(&mut out, body, &layout, border, p);
     let selected = review.selected.as_deref();
     render_list(&mut out, layout.list, run, &tasks, selected, keys_here, p);
-    if let Some(task) = selected.and_then(|id| tasks.iter().find(|task| task.id == id)) {
-        render_detail(&mut out, app, layout.detail, run, task);
-    }
+    render_detail(&mut out, app, layout.detail);
     out
 }
 

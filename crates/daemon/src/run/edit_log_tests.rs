@@ -15,7 +15,7 @@ fn a_task(id: &str) -> PlanTask {
 #[test]
 fn describe_names_every_edit_op() {
     let edits = vec![
-        PlanEdit::AddTask { task: a_task("t9") },
+        PlanEdit::add_task(a_task("t9")),
         PlanEdit::SplitTask {
             task_id: "t2".into(),
             into: vec![a_task("t2a"), a_task("t2b")],

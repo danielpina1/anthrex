@@ -69,7 +69,10 @@ fn stage_branch(n: u16) -> String {
 
 /// Round 2's `edits` submitted and approved by the user.
 pub(super) fn plan_round(fx: &mut Fixture, edits: serde_json::Value) {
-    let effects = edit_plan(fx, json!({"edits": edits, "submit": true}));
+    let effects = edit_plan(
+        fx,
+        json!({"edits": edits, "submit": true, "decided": [], "out_of_scope": []}),
+    );
     assert!(answer(&effects).0, "{effects:#?}");
     assert_eq!(fx.run().state, RunState::AwaitingApproval);
     fx.approve();
@@ -137,7 +140,10 @@ fn a_new_task_may_depend_on_an_earlier_round() {
     let edits = json!([add("t1", "auth"), add("t2", "mail")]);
     assert!(answer(&edit_plan(&mut fx, json!({"edits": edits}))).0);
     let cancel = json!({"op": "cancel_task", "task_id": "t2"});
-    let effects = edit_plan(&mut fx, json!({"edits": [cancel], "submit": true}));
+    let effects = edit_plan(
+        &mut fx,
+        json!({"edits": [cancel], "submit": true, "decided": [], "out_of_scope": []}),
+    );
     assert!(answer(&effects).0, "{effects:#?}");
     fx.approve();
     merge_real(&mut fx, "t1", C1);

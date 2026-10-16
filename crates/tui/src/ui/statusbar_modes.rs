@@ -309,14 +309,16 @@ fn alerts_view_hints(app: &App) -> Vec<Hint> {
 /// Milestone 9.6: a design plan gate adds `c` and `b` and the Plan doc tab's `tab`;
 /// on the tab, the document scrolls and the task keys go.
 fn review_hints(app: &App) -> Vec<Hint> {
+    // Milestone 9.17 decision 19 (ruling C15): `f` while the review shows a frame.
+    let frame = app.review_has_frame().then(|| hint("f", "frame", 5));
     if app.plan_doc_gate().is_some() {
-        return design_review_hints(app.plan_doc().is_some());
+        return design_review_hints(app.plan_doc().is_some(), frame);
     }
-    let tail = [
+    let tail = frame.into_iter().chain([
         hint("j/k", "task", 4),
         hint("PgUp/PgDn", "scroll", 3),
         esc_back(),
-    ];
+    ]);
     let head = match app.plan_review.as_ref().map(|review| &review.target) {
         Some(ReviewTarget::Hold(_)) => {
             vec![hint("a", "approve hold", 9), hint("x", "reject hold", 9)]
@@ -331,8 +333,9 @@ fn review_hints(app: &App) -> Vec<Hint> {
     head.into_iter().chain(tail).collect()
 }
 
-/// [`review_hints`] at a design run's plan gate, on the task list or the Plan doc tab.
-fn design_review_hints(on_doc: bool) -> Vec<Hint> {
+/// [`review_hints`] at a design run's plan gate, on the task list or the Plan doc tab;
+/// `frame` (the `f` hint) shows on the task list only (ruling C20).
+fn design_review_hints(on_doc: bool, frame: Option<Hint>) -> Vec<Hint> {
     let mut hints = vec![hint("a", "approve", 9), hint("x", "reject", 9)];
     if on_doc {
         hints.extend([
@@ -348,9 +351,9 @@ fn design_review_hints(on_doc: bool) -> Vec<Hint> {
             hint("c", "changes", 8),
             hint("b", "back", 5),
             hint("tab", "plan doc", 7),
-            hint("j/k", "task", 4),
-            hint("PgUp/PgDn", "scroll", 3),
         ]);
+        hints.extend(frame);
+        hints.extend([hint("j/k", "task", 4), hint("PgUp/PgDn", "scroll", 3)]);
     }
     hints.push(esc_back());
     hints

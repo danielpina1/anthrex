@@ -18,7 +18,7 @@ use super::contract::{mode_label, sha7, size_label};
 use super::model::Run;
 use super::report_escape::{escape_cell, list_item_text, plain_text_line};
 pub use super::report_orch::{RESEARCH_FILE, research_text};
-use super::report_task::render_task;
+use super::report_task::{render_task, state_text};
 use super::triage::{kinds_scale, source_label};
 use crate::headless::argv::CodexProjectConfig;
 
@@ -30,7 +30,7 @@ pub fn render(run: &Run, now: u64) -> String {
     tasks_table(run, &mut out);
     for task in &run.tasks {
         out.push('\n');
-        render_task(task, now, &mut out);
+        render_task(run, task, now, &mut out);
     }
     // Milestone 9.6 decision 27.
     super::report_design::section(run, &mut out);
@@ -237,7 +237,7 @@ fn tasks_table(run: &Run, out: &mut String) {
             escape_cell(&t.spec.title),
             size_label(t.size),
             mode_label(t.test_mode),
-            t.state.label(),
+            state_text(run, t),
             t.rung,
             bounces_sum,
             done_signal,

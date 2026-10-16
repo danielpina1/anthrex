@@ -285,7 +285,7 @@ fn e2e_the_orchestrators_first_turn_waits_for_its_tools() {
         &[
             edit_plan(
                 vec![add(plan_task("t1", &["a.txt"], json!({})))],
-                json!({"submit": true}),
+                json!({"submit": true, "decided": [], "out_of_scope": []}),
             ),
             read(None),
         ],

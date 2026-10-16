@@ -40,6 +40,8 @@ pub fn task_result(_run: &Run, task: &Task, git: Option<&Result<TaskGit, String>
             "test_mode_reason": spec.test_mode_reason,
             "owns": spec.owns,
             "deps": spec.deps,
+            // Milestone 9.17 decision 26.
+            "replaces": task.replaces,
             "implicit_deps": task.implicit_deps,
             "route": task.route,
             "race": super::digest::race_text(task),

@@ -10,7 +10,7 @@ use proto::{
 
 use super::{aggregate, render, tokens};
 
-const PATH: &str = "/tmp/h/history.jsonl";
+pub(super) const PATH: &str = "/tmp/h/history.jsonl";
 
 fn route() -> Route {
     Route {
@@ -22,7 +22,7 @@ fn route() -> Route {
 
 /// A task record of class `size` (`hub`), `outcome`, after `sessions` sessions, with
 /// nothing measured.
-fn task(
+pub(super) fn task(
     run: &str,
     id: &str,
     size: Size,
@@ -76,13 +76,15 @@ fn task(
         signatures: Vec::new(),
         owns: Vec::new(),
         lessons_shown: Vec::new(),
+        replaces: Vec::new(),
+        brief_findings: 0,
     }
 }
 
 /// A merged task: `lines` added, `tool_calls`, `billable` tokens split over the worker,
 /// the reviewer and the deciders (cache reads, never billed, on top), `work` seconds
 /// working.
-fn merged(
+pub(super) fn merged(
     run: &str,
     id: &str,
     size: Size,
@@ -108,7 +110,7 @@ fn merged(
     record
 }
 
-fn run(id: &str, calls: u32, fallbacks: u32) -> RunRecord {
+pub(super) fn run(id: &str, calls: u32, fallbacks: u32) -> RunRecord {
     RunRecord {
         discard_reason: None,
         v: HISTORY_VERSION,
@@ -142,7 +144,7 @@ fn check(engine: Size, decided: Option<Size>, source: DeciderSource) -> Option<S
     })
 }
 
-fn row(stats: &HistoryStats, class: &str) -> StatsRow {
+pub(super) fn row(stats: &HistoryStats, class: &str) -> StatsRow {
     stats
         .rows
         .iter()
@@ -391,7 +393,7 @@ fn a_skipped_line_is_reported_once() {
 }
 
 /// `summarise` in `dir` with a `git` that does not exist.
-fn summarise_at(dir: &Path, path: &Path) -> HistoryStats {
+pub(super) fn summarise_at(dir: &Path, path: &Path) -> HistoryStats {
     let git = std::ffi::OsStr::new("/nonexistent/anthrex-test/git");
     let testing = config::Testing::default();
     let timeout = std::time::Duration::from_secs(5);

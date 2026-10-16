@@ -33,7 +33,7 @@ pub(super) fn complete() -> Fixture {
     let mut fx = launched(false);
     let effects = edit_plan(
         &mut fx,
-        json!({"edits": [add("t1", "auth")], "submit": true}),
+        json!({"edits": [add("t1", "auth")], "submit": true, "decided": [], "out_of_scope": []}),
     );
     assert!(answer(&effects).0, "{effects:#?}");
     fx.approve();
@@ -320,7 +320,7 @@ fn the_round_wake_survives_notes_and_is_cleared_once_delivered() {
         t["task"].take()
     })
     .unwrap();
-    let effects = edit(&mut fx, vec![PlanEdit::AddTask { task }]);
+    let effects = edit(&mut fx, vec![PlanEdit::add_task(task)]);
     assert!(replies(&effects)[0].is_ok(), "{effects:#?}");
     let woken = wakes(&effects);
     assert_eq!(woken.len(), 1, "{effects:#?}");

@@ -88,7 +88,7 @@ fn orchestrated_mis_sized() -> Fixture {
     let mut fx = launched(true);
     edit_plan(
         &mut fx,
-        json!({"edits": [add("t1", "auth")], "submit": true}),
+        json!({"edits": [add("t1", "auth")], "submit": true, "decided": [], "out_of_scope": []}),
     );
     fx.launch_all();
     mis_sized_again(&mut fx);
@@ -241,12 +241,7 @@ fn the_integration_prompt_numbers_the_round_from_its_id() {
     let mut fx = mail_epic(&["m1"]);
     let user = crate::run::test_support::task_toml("mail-int1", "S", "[\"crates/zz/**\"]", "");
     let spec = crate::run::plan::parse_plan(&plan_with(PROFILE, &[user])).unwrap();
-    edit(
-        &mut fx,
-        vec![PlanEdit::AddTask {
-            task: spec.tasks[0].clone(),
-        }],
-    );
+    edit(&mut fx, vec![PlanEdit::add_task(spec.tasks[0].clone())]);
     merge_real(&mut fx, "m1", C1);
     let task = fx.task("mail-int2").clone();
     assert_eq!(task.spec.title, "integration review of epic mail, round 2");

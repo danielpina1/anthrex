@@ -7,17 +7,23 @@ release is a pre-release and any release may change behaviour or the protocol.
 
 ## [Unreleased]
 
-The protocol version is now 25 (22 for milestone 9.13's `OrchestratorInfo.untrusted`,
+The protocol version is now 26 (22 for milestone 9.13's `OrchestratorInfo.untrusted`,
 23 for milestone 9.14's build admission, 24 for milestone 9.15's lessons, 25 for
 milestone 9.16's brakes: `RunRequest::Hold`, `RunReply::Held`, `RunsSnapshot.brakes`,
-`RunInfo.handoff`, a routing decision's `failover`, the settings document's `brakes`):
-a client needs a daemon of the same release. Stop the old daemon (`anthrex daemon
+`RunInfo.handoff`, a routing decision's `failover`, the settings document's `brakes`;
+26 for milestone 9.17's plan and review quality: a finding's `target`, the `brief`
+task note kind, `RunInfo.plan_frame`, `PlannerInfo.frame`, `TaskInfo.replaces` and
+`replaced_by`, `add_task`'s `replaces`, a task record's `replaces` and
+`brief_findings`, and `HistoryStats.replaced`): a client needs a daemon of the same
+release. Stop the old daemon (`anthrex daemon
 stop`) after upgrading.
 
-**Downgrading.** `run.json` is now format 5 (milestone 9.15: a run's frozen lessons,
+**Downgrading.** `run.json` is now format 6 (milestone 9.15: a run's frozen lessons,
 its discard reason, a task's lessons shown and risk note, and the distill and
-risk-note ops; milestone 9.16: a run's failovers and its context handoff). A 0.2.0
-daemon skips a run this release wrote (`run format 5; this one reads up to 1`) and
+risk-note ops; milestone 9.16: a run's failovers and its context handoff; milestone
+9.17: a run's plan frames, an epic's frame, the approved spec's Non-goals, a task's
+`replaces`, a finding's target and the `brief` notes). A 0.2.0 daemon skips a run
+this release wrote (`run format 6; this one reads up to 1`) and
 leaves it as it is, as does any daemon that reads an older format. The hold lives in
 `brakes.json` in the data directory, which older releases ignore: an older daemon
 does not hold dispatch. Releases before
@@ -27,6 +33,41 @@ pending override proposal and an override count's protected list): finish or dis
 your runs before downgrading below 0.2.0.
 
 ### Added
+
+- **Reviewers see what the run is for** (milestone 9.17). Every reviewer prompt now
+  has the run goal as its second line (`Run goal: …`, the same line the worker gets),
+  and, before the brief, the plan's out-of-scope list (`Out of scope for this run …`)
+  or, in a design-flow run, the approved spec's Non-goals.
+- **`brief` findings.** A reviewer that thinks the brief itself is wrong (wrong for the
+  goal, out of scope, or missing something the goal needs) files a finding with
+  `target: brief`. It never sends the worker back and never blocks the merge; it
+  becomes a `brief` task note that wakes the orchestrator (`t1's reviewer says the
+  brief is wrong: …`). A run without an orchestrator, such as a plan file, shows it to
+  you as a sticky attention line in `anthrex run status` (`t1: the reviewer says the
+  brief is wrong (1 notes); read them in the task's notes`). The inspector, the report
+  (`(brief, from the reviewer)`) and history (`brief_findings`) show them apart from
+  the code findings.
+- **Decided for you · Out of scope.** The orchestrator's plan submit, and each
+  sub-planner's `submit_epic`, now carry `decided` (each question the goal left open,
+  with the answer chosen) and `out_of_scope` (what the run will not do); a submit
+  without them is refused, with the reason. At the plan gate the review opens on
+  the frame (`frame  2 decided for you · 1 out of scope · f shows them`, or `frame
+  none stated` in the attention colour), and `f` flips the detail between the frame
+  and the selected task. `anthrex run status` prints `decided for you: <question> →
+  <answer>` and `out of scope: <item>` after the goal while the plan awaits you, and
+  the run report has a `Plan frame` section. Plan files, your own `run edit --submit`
+  and design-flow runs need no frame.
+- **`replaces`.** An orchestrator's `add_task` can name the cancelled or blocked tasks
+  it takes over (`replaces: ["t1"]`); a blocked one is cancelled (`cancelled: replaced
+  by t2`), and `split_task` records it for its children. The inspector shows `replaces`
+  and `replaced by`, the report `cancelled (replaced by t2)`, and the history record
+  names what it replaces. `anthrex run stats` and the TUI's stats page judge the work
+  by the replacement: replaced records leave the class rows (`replaced 1 (judged by
+  their replacements)`).
+- **Shared sequences.** The orchestrator's and sub-planners' contracts now say that a
+  task taking the next number of a shared sequence (a migration number, a version
+  constant, a registry entry) owns the file that holds it, so two such tasks never run
+  at once.
 
 - **A dispatch hold** (milestone 9.16). `C-b H` (with a confirm) or `anthrex hold on`
   stops every new agent session daemon-wide; sessions already running finish their
@@ -123,6 +164,11 @@ your runs before downgrading below 0.2.0.
   changes; for a pinned gate script the reply adds that it `stays pinned until a task's
   owns names it (run edit)`, so the next gate command halts until you add a task whose
   `owns` names it.
+- **`brief` findings leave the code-review counts** (milestone 9.17). A history
+  record's `reviews_rejected` no longer counts a round whose only findings are about
+  the brief, the orchestrator's digest shows them apart in a task's review text (`r1
+  changes (1 brief)`), and an integration review whose findings are all about the
+  brief approves its epic.
 
 ## [0.2.0] — 2026-10-11
 

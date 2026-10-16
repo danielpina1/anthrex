@@ -132,6 +132,13 @@ pub(super) fn round_submit(fx: &mut Fixture, edits: Value) -> Result<Value, Stri
     outcome(&orch_tool(fx, ORCH, "edit_plan", args))
 }
 
+/// The plan submit of `edits` in a round with the design flow off, which is 9.5's and
+/// carries the plan frame (milestone 9.17 decisions 15 and 16): its answer.
+pub(super) fn off_round_submit(fx: &mut Fixture, edits: Value) -> Result<Value, String> {
+    let args = json!({"edits": edits, "submit": true, "decided": [], "out_of_scope": []});
+    outcome(&orch_tool(fx, ORCH, "edit_plan", args))
+}
+
 /// The round's plan review, launched by its first passing submit, in with no findings;
 /// then the submit that opens the round's plan gate.
 pub(super) fn round_reviewed(fx: &mut Fixture) -> Vec<Effect> {

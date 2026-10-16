@@ -180,7 +180,7 @@ fn held_run() -> (RunHarness, String) {
         ORCH,
         &[
             json!({"mcp_call": {"tool": "edit_plan", "args": {
-                "edits": [{"op": "add_task", "task": t2}], "submit": true}}}),
+                "edits": [{"op": "add_task", "task": t2}], "submit": true, "decided": [], "out_of_scope": []}}}),
             read_message(),
         ],
     );

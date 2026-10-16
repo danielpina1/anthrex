@@ -461,7 +461,7 @@ async fn an_edit_of_a_run_started_with_trust_project_is_not_refused() {
         model: Some("codex-mini".into()),
         ..Default::default()
     };
-    let edits = vec![proto::PlanEdit::AddTask { task: on_codex }];
+    let edits = vec![proto::PlanEdit::add_task(on_codex)];
     let id = run.id.clone();
     crate::lock(&service.state).runs.insert(id.clone(), run);
     let refusals = |trust: bool| {

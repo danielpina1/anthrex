@@ -472,7 +472,7 @@ fn an_edit_cross_checks_only_the_touched_tasks() {
     let effects = edit(
         &mut fx,
         vec![
-            PlanEdit::AddTask { task: t3 },
+            PlanEdit::add_task(t3),
             PlanEdit::AmendTask {
                 task_id: "t2".into(),
                 brief: Some("A new brief".into()),
@@ -534,7 +534,7 @@ fn a_size_check_at_the_gate_starts_on_approval_and_goes_with_a_reject() {
     // A second size check at the gate, from an added task.
     let text = plan(&[task("t2", "S", "b", "")]);
     let t2 = crate::run::plan::parse_plan(&text).unwrap().tasks.remove(0);
-    edit(&mut fx, vec![PlanEdit::AddTask { task: t2 }]);
+    edit(&mut fx, vec![PlanEdit::add_task(t2)]);
     assert_eq!(fx.queued_deciders().len(), 2);
     // Approved long after both were queued: one starts, the other still waits.
     let late = fx.now + 1_000;

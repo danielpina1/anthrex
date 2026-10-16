@@ -24,7 +24,7 @@ fn e2e_typed_steering_becomes_a_plan_edit() {
         prompt(),
         edit_plan(
             vec![add(plan_task("t1", &["a.txt"], json!({}))), add(t2)],
-            json!({"submit": true}),
+            json!({"submit": true, "decided": [], "out_of_scope": []}),
         ),
         // The approval's wake (CI flake F-a), read before the test types, so the typed
         // line is read alone. No `run_status` call comes first: a digest read would
@@ -86,7 +86,7 @@ fn e2e_mis_sized_task_is_split_by_the_orchestrator() {
         prompt(),
         edit_plan(
             vec![add(plan_task("t1", &["a.txt", "b.txt"], json!({})))],
-            json!({"submit": true}),
+            json!({"submit": true, "decided": [], "out_of_scope": []}),
         ),
         until("/gate/state", json!("approved"), ORCH_WAIT),
         read(Some("t1 blocked (mis_sized)")),
@@ -139,7 +139,7 @@ fn e2e_blocked_question_is_answered_after_a_wake() {
         prompt(),
         edit_plan(
             vec![add(plan_task("t1", &["a.txt"], json!({})))],
-            json!({"submit": true}),
+            json!({"submit": true, "decided": [], "out_of_scope": []}),
         ),
         until("/gate/state", json!("approved"), ORCH_WAIT),
         read(Some("t1 blocked (question)")),

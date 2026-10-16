@@ -267,6 +267,7 @@ fn review_missing_signal_ids_is_refused_once_then_findings_are_added() {
             line: None,
             input: None,
             text: "W1 (tests/old.rs) was not justified by the review".into(),
+            target: proto::FindingTarget::Code,
         })
     );
     assert_eq!(review.findings.len(), 3);

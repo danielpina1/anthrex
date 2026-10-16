@@ -2,7 +2,7 @@
 //! review task `<e>-int<n>` run through decision 36's dispatch, and what it holds
 //! (decision 38).
 
-use proto::{AgentRole, IntegrationState, RunState, TaskKind, TaskState};
+use proto::{AgentRole, BlockInfo, BlockReason, IntegrationState, RunState, TaskKind, TaskState};
 use serde_json::json;
 
 use super::dispatch::replies;
@@ -138,9 +138,7 @@ fn integration_review_takes_the_first_free_round_id() {
     let spec = crate::run::plan::parse_plan(&plan_with(PROFILE, &[user])).unwrap();
     let effects = super::dispatch::edit(
         &mut fx,
-        vec![proto::PlanEdit::AddTask {
-            task: spec.tasks[0].clone(),
-        }],
+        vec![proto::PlanEdit::add_task(spec.tasks[0].clone())],
     );
     assert!(matches!(&replies(&effects)[..], [Ok(_)]), "{effects:#?}");
     merge_real(&mut fx, "m1", C1);
@@ -340,4 +338,57 @@ fn integration_review_tasks_refuse_orchestrator_edits() {
         );
         assert_eq!(fx.run().tasks, before.tasks);
     }
+    // Milestone 9.17 task 7's review, I2: `add_task … replaces` would cancel a blocked
+    // integration review, so it is refused the same way.
+    let review = fx.task_mut("mail-int1");
+    review.state = TaskState::Blocked;
+    review.block = Some(BlockInfo::new(BlockReason::Environment, "no target"));
+    fx.tick();
+    assert_eq!(fx.task("mail-int1").state, TaskState::Blocked);
+    let before = fx.run().clone();
+    let mut replace = add("x2", "mail");
+    replace["replaces"] = json!(["mail-int1"]);
+    let text = error(&edit_plan(&mut fx, json!({"edits": [replace]})));
+    assert_eq!(
+        text,
+        "task mail-int1 is an integration review; the engine owns it"
+    );
+    assert_eq!(fx.run().tasks, before.tasks);
+}
+
+/// Task 4 review M2, ruling (refines milestone 9.17 decision 11): an integration review
+/// whose only critical or important findings are `brief` approves the epic, so the run
+/// is not held; REVIEWER_CONTRACT rule 7, which integration reviewers get too, says a
+/// brief finding never blocks.
+#[test]
+fn a_brief_only_integration_review_does_not_hold_the_run() {
+    let brief_only = json!({"verdict": "changes", "summary": "the epic's brief", "findings": [
+        {"severity": "critical", "target": "brief", "text": "the epic asks for the wrong store"},
+        {"severity": "minor", "text": "a typo in a comment"}]});
+    let fx = reviewed(brief_only);
+    assert_eq!(
+        epic(&fx, "mail").integration_state,
+        IntegrationState::Approved
+    );
+    assert_eq!(verify_refs(&fx.log), 1, "the run completes");
+    let notes = &fx.run().orch.orchestrator.as_ref().unwrap().notes;
+    assert!(
+        notes.contains(&"integration review of epic mail: approve".to_string()),
+        "{notes:?}"
+    );
+}
+
+/// Task 4 review M2: a later integration round confirms round one's blocking `code`
+/// findings only; a `brief` finding is not one to confirm fixed (decision 7).
+#[test]
+fn integration_round_two_lists_only_code_findings_as_earlier() {
+    let mut mixed = changes();
+    let brief =
+        json!({"severity": "critical", "target": "brief", "text": "the epic asks for too much"});
+    mixed["findings"].as_array_mut().unwrap().push(brief);
+    let fx = reviewed(mixed);
+    let record = epic(&fx, "mail").clone();
+    let prompt = integration_review_prompt(fx.run(), &record, 2, B1, H1);
+    assert!(prompt.contains("drops the error"), "{prompt}");
+    assert!(!prompt.contains("the epic asks for too much"), "{prompt}");
 }

@@ -5,7 +5,7 @@ use super::run_format::{
     clean, format_tokens, kind_glyph, local_hhmm, progress_bar_in, reason_text, route_label, rows,
     size_letter, test_mode_text,
 };
-use super::run_orch::{messages_text, notes_text};
+use super::run_orch::{messages_text, notes_text, replaced_by_text, replaces_text};
 use super::run_patterns;
 use super::run_task_outcome::{diff_text, pipeline_text, review_row};
 use super::{Inspection, field};
@@ -37,6 +37,8 @@ pub(crate) fn task_inspection(run: &RunInfo, task: &TaskInfo, app: &App) -> Insp
     if let Some(deps) = deps_text(run, task, app) {
         fields.push(field("deps", deps));
     }
+    fields.extend(replaces_text(task).map(|ids| field("replaces", ids)));
+    fields.extend(replaced_by_text(task).map(|ids| field("replaced by", ids)));
     fields.push(field("budget", budget_text(task, app.palette().ascii)));
     fields.push(field("tries", tries_text(run, task)));
     if let Some(diff) = diff_text(task) {

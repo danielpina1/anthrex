@@ -28,61 +28,7 @@ const PLAN_EDITS_SHOWN: usize = 10;
 
 /// Decision 10 (M9.11.10, A1): the finished runs a snapshot carries, newest first.
 pub const TERMINAL_RUNS_SHOWN: usize = 50;
-/// Decision 10: room left in a frame for what wraps the snapshot.
-pub const FRAME_MARGIN: usize = 64 * 1024;
-
-/// [`fit_within`] one frame, less [`FRAME_MARGIN`]: what `publish` and `current` send.
-pub fn fit_frame(snap: RunsSnapshot) -> RunsSnapshot {
-    fit_within(snap, proto::MAX_FRAME - FRAME_MARGIN)
-}
-
-/// Decision 10's last guard: while `snap` encodes over `max` bytes, its oldest finished
-/// run is dropped (the list is newest first); a live run never is. When only live runs
-/// are left and it is still too large, it is returned as it is and the largest run is
-/// logged (the connection writer then drops the frame, `server.rs`).
-pub(crate) fn fit_within(mut snap: RunsSnapshot, max: usize) -> RunsSnapshot {
-    loop {
-        let size = encoded_len(&snap);
-        if size <= max {
-            return snap;
-        }
-        // Each finished run's own encoded size counts against the excess, so one pass
-        // drops enough; the loop re-measures, as the list's own header can shrink too.
-        let mut excess = size - max;
-        let mut dropped = false;
-        while excess > 0 {
-            let Some(i) = snap.runs.iter().rposition(|r| r.state.is_terminal()) else {
-                break;
-            };
-            excess = excess.saturating_sub(encoded_len(&snap.runs.remove(i)));
-            dropped = true;
-        }
-        if !dropped {
-            let largest = (snap.runs.iter())
-                .map(|r| (encoded_len(r), r.run_id.as_str()))
-                .max();
-            let (run_bytes, run) = largest.unwrap_or((0, ""));
-            tracing::error!(
-                size,
-                max,
-                run,
-                run_bytes,
-                "the run snapshot is over one frame with only live runs left; sent as it is"
-            );
-            return snap;
-        }
-    }
-}
-
-/// `value`'s MessagePack body size, as a frame would carry it.
-fn encoded_len<T: serde::Serialize>(value: &T) -> usize {
-    match proto::encode(value) {
-        Ok(frame) => frame.len() - 4,
-        Err(proto::CodecError::TooLarge(bytes)) => bytes,
-        // Not encodable at all: the writer drops it whatever its size.
-        Err(_) => 0,
-    }
-}
+pub use super::snapshot_frame::{FRAME_MARGIN, fit_frame};
 
 /// Every live run and the [`TERMINAL_RUNS_SHOWN`] newest finished ones (decision 10;
 /// older ones stay in memory and on disk), newest first, at the engine's revision. Every
@@ -128,6 +74,8 @@ fn run_info(run: &Run, brakes: &super::engine::brakes::Brakes, now: u64) -> RunI
             info.actions = available(run, &ActionNode::Task(t.id()));
             // Milestone 9.2 decision 41: a review fix's text names its threads' authors.
             info.fixes = t.fixes.as_ref().map(|f| super::engine::fix_text(run, f));
+            // Milestone 9.17 decision 26.
+            info.replaced_by = super::snapshot_plan::replaced_by(run, t.id());
             // Milestone 9.8 (M9.8.11 fix round 1): the task's row, which the task edit
             // form shows for a pick of the row's own model; sent with the plan text,
             // while the form can open (the gate), as `route_spec` is.
@@ -244,6 +192,7 @@ fn run_info(run: &Run, brakes: &super::engine::brakes::Brakes, now: u64) -> RunI
         design_agents: super::snapshot_design::design_agents(run),
         title: run.title.clone(),
         handoff: run.handoff.as_ref().map(super::model::HandoffRecord::info),
+        plan_frame: super::snapshot_plan::plan_frame_info(run),
     }
 }
 
@@ -352,6 +301,7 @@ pub(crate) fn attention(run: &Run, now: u64) -> Vec<String> {
     lines.extend(crate::run::orch::orchestrator_lines(&run.orch, terminal));
     // Milestone 9.16 decision 29: the live orchestrator's context fill.
     lines.extend(crate::run::engine::orch_fill::attention(run));
+    lines.extend(super::snapshot_plan::brief_attention(run)); // milestone 9.17 decision 10
     lines
 }
 
@@ -448,7 +398,8 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64, plan_text: b
                 verdict: r.verdict,
                 summary: r.summary.clone(),
                 findings: r.findings.clone(),
-                blocking: r.findings.iter().any(|f| f.severity != Severity::Minor),
+                blocking: (r.findings.iter())
+                    .any(|f| f.severity != Severity::Minor && f.target.is_code()),
                 lane: patterns::review_lane(r),
             })
             .collect(),
@@ -559,6 +510,9 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64, plan_text: b
         pair: patterns::pair_info(t),
         // Milestone 9.6 decision 17.
         covers: t.spec.covers.clone(),
+        replaces: t.replaces.clone(),
+        // Set by `run_info`, which has the run.
+        replaced_by: Vec::new(),
     }
 }
 
@@ -587,7 +541,3 @@ mod tests;
 #[cfg(test)]
 #[path = "snapshot_tests_stages.rs"]
 mod tests_stages;
-
-#[cfg(test)]
-#[path = "snapshot_frame_tests.rs"]
-mod frame_tests;

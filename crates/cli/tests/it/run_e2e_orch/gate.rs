@@ -41,7 +41,7 @@ fn e2e_plan_path_scouts_plans_and_reads_the_approval() {
                 add(plan_task("t1", &["a.txt"], refs.clone())),
                 add(plan_task("t2", &["b.txt"], refs)),
             ],
-            json!({"submit": true}),
+            json!({"submit": true, "decided": [], "out_of_scope": []}),
         ),
         expect("/awaiting_approval", json!(true)),
         until("/gate/state", json!("approved"), ORCH_WAIT),
@@ -106,7 +106,7 @@ fn e2e_rejected_plan_discards_the_run_and_the_orchestrator_learns_it() {
         prompt(),
         edit_plan(
             vec![add(plan_task("t1", &["a.txt"], json!({})))],
-            json!({"submit": true}),
+            json!({"submit": true, "decided": [], "out_of_scope": []}),
         ),
         until("/run/state", json!("discarded"), ORCH_WAIT),
         call_err(
@@ -151,7 +151,7 @@ fn e2e_orchestrator_cannot_approve_merge_or_write() {
         prompt(),
         edit_plan(
             vec![add(plan_task("t1", &["a.txt"], json!({})))],
-            json!({"submit": true}),
+            json!({"submit": true, "decided": [], "out_of_scope": []}),
         ),
         call_err(
             "edit_plan",
@@ -198,7 +198,7 @@ fn an_orchestrator_route_is_ignored_and_the_run_says_so() {
         prompt(),
         edit_plan(
             vec![add(plan_task("t1", &["a.txt"], route))],
-            json!({"submit": true}),
+            json!({"submit": true, "decided": [], "out_of_scope": []}),
         ),
         expect("/awaiting_approval", json!(true)),
         marker(),

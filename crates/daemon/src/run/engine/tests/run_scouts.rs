@@ -266,6 +266,9 @@ fn planners_snapshot_fields() {
                 replans: Vec::new(),
                 note: None,
                 covers: Vec::new(),
+                // Milestone 9.17 decision 20: its hold `epic:mail` awaits the user, so
+                // its frame (the scripted empty lists) is published.
+                frame: Some(proto::PlanFrameInfo::default()),
             },
             PlannerInfo {
                 epic: "web".into(),
@@ -282,6 +285,7 @@ fn planners_snapshot_fields() {
                 replans: Vec::new(),
                 note: None,
                 covers: Vec::new(),
+                frame: None,
             },
         ]
     );

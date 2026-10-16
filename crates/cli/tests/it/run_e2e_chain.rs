@@ -117,7 +117,10 @@ fn e2e_an_idle_orchestrator_may_only_read_and_start_a_goal() {
     let idle = "has ended; start a new goal with start_goal when the user gives you one";
     let steps = [
         prompt(),
-        edit_plan(vec![staged("t1", "a.txt", 1)], json!({"submit": true})),
+        edit_plan(
+            vec![staged("t1", "a.txt", 1)],
+            json!({"submit": true, "decided": [], "out_of_scope": []}),
+        ),
         until("/run/complete", json!(true), RUN_WAIT),
         edit_plan(vec![], json!({"summary": SUMMARY_1})),
         until("/run/state", json!("accepted"), FINISH_WAIT),
@@ -126,7 +129,7 @@ fn e2e_an_idle_orchestrator_may_only_read_and_start_a_goal() {
         call("get_context", json!({})),
         call_err(
             "edit_plan",
-            json!({"edits": [staged("t2", "b.txt", 1)], "submit": true}),
+            json!({"edits": [staged("t2", "b.txt", 1)], "submit": true, "decided": [], "out_of_scope": []}),
         ),
         expect_error(idle),
         call_err(
@@ -136,7 +139,10 @@ fn e2e_an_idle_orchestrator_may_only_read_and_start_a_goal() {
         expect_error(idle),
         call("start_goal", json!({"goal": "add b"})),
         read(Some("a new goal, run ")),
-        edit_plan(vec![staged("t2", "b.txt", 1)], json!({"submit": true})),
+        edit_plan(
+            vec![staged("t2", "b.txt", 1)],
+            json!({"submit": true, "decided": [], "out_of_scope": []}),
+        ),
         marker(),
         read(None),
     ];

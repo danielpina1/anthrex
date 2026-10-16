@@ -51,7 +51,10 @@ fn orchestrated_research() -> (Fixture, u32) {
     let mut r1 = add("r1", "auth");
     r1["task"]["kind"] = json!("research");
     r1["task"]["owns"] = json!([]);
-    let effects = edit_plan(&mut fx, json!({"edits": [r1], "submit": true}));
+    let effects = edit_plan(
+        &mut fx,
+        json!({"edits": [r1], "submit": true, "decided": [], "out_of_scope": []}),
+    );
     assert!(matches!(&replies(&effects)[..], [Ok(_)]), "{effects:#?}");
     fx.tick();
     let window = research_window(&mut fx, "r1");

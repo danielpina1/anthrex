@@ -285,7 +285,7 @@ fn stage_and_atomic_fields_are_accepted() {
     };
     match &parsed[..] {
         [
-            PlanEdit::AddTask { task },
+            PlanEdit::AddTask { task, .. },
             PlanEdit::SplitTask { into, .. },
             PlanEdit::AmendTask { stage, .. },
         ] => {
@@ -304,7 +304,7 @@ fn stage_and_atomic_fields_are_accepted() {
     else {
         panic!("submit_epic must parse");
     };
-    let [PlanEdit::AddTask { task }] = &edits[..] else {
+    let [PlanEdit::AddTask { task, .. }] = &edits[..] else {
         panic!("{edits:?}");
     };
     assert_eq!((task.stage, task.atomic), (2, true));
@@ -331,6 +331,8 @@ fn parse_call_bounds_iterate() {
             summary: None,
             iterate: Some(at.clone()),
             responses: Vec::new(),
+            decided: None,
+            out_of_scope: None,
         })
     );
     let Ok(OrchCall::EditPlan { edits, iterate, .. }) =

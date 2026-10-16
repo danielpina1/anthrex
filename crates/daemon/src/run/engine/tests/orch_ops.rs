@@ -244,7 +244,10 @@ fn the_orchestrator_approves_a_hold_without_noting_itself() {
 fn the_orchestrator_may_not_approve_a_promotion_hold() {
     let mut fx = super::promote::promoted();
     edit_plan(&mut fx, json!({"edits": [super::orch::add("t2", "mail")]}));
-    edit_plan(&mut fx, json!({"edits": [], "submit": true}));
+    edit_plan(
+        &mut fx,
+        json!({"edits": [], "submit": true, "decided": [], "out_of_scope": []}),
+    );
     assert_eq!(fx.run().orch.gate_holds[0].state, HoldState::Awaiting);
     let effects = op(
         &mut fx,

@@ -32,7 +32,7 @@ pub(super) fn approved() -> Fixture {
     t2["task"]["deps"] = json!(["t1"]);
     let effects = edit_plan(
         &mut fx,
-        json!({"edits": [add("t1", "auth"), t2], "submit": true}),
+        json!({"edits": [add("t1", "auth"), t2], "submit": true, "decided": [], "out_of_scope": []}),
     );
     assert!(matches!(&replies(&effects)[..], [Ok(_)]), "{effects:#?}");
     fx.approve();
@@ -90,7 +90,7 @@ fn scenarios() -> Vec<(&'static str, Scenario)> {
                 let mut fx = launched(false);
                 edit_plan(
                     &mut fx,
-                    json!({"edits": [add("t1", "auth")], "submit": true}),
+                    json!({"edits": [add("t1", "auth")], "submit": true, "decided": [], "out_of_scope": []}),
                 );
                 clear(&mut fx);
                 fx.approve();
@@ -103,7 +103,7 @@ fn scenarios() -> Vec<(&'static str, Scenario)> {
                 let mut fx = launched(false);
                 edit_plan(
                     &mut fx,
-                    json!({"edits": [add("t1", "auth")], "submit": true}),
+                    json!({"edits": [add("t1", "auth")], "submit": true, "decided": [], "out_of_scope": []}),
                 );
                 clear(&mut fx);
                 let reply = fx.reply();
@@ -444,7 +444,7 @@ fn completion_note() {
     let mut fx = launched(true);
     edit_plan(
         &mut fx,
-        json!({"edits": [add("t1", "auth")], "submit": true}),
+        json!({"edits": [add("t1", "auth")], "submit": true, "decided": [], "out_of_scope": []}),
     );
     merge_real(&mut fx, "t1", C1);
     let (op, _) = fx.op("VerifyRefs");
