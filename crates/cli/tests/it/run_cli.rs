@@ -335,6 +335,38 @@ fn edit_from_a_file() {
     let info = h.run(&id).unwrap();
     assert_eq!(t(&info, "t2").state, TaskState::Cancelled);
     assert_eq!(t(&info, "t1").state, TaskState::Queued);
+
+    // Milestone 9.17 decision 22: an edit file's `add_task` takes `replaces`.
+    let replace = h.dir.path().join("replace.toml");
+    let file = "[[edit]]\nop = \"add_task\"\nreplaces = [\"t2\"]\n\n[edit.task]\n\
+                id = \"t3\"\ntitle = \"Title t3\"\nsize = \"S\"\nowns = [\"c.txt\"]\n\
+                brief = \"Brief t3\"\nacceptance = [\"Accept t3\"]\n";
+    std::fs::write(&replace, file).unwrap();
+    ok(&run(
+        &h,
+        &["edit", &id, "--file", &replace.display().to_string()],
+        "",
+    ));
+    let info = h.run(&id).unwrap();
+    assert_eq!(t(&info, "t3").replaces, ["t2"]);
+    assert_eq!(t(&info, "t2").replaced_by, ["t3"]);
+    let t2 = t(&info, "t2");
+    assert_eq!(t2.history[0].text, "replaced by t3", "{:?}", t2.history);
+    // A rule refuses the whole file with its own text: t1 is neither cancelled nor
+    // blocked.
+    std::fs::write(
+        &replace,
+        file.replace("\"t2\"", "\"t1\"").replace("t3", "t5"),
+    )
+    .unwrap();
+    refused_with(
+        &run(
+            &h,
+            &["edit", &id, "--file", &replace.display().to_string()],
+            "",
+        ),
+        "replaces: t1 is queued; only a cancelled or blocked task can be replaced",
+    );
 }
 
 /// Each refusal's text is the daemon's own: the same request sent raw is refused with
