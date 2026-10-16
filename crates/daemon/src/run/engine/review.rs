@@ -19,7 +19,7 @@ use crate::run::contract::{
     APPROVE_WITH_BLOCKING, REVIEW_RECORDED, review_changes_message, reviewer_prompt,
 };
 use crate::run::model::{AgentRound, ReviewLevel, ReviewRecord, Run};
-use crate::run::model_roles::{failed_routes, reviewer_at_launch};
+use crate::run::model_roles::{failed_routes, reviewer_at_launch_avoiding};
 use crate::run::orch::contract::worker_messages_for_review;
 use crate::run::role_launch::{jitter_ms, reviewer_spec, session_uuid_of};
 use crate::run::routing;
@@ -165,7 +165,10 @@ pub(super) fn review_ready(
         // Milestone 9.8 decision 27: the reviewer row against the author, past a route
         // that failed in this task (ruling RL-1).
         let failed = failed_routes(task);
-        let (route, line) = reviewer_at_launch(run.limits.models(), &author, &failed);
+        // Task 7's review M2: never the failed-over test writer's model either.
+        let writer = super::failover::writer_failed_over(run, i);
+        let models = run.limits.models();
+        let (route, line) = reviewer_at_launch_avoiding(models, &author, &failed, writer.as_ref());
         same_model = line;
         (author, level, route)
     };

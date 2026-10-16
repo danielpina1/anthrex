@@ -111,10 +111,16 @@ pub fn admit(gate: &Gate, run: &Run, starter: Starter<'_>, role: Role, current: 
     // Task 6's review, the writer ruling (U17 read symmetrically): a test writer never
     // lands on its task's reviewer's model. A worker's reviewer is chosen again against
     // the fallback in `record` (decision 41), so it never is that model.
+    // Task 7's review M2: nor does a worker's failover re-pick its reviewer onto the
+    // model its failed-over test writer runs.
     let reviewer = match starter {
         Starter::TestWriter(i) => {
             (run.tasks[i].review_route.as_ref()).is_some_and(|r| models.same_model(r, &to))
         }
+        Starter::Worker(i) => (run.tasks[i].review_level.is_some())
+            .then(|| writer_failed_over(run, i))
+            .flatten()
+            .is_some_and(|w| models.same_model(&models.reviewer_route(&to).0, &w)),
         _ => false,
     };
     match allowed && !failed && !overlap && !author && !reviewer {
@@ -263,6 +269,13 @@ pub fn task_from(run: &Run, task: usize, role: Role, chosen: &Route) -> Option<R
             f.who == id && f.to == *chosen && models.same_model(&f.from, &models.route(role))
         })
         .map(|f| f.from.clone())
+}
+
+/// Task 7's review M2: task `i`'s test writer's route when that writer failed over
+/// (a failover record of the task onto its `writer_route` from the `test_writer` row).
+pub fn writer_failed_over(run: &Run, i: usize) -> Option<Route> {
+    let writer = run.tasks[i].pair.as_ref()?.writer_route.clone();
+    task_from(run, i, Role::TestWriter, &writer).map(|_| writer)
 }
 
 /// The run scout `id`'s failover record, if it failed over: the route it runs on is the

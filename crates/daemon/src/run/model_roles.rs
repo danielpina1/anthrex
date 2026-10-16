@@ -432,6 +432,36 @@ pub fn reviewer_at_launch(
     other.map_or((route, line), |r| (r, None))
 }
 
+/// [`reviewer_at_launch`], keeping off `writer` too (task 7's review M2): the task's
+/// failed-over test writer's route.
+pub fn reviewer_at_launch_avoiding(
+    models: &RunModels,
+    author: &Route,
+    failed: &[Route],
+    writer: Option<&Route>,
+) -> (Route, Option<String>) {
+    let (route, line) = reviewer_at_launch(models, author, failed);
+    let Some(writer) = writer.filter(|w| models.same_model(&route, w)) else {
+        return (route, line);
+    };
+    // The row's other model, unless it failed here or is an author's; with none, the
+    // row's own route (decision 27 still keeps it off the worker's model).
+    let choice = models.choice(Role::Reviewer);
+    let own = models.route(Role::Reviewer);
+    let fallback = (choice.fallback.as_ref()).map(|f| RunModels::route_of(f, None));
+    let off = |r: &Route| {
+        failed_in(models, failed, r) || models.same_model(r, author) || models.same_model(r, writer)
+    };
+    match std::iter::once(own.clone())
+        .chain(fallback)
+        .find(|r| !off(r))
+    {
+        Some(other) => (other, None),
+        None if !models.same_model(&own, author) => (own, None),
+        None => (route, line),
+    }
+}
+
 /// Decision 28 (rulings FW-1, FW-5, T10a-6): whether a lane on `runtime` may run beside
 /// task `i`: the runtime is the task's own, or it is installed for the run and no
 /// unfinished task that `mover`'s rule counts ([`alongside`]) on another runtime than

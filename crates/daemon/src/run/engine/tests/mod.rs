@@ -124,6 +124,7 @@ mod exit_duplicates;
 mod exit_startup;
 mod failover;
 mod failover_readers;
+mod failover_writer;
 mod fast_path;
 mod finish;
 mod first_turn;
