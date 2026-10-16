@@ -339,3 +339,40 @@ fn integration_review_tasks_refuse_orchestrator_edits() {
         assert_eq!(fx.run().tasks, before.tasks);
     }
 }
+
+/// Task 4 review M2, ruling (refines milestone 9.17 decision 11): an integration review
+/// whose only critical or important findings are `brief` approves the epic, so the run
+/// is not held; REVIEWER_CONTRACT rule 7, which integration reviewers get too, says a
+/// brief finding never blocks.
+#[test]
+fn a_brief_only_integration_review_does_not_hold_the_run() {
+    let brief_only = json!({"verdict": "changes", "summary": "the epic's brief", "findings": [
+        {"severity": "critical", "target": "brief", "text": "the epic asks for the wrong store"},
+        {"severity": "minor", "text": "a typo in a comment"}]});
+    let fx = reviewed(brief_only);
+    assert_eq!(
+        epic(&fx, "mail").integration_state,
+        IntegrationState::Approved
+    );
+    assert_eq!(verify_refs(&fx.log), 1, "the run completes");
+    let notes = &fx.run().orch.orchestrator.as_ref().unwrap().notes;
+    assert!(
+        notes.contains(&"integration review of epic mail: approve".to_string()),
+        "{notes:?}"
+    );
+}
+
+/// Task 4 review M2: a later integration round confirms round one's blocking `code`
+/// findings only; a `brief` finding is not one to confirm fixed (decision 7).
+#[test]
+fn integration_round_two_lists_only_code_findings_as_earlier() {
+    let mut mixed = changes();
+    let brief =
+        json!({"severity": "critical", "target": "brief", "text": "the epic asks for too much"});
+    mixed["findings"].as_array_mut().unwrap().push(brief);
+    let fx = reviewed(mixed);
+    let record = epic(&fx, "mail").clone();
+    let prompt = integration_review_prompt(fx.run(), &record, 2, B1, H1);
+    assert!(prompt.contains("drops the error"), "{prompt}");
+    assert!(!prompt.contains("the epic asks for too much"), "{prompt}");
+}

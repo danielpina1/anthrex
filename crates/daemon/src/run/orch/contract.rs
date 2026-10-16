@@ -488,7 +488,7 @@ pub fn integration_review_prompt(
         .iter()
         .filter(|t| t.orch.integration_of.as_deref() == Some(epic.epic.as_str()))
         .flat_map(|t| t.reviews.iter().flat_map(|r| r.findings.iter()))
-        .filter(|f| f.severity != Severity::Minor)
+        .filter(|f| f.severity != Severity::Minor && f.target.is_code())
         .map(finding_line)
         .collect();
     if round > 1 && !earlier.is_empty() {

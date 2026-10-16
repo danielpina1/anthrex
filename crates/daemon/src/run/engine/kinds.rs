@@ -226,7 +226,10 @@ pub(super) fn reviewed(run: &mut Run, i: usize, now: u64) {
     let Some(epic) = run.tasks[i].orch.integration_of.clone() else {
         return;
     };
-    let count = |s: Severity| review.findings.iter().filter(|f| f.severity == s).count();
+    // Milestone 9.17 (task 4 review M2, refining decision 11): a `brief` finding never
+    // blocks an integration review either.
+    let code = review.findings.iter().filter(|f| f.target.is_code());
+    let count = |s: Severity| code.clone().filter(|f| f.severity == s).count();
     let (critical, important) = (count(Severity::Critical), count(Severity::Important));
     let blocking = critical + important > 0;
     if let Some(record) = run.orch.epics.iter_mut().find(|e| e.epic == epic) {
