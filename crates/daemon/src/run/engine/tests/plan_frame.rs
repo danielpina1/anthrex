@@ -347,3 +347,27 @@ fn iterate_and_a_complete_runs_summary_refuse_the_keys() {
         );
     }
 }
+
+/// Task 5 review M1 (ruling C6): a promoted run's submit acts while its promotion is
+/// open, so it needs the frame; once the promotion is approved a running submit acts
+/// on nothing and needs none.
+#[test]
+fn a_promoted_runs_submit_needs_the_frame() {
+    use super::promote::{hold_verdict, promoted};
+    let mut fx = promoted();
+    let bare = json!({"edits": [add("t2", "mail")], "submit": true});
+    assert_eq!(error(&edit_plan(&mut fx, bare.clone())), PLAN_FRAME_MISSING);
+    assert!(
+        fx.run().tasks.iter().all(|t| t.id() != "t2"),
+        "nothing applied"
+    );
+    assert!(fx.run().orch.plan_frames.is_empty());
+    let (ok, value) = answer(&edit_plan(&mut fx, framed(bare, json!([]), json!([]))));
+    assert!(ok, "{value}");
+    hold_verdict(&mut fx, "promotion", true);
+    // The stored frame is not what lets the next one through.
+    fx.run_mut().orch.plan_frames.clear();
+    let later = json!({"edits": [add("t3", "sms")], "submit": true});
+    let (ok, value) = answer(&edit_plan(&mut fx, later));
+    assert!(ok, "{value}");
+}
