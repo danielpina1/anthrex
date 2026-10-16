@@ -11,7 +11,8 @@
 //!   (`transcript::rollout::find_rollout`, cached per thread), reads its tail and parses its
 //!   last `token_count` (`transcript::fill::codex_limits`) on `spawn_blocking`, within
 //!   [`QUOTA_READ_WAIT`], and sends `EventKind::Quota { runtime: Codex, .. }`. `observe`
-//!   never awaits it. A rollout that is missing, unreadable, without limits or too slow is
+//!   never awaits it. A window whose read has not returned starts no other, so a hung
+//!   filesystem holds one blocking thread per window, not one a minute. A rollout that is missing, unreadable, without limits or too slow is
 //!   no reading (decision 8, fail open), logged at `debug`.
 //!
 //! **Locks.** This module's own mutexes are held for a lookup or an insert. The one call
@@ -19,8 +20,8 @@
 //! never while this module's own lock is held (AGENTS.md rules 2 and 3). No file is read
 //! on a tokio worker.
 
-use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -47,6 +48,26 @@ const KEPT: usize = 4096;
 pub(super) type Sink = Arc<dyn Fn(EventKind) + Send + Sync>;
 /// A window's runtime, from the manager (`None`: not a headless window).
 pub(super) type RuntimeOf = Arc<dyn Fn(u32) -> Option<Runtime> + Send + Sync>;
+/// One rollout read, blocking (`spawn_blocking`): given the sessions folder, the
+/// thread's id and start, and its cached path, the path read and its tail; `None`
+/// when no rollout was found.
+pub(super) type ReadFn = Arc<
+    dyn Fn(&Path, &str, u64, Option<PathBuf>) -> Option<(PathBuf, std::io::Result<String>)>
+        + Send
+        + Sync,
+>;
+
+/// The production [`ReadFn`]: `find_rollout` (unless cached), then `read_tail`.
+fn read_rollout(
+    sessions: &Path,
+    id: &str,
+    started_at: u64,
+    cached: Option<PathBuf>,
+) -> Option<(PathBuf, std::io::Result<String>)> {
+    let path = cached.or_else(|| find_rollout(sessions, id, started_at))?;
+    let tail = read_tail(&path, TRANSCRIPT_TAIL_BYTES);
+    Some((path, tail))
+}
 
 /// See the module doc.
 pub(super) struct Quota {
@@ -56,6 +77,7 @@ pub(super) struct Quota {
     /// resolved once; `None` reads no rollout.
     sessions: Option<PathBuf>,
     read_wait: Duration,
+    read: ReadFn,
     /// Decision 23 (4): every context window a headless Claude session reported.
     windows: Mutex<BTreeMap<String, u64>>,
     feed: Arc<Mutex<Feed>>,
@@ -70,6 +92,9 @@ struct Feed {
     /// Decision 9: each thread's rollout, once found.
     rollouts: HashMap<String, PathBuf>,
     last_read: Option<Instant>,
+    /// Task 7's review M1: the windows whose read has not returned yet (it is cleared
+    /// by the blocking read itself, so a read that never returns keeps its window out).
+    in_flight: HashSet<u32>,
 }
 
 #[derive(Clone)]
@@ -85,6 +110,7 @@ impl Quota {
             runtime_of,
             sessions,
             read_wait: QUOTA_READ_WAIT,
+            read: Arc::new(read_rollout),
             windows: Mutex::default(),
             feed: Arc::default(),
         }
@@ -94,6 +120,13 @@ impl Quota {
     #[cfg(test)]
     pub(super) fn with_read_wait(mut self, wait: Duration) -> Self {
         self.read_wait = wait;
+        self
+    }
+
+    /// This feed with `read` in place of the rollout read (a test seam).
+    #[cfg(test)]
+    pub(super) fn with_reader(mut self, read: ReadFn) -> Self {
+        self.read = read;
         self
     }
 
@@ -174,21 +207,23 @@ impl Quota {
             let thread = feed.threads.get(&window)?.clone();
             let recent = (feed.last_read)
                 .is_some_and(|at| now.saturating_duration_since(at) < ROLLOUT_READ_EVERY);
-            if recent {
+            if recent || feed.in_flight.contains(&window) {
                 return None;
             }
+            feed.in_flight.insert(window);
             feed.last_read = Some(now);
             let cached = feed.rollouts.get(&thread.id).cloned();
             (thread, cached)
         };
         let (sink, feed, wait) = (self.sink.clone(), self.feed.clone(), self.read_wait);
+        let reader = self.read.clone();
         Some(tokio::spawn(async move {
             let id = thread.id.clone();
+            let flight = feed.clone();
             let read = tokio::task::spawn_blocking(move || {
-                let path =
-                    cached.or_else(|| find_rollout(&sessions, &thread.id, thread.started_at))?;
-                let tail = read_tail(&path, TRANSCRIPT_TAIL_BYTES);
-                Some((path, tail))
+                let read = reader(&sessions, &thread.id, thread.started_at, cached);
+                crate::lock(&flight).in_flight.remove(&window);
+                read
             });
             match tokio::time::timeout(wait, read).await {
                 Ok(Ok(Some((path, Ok(tail))))) => {

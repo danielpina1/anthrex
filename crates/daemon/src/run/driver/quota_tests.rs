@@ -177,48 +177,38 @@ async fn codex_turn_end_reads_the_rollout_once_a_minute() {
     );
 }
 
-/// Ruling C26: the rollout is a FIFO nobody writes, so the read blocks in `open`; the
-/// writer thread opens it once the read has (or `O_RDWR` past its deadline, which never
-/// blocks), and holds it until the test is done, so the abandoned read ends (EOF).
+/// A reader standing in for a hung filesystem (task 7's review M1: a FIFO is no
+/// longer read at all): each call is counted and blocks until `release` is sent, or
+/// for the guard at most, then finds nothing.
+fn hung_reader() -> (
+    super::ReadFn,
+    Arc<std::sync::atomic::AtomicUsize>,
+    std::sync::mpsc::Sender<()>,
+) {
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let released = Arc::new(std::sync::Mutex::new(released));
+    let counted = calls.clone();
+    let read: super::ReadFn = Arc::new(move |_sessions, _id, _started, _cached| {
+        counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let _ = crate::lock(&released).recv_timeout(GUARD);
+        None
+    });
+    (read, calls, release)
+}
+
+/// Ruling C26's case: a read that does not finish in its wait sends nothing, and
+/// `observe` never waits for it.
 #[tokio::test(flavor = "multi_thread")]
 async fn codex_rollout_read_times_out_cleanly() {
-    use std::os::unix::fs::OpenOptionsExt;
     let wait = Duration::from_millis(200);
     let dir = tempfile::tempdir().unwrap();
-    let sessions = dir.path().join("sessions");
-    let fifo = rollout_path(&sessions);
-    let path = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
-    assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
-    let held = fifo.clone();
-    let (release, released) = std::sync::mpsc::channel::<()>();
-    let writer = std::thread::spawn(move || {
-        let deadline = Instant::now() + wait * 100;
-        let file = loop {
-            let opened = std::fs::OpenOptions::new()
-                .write(true)
-                .custom_flags(libc::O_NONBLOCK)
-                .open(&held);
-            match opened {
-                Ok(file) => break file,
-                Err(_) if Instant::now() < deadline => {
-                    std::thread::sleep(Duration::from_millis(5));
-                }
-                Err(_) => {
-                    let mut rdwr = std::fs::OpenOptions::new();
-                    rdwr.read(true).write(true);
-                    break rdwr.open(&held).expect("a FIFO opens O_RDWR");
-                }
-            }
-        };
-        let _ = released.recv_timeout(wait * 100);
-        let _ = std::fs::remove_file(&held);
-        drop(file);
-    });
-
-    let (quota, mut rx) = feed(Some(sessions), wait);
+    let (read, _calls, release) = hung_reader();
+    let (quota, mut rx) = feed(Some(dir.path().join("sessions")), wait);
+    let quota = quota.with_reader(read);
     let now = Instant::now();
     quota.observe_at(&init(CODEX), now, START);
-    let read = quota.observe_at(&turn_ended(CODEX), now, START);
+    let started = quota.observe_at(&turn_ended(CODEX), now, START);
     // `observe` never waits for the read: the next signal is delivered at once.
     let sample = seven_day(530);
     quota.observe_at(
@@ -233,15 +223,52 @@ async fn codex_rollout_read_times_out_cleanly() {
             sample,
         })
     );
-    finished(read).await;
+    finished(started).await;
     assert!(
         rx.try_recv().is_err(),
         "a read that timed out sends nothing"
     );
     let _ = release.send(());
-    tokio::task::spawn_blocking(move || writer.join().unwrap())
-        .await
-        .unwrap();
+}
+
+/// Task 7's review M1: while a window's read has not returned (a hung filesystem), no
+/// second read of that window starts, however often its turns end; once it returns,
+/// the next due turn end reads again. So a stuck read costs one blocking thread, not
+/// one a minute.
+#[tokio::test(flavor = "multi_thread")]
+async fn one_rollout_read_in_flight_per_window() {
+    use std::sync::atomic::Ordering;
+    let wait = Duration::from_millis(100);
+    let dir = tempfile::tempdir().unwrap();
+    let (read, calls, release) = hung_reader();
+    let (quota, _rx) = feed(Some(dir.path().join("sessions")), wait);
+    let quota = quota.with_reader(read);
+    let now = Instant::now();
+    quota.observe_at(&init(CODEX), now, START);
+    finished(quota.observe_at(&turn_ended(CODEX), now, START)).await;
+    // Timed out, still running. Due again by the throttle, but in flight: no read.
+    for n in 1..4 {
+        let later = now + ROLLOUT_READ_EVERY * n;
+        assert!(
+            quota.observe_at(&turn_ended(CODEX), later, START).is_none(),
+            "a second read started at {n}"
+        );
+    }
+    let _ = release.send(());
+    let deadline = Instant::now() + GUARD;
+    let mut n = 4;
+    let again = loop {
+        let later = now + ROLLOUT_READ_EVERY * n;
+        if let Some(read) = quota.observe_at(&turn_ended(CODEX), later, START) {
+            break read;
+        }
+        assert!(Instant::now() < deadline, "the released read never cleared");
+        n += 1;
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
+    let _ = release.send(());
+    finished(Some(again)).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
 }
 
 #[tokio::test]

@@ -89,3 +89,39 @@ fn read_tail_returns_at_most_the_tail() {
     // A missing file is an error, not an empty tail.
     assert!(read_tail(&dir.path().join("missing"), 10).is_err());
 }
+
+/// Task 7's review M1: a FIFO named like the thread's rollout is not a rollout. The
+/// listing skips it, and a cached path that became one is refused without opening it
+/// (an `open` of a FIFO nobody writes would block for good). The read runs on a thread
+/// of its own with a guard; past the guard the FIFO is opened `O_RDWR` (which never
+/// blocks) so the stuck read is released before the test fails.
+#[test]
+fn a_fifo_named_like_a_rollout_is_skipped() {
+    use std::time::Duration;
+    let dir = tempfile::tempdir().unwrap();
+    let sessions = dir.path().join("sessions");
+    let day = sessions.join("2026").join("10").join("15");
+    std::fs::create_dir_all(&day).unwrap();
+    let fifo = day.join(rollout("2026-10-15T12-00-01", THREAD));
+    let path = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+    assert_eq!(find_rollout(&sessions, THREAD, START), None);
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    let read = fifo.clone();
+    let reader = std::thread::spawn(move || {
+        let _ = tx.send(read_tail(&read, TRANSCRIPT_TAIL_BYTES).is_err());
+    });
+    let refused = match rx.recv_timeout(Duration::from_secs(10)) {
+        Ok(refused) => refused,
+        Err(_) => {
+            let mut rdwr = std::fs::OpenOptions::new();
+            rdwr.read(true).write(true);
+            let _held = rdwr.open(&fifo).expect("a FIFO opens O_RDWR");
+            reader.join().unwrap();
+            panic!("read_tail opened a FIFO");
+        }
+    };
+    reader.join().unwrap();
+    assert!(refused, "a FIFO's tail was read");
+}

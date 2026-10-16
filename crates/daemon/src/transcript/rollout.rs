@@ -52,7 +52,9 @@ pub fn find_rollout(sessions: &Path, thread_id: &str, started_at: u64) -> Option
         entries.flatten().find_map(|entry| {
             let name = entry.file_name();
             let name = name.to_str()?;
-            let file = entry.file_type().is_ok_and(|t| !t.is_dir());
+            // Task 7's review M1: a regular file only, never a FIFO, a socket or a link
+            // (an `open` of a FIFO nobody writes never returns).
+            let file = entry.file_type().is_ok_and(|t| t.is_file());
             (file && name.starts_with("rollout-") && name.ends_with(&suffix)).then(|| entry.path())
         })
     })
@@ -60,7 +62,12 @@ pub fn find_rollout(sessions: &Path, thread_id: &str, started_at: u64) -> Option
 
 /// The last `max` bytes of `path` (all of it when shorter), as text; a character the cut
 /// splits becomes U+FFFD, and the parsers skip the first line anyway (decision 22).
+/// Only a regular file is opened (task 7's review M1): anything else is an error.
 pub fn read_tail(path: &Path, max: u64) -> std::io::Result<String> {
+    if !std::fs::symlink_metadata(path)?.is_file() {
+        let what = format!("{} is not a regular file", path.display());
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, what));
+    }
     let mut file = std::fs::File::open(path)?;
     let len = file.metadata()?.len();
     if len > max {
