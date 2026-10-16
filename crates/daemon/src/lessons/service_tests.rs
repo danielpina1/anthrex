@@ -419,7 +419,12 @@ async fn serve_compacts_a_large_store_under_its_lock() {
     let guard = rig.locks.lock(&repo).await;
     let service = rig.start(10, DeciderMode::Claude);
     holders(&rig.locks, &repo, 3).await;
-    let late = queued("late", T);
+    // M9.18.3 review, M4: the appended line is one the rewrite would drop (a two-day-old
+    // attempt of a closed entry), so it survives only when it lands after the rewrite.
+    // It opens no entry, so the worker has nothing to serve after the compaction: the
+    // old fixture's `queued("late")` was open, and a pass whose read came after the
+    // append distilled it, two lines and a call more (the 457-for-455 flake).
+    let late = attempt("r0", 3, old + 1, Some("no answer"));
     let append = tokio::spawn({
         let (locks, repo, late) = (rig.locks.clone(), repo.clone(), late.clone());
         async move { append(&locks, &repo, late).await }
@@ -431,8 +436,10 @@ async fn serve_compacts_a_large_store_under_its_lock() {
 
     let after = std::fs::read_to_string(repo.join(LESSONS_FILE)).unwrap();
     let after: Vec<&str> = after.lines().collect();
-    assert_eq!(after.len(), 2 * entries + 1, "the attempts are gone");
-    assert!(!after.iter().any(|l| l.contains("\"type\":\"attempt\"")));
+    assert_eq!(after.len(), 2 * entries + 1, "the old attempts are gone");
+    let attempts = (after.iter()).filter(|l| l.contains("\"type\":\"attempt\""));
+    assert_eq!(attempts.count(), 1, "only the late attempt is kept");
+    assert_eq!(rig.calls(), 0, "nothing was open to distill");
     assert_eq!(
         after.last(),
         Some(&serde_json::to_string(&late).unwrap().as_str())
