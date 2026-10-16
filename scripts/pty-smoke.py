@@ -51,6 +51,7 @@ from pty_smoke_tuning import tuning_stage
 from pty_smoke_lessons import lessons_stage
 from pty_smoke_design import design_stage
 from pty_smoke_profile import profile_stage
+from pty_smoke_brakes import brakes_stage
 from pty_smoke_run_view import run_view_stage
 from pty_smoke_tui import tui_stage
 from smoke_task_tmp import check_pinned, teardown
@@ -88,6 +89,10 @@ ENV["FAKE_AGENT_SCRIPT"] = FAKE_AGENT_SCRIPT
 # other stage the path simply never exists, which the daemon's reader must tolerate.
 FAKE_AGENT_TRANSCRIPT = os.path.join(DATA_DIR, "fake-agent-transcript.jsonl")
 ENV["FAKE_AGENT_TRANSCRIPT"] = FAKE_AGENT_TRANSCRIPT
+# Milestone 9.16 decision 9: a daemon reads Codex rollouts under `$CODEX_HOME/sessions`,
+# and fake-agent's `rollout` step writes there. Every smoke daemon (each stage's own
+# copies this `ENV`) points it inside `DATA_DIR`, never at a developer's `~/.codex`.
+ENV["CODEX_HOME"] = os.path.join(DATA_DIR, "codex-home")
 ENV["TERM"] = "xterm-256color"
 # This script compares rendered screens against literal text. The bottom-bar git
 # segment (design decision 21) would make those comparisons depend on the state of
@@ -198,8 +203,9 @@ RESTART_CMD_TIMEOUT = 40.0
 # daemon's shutdown sequence escalating any still-live window through `HUP_GRACE` (1s,
 # `crates/daemon/src/process.rs`) then `KILL_GRACE` (3s) before the final flush and
 # socket unlink can even start, then the CLI's own post-shutdown poll,
-# `wait_released`, capped at 10s (`crates/cli/src/main.rs`'s `DaemonAction::Stop`) —
-# 5 + 1 + 3 + 10 = 19s before the CLI itself gives up and reports a timeout.
+# `wait_released`, capped at 10s (`crates/cli/src/main.rs`'s `DaemonAction::Stop`), then
+# its wait for the daemon process's exit, `EXIT_WAIT` (5s, `crates/cli/src/daemon_cmd.rs`)
+# — 5 + 1 + 3 + 10 + 5 = 24s before the CLI itself gives up and reports a timeout.
 DAEMON_STOP_CMD_TIMEOUT = 40.0
 
 # fix-wave-12-re-review Major 2: `run_worktree_cli_stage`'s three `anthrex new
@@ -1815,6 +1821,7 @@ def main():
     lessons_stage(PtyProc, BIN, run_cmd, fail, ENV)
     design_stage(PtyProc, BIN, run_cmd, fail, ENV)
     profile_stage(PtyProc, BIN, run_cmd, fail, ENV)
+    brakes_stage(PtyProc, BIN, run_cmd, fail, ENV)
     tui_stage(PtyProc, BIN, run_cmd, fail, ANTHREX_CONFIG_PATH)
 
     print("== stage 12: stop the daemon, verify status ==")
@@ -1874,16 +1881,17 @@ def main():
 
 def only(stage):
     """`ANTHREX_SMOKE_ONLY=<stage>`: runs that one stage alone, for a stage that needs
-    nothing the stages before it set up. Only `11g`, `11i`, `11j`, `11k` and `11n` qualify: each runs
-    its own daemon (`scripts/pty_smoke_tuning.py`, `scripts/pty_smoke_pr.py`,
+    nothing the stages before it set up. Only `11g`, `11i`, `11j`, `11k`, `11n` and `11o` qualify:
+    each runs its own daemon (`scripts/pty_smoke_tuning.py`, `scripts/pty_smoke_pr.py`,
     `scripts/pty_smoke_keep_going.py`, `scripts/pty_smoke_design.py`,
-    `scripts/pty_smoke_lessons.py`). The merge gate is the whole script, without it."""
+    `scripts/pty_smoke_lessons.py`, `scripts/pty_smoke_brakes.py`). The merge gate is the whole script, without it."""
     stages = {
         "11i": lambda: pr_stage(PtyProc, BIN, run_cmd, fail, ENV),
         "11j": lambda: keep_going_stage(PtyProc, BIN, run_cmd, fail, ENV),
         "11g": lambda: tuning_stage(PtyProc, BIN, run_cmd, fail, ENV),
         "11k": lambda: design_stage(PtyProc, BIN, run_cmd, fail, ENV),
         "11n": lambda: lessons_stage(PtyProc, BIN, run_cmd, fail, ENV),
+        "11o": lambda: brakes_stage(PtyProc, BIN, run_cmd, fail, ENV),
     }
     if stage not in stages:
         fail(f"ANTHREX_SMOKE_ONLY={stage!r}: only {sorted(stages)} can run alone")

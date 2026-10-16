@@ -7,21 +7,55 @@ release is a pre-release and any release may change behaviour or the protocol.
 
 ## [Unreleased]
 
-The protocol version is now 24 (22 for milestone 9.13's `OrchestratorInfo.untrusted`,
-23 for milestone 9.14's build admission, 24 for milestone 9.15's lessons): a client
-needs a daemon of the same release. Stop the old daemon (`anthrex daemon stop`) after
-upgrading.
+The protocol version is now 25 (22 for milestone 9.13's `OrchestratorInfo.untrusted`,
+23 for milestone 9.14's build admission, 24 for milestone 9.15's lessons, 25 for
+milestone 9.16's brakes: `RunRequest::Hold`, `RunReply::Held`, `RunsSnapshot.brakes`,
+`RunInfo.handoff`, a routing decision's `failover`, the settings document's `brakes`):
+a client needs a daemon of the same release. Stop the old daemon (`anthrex daemon
+stop`) after upgrading.
 
-**Downgrading.** `run.json` is now format 4 (milestone 9.15: a run's frozen lessons,
+**Downgrading.** `run.json` is now format 5 (milestone 9.15: a run's frozen lessons,
 its discard reason, a task's lessons shown and risk note, and the distill and
-risk-note ops). A 0.2.0 daemon skips a run this release wrote (`run format 4; this one
-reads up to 1`) and leaves it as it is, as does any daemon that reads an older format. Releases before
+risk-note ops; milestone 9.16: a run's failovers and its context handoff). A 0.2.0
+daemon skips a run this release wrote (`run format 5; this one reads up to 1`) and
+leaves it as it is, as does any daemon that reads an older format. The hold lives in
+`brakes.json` in the data directory, which older releases ignore: an older daemon
+does not hold dispatch. Releases before
 0.2.0 have no such guard and can drop this release's new run fields when they save
 (the untrusted-read record, the orchestrator's retry count, the pinned gate files, a
 pending override proposal and an override count's protected list): finish or discard
 your runs before downgrading below 0.2.0.
 
 ### Added
+
+- **A dispatch hold** (milestone 9.16). `C-b H` (with a confirm) or `anthrex hold on`
+  stops every new agent session daemon-wide; sessions already running finish their
+  work, are reviewed and merge. The status bar shows ` HELD `, an alert and every
+  run's attention line say so, and new goals are refused with `dispatch is held
+  daemon-wide · anthrex hold off`; queued goals wait. The hold survives a daemon
+  restart (`brakes.json`, written atomically; a corrupt file holds). `C-b H` again or
+  `anthrex hold off` releases it and says how many queued goals start; `anthrex hold
+  status` shows the hold and the quota.
+- **A subscription quota brake.** anthrex reads each CLI's own rate-limit readings,
+  Claude's `rate_limit_event` and the `token_count` lines of Codex's session rollout
+  under `$CODEX_HOME/sessions`, with no credentials and no vendor request. While a
+  runtime's 5-hour window is at 90 % or its 7-day window at 95 %, no new session of
+  that runtime starts until the window resets; in-flight work still finishes. A
+  runtime with no recent reading is never braked, and the run log says so once.
+  `[orchestrator.brakes]` (`quota_brake`, `quota_pause_5h_percent`,
+  `quota_pause_7d_percent`, `quota_fresh_secs`) sets it, also from the Settings
+  screen; `anthrex run status` prints the brake lines while something is held.
+- **Cross-runtime failover.** A fresh session whose runtime is braked starts on its
+  role row's "if it struggles" fallback when that is on the other runtime: `claude
+  braked: t2 started on codex (fallback)`. A reviewer never gets its author's model,
+  overlapping work never splits runtimes, and the hold stops failover too. A row whose
+  fallback is on the same runtime waits instead.
+- **The orchestrator's context handoff.** When a goal is continued on a chain whose
+  orchestrator session is 80 % of its context window or 300,000 tokens full
+  (`[orchestrator] handoff_at_percent`, `handoff_at_tokens`, `context_window_tokens`),
+  a fresh orchestrator session starts with the summary and recent history, the old
+  window is renamed `<h4>/orchestrator (handed off)`, and the run's inspector shows
+  where it came from. A live orchestrator at 90 % gets an attention line.
 
 - **Lessons** (milestone 9.15). anthrex now learns from its own runs in a repository.
   Each failed check or proof records a failure signature on the task's history record,

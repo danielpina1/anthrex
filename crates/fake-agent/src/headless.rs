@@ -45,6 +45,8 @@ pub trait Events {
     fn turn_failed(&mut self, error: &str, usage: Usage) -> Result<()>;
     fn interrupted(&mut self, request_id: &str, usage: Usage) -> Result<()>;
     fn control_response(&mut self, request_id: &str) -> Result<()>;
+    /// Milestone 9.16: Claude's `rate_limit_event`; Codex writes nothing.
+    fn rate_limit(&mut self, info: Value) -> Result<()>;
 }
 
 /// One JSON line per event on stdout, flushed at once.

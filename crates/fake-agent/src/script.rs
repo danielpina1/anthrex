@@ -75,6 +75,10 @@ pub enum Step {
         stderr: Vec<String>,
         code: i32,
     },
+    /// Milestone 9.16: a Claude `rate_limit_event` (`quota_steps`); nothing on Codex.
+    RateLimit(crate::quota_steps::RateLimit),
+    /// Milestone 9.16: a Codex rollout `token_count` (`quota_steps`); nothing on Claude.
+    Rollout(crate::quota_steps::Rollout),
 }
 
 /// The token usage a turn end reports (the `usage` step).
@@ -271,6 +275,12 @@ fn parse_step(value: Value) -> Result<Step> {
             Ok(Step::Deny { tool, reason })
         }
         Some("usage") if has_keys(object, &["usage"]) => Ok(Step::Usage(field(object, "usage")?)),
+        Some("rate_limit") if has_keys(object, &["rate_limit"]) => {
+            Ok(Step::RateLimit(field(object, "rate_limit")?))
+        }
+        Some("rollout") if has_keys(object, &["rollout"]) => {
+            Ok(Step::Rollout(field(object, "rollout")?))
+        }
         Some("hang") if has_keys(object, &["hang"]) => {
             let NoArgs {} = field(object, "hang")?;
             Ok(Step::Hang)
@@ -423,6 +433,39 @@ mod tests {
                 Step::Bash("echo hi".into()),
             ]
         );
+    }
+
+    /// Milestone 9.16: the quota steps.
+    #[test]
+    fn parses_the_quota_steps() {
+        use crate::quota_steps::{RateLimit, Rollout, RolloutWindow};
+        let input = concat!(
+            "{\"rate_limit\":{\"seven_day\":0.97}}\n",
+            "{\"rollout\":{\"secondary\":{\"window_minutes\":10080,\"used_percent\":99.0}}}\n",
+        );
+        let steps = parse_script(Cursor::new(input)).unwrap();
+        assert_eq!(
+            steps,
+            vec![
+                Step::RateLimit(RateLimit {
+                    five_hour: None,
+                    seven_day: Some(0.97),
+                }),
+                Step::Rollout(Rollout {
+                    primary: None,
+                    secondary: Some(RolloutWindow {
+                        window_minutes: 10080,
+                        used_percent: 99.0,
+                    }),
+                }),
+            ]
+        );
+        for line in [
+            "{\"rate_limit\":{\"seven_days\":0.97}}\n",
+            "{\"rollout\":{\"secondary\":{\"used_percent\":99.0}}}\n",
+        ] {
+            assert!(parse_script(Cursor::new(line)).is_err(), "{line}");
+        }
     }
 
     #[test]
