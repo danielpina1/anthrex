@@ -382,7 +382,9 @@ async fn hold_refuses_start_goal_with_text() {
 /// refusal text and the chain is unchanged.
 #[tokio::test(flavor = "multi_thread")]
 async fn hold_refuses_the_orchestrator_start_goal_tool() {
-    let rig = ChainRig::new(|_| {}).await;
+    // Off macOS a run's checks run only unconfined; `start_goal_tool` inherits the
+    // previous run's choice (as the sibling chain tests do).
+    let rig = ChainRig::new(|prev| prev.limits.unconfined_checks = true).await;
     assert!(matches!(hold(&rig.s, true).await, RunReply::Held { .. }));
     let before = format!("{:?}", crate::lock(&rig.s.state).chains.get(CHAIN));
     let reply = rig.s.start_goal_tool(PREV, "next".into()).await;
