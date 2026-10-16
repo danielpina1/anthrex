@@ -2456,3 +2456,10 @@ Each item was checked against the code at the M9.16.11 head; items the later tas
 - **An unmeasured live check clears a shown fill line** (task 9's review 5): a transient read timeout after a 92 % reading removes the line until the next good read.
 - **A Codex orchestrator is measured only through its `SessionStart` hook's `session_id`** (task 9's review 6): with Codex hooks off its fill is always unknown (fail open); decision 26 names the notify payload's `thread-id`.
 - **`check_live` lists up to three date directories per running Codex orchestrator each minute** (task 9's review 8), with no cached path, unlike `quota.rs`.
+
+## From milestone 9.17 (2026-10-16, recorded after M9.17.5 from task 4's review), for later
+
+- **The per-task report lists brief findings under Critical with no mark** (task 4's review M3; `report_task::findings_by_severity`, `report_task.rs:296`): a brief finding reads like a code defect there, with its `file` if the reviewer gave one; the `(brief, from the reviewer)` note line above it is the only clue. Mark it `brief`, as `finding_line` does.
+- **The `brief finding: ` check on a task entry's `last` rarely fires** (task 4's review M5; `orch/untrusted.rs::note_source`): `review::submit` logs `review round N approved` / `asked for changes` (or `reported: …`) straight after `review_brief::record`, so `last` is almost never the brief line. Harmless; nothing should rely on it as the taint (the digest's `task_notes` arm is the one that holds).
+- **The TUI notes row credits a brief note to the task** (task 4's review M6): it reads `02:45 brief from t1: review round 1 …`, the "from" ambiguity C12 fixed in the report; it should say the reviewer wrote it.
+

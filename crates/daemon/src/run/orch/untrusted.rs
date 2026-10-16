@@ -111,9 +111,12 @@ fn note_source<'a>(
         })
         .or_else(|| {
             let attention = digest["attention"].as_array().into_iter().flatten();
+            // Task 4 review M4: the separator that comes first ends the task id, so
+            // a note's text holding the other form cannot hide it.
             let id = |l: &'a str| {
-                let brief = l.split_once(" review flagged the brief: ");
-                l.split_once(" noted a ").or(brief).map(|(id, _)| id)
+                let seps = [" review flagged the brief: ", " noted a "];
+                let at = seps.iter().filter_map(|sep| l.find(sep)).min()?;
+                Some(&l[..at])
             };
             attention.filter_map(|l| id(l.as_str()?)).find_map(line)
         })
