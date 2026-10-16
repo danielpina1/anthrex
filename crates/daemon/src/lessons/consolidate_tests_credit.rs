@@ -120,6 +120,29 @@ fn cancelled_not_counted() {
     assert_eq!(one(&got, &id).usefulness(), Some(666));
 }
 
+/// Milestone 9.17 decision 26 (pinning): a replaced task is cancelled by the time its
+/// record is written, and a cancelled record counts as nothing (decision 25), so a
+/// lesson shown only to it gains no outcome; one shown to its replacement too is judged
+/// by the replacement alone.
+#[test]
+fn replaced_task_is_no_credit() {
+    let id = id_of(TRIAL);
+    let store = fold(&entry(&rid(0), T0, &[(LessonLayer::Episodic, TRIAL)]));
+    let replaced = shown(task(&rid(1), "t1", T0 + 10, TaskOutcome::Cancelled), &[&id]);
+    let mut replacement = task(&rid(1), "t2", T0 + 20, TaskOutcome::Blocked);
+    replacement.replaces = vec!["t1".into()];
+    let history = vec![line(replaced.clone()), line(replacement.clone())];
+    let got = consolidate(&store, &history, T0 + 30, &cfg());
+    let lesson = one(&got, &id);
+    assert_eq!((lesson.green, lesson.outcomes), (0, 0));
+    assert_eq!(lesson.usefulness(), None);
+
+    let history = vec![line(replaced), line(shown(replacement, &[&id]))];
+    let got = consolidate(&store, &history, T0 + 30, &cfg());
+    let lesson = one(&got, &id);
+    assert_eq!((lesson.green, lesson.outcomes), (0, 1));
+}
+
 #[test]
 fn consolidate_lists_active_proposed_and_with_all_the_gone() {
     const APPROVED: &str = "crates/a owns the parser";

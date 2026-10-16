@@ -242,6 +242,34 @@ fn class_of_moved_from_stats_unchanged() {
     );
 }
 
+/// Milestone 9.17 decision 26 (pinning): the refit reads merged records only, and a
+/// replaced task is never merged, so a replaced (cancelled) record changes no sample and
+/// no refit, whether or not its replacement names it.
+#[test]
+fn refit_ignores_replaced_records() {
+    let t = config::Tuning::default();
+    let mut without = fixture_records("refit");
+    let mut replacement = record("r9", 1, NOW - 60, 12, 300, 9);
+    replacement.replaces = vec!["t0".into()];
+    without.push(task(replacement));
+    let mut replaced = record("r9", 0, NOW - 120, 90, 3_000, 400);
+    replaced.outcome = TaskOutcome::Cancelled;
+    let mut with = without.clone();
+    with.push(task(replaced));
+    for class in SizeClass::ALL {
+        let budget = |l: &[HistoryLine]| ids(&budget_samples(l, class, &t));
+        let threshold = |l: &[HistoryLine]| ids(&threshold_samples(l, class, &t));
+        assert_eq!(budget(&with), budget(&without), "{class:?}");
+        assert_eq!(threshold(&with), threshold(&without), "{class:?}");
+    }
+    let cfg = config::Orchestrator::default();
+    let file = TuningFile::default();
+    assert_eq!(
+        refit(&with, &file, &cfg, NOW),
+        refit(&without, &file, &cfg, NOW)
+    );
+}
+
 #[test]
 fn refit_fixture_budgets_weights_and_proposals() {
     let lines = fixture_records("refit");
