@@ -33,7 +33,7 @@ fn doc_of_a_default_config_is_the_empty_table_and_defaults() {
 fn origin_marks_only_what_the_file_sets() {
     let text = "[orchestrator]\nmax_writers = 2\n\n[[orchestrator.models]]\nruntime = \"codex\"\nmodel = \"gpt-6-sol\"\nstrength = \"standard\"\n";
     let origin = origin_of(&text.parse().unwrap());
-    assert_eq!(origin.len(), 11);
+    assert_eq!(origin.len(), 15);
     for k in proto::SETTINGS_KEYS {
         let want = if k == key::MAX_WRITERS || k == key::ROLES {
             proto::Origin::File
@@ -183,7 +183,7 @@ fn load_with_origin_of_a_missing_or_broken_file_is_all_default() {
     assert_eq!(config, crate::Config::default());
     assert!(problems.is_empty());
     assert!(origin.values().all(|o| *o == proto::Origin::Default));
-    assert_eq!(origin.len(), 11);
+    assert_eq!(origin.len(), 15);
     std::fs::write(&missing, "[orchestrator\nmax_writers = 2\n").unwrap();
     let (_, problems, origin) = load_with_origin(&missing);
     assert_eq!(problems.len(), 1);
@@ -260,4 +260,59 @@ fn doc_of_names_the_design_default() {
     let mut o = crate::Orchestrator::default();
     o.design.default = proto::DesignMode::Off;
     assert_eq!(doc_of(&o).design_default, Some(proto::DesignMode::Off));
+}
+
+/// Milestone 9.16 decision 10: `doc_of` reads `[orchestrator.brakes]`, the origin marks
+/// each brake key the file sets, and the screen and the parser agree on its ranges.
+#[test]
+fn brake_keys_read_validate_and_agree_with_the_parser() {
+    let text = "[orchestrator.brakes]\nquota_brake = false\nquota_pause_7d_percent = 97\n";
+    let table: toml::Table = text.parse().unwrap();
+    let doc = doc_of(&crate::parse(text).0.orchestrator);
+    assert_eq!(
+        doc.brakes,
+        proto::SettingsBrakes {
+            quota_brake: false,
+            quota_pause_5h_percent: 90,
+            quota_pause_7d_percent: 97,
+            quota_fresh_secs: 600,
+        }
+    );
+    let origin = origin_of(&table);
+    for (k, want) in [
+        (key::QUOTA_BRAKE, proto::Origin::File),
+        (key::QUOTA_PAUSE_5H_PERCENT, proto::Origin::Default),
+        (key::QUOTA_PAUSE_7D_PERCENT, proto::Origin::File),
+        (key::QUOTA_FRESH_SECS, proto::Origin::Default),
+    ] {
+        assert_eq!(origin[k], want, "{k}");
+    }
+
+    type Set = fn(&mut proto::SettingsBrakes, u64);
+    let cases: [(&str, u64, u64, Set); 3] = [
+        ("quota_pause_5h_percent", 1, 100, |b, v| {
+            b.quota_pause_5h_percent = v as u8
+        }),
+        ("quota_pause_7d_percent", 1, 100, |b, v| {
+            b.quota_pause_7d_percent = v as u8
+        }),
+        ("quota_fresh_secs", 60, 86_400, |b, v| {
+            b.quota_fresh_secs = v
+        }),
+    ];
+    for (name, low, high, set) in cases {
+        for value in [low - 1, high + 1] {
+            let (_, problems) = crate::parse(&format!("[orchestrator.brakes]\n{name} = {value}\n"));
+            assert_eq!(problems.len(), 1, "{name} = {value}: {problems:?}");
+            let parser = format!("{}: {}", problems[0].key, problems[0].message);
+            let mut doc = default_doc();
+            set(&mut doc.brakes, value);
+            assert_eq!(validate(&doc), [parser], "{name} = {value}");
+        }
+        for value in [low, high] {
+            let mut doc = default_doc();
+            set(&mut doc.brakes, value);
+            assert!(validate(&doc).is_empty(), "{name} = {value}");
+        }
+    }
 }

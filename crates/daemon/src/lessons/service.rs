@@ -61,6 +61,9 @@ pub const DAY_SECS: u64 = 86_400;
 /// again, so a full disk never turns into a loop of decider calls.
 pub const WRITE_FAILED_WAIT_SECS: u64 = 60;
 
+/// Milestone 9.16 ruling C28: how often a braked worker looks again.
+pub const DISTILL_BRAKE_RECHECK: Duration = Duration::from_secs(30);
+
 /// A clock in Unix seconds.
 pub type Clock = Arc<dyn Fn() -> u64 + Send + Sync>;
 /// A decider call's future: its route (`None` when the probe outlasted the bound or the
@@ -77,6 +80,8 @@ pub struct ServiceTiming {
     pub bound: Duration,
     pub retry: [Duration; 2],
     pub now: Clock,
+    /// Ruling C28: how long a braked repository waits before it is served again.
+    pub brake_recheck: Duration,
 }
 
 impl Default for ServiceTiming {
@@ -85,6 +90,7 @@ impl Default for ServiceTiming {
             bound: DISTILL_BOUND,
             retry: DISTILL_RETRY_SECS.map(Duration::from_secs),
             now: Arc::new(crate::run::driver::unix_now),
+            brake_recheck: DISTILL_BRAKE_RECHECK,
         }
     }
 }
@@ -96,6 +102,9 @@ pub struct ServiceParts {
     pub data_dir: PathBuf,
     pub config: config::Lessons,
     pub locks: Arc<LessonLocks>,
+    /// Milestone 9.16 ruling C28: whether a distill on a runtime must wait (the hold,
+    /// or that runtime's quota brake); `None` never waits.
+    pub braked: Option<crate::run::driver::BrakeProbe>,
 }
 
 /// The running worker's handle.
@@ -306,11 +315,35 @@ impl Worker {
             if let Some(reopen) = capped(&lines, now, max) {
                 return Served::Later(later.map_or(reopen, |l| l.min(reopen)));
             }
+            // Ruling C28: braked, the entry stays queued and is looked at again later;
+            // no failover.
+            if self.braked(repo).await {
+                return Served::Later(now + self.timing.brake_recheck.as_secs().max(1));
+            }
             match self.attempt(repo, entry, now).await {
                 Some(true) => {}
                 Some(false) => return Served::Later(now + WRITE_FAILED_WAIT_SECS),
                 None => return Served::Stopped,
             }
+        }
+    }
+
+    /// Ruling C28: whether the distill helper's runtime (its row's, for the
+    /// repository's project) may not start a session now. The row is read on
+    /// `spawn_blocking`.
+    async fn braked(&self, repo: &Path) -> bool {
+        let Some(probe) = self.parts.braked.clone() else {
+            return false;
+        };
+        let project = project_of(repo).await;
+        let deciders = self.parts.deciders.clone();
+        let route = tokio::task::spawn_blocking(move || {
+            deciders.route_for(crate::decider::DeciderKind::Distill, project.as_deref())
+        })
+        .await;
+        match route {
+            Ok(route) => probe(route.runtime),
+            Err(_) => probe(proto::Runtime::Claude) || probe(proto::Runtime::Codex),
         }
     }
 

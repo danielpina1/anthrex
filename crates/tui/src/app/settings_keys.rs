@@ -114,6 +114,18 @@ fn limit_key(s: &mut SettingsScreen, key: KeyEvent) {
     let Some(field) = s.limits.get_mut(s.selected) else {
         return;
     };
+    // Milestone 9.16 decision 33: `quota brake` is on or off.
+    if field.key == proto::settings::key::QUOTA_BRAKE {
+        let on = match key.code {
+            KeyCode::Char(' ') => field.text != super::on_off(true),
+            KeyCode::Char('1') => true,
+            KeyCode::Char('0') => false,
+            _ => return,
+        };
+        field.text = super::on_off(on).to_owned();
+        s.touched();
+        return;
+    }
     match key.code {
         KeyCode::Char(c @ '0'..='9') if field.text.len() < DIGITS_MAX => field.text.push(c),
         KeyCode::Backspace => {

@@ -10,6 +10,8 @@ use proto::TaskState;
 
 use super::history;
 use super::session::launch_worker;
+use crate::run::engine::brakes::Gate;
+use crate::run::engine::failover::{self, Admit, Starter};
 use crate::run::engine::race::Start;
 use crate::run::engine::schedule::{
     dispatch_order, held_hub_waits_for, hub_started, is_reader_task, may_return_to_working,
@@ -18,6 +20,7 @@ use crate::run::engine::schedule::{
 use crate::run::engine::{Effect, OpKind, concurrency, emit_op, gate_holds, next_op, pair};
 use crate::run::env::profile_env;
 use crate::run::model::Run;
+use crate::run::model_roles::RunModels;
 
 fn prepare_in_flight(run: &Run, i: usize) -> bool {
     op_in_flight(run, run.tasks[i].id(), |k| {
@@ -88,7 +91,8 @@ pub(super) fn prewarm(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
 }
 
 /// Writer dispatch in critical-path order while writer slots are free (decision 41).
-pub(super) fn dispatch_writers(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
+/// Milestone 9.16 decision 11: a task whose runtime `gate` refuses stays `Queued`.
+pub(super) fn dispatch_writers(run: &mut Run, now: u64, gate: &mut Gate, fx: &mut Vec<Effect>) {
     // F3 review N1: a held hub task lets only what it waits for start.
     let only = held_hub_waits_for(run);
     // Milestone 9.5 decision 18: a race waiting for its second slot at the head of the
@@ -112,20 +116,33 @@ pub(super) fn dispatch_writers(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         if busy >= usize::from(run.limits.max_writers) || hub_started(run) {
             break;
         }
+        // Milestone 9.16 ruling C5: before the race is decided, so a refused task
+        // latches no `race_decision`; decisions 36–41: a quota-braked one may start on
+        // its row's fallback instead.
+        let runtime = pair::dispatch_runtime(run, i);
+        let (starter, failover) = match writer_admit(run, i, gate) {
+            (_, Admit::Wait) => continue,
+            (starter, Admit::Go) => (starter, None),
+            (starter, Admit::FailOver(f)) => (starter, Some(f)),
+        };
+        let runtime = failover.as_ref().map_or(runtime, |f| f.to.runtime);
         let head_of_line = std::mem::replace(&mut first, false);
-        match super::super::race::start(run, i, now) {
+        match super::super::race::start(run, i, now, gate) {
             Start::Single => {}
             Start::Wait if head_of_line => break,
             Start::Wait => continue,
             Start::Race(peer) => {
+                gate.started(run, runtime, now);
+                gate.started(run, peer.runtime, now);
                 history(run, i, now, "dispatched");
                 super::super::race::dispatch_race(run, i, peer, now, fx, prepare);
                 continue;
             }
         }
         // Milestone 9.5 decision 16: a task whose runtime is at its cap is skipped; a
-        // paired task's is its test writer's (the final fix wave's A-I3).
-        if !concurrency::has_room(run, pair::dispatch_runtime(run, i)) {
+        // paired task's is its test writer's (the final fix wave's A-I3); a failover's
+        // the fallback's (milestone 9.16 decision 37 (h)).
+        if !concurrency::has_room(run, runtime) {
             continue;
         }
         if run.tasks[i].hub
@@ -133,9 +150,13 @@ pub(super) fn dispatch_writers(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         {
             continue;
         }
+        gate.started(run, runtime, now);
         set_state(&mut run.tasks[i], TaskState::Preparing, now);
         // Milestone 9.5 decision 25: a paired task starts with its test writer.
         pair::begin(run, i);
+        if let Some(f) = failover {
+            failover::record(run, starter, &f, now);
+        }
         history(run, i, now, "dispatched");
         if prepare_in_flight(run, i) {
             // A pre-warm still running: its result continues the dispatch.
@@ -157,10 +178,29 @@ pub(super) fn dispatch_writers(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
 
 /// Ruling T14-I2: a task whose worktree was prepared while the run was not running is
 /// launched now, from that commit when it is still the run head, else re-pointed.
-pub(super) fn launch_ready(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
+/// Milestone 9.16 decision 11: on a runtime `gate` refuses it keeps its `ready_from`.
+pub(super) fn launch_ready(run: &mut Run, now: u64, gate: &mut Gate, fx: &mut Vec<Effect>) {
     for i in 0..run.tasks.len() {
         if run.tasks[i].state != TaskState::Preparing || prepare_in_flight(run, i) {
             continue;
+        }
+        if run.tasks[i].ready_from.is_none() {
+            continue;
+        }
+        let (starter, failover) = match writer_admit(run, i, gate) {
+            (_, Admit::Wait) => continue,
+            (starter, Admit::Go) => (starter, None),
+            (starter, Admit::FailOver(f)) => (starter, Some(f)),
+        };
+        let runtime = match &failover {
+            // Decision 37 (h): the fallback's runtime has room.
+            Some(f) if !concurrency::has_room(run, f.to.runtime) => continue,
+            Some(f) => f.to.runtime,
+            None => pair::dispatch_runtime(run, i),
+        };
+        gate.started(run, runtime, now);
+        if let Some(f) = failover {
+            failover::record(run, starter, &f, now);
         }
         let Some(from) = run.tasks[i].ready_from.take() else {
             continue;
@@ -172,4 +212,20 @@ pub(super) fn launch_ready(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             prepare(run, i, head, fx);
         }
     }
+}
+
+/// Milestone 9.16 decisions 36–38: the gate's answer for task `i`'s first session at
+/// dispatch, its test writer on the `test_writer` row or its worker on its own row. A
+/// racing task never fails over (decision 38): lane 2 is the row's fallback already.
+fn writer_admit(run: &Run, i: usize, gate: &Gate) -> (Starter<'static>, Admit) {
+    let (writer, current) = pair::dispatch_route(run, i);
+    let (starter, role) = match writer {
+        true => (Starter::TestWriter(i), proto::models::Role::TestWriter),
+        false => (Starter::Worker(i), RunModels::task_role(&run.tasks[i])),
+    };
+    let admit = match failover::admit(gate, run, starter, role, &current) {
+        Admit::FailOver(_) if run.tasks[i].spec.race => Admit::Wait,
+        admit => admit,
+    };
+    (starter, admit)
 }

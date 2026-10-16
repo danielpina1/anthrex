@@ -328,9 +328,10 @@ async fn dispatch(command: RunCommand, socket: &Path, dir: Option<PathBuf>) -> a
                 let text = serde_json::to_string_pretty(&snapshot)?;
                 println!("{}", status::printable(&text));
             } else if snapshot.runs.is_empty() {
+                print!("{}", status::brakes_head(&snapshot.brakes, snapshot.now));
                 eprintln!("no runs");
             } else {
-                let text = status::render(&snapshot.runs, tui::local_utc_offset_secs());
+                let text = status::listing(&snapshot, tui::local_utc_offset_secs());
                 print!("{}", status::printable(&text));
             }
             Ok(())

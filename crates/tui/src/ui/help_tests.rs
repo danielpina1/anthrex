@@ -79,6 +79,7 @@ fn global_lists_every_prefix_key() {
         ("C-a a", "alerts"),
         ("C-a P", "profile"),
         ("C-a S", "settings"),
+        ("C-a H", "hold or release dispatch"),
         ("C-a s", "toggle sidebar"),
         ("C-a < / >", "sidebar width"),
         ("C-a r", "reconnect"),
@@ -160,7 +161,7 @@ fn the_help_renders_at_80x24_and_120x40() {
     for (k, w) in &group(&help_groups("C-b"), "global")[..19] {
         body.push(row_text(k, w));
     }
-    body.push("↓ 96 more".into());
+    body.push("↓ 97 more".into());
     body.push("j/k scroll · tab group · esc close".into());
     for line in &body {
         want.push(format!("│ {line:<60} │"));
@@ -195,11 +196,12 @@ fn the_help_renders_at_80x24_and_120x40() {
     );
     body.push("run view".into());
     body.extend(
-        group(&groups, "run view")[..5]
+        // Milestone 9.16: `C-b H` in `global` leaves room for one row fewer here.
+        group(&groups, "run view")[..4]
             .iter()
             .map(|(k, w)| row_text(k, w)),
     );
-    body.push("↓ 80 more".into());
+    body.push("↓ 81 more".into());
     body.push("j/k scroll · tab group · esc close".into());
     for line in &body {
         want.push(format!("│ {line:<60} │"));
@@ -283,7 +285,7 @@ fn help_in_ascii() {
     }
     let rows = drawn(&app, 80, 24).join("\n");
     assert!(rows.contains("+ keys ---"), "{rows}");
-    assert!(rows.contains("^ 96 more"), "{rows}");
+    assert!(rows.contains("^ 97 more"), "{rows}");
     assert!(
         rows.contains("  <- / ->      scope: everywhere / this repo"),
         "{rows}"
@@ -437,5 +439,16 @@ fn the_document_gate_group_lists_its_keys() {
             "review the document (brainstorm or spec gate)".to_string()
         )),
         "{run_view:?}"
+    );
+}
+
+/// Milestone 9.16 decision 32: the help lists `C-b H`, with the configured prefix.
+#[test]
+#[allow(non_snake_case)]
+fn help_lists_c_b_H() {
+    let global = group(&help_groups("C-b"), "global");
+    assert!(
+        global.contains(&("C-b H".to_owned(), "hold or release dispatch".to_owned())),
+        "{global:?}"
     );
 }

@@ -38,6 +38,10 @@ impl RunService {
             Ok(message) => RunReply::done(label, message),
             Err(message) => RunReply::refused(label, message),
         };
+        // Milestone 9.16 decision 19: refused before any decider, scout or session.
+        if let Some(refused) = self.held_refusal(&req).await {
+            return refused;
+        }
         match req {
             RunRequest::Start {
                 plan_toml,
@@ -109,6 +113,8 @@ impl RunService {
                 reason,
             } => self.finish(run_id, action, confirm, reason).await,
             RunRequest::Lessons(req) => self.lessons(req).await,
+            // Milestone 9.16 decision 17 (`driver/hold.rs`).
+            RunRequest::Hold { on } => self.hold_request(on).await,
             RunRequest::List => RunReply::Snapshot(self.current()),
             RunRequest::Tool(call) => self.tool(call).await,
             // Milestone 8b: `run start --goal` (decision 22), `run promote` (25), `run

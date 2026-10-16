@@ -128,6 +128,7 @@ fn run(id: &str, calls: u32, fallbacks: u32) -> RunRecord {
             decider_fallbacks: fallbacks,
             ..RunUsage::default()
         }),
+        handoff: None,
     }
 }
 

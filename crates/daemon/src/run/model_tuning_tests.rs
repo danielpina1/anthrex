@@ -231,6 +231,10 @@ fn an_old_run_json_still_loads() {
         "discard_reason",
         "risk_note",
         "risk_note_asked",
+        // Milestone 9.16 ruling C2: no failover and no handoff either.
+        "failovers",
+        "failover",
+        "handoff",
     ] {
         assert_eq!(count(&written, key), 0, "run.json gained {key}");
     }

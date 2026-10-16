@@ -95,6 +95,7 @@ fn every_run_reply_round_trips_its_request_id() {
         proposals: Vec::new(),
         idle_orchestrators: Vec::new(),
         queued_goals: Vec::new(),
+        brakes: Default::default(),
     });
     assert_eq!(snapshot.clone().tagged(Some(7)), snapshot);
     assert_eq!(snapshot.request_id(), None);

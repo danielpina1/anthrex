@@ -182,6 +182,10 @@ impl RunService {
                 self.ctx
                     .settings
                     .swap_owned(&saved.orchestrator, saved.origin.clone());
+                // Decision 10: the live brakes, to the engine.
+                self.send(super::quota::brakes_config(
+                    &self.ctx.settings.current().orchestrator,
+                ));
                 drop(guard);
                 reply(SettingsReply::Saved {
                     doc: config::settings::doc_of(&saved.orchestrator),
@@ -193,7 +197,7 @@ impl RunService {
             Err(_) => {
                 let claimed = cancel.swap(true, Ordering::SeqCst);
                 let live = self.ctx.settings.clone();
-                tokio::spawn(finish_late(task, live, guard));
+                tokio::spawn(finish_late(task, live, self.tx.clone(), guard));
                 let text = if claimed {
                     WRITE_UNKNOWN_TEXT
                 } else {
@@ -225,15 +229,18 @@ impl RunService {
 }
 
 /// A save that outlived the timeout: awaited in the background with `settings_write`
-/// held, and swapped in if it landed.
+/// held, and swapped in if it landed (its brakes sent to the engine, decision 10).
 async fn finish_late(
     task: tokio::task::JoinHandle<Result<config::settings::Saved, Vec<String>>>,
     live: Arc<LiveSettings>,
+    tx: tokio::sync::mpsc::UnboundedSender<super::Msg>,
     guard: tokio::sync::OwnedMutexGuard<()>,
 ) {
     if let Ok(Ok(saved)) = task.await {
         tracing::warn!("a settings save finished after its timeout; applying it");
         live.swap_owned(&saved.orchestrator, saved.origin);
+        let config = super::quota::brakes_config(&live.current().orchestrator);
+        let _ = tx.send(super::Msg::Event(config));
     }
     drop(guard);
 }
@@ -241,3 +248,7 @@ async fn finish_late(
 #[cfg(test)]
 #[path = "settings_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "settings_brakes_tests.rs"]
+mod brakes_tests;

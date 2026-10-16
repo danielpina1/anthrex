@@ -437,6 +437,51 @@ pub struct Run {
     /// `None` (left out of `run.json`, ruling C2) for any other run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discard_reason: Option<String>,
+    /// Milestone 9.16 decision 42 (U17): the sessions that started on their row's
+    /// fallback while their runtime was quota-braked, the newest
+    /// `failover::FAILOVERS_KEPT`; left out of `run.json` while empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub failovers: Vec<FailoverRecord>,
+    /// Milestone 9.16 decision 30: the context handoff this run started with (its
+    /// chain's previous session was too full to adopt); left out while `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handoff: Option<HandoffRecord>,
+}
+
+/// Milestone 9.16 decisions 25 and 30: a continued run's fresh orchestrator session,
+/// started because the previous session's context was at or past the threshold.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HandoffRecord {
+    /// The previous run's short id.
+    pub from_run: String,
+    /// The previous session's window, renamed and left open (decision 27).
+    pub from_window: u32,
+    pub fill_tokens: u64,
+    pub window_tokens: Option<u64>,
+    pub at: u64,
+}
+
+impl HandoffRecord {
+    /// The wire record (`RunInfo.handoff`, `RunRecord.handoff`).
+    pub fn info(&self) -> proto::brakes::HandoffInfo {
+        proto::brakes::HandoffInfo {
+            from_run: self.from_run.clone(),
+            fill_tokens: self.fill_tokens,
+            window_tokens: self.window_tokens,
+            at: self.at,
+        }
+    }
+}
+
+/// Milestone 9.16 decision 42: one cross-runtime failover. `who` is the task id,
+/// `planner <epic>`, `scout <id>` or `doc review <label>`; `from` the braked route it
+/// moved from, `to` the route it started on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FailoverRecord {
+    pub who: String,
+    pub from: Route,
+    pub to: Route,
+    pub at: u64,
 }
 
 pub(crate) fn is_zero(n: &u64) -> bool {

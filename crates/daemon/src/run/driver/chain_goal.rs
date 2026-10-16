@@ -6,14 +6,16 @@
 //! (`RunService::goal_ready`), triage is skipped, and the run is built as a planned
 //! run on the chain's runtime and model, carrying its chain. The engine then adopts the
 //! chain's window or, once the chain has ended, launches a fresh session with the
-//! handoff prompt (`engine/chains.rs::join`).
+//! handoff prompt (`engine/chains.rs::join`). Milestone 9.16 (U13): a window to adopt
+//! is measured first (`driver/handoff.rs`); one whose context is at or past the
+//! threshold is handed off to a fresh session instead (`Run.handoff`).
 //!
 //! I/O: git, the profile, the delivery's preflight and the history read run off every
 //! lock, on `spawn_blocking` and bounded; the engine lock is taken only to look the
 //! chain up (`// lookup`).
 
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use proto::run_wire::request;
 use proto::{DeliveryMode, DesignMode, OrchestratorChoice, Plan, RunReply, RunState};
@@ -22,14 +24,15 @@ use super::super::RunService;
 use super::super::adapt::{CONTINUE_NEEDS_PROFILE, GoalNotReady, GoalReady};
 use super::super::build::{Planned, Shape, TuneOnce};
 use super::super::delivery::DeliveryStart;
+use super::super::handoff::Measured;
 use crate::run::chain::{CONTINUE_START_BOUND, START_GOAL_TOOL_BOUND, continuable};
 use crate::run::contract::sha7;
 use crate::run::engine::{EventKind, HISTORY_FILE};
-use crate::run::model::{LogEntry, Run};
+use crate::run::model::{HandoffRecord, LogEntry, Run};
 use crate::run::orch::contract::fresh_first_prompt;
 use crate::run::orch::contract_rounds::{
-    CONTINUE_TOO_SLOW, GOAL_TOO_LONG, NO_CHAIN_FOR_TOOL, goal_started, handoff_prompt,
-    no_chain_to_continue, other_project,
+    CONTINUE_TOO_SLOW, FILL_UNKNOWN_TEXT, GOAL_TOO_LONG, NO_CHAIN_FOR_TOOL, goal_started,
+    handoff_prompt, no_chain_to_continue, other_project,
 };
 
 /// Decision 24: how many of the chain's history lines a fresh session's first prompt
@@ -78,6 +81,8 @@ struct Joined {
     handoff: Handoff,
     /// The lookup found the chain's window to adopt (fix round 1, m5: no history read).
     adopt: bool,
+    /// The chain's window (milestone 9.16 ruling C15: the handoff measures its session).
+    window_id: u32,
 }
 
 /// Decision 24: what a fresh session's first prompt says of its chain, copied out of
@@ -112,18 +117,26 @@ impl Handoff {
 
     /// The prompt after `first` (the run's own first prompt), with the chain's last
     /// history lines read within `read` ([`history_lines`]); none read when `read` is
-    /// `None`.
+    /// `None` or zero (milestone 9.16 ruling C14: the handoff's measurement spent the
+    /// budget). A context handoff (`handoff`) is named last (decision 25).
     pub(in crate::run::driver) async fn prompt(
         &self,
         first: &str,
         read: Option<Duration>,
+        handoff: Option<&HandoffRecord>,
     ) -> String {
-        let lines = match read {
+        let lines = match read.filter(|bound| !bound.is_zero()) {
             Some(bound) => history_lines(self.history.clone(), self.runs.clone(), bound).await,
             None => None,
         };
         let ended = (self.chain.as_str(), self.prev_h4.as_str(), self.outcome);
-        handoff_prompt(first, ended, self.summary.as_deref(), lines.as_deref())
+        handoff_prompt(
+            first,
+            ended,
+            self.summary.as_deref(),
+            lines.as_deref(),
+            handoff,
+        )
     }
 }
 
@@ -153,6 +166,8 @@ impl RunService {
         last: &str,
         goal: String,
     ) -> Result<String, String> {
+        // Milestone 9.16 decision 19 (ruling C11): the first statement.
+        self.refuse_if_held().await?;
         let next = {
             let state = crate::lock(&self.state); // lookup
             let prev = state
@@ -271,13 +286,38 @@ impl RunService {
                 text: based,
             },
         );
+        // Milestone 9.16 decisions 25 and 28 (rulings C14, C15): a window to adopt is
+        // measured first; a session at or past the threshold is handed off (the run
+        // starts fresh, `Run.handoff`), an unmeasured one adopted and logged. The
+        // measurement and the history read share the run's `git_timeout_secs`.
+        let bound = Duration::from_secs(run.limits.git_timeout_secs);
+        let started = Instant::now();
+        let mut adopt = joined.adopt;
+        if adopt {
+            let model = joined.choice.model.as_deref().unwrap_or_default();
+            let from = (joined.window_id, joined.handoff.prev_h4.as_str());
+            match self.measure_handoff(from, model, bound).await {
+                Measured::Due(record) => {
+                    adopt = false;
+                    run.handoff = Some(record);
+                }
+                Measured::Unknown => run.log.push(LogEntry {
+                    at: run.created_at,
+                    text: FILL_UNKNOWN_TEXT.to_string(),
+                }),
+                Measured::Below | Measured::Off => {}
+            }
+        }
         // Decision 24: the first prompt of a fresh session, should the chain have
         // ended; the engine keeps the adopted session's own when it adopts. Fix round
         // 1 (m5): when the lookup found a window to adopt, the history is not read; a
         // chain that ended before the step launches with the summary alone.
-        let bound = Duration::from_secs(run.limits.git_timeout_secs);
-        let read = (!joined.adopt).then_some(bound);
-        let prompt = joined.handoff.prompt(&fresh_first_prompt(&run), read).await;
+        let read = (!adopt).then(|| bound.saturating_sub(started.elapsed()));
+        let first = fresh_first_prompt(&run);
+        let prompt = joined
+            .handoff
+            .prompt(&first, read, run.handoff.as_ref())
+            .await;
         if let Some(o) = run.orch.orchestrator.as_mut() {
             o.first_prompt = prompt;
         }
@@ -299,6 +339,7 @@ impl RunService {
             },
             handoff: Handoff::of(&chain.id, chain.runs.clone(), prev),
             adopt: !chain.ended && chain.window_id != 0,
+            window_id: chain.window_id,
         })
     }
 }

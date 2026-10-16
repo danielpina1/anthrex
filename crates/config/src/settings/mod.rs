@@ -6,7 +6,8 @@
 //! Owned keys, decision 23 as milestone 9.8 left it: the role table (`[models]`, written
 //! by `write_models.rs`, which also removes the old model keys it replaced, decision
 //! 40), the S/M/L budgets' `tool_calls` and `minutes`, `stall_after_secs`,
-//! `max_writers`, `max_readers` and `max_bounces`. Everything else in the file is the
+//! `max_writers`, `max_readers` and `max_bounces`, and (milestone 9.16 decision 10) the
+//! four `[orchestrator.brakes]` keys. Everything else in the file is the
 //! user's and is never rewritten.
 
 use proto::{BudgetLimit, SettingsDoc, SettingsLimits};
@@ -51,6 +52,13 @@ pub fn doc_of(o: &Orchestrator) -> SettingsDoc {
         design_default: Some(o.design.default),
         // Milestone 9.8 (M9.8.12): the table the settings screen edits and a save writes.
         roles: o.roles.clone(),
+        // Milestone 9.16 decision 10: `[orchestrator.brakes]`, settings-owned.
+        brakes: proto::SettingsBrakes {
+            quota_brake: o.brakes.quota_brake,
+            quota_pause_5h_percent: o.brakes.pause_5h_percent,
+            quota_pause_7d_percent: o.brakes.pause_7d_percent,
+            quota_fresh_secs: o.brakes.fresh_secs,
+        },
     }
 }
 
@@ -75,6 +83,8 @@ pub fn apply_owned(live: &mut Orchestrator, from: &Orchestrator) {
     live.max_writers = from.max_writers;
     live.max_readers = from.max_readers;
     live.max_bounces = from.max_bounces;
+    // Milestone 9.16 decision 10: the brake keys apply live.
+    live.brakes = from.brakes;
     // Milestone 9.8 decision 42 (preflight ruling F14): helpers read the live table.
     live.roles = from.roles.clone();
     // Final review I1: the notes belong to the file this table came from.

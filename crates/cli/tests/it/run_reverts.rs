@@ -54,6 +54,7 @@ fn run_start_records_a_revert_of_an_accepted_run() {
         accepted_commit: Some(accept.clone()),
         tasks: 1,
         usage: None,
+        handoff: None,
     });
     std::fs::write(&path, format!("{}\n", serde_json::to_string(&run).unwrap())).unwrap();
 

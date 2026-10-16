@@ -6,6 +6,7 @@
 mod support;
 
 mod admit_hook;
+mod brakes_harness;
 mod claude_status;
 mod claude_subagents;
 mod codex_status;
@@ -55,6 +56,7 @@ mod run_e2e_admit;
 mod run_e2e_base;
 mod run_e2e_basic;
 mod run_e2e_bisect;
+mod run_e2e_brakes;
 mod run_e2e_chain;
 mod run_e2e_codex_config;
 #[cfg(target_os = "macos")]

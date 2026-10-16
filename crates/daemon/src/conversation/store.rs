@@ -251,6 +251,13 @@ impl ConversationSet {
         self.entries.get(&None)?.draft.transcript_path.as_deref()
     }
 
+    /// The root conversation's session id, as its last `SessionStart` set it (Claude's
+    /// `session_id`, Codex's thread id); `None` before one. Milestone 9.16 decision 26
+    /// (ruling C16): a Codex orchestrator's rollout is found by it.
+    pub fn session_id(&self) -> Option<&str> {
+        self.entries.get(&None)?.draft.session_id.as_deref()
+    }
+
     /// Whether a new session with its own transcript file has started since the last
     /// call (review F2), clearing the flag. The reader asks when the path it tails no
     /// longer matches: `true` means switch files as a new session, `false` means the same

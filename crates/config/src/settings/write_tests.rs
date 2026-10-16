@@ -249,3 +249,83 @@ fn a_multi_line_inline_table_is_one_value() {
         )])
     );
 }
+
+/// Milestone 9.16 decision 10: the brake keys are owned scalars of `[orchestrator.brakes]`.
+#[test]
+fn settings_save_writes_the_brakes_table_and_keeps_other_lines() {
+    let (before, _) = crate::parse(HAND_WRITTEN);
+    let mut doc = doc_of(&before.orchestrator);
+    assert_eq!(doc.brakes, proto::SettingsBrakes::default());
+    doc.brakes.quota_pause_7d_percent = 97;
+    let out = edit_text(HAND_WRITTEN, &doc).unwrap();
+    assert_eq!(
+        out,
+        format!("{HAND_WRITTEN}\n[orchestrator.brakes]\nquota_pause_7d_percent = 97\n")
+    );
+    let (after, problems) = crate::parse(&out);
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(doc_of(&after.orchestrator), doc);
+    assert_eq!(after.orchestrator.brakes.pause_7d_percent, 97);
+
+    // An existing table: the changed key in place, a missing one after the table's last
+    // line, every other line (comments included) byte-identical.
+    let text = "[orchestrator.brakes]\nquota_brake = false   # quiet\nquota_pause_7d_percent = 96\n\n[testing]\ntest_slots = 4\n";
+    let mut doc = doc_of(&crate::parse(text).0.orchestrator);
+    assert!(!doc.brakes.quota_brake);
+    doc.brakes.quota_pause_7d_percent = 97;
+    doc.brakes.quota_fresh_secs = 900;
+    let out = edit_text(text, &doc).unwrap();
+    assert_eq!(
+        out,
+        "[orchestrator.brakes]\nquota_brake = false   # quiet\nquota_pause_7d_percent = 97\nquota_fresh_secs = 900\n\n[testing]\ntest_slots = 4\n"
+    );
+    assert_eq!(doc_of(&crate::parse(&out).0.orchestrator), doc);
+
+    // apply_owned copies all four keys.
+    let from = crate::parse(
+        "[orchestrator]\ngit_timeout_secs = 9\n[orchestrator.brakes]\nquota_brake = false\nquota_pause_5h_percent = 70\nquota_pause_7d_percent = 97\nquota_fresh_secs = 120\n",
+    )
+    .0
+    .orchestrator;
+    let mut live = crate::Orchestrator::default();
+    apply_owned(&mut live, &from);
+    assert_eq!(live.brakes, from.brakes);
+    assert_eq!(
+        doc_of(&live).brakes,
+        proto::SettingsBrakes {
+            quota_brake: false,
+            quota_pause_5h_percent: 70,
+            quota_pause_7d_percent: 97,
+            quota_fresh_secs: 120,
+        }
+    );
+    assert_eq!(live.git_timeout_secs, 60, "not owned");
+}
+
+/// The brake keys in a form the writer does not edit refuse the save, as the limits do.
+#[test]
+fn a_brake_key_in_another_form_is_refused() {
+    let mut doc = doc_of(&crate::Orchestrator::default());
+    doc.brakes.quota_fresh_secs = 900;
+    for (text, key) in [
+        (
+            "[orchestrator]\nbrakes.quota_brake = false\n",
+            "orchestrator.brakes.quota_brake",
+        ),
+        (
+            "[orchestrator]\nbrakes = { quota_brake = false }\n",
+            "orchestrator.brakes",
+        ),
+        (
+            "orchestrator.brakes.quota_fresh_secs = 120\n",
+            "orchestrator.brakes.quota_fresh_secs",
+        ),
+    ] {
+        assert!(text.parse::<toml::Table>().is_ok(), "{text}");
+        assert_eq!(
+            edit_text(text, &doc),
+            Err(vec![unsupported(key, "orchestrator.brakes")]),
+            "{text}"
+        );
+    }
+}

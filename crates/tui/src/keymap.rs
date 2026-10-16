@@ -35,6 +35,8 @@ pub enum Command {
     OpenProfile,
     /// `C-b S` (milestone 9.0.6 decision 36): opens the Settings screen.
     OpenSettings,
+    /// `C-b H` (milestone 9.16 decision 32): holds or releases dispatch daemon-wide.
+    ToggleHold,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -198,6 +200,7 @@ impl Keymap {
                 KeyCode::Char('a') => KeyAction::Run(Command::FocusAlerts),
                 KeyCode::Char('P') => KeyAction::Run(Command::OpenProfile),
                 KeyCode::Char('S') => KeyAction::Run(Command::OpenSettings),
+                KeyCode::Char('H') => KeyAction::Run(Command::ToggleHold),
                 KeyCode::Esc => KeyAction::Cancel,
                 _ => KeyAction::Nothing,
             };

@@ -464,6 +464,9 @@ mod orch_agent;
 #[path = "orchestrator_tests_ranges.rs"]
 mod ranges;
 
+#[path = "orchestrator_tests_brakes.rs"]
+mod brakes;
+
 /// Final fix batch F2 (C-I3), decision 50's recorded ruling: whether `--settings` hooks
 /// and `--mcp-config` still apply under `--bare` is not verified, so `auth = "api_key"`
 /// is refused at config load with a problem, and `login` is kept.

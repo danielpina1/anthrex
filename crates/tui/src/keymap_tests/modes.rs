@@ -125,3 +125,22 @@ fn screen_mode_routes_bare_keys_to_the_screen() {
     km.set_screen_mode(false);
     assert_eq!(km.handle(j, false), KeyAction::Review(j));
 }
+
+/// Milestone 9.16 decision 32: `C-b H` toggles the dispatch hold; `C-b h` stays unbound.
+#[test]
+#[allow(non_snake_case)]
+fn c_b_H_is_toggle_hold() {
+    let mut km = Keymap::new(Keymap::default_prefix());
+    let prefix = key(KeyCode::Char('b'), KeyModifiers::CONTROL);
+    assert_eq!(km.handle(prefix, false), KeyAction::AwaitPrefix);
+    assert_eq!(
+        km.handle(key(KeyCode::Char('H'), KeyModifiers::SHIFT), false),
+        KeyAction::Run(Command::ToggleHold)
+    );
+    assert_eq!(km.handle(prefix, false), KeyAction::AwaitPrefix);
+    assert_eq!(
+        km.handle(key(KeyCode::Char('h'), KeyModifiers::NONE), false),
+        KeyAction::Nothing
+    );
+    assert!(!km.pending());
+}

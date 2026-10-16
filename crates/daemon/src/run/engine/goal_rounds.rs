@@ -150,7 +150,7 @@ pub(super) fn edit(
     run: &mut Run,
     reply: ReplyId,
     (goal, alone): (&str, bool),
-    (now, base): (u64, &mut Option<Run>),
+    (now, pass): (u64, &mut orch::Pass<'_>),
     fx: &mut Vec<Effect>,
 ) {
     let source = crate::run::orch::EditSource::Orchestrator;
@@ -169,7 +169,7 @@ pub(super) fn edit(
         recipients: Vec::new(),
     };
     crate::run::edit_log::record(run, &edit, now, &source, outcome);
-    orch::accepted(run, reply, (Vec::new(), None, None), (now, base), fx)
+    orch::accepted(run, reply, (Vec::new(), None, None), (now, pass), fx)
 }
 
 /// Decision 13: a `Single` run is `Multi` from its second round on, with no stage

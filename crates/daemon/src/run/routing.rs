@@ -175,6 +175,7 @@ fn decision(
         chosen: chosen.clone(),
         selected_index,
         candidates,
+        failover: None,
     }
 }
 
@@ -233,7 +234,7 @@ pub fn record_worker(run: &mut Run, i: usize, now: u64) {
                     }
                 })
                 .collect();
-            decision(
+            let d = decision(
                 run,
                 task,
                 id,
@@ -241,7 +242,8 @@ pub fn record_worker(run: &mut Run, i: usize, now: u64) {
                 &chosen,
                 pool,
                 now,
-            )
+            );
+            failed_over(run, i, RunModels::task_role(task), d)
         }
         None => return,
     };
@@ -288,7 +290,7 @@ pub fn record_test_writer(run: &mut Run, i: usize, chosen: &Route, now: u64) {
                 })
             };
             let pool = row_pool(run, Role::TestWriter, held);
-            decision(
+            let d = decision(
                 run,
                 task,
                 id,
@@ -296,7 +298,8 @@ pub fn record_test_writer(run: &mut Run, i: usize, chosen: &Route, now: u64) {
                 chosen,
                 pool,
                 now,
-            )
+            );
+            failed_over(run, i, Role::TestWriter, d)
         }
         None => return,
     };
@@ -325,7 +328,7 @@ pub fn record_reviewer(
         (same && route != chosen).then(|| "the author's own model".to_string())
     };
     let pool = mark_failed(models, row_pool(run, Role::Reviewer, own), task, chosen);
-    let decision = decision(
+    let mut decision = decision(
         run,
         task,
         (AgentRole::Reviewer, round, Some(round)),
@@ -334,5 +337,22 @@ pub fn record_reviewer(
         pool,
         now,
     );
+    // Milestone 9.16 decision 38: a review task's own session may have failed over; a
+    // reviewer of a dispatched task never does.
+    if task.spec.kind == proto::TaskKind::Review {
+        decision = failed_over(run, i, Role::Reviewer, decision);
+    }
     push(&mut run.tasks[i], decision);
+}
+
+/// Milestone 9.16 decision 42: a task's first session of `role` that started on its
+/// row's fallback while its own runtime was quota-braked records the route it moved
+/// from, source `quota_failover`.
+fn failed_over(run: &Run, i: usize, role: Role, mut d: RoutingDecision) -> RoutingDecision {
+    use super::engine::failover::{QUOTA_FAILOVER, task_from};
+    if let Some(from) = task_from(run, i, role, &d.chosen) {
+        d.source = QUOTA_FAILOVER.to_string();
+        d.failover = Some(from);
+    }
+    d
 }

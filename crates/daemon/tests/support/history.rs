@@ -44,6 +44,7 @@ pub fn run_line(outcome: &str) -> HistoryLine {
         accepted_commit: None,
         tasks: 1,
         usage: None,
+        handoff: None,
     })
 }
 

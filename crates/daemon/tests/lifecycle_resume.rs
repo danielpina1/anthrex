@@ -20,6 +20,7 @@ use common::*;
 
 /// The runtime command overrides this test sets to its own fake.
 const BIN_VARS: [&str; 2] = ["ANTHREX_CLAUDE_BIN", "ANTHREX_CODEX_BIN"];
+const CODEX_HOME: &str = "CODEX_HOME";
 
 /// A minimal, valid `WindowRecord` for this file's test — the fields the test
 /// actually cares about set, everything else at a harmless default.
@@ -116,13 +117,17 @@ async fn restart_resumes_claude_and_codex_sessions() {
     // path that does not exist) would launch nothing. Both are set to this test's own
     // `argv.sh`, which `config.toml` below names as well: whichever wins, the program is
     // this fake, never a real agent. The daemon reads them when it starts, below.
-    let restore = [BIN_VARS[0], BIN_VARS[1]].map(|key| (key, std::env::var_os(key)));
+    // Milestone 9.16: the daemon resolves Codex's rollouts from `CODEX_HOME` once, at its
+    // start (`transcript::rollout::codex_sessions_dir`); pointed into this test's own
+    // directory, so no reading can ever list a developer's own Codex sessions.
+    let restore = [BIN_VARS[0], BIN_VARS[1], CODEX_HOME].map(|key| (key, std::env::var_os(key)));
     // SAFETY: this is the only test in this binary, and no other thread of it exists
     // yet (the daemon starts below), so nothing reads `environ` while it changes.
     unsafe {
         for key in BIN_VARS {
             std::env::set_var(key, &script);
         }
+        std::env::set_var(CODEX_HOME, dir.path().join("codex-home"));
     }
     let opts = opts(socket.clone(), data_dir.clone());
     std::fs::write(

@@ -124,6 +124,7 @@ fn worker_decision(at: u64, route: &Route) -> RoutingDecision {
             route: route.clone(),
             skipped_reason: None,
         }],
+        failover: None,
     }
 }
 

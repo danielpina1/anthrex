@@ -363,13 +363,14 @@ impl RunService {
             return failed("the scout service is not running");
         };
         let scout_id = spec.id.clone();
-        // Milestone 9.8: the run's `research` row, the route its record names.
+        // Milestone 9.8: the run's `research` row, the route its record names (milestone
+        // 9.16 decision 41: its fallback when it failed over).
         let (record, route) = {
             let state = crate::lock(&self.state);
             let run = state.runs.get(&ctx.run_id);
             let record =
                 run.map(|run| crate::run::orch::roles::scout_record(run, &scout_id, unix_now()));
-            let route = run.map(crate::run::orch::launch::scout_route);
+            let route = run.map(|run| crate::run::orch::launch::run_scout_route(run, &scout_id));
             (record, route)
         };
         // Fix round 3, item 2: a run scout is routed from its run alone; with the run

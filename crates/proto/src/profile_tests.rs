@@ -94,6 +94,7 @@ fn snapshot(queued_goals: Vec<QueuedGoalInfo>) -> RunsSnapshot {
         proposals: Vec::new(),
         idle_orchestrators: Vec::new(),
         queued_goals,
+        brakes: Default::default(),
     }
 }
 

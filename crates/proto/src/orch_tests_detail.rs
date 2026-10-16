@@ -171,6 +171,8 @@ fn appended_variants_keep_their_indices() {
     expected.push("AnswerAsk");
     // Milestone 9.15 appends `Lessons` after `AnswerAsk` (`lessons_tests.rs`).
     expected.push("Lessons");
+    // Milestone 9.16 appends `Hold` after `Lessons` (`brakes_tests.rs`).
+    expected.push("Hold");
     assert_eq!(variant_names::<RunRequest>(), expected);
     assert_eq!(
         variant_at::<RunRequest>(
@@ -203,6 +205,8 @@ fn appended_variants_keep_their_indices() {
     expected.push("Queued");
     // Milestone 9.15 appends `Lessons` and `LessonsGraph` after `Queued`.
     expected.extend(["Lessons", "LessonsGraph"]);
+    // Milestone 9.16 appends `Held` after `LessonsGraph` (`brakes_tests.rs`).
+    expected.push("Held");
     assert_eq!(variant_names::<RunReply>(), expected);
     let detail = a_detail(None);
     assert_eq!(

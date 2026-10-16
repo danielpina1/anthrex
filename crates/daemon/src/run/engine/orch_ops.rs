@@ -42,7 +42,7 @@ pub(super) fn intercept(
     run: &mut Run,
     reply: ReplyId,
     (edits, submit, other): (&[PlanEdit], bool, bool),
-    (now, base): (u64, &mut Option<Run>),
+    (now, pass): (u64, &mut super::orch::Pass<'_>),
     fx: &mut Vec<Effect>,
 ) -> bool {
     if !edits.iter().any(is_op) {
@@ -146,7 +146,7 @@ pub(super) fn intercept(
         Ok(text) => {
             edit_log::record(run, edits, now, &source, EditOutcome::accepted());
             // The call's own change is the quiet base; the step's pass settles after it.
-            *base = Some(run.clone());
+            *pass.base = Some(run.clone());
             fx.push(Effect::Reply {
                 reply,
                 result: Ok(text),

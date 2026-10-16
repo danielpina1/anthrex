@@ -341,6 +341,7 @@ fn a_read_only_stats_writes_nothing() {
         accepted_commit: Some(accept),
         tasks: 1,
         usage: None,
+        handoff: None,
     });
     let history = seed(&h, &[run]);
     // An older refit of S, which history would now move to 55/18.

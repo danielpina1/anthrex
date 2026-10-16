@@ -84,6 +84,7 @@ fn a_view_snapshot() -> RunsSnapshot {
         proposals: Vec::new(),
         idle_orchestrators: Vec::new(),
         queued_goals: Vec::new(),
+        brakes: Default::default(),
     }
 }
 

@@ -10,6 +10,7 @@ use std::path::Path;
 
 use proto::{AgentRole, BlockInfo, BlockReason, RunState, TaskState};
 
+use super::brakes::Gate;
 use super::schedule::{deps_done, op_in_flight};
 use super::{Effect, OpKind, OpResult, emit_op, next_op};
 use super::{
@@ -31,8 +32,9 @@ mod session;
 pub(super) use session::{launch_fresh, launch_implementer, launch_worker};
 
 /// The scheduler, run after every event: runnability, then whatever the run's state
-/// allows to start, then clean-up and delivery.
-pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
+/// allows to start, then clean-up and delivery. Milestone 9.16 decision 11: `gate`
+/// decides which runtimes' fresh sessions may start (`brakes.rs`).
+pub(super) fn schedule(run: &mut Run, now: u64, gate: &mut Gate, fx: &mut Vec<Effect>) {
     if run.state.is_terminal() || finishing(run) {
         return;
     }
@@ -78,25 +80,25 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
                 review::watch(run, now, fx);
                 // Milestone 9.5 ruling T16-3: a confirmed red's implementer.
                 super::pair::launch_due(run, now, fx);
-                launch_ready(run, now, fx);
-                dispatch_writers(run, now, fx);
+                launch_ready(run, now, gate, fx);
+                dispatch_writers(run, now, gate, fx);
                 // M8b decision 18: queued deciders take free reader slots first.
                 fx.extend(deciders::dispatch(run, now));
                 review::dispatch_reviewers(run, fx);
                 // Milestone 9.5 decision 20: each lane of a race, in its lane's view.
-                lane_passes(run, now, fx);
+                lane_passes(run, now, gate, fx);
                 super::race_end::crown_pass(run, now, fx);
                 // Milestone 9 decision 31: integration reviews go with the reviewers.
-                kinds::dispatch(run, now, true, fx);
+                kinds::dispatch(run, now, true, gate, fx);
             }
             _ => {}
         }
         // Milestone 9 decision 31: sub-planners, then run scouts, in free reader slots.
-        super::planners::dispatch(run, now, fx);
+        super::planners::dispatch(run, now, gate, fx);
         // Then research and review tasks (decisions 35, 36), never before a documents
         // commit lands (a later round's too, which holds no pass: task M9.6.15).
         if !held && !super::design_commit::due(run) {
-            kinds::dispatch(run, now, false, fx);
+            kinds::dispatch(run, now, false, gate, fx);
         }
     }
     remove_cancelled_worktrees(run, now, fx);
@@ -123,7 +125,7 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
 /// each in its lane's view, so each lane relaunches, is watched, and runs every
 /// pre-merge gate on its own. Each pass is idempotent at one `now`, so the tasks that do
 /// not race, which each view shows as they are, see nothing new.
-fn lane_passes(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
+fn lane_passes(run: &mut Run, now: u64, gate: &mut Gate, fx: &mut Vec<Effect>) {
     super::race::each_lane(run, now, fx, |run, fx| {
         restore::relaunch(run, now, fx);
         signals::watch(run, now, fx);
@@ -131,7 +133,7 @@ fn lane_passes(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         ladder::start_fresh_sessions(run, fx);
         gates::start_gates(run, now, fx);
         review::watch(run, now, fx);
-        launch_ready(run, now, fx);
+        launch_ready(run, now, gate, fx);
         review::dispatch_reviewers(run, fx);
     });
 }

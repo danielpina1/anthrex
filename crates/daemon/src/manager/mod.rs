@@ -14,6 +14,7 @@ mod remove;
 mod restart;
 mod restore;
 mod role_window;
+mod session_files;
 
 pub use config::{ManagerConfig, TEST_GH_BIN, TEST_WORKTREES_ROOT, refuse_test_worktrees_root};
 pub use conversation::{CONVERSATION_GONE, ReaderStep, conversation_delta_message};
@@ -25,6 +26,7 @@ pub use headless_terminal::{TERMINAL_PIDS_KEPT, TerminalRecord};
 pub use headless_turns::RESUME_START_TIMEOUT;
 pub use remove::{GitRoots, RemoveError};
 pub use role_window::{RUN_WINDOW_SIZE, lost_role_refusal, orchestrator_refusal};
+pub use session_files::SessionFiles;
 
 use crate::hooks;
 use crate::launch;

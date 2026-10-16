@@ -35,6 +35,7 @@ pub(super) fn snapshot(revision: u64, now: u64, runs: Vec<RunInfo>) -> RunsSnaps
         proposals: Vec::new(),
         idle_orchestrators: Vec::new(),
         queued_goals: Vec::new(),
+        brakes: Default::default(),
     }
 }
 

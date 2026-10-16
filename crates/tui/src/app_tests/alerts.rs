@@ -19,6 +19,7 @@ pub(super) fn listed(app: &App) -> Vec<(u8, String, String)> {
             let who = match alert.who {
                 AlertWho::Run { id, .. } => id,
                 AlertWho::Project(name) => name,
+                AlertWho::Daemon => "daemon".to_owned(),
             };
             let who = match alert.task {
                 Some(task) => format!("{who} › {task}"),
@@ -223,6 +224,7 @@ fn alert_who_and_text_are_one_line() {
         let who = match &alert.who {
             AlertWho::Run { goal, id } => format!("{goal}{id}"),
             AlertWho::Project(name) => name.clone(),
+            AlertWho::Daemon => "daemon".to_owned(),
         };
         let task = alert.task.clone().unwrap_or_default();
         for text in [&who, &task, &alert.text] {

@@ -35,8 +35,9 @@ pub use lessons::Lessons;
 use lessons::{KNOWN_LESSONS_KEYS, read_lessons};
 pub use models::{ModelRef, ModelTable, Role, RoleChoice};
 pub use orchestrator::{
-    AgentConfig, ClaudeAuth, ClaudeHeadless, ConfiguredBudgets, Deciders, DesignBudget,
-    DesignConfig, Metering, Onboarding, Orchestrator, Scouts, Tuning, TuningConfig,
+    AgentConfig, BrakeKeys, ClaudeAuth, ClaudeHeadless, ConfiguredBudgets, Deciders, DesignBudget,
+    DesignConfig, Metering, Onboarding, Orchestrator, QUOTA_FRESH_SECS_RANGE,
+    QUOTA_PAUSE_PERCENT_RANGE, Scouts, Tuning, TuningConfig,
 };
 // Milestone 9.8 (task M9.8.13): the model lists are read for the migration only.
 pub(crate) use orchestrator::{RouteList, RouteLists};

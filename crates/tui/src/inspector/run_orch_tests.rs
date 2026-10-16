@@ -424,3 +424,31 @@ fn run_orch_shows_the_untrusted_row() {
         "{text}"
     );
 }
+
+/// Milestone 9.16 decision 30: a run whose orchestrator was handed off names where from,
+/// and how full the old session was; with no known window, its tokens.
+#[test]
+fn inspector_shows_the_handoff_row() {
+    let (mut snapshot, windows) = orch_fixture(RunState::Running);
+    snapshot.runs[0].handoff = Some(proto::HandoffInfo {
+        from_run: "a1b2".into(),
+        fill_tokens: 170_000,
+        window_tokens: Some(200_000),
+        at: ORCH_NOW,
+    });
+    let app = app_of((snapshot.clone(), windows.clone()));
+    let inspection = inspect_node(&app, &run_key());
+    assert_eq!(
+        value(&inspection, "handoff"),
+        Some("from a1b2 · context 85% full (170000/200000)")
+    );
+    snapshot.runs[0].handoff.as_mut().unwrap().window_tokens = None;
+    let app = app_of((snapshot.clone(), windows.clone()));
+    assert_eq!(
+        value(&inspect_node(&app, &run_key()), "handoff"),
+        Some("from a1b2 · context 170000 tokens")
+    );
+    snapshot.runs[0].handoff = None;
+    let app = app_of((snapshot, windows));
+    assert_eq!(value(&inspect_node(&app, &run_key()), "handoff"), None);
+}

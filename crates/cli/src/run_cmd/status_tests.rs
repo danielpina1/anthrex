@@ -256,6 +256,7 @@ pub(in crate::run_cmd) fn example() -> RunInfo {
         halted_phase: None,
         design_agents: Vec::new(),
         title: String::new(),
+        handoff: None,
     }
 }
 

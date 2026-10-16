@@ -183,6 +183,10 @@ impl ProfileService {
         trust_project: bool,
         unconfined_checks: bool,
     ) -> Result<ProfileReply, String> {
+        // Task 8's review I1 (the controller's ruling): a scout is a new session.
+        if self.dispatch_held() {
+            return Err(crate::run::engine::brakes::HOLD_TEXT.to_string());
+        }
         let pre = self.preflight(dir).await?;
         self.refuse_if_running(&pre.project).await?;
         self.start_detection(

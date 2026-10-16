@@ -220,7 +220,7 @@ pub(super) fn read_back(
         .parse()
         .map_err(|e| vec![format!("the edited config.toml would not parse: {e}")])?;
     let read = super::doc_of(&crate::parse(out).0.orchestrator);
-    if read.limits != doc.limits {
+    if read.limits != doc.limits || read.brakes != doc.brakes {
         return Err(vec![format!(
             "config.toml would not read back as saved ({}); nothing changed",
             differing(&read, doc).join(", ")
@@ -235,10 +235,11 @@ pub(super) fn read_back(
 pub(super) const UNOWNED_CHANGED: &str =
     "the edit would change keys the settings screen does not own; nothing changed";
 
-/// The keys of `SETTINGS_KEYS` on which `a` and `b`'s limits differ.
+/// The keys of `SETTINGS_KEYS` on which `a` and `b`'s limits and brake keys differ.
 fn differing(a: &SettingsDoc, b: &SettingsDoc) -> Vec<&'static str> {
     use proto::settings::key;
     let (x, y) = (&a.limits, &b.limits);
+    let (p, q) = (&a.brakes, &b.brakes);
     [
         (
             key::BUDGET_S_CALLS,
@@ -271,13 +272,26 @@ fn differing(a: &SettingsDoc, b: &SettingsDoc) -> Vec<&'static str> {
         (key::MAX_WRITERS, x.max_writers != y.max_writers),
         (key::MAX_READERS, x.max_readers != y.max_readers),
         (key::MAX_BOUNCES, x.max_bounces != y.max_bounces),
+        (key::QUOTA_BRAKE, p.quota_brake != q.quota_brake),
+        (
+            key::QUOTA_PAUSE_5H_PERCENT,
+            p.quota_pause_5h_percent != q.quota_pause_5h_percent,
+        ),
+        (
+            key::QUOTA_PAUSE_7D_PERCENT,
+            p.quota_pause_7d_percent != q.quota_pause_7d_percent,
+        ),
+        (
+            key::QUOTA_FRESH_SECS,
+            p.quota_fresh_secs != q.quota_fresh_secs,
+        ),
     ]
     .into_iter()
     .filter_map(|(k, differs)| differs.then_some(k))
     .collect()
 }
 
-/// `table` without the limits, and with `models` also without `[models]` and every old
+/// `table` without the limits and the brake keys, and with `models` also without `[models]` and every old
 /// model key (decision 18), each table left empty by the removal pruned.
 pub(super) fn unowned(mut table: toml::Table, models: bool) -> toml::Table {
     if models {
@@ -310,6 +324,18 @@ pub(super) fn unowned(mut table: toml::Table, models: bool) -> toml::Table {
         }
     }
     prune(o, "budget");
+    // Milestone 9.16 decision 10 (task 2's review M2).
+    if let Some(brakes) = o.get_mut("brakes").and_then(|v| v.as_table_mut()) {
+        for k in [
+            "quota_brake",
+            "quota_pause_5h_percent",
+            "quota_pause_7d_percent",
+            "quota_fresh_secs",
+        ] {
+            brakes.remove(k);
+        }
+    }
+    prune(o, "brakes");
     for t in ["agent", "planners", "scouts", "deciders", "routes"] {
         prune(o, t);
     }

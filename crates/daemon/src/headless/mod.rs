@@ -17,6 +17,7 @@ pub mod codex_sandbox;
 pub mod codex_stream;
 pub mod conversation;
 pub mod failure;
+pub mod quota;
 pub mod session;
 pub mod status;
 
@@ -196,7 +197,7 @@ pub enum SessionEvent {
     StructuredOutput {
         value: serde_json::Value,
     },
-    /// Recognised, nothing to act on (reasoning, thinking, rate-limit info, hook progress).
+    /// Recognised, nothing to act on (reasoning, thinking, hook progress).
     Other {
         kind: String,
     },
@@ -204,6 +205,14 @@ pub enum SessionEvent {
         outcome: TurnOutcome,
         usage: Option<TokenUsage>,
         denials: Vec<String>,
+    },
+    /// A Claude `rate_limit_event` with a usable window (milestone 9.16 decision 4).
+    Quota(quota::QuotaSample),
+    /// A Claude `result` line's `modelUsage.<model>.contextWindow` (decision 23), the model
+    /// keyed as written (`claude-opus-5-5[1m]` keeps its tag).
+    ContextWindow {
+        model: String,
+        tokens: u64,
     },
     /// A runtime's own error notice (Codex's top-level `error` line), nothing to act on.
     /// The parsers are pure, so the session driver logs it and keeps it in the window's

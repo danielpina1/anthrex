@@ -57,6 +57,7 @@ pub fn help_groups(prefix_label: &str) -> Vec<HelpGroup> {
         ("a", "alerts"),
         ("P", "profile"),
         ("S", "settings"),
+        ("H", "hold or release dispatch"),
         ("s", "toggle sidebar"),
         ("< / >", "sidebar width"),
         ("r", "reconnect"),

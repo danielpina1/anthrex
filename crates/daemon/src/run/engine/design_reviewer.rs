@@ -13,6 +13,7 @@
 //! the review's `not reviewed: <reason>`. A restart relaunches a running reviewer fresh
 //! ([`restore`]). Pure (design decision 2).
 
+use proto::models::Role;
 use proto::{AgentRole, DocFinding, DocKind, DocSeverity, RoleOutcome, RunState, ToolCall};
 use proto::{TokenUsage, safe_text};
 use serde_json::{Value, json};
@@ -24,9 +25,10 @@ use super::super::{
 };
 use super::relaunch::{self, Agent};
 use crate::run::design::state::{DesignAgent, DesignAgentState, DesignState, DocReviewRecord};
+use crate::run::engine::failover::{self, Admit, Starter};
 use crate::run::model::Run;
 use crate::run::orch::roles;
-use crate::run::orch::roles::lists::{UNSAVED_REVIEWER, review_pick};
+use crate::run::orch::roles::lists::{UNSAVED_REVIEWER, review_pick, runs_unsaved};
 use crate::run::orch::tools::{OrchCall, parse_call};
 use crate::scout::design_spec::{DesignAgentSpec, reviewer_spec};
 
@@ -151,13 +153,29 @@ fn asked(run: &Run) -> bool {
 }
 
 /// A queued reviewer starts in a free reader slot while its review is asked.
-pub(super) fn start_next(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> bool {
+pub(super) fn start_next(
+    run: &mut Run,
+    now: u64,
+    gate: &mut crate::run::engine::brakes::Gate,
+    fx: &mut Vec<Effect>,
+) -> bool {
     let queued = (run.orch.design.as_ref())
         .and_then(|d| d.reviewer.as_ref())
-        .is_some_and(|a| a.state == DesignAgentState::Queued);
-    if !queued || !asked(run) {
+        .filter(|a| a.state == DesignAgentState::Queued)
+        .map(|a| (a.label.clone(), a.route.clone()));
+    let Some((label, current)) = queued.filter(|_| asked(run)) else {
         return false;
-    }
+    };
+    // Milestone 9.16 decision 11: a refused runtime leaves it queued, unless it fails
+    // over (decisions 36–41: the reviewer rule, and ruling T8-4's unsaved session).
+    let starter = Starter::DocReviewer(&label);
+    let admit = match failover::admit(gate, run, starter, Role::Reviewer, &current) {
+        Admit::FailOver(f) if !runs_unsaved(f.to.runtime, &crate::decider::caps()) => Admit::Wait,
+        admit => admit,
+    };
+    let Some(from) = failover::start(gate, run, starter, admit, current.runtime, now) else {
+        return false;
+    };
     let op = next_op(run);
     let asked = (run.orch.design.as_ref()).and_then(review);
     let (doc, k) = asked.map_or((DocKind::Spec, 0), |r| (r.doc, r.n));
@@ -175,7 +193,9 @@ pub(super) fn start_next(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> bool 
         agent.label, agent.session
     );
     log(run, now, text);
-    history::open(run, roles::design_agent_record(run, &agent, false, now));
+    let mut record = roles::design_agent_record(run, &agent, false, now);
+    failover::mark(&mut record, from);
+    history::open(run, record);
     let kind = OpKind::StartDesignAgent {
         spec: Box::new(spec),
     };

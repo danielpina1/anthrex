@@ -23,6 +23,9 @@ fn push_disconnected(spans: &mut Vec<Span<'static>>) {
     spans.push(Span::raw(" "));
 }
 
+/// Milestone 9.16 decision 32: the status bar's badge while dispatch is held.
+pub const HELD_BADGE: &str = " HELD ";
+
 /// The columns the bar keeps between the hints and the git segment.
 const GAP: u16 = 2;
 
@@ -69,6 +72,17 @@ pub(crate) fn render_with(frame: &mut Frame, app: &App, area: Rect, all: &[crate
                 spans.push(Span::raw(" "));
             }
         }
+    }
+    // Milestone 9.16 decision 32: ` HELD ` in `Failed` while dispatch is held.
+    if app.runs.brakes.hold.is_some() {
+        let style = Style {
+            bg: role(Role::Failed, palette).fg,
+            ..Style::default()
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD)
+        };
+        spans.push(Span::styled(HELD_BADGE, style));
+        spans.push(Span::raw(" "));
     }
 
     // Decision 20, and milestone 9.0.7 decision 32: with the sidebar hidden,

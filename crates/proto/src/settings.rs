@@ -30,10 +30,15 @@ pub mod key {
     pub const MAX_WRITERS: &str = "orchestrator.max_writers";
     pub const MAX_READERS: &str = "orchestrator.max_readers";
     pub const MAX_BOUNCES: &str = "orchestrator.max_bounces";
+    /// Milestone 9.16 decision 10: the `[orchestrator.brakes]` sub-table.
+    pub const QUOTA_BRAKE: &str = "orchestrator.brakes.quota_brake";
+    pub const QUOTA_PAUSE_5H_PERCENT: &str = "orchestrator.brakes.quota_pause_5h_percent";
+    pub const QUOTA_PAUSE_7D_PERCENT: &str = "orchestrator.brakes.quota_pause_7d_percent";
+    pub const QUOTA_FRESH_SECS: &str = "orchestrator.brakes.quota_fresh_secs";
 }
 
-/// The eleven keys, in the order of `key`.
-pub const SETTINGS_KEYS: [&str; 11] = [
+/// The fifteen keys, in the order of `key`.
+pub const SETTINGS_KEYS: [&str; 15] = [
     key::ROLES,
     key::BUDGET_S_CALLS,
     key::BUDGET_S_MINUTES,
@@ -45,6 +50,10 @@ pub const SETTINGS_KEYS: [&str; 11] = [
     key::MAX_WRITERS,
     key::MAX_READERS,
     key::MAX_BOUNCES,
+    key::QUOTA_BRAKE,
+    key::QUOTA_PAUSE_5H_PERCENT,
+    key::QUOTA_PAUSE_7D_PERCENT,
+    key::QUOTA_FRESH_SECS,
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,6 +86,30 @@ pub struct SettingsDoc {
     /// as `[models]` (decision 40). It replaced the roster and the orchestrator default.
     #[serde(default, skip_serializing_if = "ModelTable::is_empty")]
     pub roles: ModelTable,
+    /// Milestone 9.16 decision 10: `[orchestrator.brakes]`, applied live. A document
+    /// from a daemon that did not send it reads as the defaults.
+    #[serde(default)]
+    pub brakes: SettingsBrakes,
+}
+
+/// The quota brake's settings-owned keys (decision 10).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettingsBrakes {
+    pub quota_brake: bool,
+    pub quota_pause_5h_percent: u8,
+    pub quota_pause_7d_percent: u8,
+    pub quota_fresh_secs: u64,
+}
+
+impl Default for SettingsBrakes {
+    fn default() -> SettingsBrakes {
+        SettingsBrakes {
+            quota_brake: true,
+            quota_pause_5h_percent: 90,
+            quota_pause_7d_percent: 95,
+            quota_fresh_secs: 600,
+        }
+    }
 }
 
 /// Whether a key's value came from the file or is the built-in default.

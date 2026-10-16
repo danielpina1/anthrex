@@ -164,6 +164,7 @@ fn run(run: &str, at: u64, outcome: &str) -> HistoryLine {
         accepted_commit: (outcome == "accepted").then(|| sha(run)),
         tasks: 1,
         usage: None,
+        handoff: None,
     })
 }
 

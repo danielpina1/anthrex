@@ -54,6 +54,7 @@ pub(crate) fn who_text(who: &AlertWho, room: usize, p: Palette) -> String {
             }
         }
         AlertWho::Project(name) => truncate_in(&fold(&one_line(name), p.ascii), room, p.ascii),
+        AlertWho::Daemon => truncate_in("daemon", room, p.ascii),
     }
 }
 

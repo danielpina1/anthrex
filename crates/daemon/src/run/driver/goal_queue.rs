@@ -231,6 +231,8 @@ impl RunService {
     /// Decision 6: a drained goal started with its stored request; `Ok` is the run id,
     /// `Err` the refusal, which the drain records as a drop.
     pub(crate) async fn start_queued_goal(&self, goal: QueuedGoal) -> Result<String, String> {
+        // Milestone 9.16 decision 19: the drain keeps the goal queued (ruling C9).
+        self.refuse_if_held().await?;
         // The model and effort checks passed when the goal was queued (decision 6).
         match self.start_with_profile(goal).await {
             RunReply::Triaged {

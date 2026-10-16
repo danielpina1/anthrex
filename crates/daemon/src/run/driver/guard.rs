@@ -151,6 +151,10 @@ pub(super) fn kind_name(kind: &EventKind) -> &'static str {
         EventKind::DocGate { .. } => "DocGate",
         EventKind::DesignChecked { .. } => "DesignChecked",
         EventKind::PoolNote { .. } => "PoolNote",
+        EventKind::Quota { .. } => "Quota",
+        EventKind::BrakesConfig(_) => "BrakesConfig",
+        EventKind::Hold { .. } => "Hold",
+        EventKind::OrchestratorFill { .. } => "OrchestratorFill",
     }
 }
 
@@ -170,7 +174,8 @@ pub(super) fn reply_of(kind: &EventKind) -> Option<ReplyId> {
         | EventKind::Tool { reply, .. }
         | EventKind::Promote { reply, .. }
         | EventKind::Iterate { reply, .. }
-        | EventKind::DocGate { reply, .. } => Some(*reply),
+        | EventKind::DocGate { reply, .. }
+        | EventKind::Hold { reply, .. } => Some(*reply),
         EventKind::Orch(event) => event.reply(),
         EventKind::Delivery(request) => Some(request.reply()),
         EventKind::BaseAdvanced { .. }
@@ -181,6 +186,9 @@ pub(super) fn reply_of(kind: &EventKind) -> Option<ReplyId> {
         | EventKind::Restore { .. }
         | EventKind::DesignChecked { .. }
         | EventKind::PoolNote { .. }
+        | EventKind::Quota { .. }
+        | EventKind::BrakesConfig(_)
+        | EventKind::OrchestratorFill { .. }
         | EventKind::Stop
         | EventKind::Tick => None,
     }

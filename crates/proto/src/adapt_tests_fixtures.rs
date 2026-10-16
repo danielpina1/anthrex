@@ -274,5 +274,6 @@ pub(super) fn a_routing_decision() -> RoutingDecision {
                 skipped_reason: None,
             },
         ],
+        failover: None,
     }
 }

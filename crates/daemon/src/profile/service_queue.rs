@@ -30,6 +30,16 @@ pub type GoalStarter = Arc<
         + Sync,
 >;
 
+/// Milestone 9.16 ruling C9: whether dispatch is held daemon-wide now.
+pub type DispatchHeld = Arc<dyn Fn() -> bool + Send + Sync>;
+
+/// What a drain starts goals with, and asks before it takes one.
+#[derive(Default)]
+pub struct Starters {
+    start: Option<GoalStarter>,
+    held: Option<DispatchHeld>,
+}
+
 /// Decision 8's reason for the goals `profile reject` drops.
 pub const DISCARDED: &str = "the proposal was discarded";
 /// Decision 11's reason for a goal whose directory went away.
@@ -90,6 +100,16 @@ fn starting(n: usize) -> String {
     }
 }
 
+/// Under the hold (decision 20): `; 1 queued goal waits for hold off` / `; <n> queued
+/// goals wait for hold off`; empty for none.
+fn held_waiting(n: usize) -> String {
+    match n {
+        0 => String::new(),
+        1 => "; 1 queued goal waits for hold off".to_string(),
+        n => format!("; {n} queued goals wait for hold off"),
+    }
+}
+
 /// `; dropped 1 queued goal` / `; dropped <n> queued goals`; empty for none.
 pub(super) fn dropped_note(n: usize) -> String {
     match n {
@@ -102,7 +122,32 @@ pub(super) fn dropped_note(n: usize) -> String {
 impl ProfileService {
     /// Decision 6: installs the callback a drain starts goals with.
     pub fn set_goal_starter(&self, f: GoalStarter) {
-        *crate::lock(&self.starter) = Some(f);
+        crate::lock(&self.starter).start = Some(f);
+    }
+
+    /// Milestone 9.16 ruling C9: installs the hold probe a drain asks before each goal.
+    pub fn set_dispatch_held(&self, f: DispatchHeld) {
+        crate::lock(&self.starter).held = Some(f);
+    }
+
+    /// Whether the hold keeps queued goals waiting (and, task 8's review I1, scouts from
+    /// starting); never held with no probe.
+    pub(super) fn dispatch_held(&self) -> bool {
+        let held = crate::lock(&self.starter).held.clone();
+        held.is_some_and(|held| held())
+    }
+
+    /// Ruling C9: the hold was turned off (or found off at start): every project with
+    /// queued goals and a stored profile drains them, in queue order.
+    pub fn drain_all(self: &Arc<Self>) {
+        let projects: Vec<PathBuf> = (crate::lock(&self.table).queued.iter())
+            .filter(|(_, queue)| !queue.goals.is_empty())
+            .map(|(project, _)| project.clone())
+            .collect();
+        for project in projects {
+            tokio::spawn(self.clone().drain_if_stored(project));
+        }
+        self.resume_auto_at_start();
     }
 
     /// `project`'s queue as memory holds it.
@@ -224,7 +269,7 @@ impl ProfileService {
     }
 
     /// `profile status`'s queued and dropped goals for `project`.
-    pub(super) fn queued_for(
+    pub(crate) fn queued_for(
         &self,
         project: &Path,
     ) -> (Vec<QueuedGoalInfo>, Vec<proto::DroppedGoal>) {
@@ -318,7 +363,11 @@ impl ProfileService {
         if n > 0 && self.claim_drain(project) {
             tokio::spawn(self.clone().run_drain(project.to_path_buf()));
         }
-        starting(n)
+        // Milestone 9.16 decision 20: under the hold the drain starts nothing.
+        match self.dispatch_held() {
+            true => held_waiting(n),
+            false => starting(n),
+        }
     }
 
     /// `project`'s drain marked as running; `false` when one already runs. The caller
@@ -354,7 +403,7 @@ impl ProfileService {
     /// The claimed drain of `project`: every goal taken out and started in turn, until
     /// `take_next` finds none and ends the drain.
     async fn run_drain(self: Arc<Self>, project: PathBuf) {
-        let starter = crate::lock(&self.starter).clone();
+        let starter = crate::lock(&self.starter).start.clone();
         while let Some(goal) = self.take_next(&project).await {
             let started = match &starter {
                 Some(start) => start_caught(start, goal.clone()).await,
@@ -371,7 +420,8 @@ impl ProfileService {
     async fn take_next(&self, project: &Path) -> Option<QueuedGoal> {
         let _writes = self.hold_writes(project).await;
         let mut queue = self.queue_of(project);
-        if queue.goals.is_empty() {
+        // Milestone 9.16 ruling C9: while the hold is on, the goals wait in place.
+        if queue.goals.is_empty() || self.dispatch_held() {
             self.end_drain(project);
             return None;
         }
@@ -414,6 +464,12 @@ impl ProfileService {
         queue.starting.retain(|g| g.id != goal.id);
         match started {
             Ok(run) => tracing::info!(%run, goal = %goal.id, "started a queued goal"),
+            // Ruling C9: the hold came on between the probe and the start; the goal goes
+            // back to the head of the queue and nothing is recorded.
+            Err(reason) if reason == crate::run::engine::brakes::HOLD_TEXT => {
+                tracing::info!(goal = %goal.id, "a queued goal waits for the hold");
+                queue.goals.insert(0, goal.clone());
+            }
             Err(reason) => {
                 tracing::info!("{}", queue::drop_line(&goal.goal, &reason));
                 queue.record_drop(&goal.goal, &reason, unix_now());
@@ -509,6 +565,11 @@ impl ProfileService {
                 tracing::warn!(%error, "could not drop a queued goal");
             }
         }
+        self.drain_if_stored(project).await;
+    }
+
+    /// `project`'s queue drained when its profile is stored.
+    async fn drain_if_stored(self: Arc<Self>, project: PathBuf) {
         let dir = self.repo_dir(&project);
         let stored = blocking(move || Ok(matches!(store::load(&dir), store::Stored::Found { .. })))
             .await

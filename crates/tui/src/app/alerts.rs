@@ -29,6 +29,16 @@ mod alerts_dropped;
 pub(crate) use alerts_dropped::ASK_GAP;
 pub use alerts_dropped::{DroppedGoals, GOAL_START_BUDGET, RUN_REQUEST_SECS};
 
+#[path = "alerts_brakes.rs"]
+mod alerts_brakes;
+
+/// Milestone 9.16 decision 31: what holds dispatch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DispatchHeldKind {
+    Hold,
+    Quota(Runtime),
+}
+
 /// What an alert is about: its identity, which the focus follows (decision 21).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AlertKey {
@@ -67,6 +77,8 @@ pub enum AlertKey {
     Setup(PathBuf),
     /// Milestone 9.11 decision 22: a repository's queued goals that could not start.
     Dropped(PathBuf),
+    /// Milestone 9.16 decision 31: dispatch held daemon-wide, or a runtime quota-braked.
+    DispatchHeld(DispatchHeldKind),
 }
 
 /// Who an alert is for (milestone 9.0.7 decision 7): a run, by its goal (the id when
@@ -74,8 +86,13 @@ pub enum AlertKey {
 /// name. Each already one line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AlertWho {
-    Run { goal: String, id: String },
+    Run {
+        goal: String,
+        id: String,
+    },
     Project(String),
+    /// Milestone 9.16 decision 31: the daemon's own (the brakes), drawn `daemon`.
+    Daemon,
 }
 
 /// One alert (milestone 9.0.7 decision 7). `who`, `task` and `text` are already one
@@ -386,6 +403,7 @@ pub fn alerts(app: &App) -> Vec<Alert> {
     }
     alerts_setup::profile_alerts(app, &mut out);
     alerts_dropped::dropped_alerts(app, &mut out);
+    alerts_brakes::brake_alerts(app, &mut out);
     // Stable: within a priority the runs' order, then the rules', then the projects'.
     out.sort_by_key(|alert| alert.priority);
     out

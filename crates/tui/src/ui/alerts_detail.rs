@@ -128,7 +128,10 @@ fn facts(app: &App, alert: &Alert) -> Vec<(String, String)> {
         rows.push((label.to_owned(), value));
     };
     let run = match &alert.key {
-        AlertKey::Proposal(_) | AlertKey::Setup(_) | AlertKey::Dropped(_) => None,
+        AlertKey::Proposal(_)
+        | AlertKey::Setup(_)
+        | AlertKey::Dropped(_)
+        | AlertKey::DispatchHeld(_) => None,
         AlertKey::Orchestrator(id)
         | AlertKey::OrchestratorAsks(id)
         | AlertKey::OrchestratorStuck(id)
@@ -273,6 +276,16 @@ fn facts(app: &App, alert: &Alert) -> Vec<(String, String)> {
             text_rows(&mut rows, "detail", &alert.detail);
             push(&mut rows, "project", one_line(&project.to_string_lossy()));
         }
+        // Milestone 9.16 decision 31: the daemon's brakes.
+        (AlertKey::DispatchHeld(kind), _) => {
+            let phase = match kind {
+                crate::app::alerts::DispatchHeldKind::Hold => "dispatch held".to_owned(),
+                crate::app::alerts::DispatchHeldKind::Quota(runtime) => {
+                    format!("{runtime} quota braked")
+                }
+            };
+            push(&mut rows, "phase", phase);
+        }
         (_, None) => {}
     }
     if let Some(age) = alert.age {
@@ -316,6 +329,7 @@ fn header(app: &App, alert: &Alert, width: usize) -> Line<'static> {
             format!("{}  {}", one_line(task), title.trim())
         }
         (_, AlertWho::Project(name)) => one_line(name),
+        (_, AlertWho::Daemon) => "daemon".to_owned(),
         (_, AlertWho::Run { goal, id }) => kit::run_name_in(goal, id, u16::MAX, p),
     };
     let text = truncate_in(&fold(text.trim_end(), p.ascii), width, p.ascii);
@@ -406,7 +420,7 @@ fn detail_hints(app: &App, alert: &Alert) -> Vec<Hint> {
     }
     match alert.key {
         AlertKey::Blocked { .. } => hints.push(hint("o", "open task", 6)),
-        AlertKey::Proposal(_) => {}
+        AlertKey::Proposal(_) | AlertKey::DispatchHeld(_) => {}
         AlertKey::Setup(_) | AlertKey::Dropped(_) => hints.push(hint("o", "open profile", 6)),
         _ => hints.push(hint("o", "open run", 6)),
     }

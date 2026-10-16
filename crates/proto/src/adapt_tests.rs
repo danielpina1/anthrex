@@ -191,6 +191,7 @@ fn history_lines_are_tagged() {
         accepted_commit: Some("eeee5555".into()),
         tasks: 1,
         usage: Some(RunUsage::default()),
+        handoff: None,
     });
     let revert = HistoryLine::Revert(RevertRecord {
         v: HISTORY_VERSION,
@@ -453,6 +454,7 @@ fn every_new_request_and_reply_round_trips() {
         proposals: Vec::new(),
         idle_orchestrators: Vec::new(),
         queued_goals: Vec::new(),
+        brakes: Default::default(),
     }));
     let packed = rmp_serde::to_vec_named(&msg).unwrap();
     assert_eq!(rmp_serde::from_slice::<DaemonMsg>(&packed).unwrap(), msg);

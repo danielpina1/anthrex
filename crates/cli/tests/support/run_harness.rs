@@ -181,9 +181,10 @@ impl RunHarness {
         std::fs::write(
             &config,
             format!(
-                "{lessons}\n[orchestrator]\ngit_timeout_secs = {GIT_TIMEOUT_SECS}\n{orchestrator}\n\n                 [orchestrator.cache_dirs]\n{:?} = [{:?}]\n\n                 [orchestrator.profile]\ncheck_timeout_secs = {CHECK_TIMEOUT_SECS}\n",
+                "{lessons}\n[orchestrator]\ngit_timeout_secs = {GIT_TIMEOUT_SECS}\n{orchestrator}\n\n                 [orchestrator.cache_dirs]\n{:?} = [{:?}]\n\n                 [orchestrator.profile]\ncheck_timeout_secs = {CHECK_TIMEOUT_SECS}\n\n{}",
                 repo_key.display().to_string(),
                 cache.display().to_string(),
+                super::brakes::default_for(&orchestrator),
             ),
         )
         .unwrap();
@@ -212,6 +213,9 @@ impl RunHarness {
             ),
             ("GIT_CONFIG_GLOBAL".into(), "/dev/null".into()),
             ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
+            // Milestone 9.16 decision 9: the daemon reads Codex rollouts under
+            // `$CODEX_HOME/sessions`; never the developer's `~/.codex`.
+            ("CODEX_HOME".into(), path(&dir.path().join("codex-home"))),
         ];
         if git_off {
             all.push(("ANTHREX_GIT".into(), "off".into()));

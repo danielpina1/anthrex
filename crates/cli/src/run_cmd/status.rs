@@ -11,6 +11,29 @@ use super::status_orch::{orchestrator_lines, state_text};
 /// Decision 20: the commits a moved-base prompt lists, at most.
 pub const LISTED_COMMITS: usize = 50;
 
+/// Decision 34: the list form's text, with the brake lines and a blank line first
+/// whenever dispatch is held or a runtime is braked.
+pub fn listing(snapshot: &proto::RunsSnapshot, utc_offset: i64) -> String {
+    let mut out = brakes_head(&snapshot.brakes, snapshot.now);
+    out.push_str(&render(&snapshot.runs, utc_offset));
+    out
+}
+
+/// The brake lines and a blank line while held or braked; empty otherwise.
+pub fn brakes_head(brakes: &proto::brakes::BrakesInfo, now: u64) -> String {
+    let braked = brakes.quota.iter().any(|q| q.trip.is_some());
+    if brakes.hold.is_none() && !braked {
+        return String::new();
+    }
+    let lines = crate::hold_cmd::brake_lines(brakes, now);
+    format!(
+        "{}
+
+",
+        lines.join("\n")
+    )
+}
+
 /// One block per run, newest first. `utc_offset` is the local zone's, in seconds: the
 /// caller reads it, so this stays pure.
 pub fn render(runs: &[RunInfo], utc_offset: i64) -> String {
@@ -390,3 +413,7 @@ mod tests_orch;
 #[cfg(test)]
 #[path = "status_tests_text.rs"]
 mod tests_text;
+
+#[cfg(test)]
+#[path = "status_tests_brakes.rs"]
+mod tests_brakes;

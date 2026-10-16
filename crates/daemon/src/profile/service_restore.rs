@@ -382,9 +382,24 @@ impl ProfileService {
         }
     }
 
+    /// Task 8's review I1: `hold off` runs the start's staleness checks the hold kept
+    /// waiting (each asks the hold again).
+    pub(super) fn resume_auto_at_start(self: &Arc<Self>) {
+        let waiting = std::mem::take(&mut crate::lock(&self.table).auto_at_start);
+        for (project, meta) in waiting {
+            tokio::spawn(self.clone().auto_at_start(project, meta));
+        }
+    }
+
     /// Step 4 for one stored profile: its staleness, then [`Self::auto_on_stale`] after
     /// a preflight of its project (a dirty tree skips it, as at `profile status`).
     async fn auto_at_start(self: Arc<Self>, project: PathBuf, meta: proto::ProfileMeta) {
+        // Task 8's review I1: under the hold the check waits for `hold off`
+        // ([`Self::resume_auto_at_start`]).
+        if self.dispatch_held() {
+            crate::lock(&self.table).auto_at_start.push((project, meta));
+            return;
+        }
         let p = project.clone();
         let Ok(stale) = blocking(move || Ok(store::stale(&p, &meta))).await else {
             return;
@@ -403,7 +418,9 @@ impl ProfileService {
     /// preflight that passed (a clean tree). Called from `profile status`, `run start`
     /// and the daemon's start.
     pub async fn auto_on_stale(self: &Arc<Self>, pre: &Preflight, stale: Vec<String>) {
-        if !self.ctx.orchestrator.onboarding.auto || stale.is_empty() {
+        // Task 8's review I1: no scout under the hold; nothing is recorded, so the next
+        // check after `hold off` re-detects.
+        if !self.ctx.orchestrator.onboarding.auto || stale.is_empty() || self.dispatch_held() {
             return;
         }
         let busy = crate::lock(&self.table).active.contains_key(&pre.project);

@@ -125,6 +125,10 @@ pub struct RoutingDecision {
     pub chosen: Route,
     pub selected_index: u32,
     pub candidates: Vec<RoutingCandidate>,
+    /// Milestone 9.16 decision 42 (U17): the braked route this session moved from;
+    /// `chosen` is the one used. Left out while `None`; `HISTORY_VERSION` stays.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failover: Option<Route>,
 }
 
 /// Decision 43: the route chosen for an agent session that belongs to no task (the
@@ -169,6 +173,9 @@ pub struct RoleRoutingDecision {
     /// The role's accepted/rejected, report or submission status.
     #[serde(default)]
     pub result: Option<String>,
+    /// Milestone 9.16 decision 42 (U17): the braked route this session moved from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failover: Option<Route>,
 }
 
 /// What a role session was dispatched for (decision 43). Never transcripts,
@@ -298,6 +305,10 @@ pub struct RunRecord {
     /// `DISCARD_REASON_MAX` characters). Left out while `None`; `HISTORY_VERSION` stays.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discard_reason: Option<String>,
+    /// Milestone 9.16 decision 30: the run's orchestrator started fresh at the goal
+    /// boundary. Left out while `None`; `HISTORY_VERSION` stays.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handoff: Option<crate::brakes::HandoffInfo>,
 }
 
 /// A merged task's commit that was later reverted on the base branch.

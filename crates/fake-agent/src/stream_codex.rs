@@ -172,4 +172,9 @@ impl Events for Codex {
     fn control_response(&mut self, _request_id: &str) -> Result<()> {
         Ok(())
     }
+
+    /// `codex exec --json` carries no rate limits (M9.16.1 finding 3): its rollout does.
+    fn rate_limit(&mut self, _info: Value) -> Result<()> {
+        Ok(())
+    }
 }

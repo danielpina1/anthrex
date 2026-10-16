@@ -167,6 +167,16 @@ pub fn scout_route(run: &Run) -> Route {
     run.limits.models().route(Role::Research)
 }
 
+/// Milestone 9.16 decision 41: run scout `id`'s route, the `research` row's
+/// ([`scout_route`]) unless it started on the row's fallback while its runtime was
+/// quota-braked; then the route its failover record names.
+pub fn run_scout_route(run: &Run, id: &str) -> Route {
+    match crate::run::engine::failover::scout_route(run, id) {
+        Some(record) => record.to.clone(),
+        None => scout_route(run),
+    }
+}
+
 /// Decision 31, milestone 9.8 (MR §3.1): a sub-planner's route, the run's `planner`
 /// row, once the run has an orchestrator.
 pub fn planner_route(run: &Run) -> Option<Route> {

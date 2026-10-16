@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+pub mod brakes;
 pub mod decider;
 pub mod lessons;
 pub mod models;
@@ -82,7 +83,10 @@ pub fn isolated_command(dir: &Path, args: &[&str]) -> Command {
     command
         .args(args)
         .env("ANTHREX_SOCKET", dir.join("daemon.sock"))
-        .env("ANTHREX_DATA_DIR", dir.join("data"));
+        .env("ANTHREX_DATA_DIR", dir.join("data"))
+        // Milestone 9.16 decision 9: the daemon reads Codex rollouts under
+        // `$CODEX_HOME/sessions`; never the developer's `~/.codex`.
+        .env("CODEX_HOME", dir.join("codex-home"));
     pin_agents(&mut command);
     command
 }
@@ -271,10 +275,12 @@ impl TestDaemon {
             .join("\n");
         std::fs::write(&script_path, lines).unwrap();
         let log = std::fs::File::create(dir.path().join("daemon.log")).unwrap();
-        // Milestone 9.15 ruling C3: a config of its own, with lessons off. A test that
-        // sets `ANTHREX_CONFIG` in `configure` replaces it.
+        // Milestone 9.15 ruling C3: a config of its own, with lessons off (and 9.16's
+        // C19: the quota brake off). A test that sets `ANTHREX_CONFIG` in `configure`
+        // replaces it.
         let config = dir.path().join("config.toml");
-        std::fs::write(&config, lessons::LESSONS_OFF).unwrap();
+        let off = format!("{}\n{}", lessons::LESSONS_OFF, brakes::BRAKES_OFF);
+        std::fs::write(&config, off).unwrap();
         let mut command = isolated_command(dir.path(), &["daemon", "start", "--foreground"]);
         command
             .env("ANTHREX_CONFIG", &config)

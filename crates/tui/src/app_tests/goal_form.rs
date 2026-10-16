@@ -74,6 +74,7 @@ pub(super) fn doc(models: Vec<FixtureModel>) -> SettingsDoc {
         },
         design_default: None,
         roles: table(models),
+        brakes: Default::default(),
     }
 }
 

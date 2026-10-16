@@ -17,6 +17,7 @@ use proto::{
 };
 
 use super::dispatch::{block, history};
+use super::failover::{self, Starter};
 pub(super) use super::integration::{engine_owned, integration_pass, may_complete, record_merge};
 use super::requests::log;
 pub(super) use super::research::{
@@ -28,6 +29,7 @@ use super::schedule::{
 use super::{Effect, OpId, OpKind, OpResult, emit_op, gate_holds, next_op, wake};
 use crate::run::contract::sha7;
 use crate::run::model::{ReviewLevel, Run, Task};
+use crate::run::model_roles::RunModels;
 use crate::run::orch::contract::{integration_review_prompt, review_task_prompt};
 use crate::run::phases::set_state;
 
@@ -38,8 +40,16 @@ pub(super) fn is_integration(task: &Task) -> bool {
 /// Decision 31's reader-slot order: integration reviews go with the reviewers
 /// (`integration`), research and review tasks after the sub-planners and run scouts.
 /// Runs only while the run runs, as every task dispatch does, and not beside a hub
-/// task holding its writer slot.
-pub(super) fn dispatch(run: &mut Run, now: u64, integration: bool, fx: &mut Vec<Effect>) {
+/// task holding its writer slot. Milestone 9.16 decision 11: a queued one whose
+/// runtime `gate` refuses stays queued, unless it fails over (decisions 36–40); one
+/// resolving its target again is in flight.
+pub(super) fn dispatch(
+    run: &mut Run,
+    now: u64,
+    integration: bool,
+    gate: &mut super::brakes::Gate,
+    fx: &mut Vec<Effect>,
+) {
     if run.state != RunState::Running || hub_holds_slot(run) {
         return;
     }
@@ -62,7 +72,18 @@ pub(super) fn dispatch(run: &mut Run, now: u64, integration: bool, fx: &mut Vec<
         if !runnable && !unresolved {
             continue;
         }
-        match task.spec.kind {
+        let kind = task.spec.kind;
+        // Milestone 9.16 decisions 36–40: a quota-braked one may start on its row's
+        // fallback (the reviewer rule for a review task).
+        if !unresolved {
+            let (current, role) = (task.route.clone(), RunModels::task_role(task));
+            let starter = Starter::Reader(i);
+            let admit = failover::admit(gate, run, starter, role, &current);
+            if failover::start(gate, run, starter, admit, current.runtime, now).is_none() {
+                continue;
+            }
+        }
+        match kind {
             TaskKind::Research => super::research::launch(run, i, now, fx),
             _ => resolve(run, i, now, fx),
         }

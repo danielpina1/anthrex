@@ -130,19 +130,29 @@ fn show_route(route: &proto::Route) -> String {
 
 /// One queued design agent starts in a free reader slot: a brainstormer while the run
 /// brainstorms, the document reviewer while its review is asked; false when none is
-/// queued (`planners::dispatch`'s loop then tries the run scouts).
-pub(super) fn start_next(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> bool {
-    if reviewer::start_next(run, now, fx) {
+/// queued (`planners::dispatch`'s loop then tries the run scouts). Milestone 9.16
+/// decision 11, ruling C6: an agent whose route's runtime `gate` refuses stays queued.
+pub(super) fn start_next(
+    run: &mut Run,
+    now: u64,
+    gate: &mut super::brakes::Gate,
+    fx: &mut Vec<Effect>,
+) -> bool {
+    if reviewer::start_next(run, now, gate, fx) {
         return true;
     }
     if run.state != RunState::Brainstorming {
         return false;
     }
-    let queued = (run.orch.design.as_ref())
-        .and_then(|d| (d.brainstormers.iter()).position(|a| a.state == DesignAgentState::Queued));
-    let Some(k) = queued else {
+    let queued = (run.orch.design.as_ref()).and_then(|d| {
+        (d.brainstormers.iter())
+            .position(|a| a.state == DesignAgentState::Queued && gate.allows(a.route.runtime))
+            .map(|k| (k, d.brainstormers[k].route.runtime))
+    });
+    let Some((k, runtime)) = queued else {
         return false;
     };
+    gate.started(run, runtime, now);
     start(run, k, now, fx);
     true
 }

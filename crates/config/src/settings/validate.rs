@@ -16,6 +16,8 @@ use proto::settings::{
 };
 use proto::{BudgetLimit, SettingsDoc};
 
+use crate::orchestrator::{QUOTA_FRESH_SECS_RANGE, QUOTA_PAUSE_PERCENT_RANGE};
+
 /// Every reason `doc` cannot be saved, in a fixed order: the role table (rows in
 /// `Role::all` order, then brainstorm), then the limits in `SETTINGS_KEYS` order. Empty
 /// when it can.
@@ -121,6 +123,20 @@ fn limits(doc: &SettingsDoc, problems: &mut Vec<String>) {
         key::MAX_BOUNCES,
         l.max_bounces,
         &MAX_BOUNCES_RANGE,
+        problems,
+    );
+    // Milestone 9.16 decision 10; `quota_brake` is a bool and always valid.
+    let b = &doc.brakes;
+    for (k, percent) in [
+        (key::QUOTA_PAUSE_5H_PERCENT, b.quota_pause_5h_percent),
+        (key::QUOTA_PAUSE_7D_PERCENT, b.quota_pause_7d_percent),
+    ] {
+        in_range(k, percent, &QUOTA_PAUSE_PERCENT_RANGE, problems);
+    }
+    in_range(
+        key::QUOTA_FRESH_SECS,
+        b.quota_fresh_secs,
+        &QUOTA_FRESH_SECS_RANGE,
         problems,
     );
 }

@@ -468,12 +468,13 @@ fn old_finish_decodes_without_reason() {
 
 #[test]
 fn the_new_variants_are_appended_last() {
+    // Milestone 9.16 appends `Hold` and `Held` after these (`brakes_tests.rs`).
     let requests = variant_names::<RunRequest>();
-    assert_eq!(requests.last().map(String::as_str), Some("Lessons"));
-    assert_eq!(requests[requests.len() - 2], "AnswerAsk");
+    assert_eq!(requests[requests.len() - 2], "Lessons");
+    assert_eq!(requests[requests.len() - 3], "AnswerAsk");
     let replies = variant_names::<RunReply>();
     assert_eq!(
-        &replies[replies.len() - 3..],
+        &replies[replies.len() - 4..replies.len() - 1],
         ["Queued", "Lessons", "LessonsGraph"]
     );
     assert_eq!(
