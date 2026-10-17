@@ -176,11 +176,17 @@ fn an_encoded_url_in_compact_json_stops_at_its_quote() {
     // to a later field's `@`, so an address after a URL was redacted with it.
     for json in [
         r#"{"url":"https:\/\/github.com","author":"dan@x.com"}"#,
-        r#"{\"url\":\"https:\/\/github.com\",\"author\":\"dan@x.com\"}"#,
         r#"{"url":"https%3A%2F%2Fgithub.com","author":"dan%40x.com"}"#,
     ] {
         assert_left(json);
     }
+    // PR #81's review: an escaped `\"` no longer ends the authority (it may be a
+    // password's quote), so JSON nested in a string, whose quotes are all escaped, is
+    // over-redacted to the later field's `@`. That hides an address; it leaks nothing.
+    assert_becomes(
+        r#"{\"url\":\"https:\/\/github.com\",\"author\":\"dan@x.com\"}"#,
+        r#"{\"url\":\"https:\/\/***@x.com\"}"#,
+    );
     // A real encoded `user:pass@` inside the string is still user information.
     assert_becomes(
         r#"{"url":"https:\/\/user:pass@host\/x","author":"dan@x.com"}"#,
@@ -189,6 +195,28 @@ fn an_encoded_url_in_compact_json_stops_at_its_quote() {
     assert_becomes(
         r#"{"url":"https%3A%2F%2Fuser%3Atok%40host","a":"b"}"#,
         r#"{"url":"https%3A%2F%2F***%40host","a":"b"}"#,
+    );
+}
+
+#[test]
+fn an_escaped_quote_does_not_end_an_encoded_authority() {
+    // PR #81's review: the authority stopped at the `"` of an escaped `\"`, so a
+    // password holding a quote left its user information whole.
+    let password = ["pa", r#"\""#, "ss"].concat();
+    assert_becomes(
+        &format!(r"https:\/\/admin:{password}@db.example"),
+        r"https:\/\/***@db.example",
+    );
+    // In `\\"` the backslash is itself escaped, so the quote is unescaped and ends the
+    // authority: the later field's `@` is not this URL's.
+    assert_left(r#"{"url":"https:\/\/github.com\\","author":"dan@x.com"}"#);
+    // PR #81's compact-JSON case still stops at its quote.
+    assert_left(r#"{"url":"https:\/\/github.com","author":"dan@x.com"}"#);
+    // A plain encoded `user:pass@` is still user information.
+    let userinfo = ["user", ":", "pass"].concat();
+    assert_becomes(
+        &format!(r"https:\/\/{userinfo}@host\/x"),
+        r"https:\/\/***@host\/x",
     );
 }
 
