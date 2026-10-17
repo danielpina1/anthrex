@@ -22,7 +22,7 @@ fn tokens_bands() {
     ] {
         assert_eq!(tokens(n), want, "tokens({n})");
     }
-    assert!(tokens(u64::MAX).ends_with('M'));
+    assert_eq!(tokens(u64::MAX), "18446744073709.5M");
 }
 
 #[test]
@@ -42,7 +42,7 @@ fn duration_formats() {
     ] {
         assert_eq!(duration(secs), want, "duration({secs})");
     }
-    assert!(duration(u64::MAX).contains('d'));
+    assert_eq!(duration(u64::MAX), "213503982334601d 07h");
 }
 
 #[test]
@@ -58,7 +58,7 @@ fn duration_coarse_floors_to_one_unit() {
     ] {
         assert_eq!(duration_coarse(secs), want, "duration_coarse({secs})");
     }
-    assert!(duration_coarse(u64::MAX).ends_with('d'));
+    assert_eq!(duration_coarse(u64::MAX), "213503982334601d");
 }
 
 #[test]
@@ -119,13 +119,19 @@ fn clock_cases() {
     // `at` after `now`, by minutes: still the same day.
     assert_eq!(clock(NOW + 600, NOW, UTC), "14:40 UTC");
 
-    // Never a panic.
-    let _ = clock(u64::MAX, NOW, UTC);
-    let _ = clock(NOW, u64::MAX, UTC);
-    let _ = clock(u64::MAX, u64::MAX, Zone::Local(i32::MAX));
-    let _ = clock_full(u64::MAX, Zone::Local(i32::MIN));
+    // Extremes: exact, never a panic (`at` clamps to i64::MAX, offsets saturate).
+    assert_eq!(clock(u64::MAX, NOW, UTC), "292277026596-12-04 15:30 UTC");
+    assert_eq!(clock(NOW, u64::MAX, UTC), "2026-10-17 14:30 UTC");
+    assert_eq!(
+        clock(u64::MAX, u64::MAX, Zone::Local(i32::MAX)),
+        "15:30 +596523:14"
+    );
+    assert_eq!(
+        clock_full(u64::MAX, Zone::Local(i32::MIN)),
+        "292277026528-11-16 12:15 -596523:14"
+    );
     assert_eq!(clock(0, 0, Zone::Local(-18_000)), "19:00 -05:00");
-    assert!(clock(100, 100, Zone::Local(i32::MIN)).len() > 5);
+    assert_eq!(clock(100, 100, Zone::Local(i32::MIN)), "20:47 -596523:14");
 }
 
 #[test]
@@ -156,6 +162,10 @@ fn fill_and_context_text() {
     assert_eq!(fill(200_001, 200_000), Fill::Over);
     assert_eq!(fill(5, 0), Fill::NoWindow);
     assert_eq!(fill(u64::MAX, 1), Fill::Over);
+    // A u64 multiply by 100 would overflow in each of these.
+    assert_eq!(fill(u64::MAX, u64::MAX), Fill::Percent(100));
+    assert_eq!(fill(u64::MAX / 2, u64::MAX), Fill::Percent(49));
+    assert_eq!(fill(u64::MAX - 1, u64::MAX), Fill::Percent(99));
     assert_eq!(
         context_text(183_400, Some(200_000)),
         "context 91% full (183k / 200k)"

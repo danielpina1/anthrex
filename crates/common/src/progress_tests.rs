@@ -133,3 +133,14 @@ fn stage_count_mirrors_the_daemon() {
     // A task with stage 0 never makes it 0.
     assert_eq!(stage_count(&run(planned(0), 0)), 1);
 }
+
+#[test]
+fn tally_leaves_out_a_task_with_a_replacement_whatever_its_state() {
+    // Only `replaced_by` excludes it: a blocked task is otherwise counted.
+    let tasks = [
+        task("x", TaskState::Blocked, 1, 1, &["y"]),
+        task("y", TaskState::Merged, 1, 1, &[]),
+    ];
+    let p = tally(&tasks);
+    assert_eq!((p.merged, p.total, p.cancelled), (1, 1, 0));
+}

@@ -14,10 +14,18 @@ use std::path::Path;
 const PURE_FILES: [&str; 3] = ["book.rs", "book_file.rs", "clean.rs"];
 
 /// The `std` modules a pure file may not name: `std::<m>`, or `<m>` in `use std::{…}`.
-const STD_MODULES: [&str; 4] = ["fs", "process", "net", "thread"];
+const STD_MODULES: [&str; 5] = ["fs", "process", "net", "thread", "env"];
 /// The names a pure file may not use, each after no identifier byte (the paths may take
 /// spaces around `::`). `std::<m>` for each of `STD_MODULES` is checked beside them.
-const NAMES: [&str; 4] = ["tokio::", "Command::new", "SystemTime", "Instant::now"];
+const NAMES: [&str; 7] = [
+    "tokio::",
+    "Command::new",
+    "SystemTime",
+    "Instant::now",
+    "env::var",
+    "libc::",
+    "localtime_r",
+];
 
 /// Every forbidden name in `text`'s production code (not its comments, literals or
 /// `#[cfg(test)]` items), as (line, name), sorted.
@@ -36,8 +44,8 @@ pub(super) fn pure_scan(text: &str) -> Vec<(usize, &'static str)> {
             }
         }
         for name in NAMES {
-            // `tokio::` is followed by a path; the others are whole words.
-            if word_at(&flat, name, name != "tokio::") {
+            // `tokio::` and `libc::` are followed by a path; the others are whole words.
+            if word_at(&flat, name, !name.ends_with("::")) {
                 found.push((k + 1, name));
             }
         }
@@ -53,7 +61,13 @@ pub(super) fn pure_scan(text: &str) -> Vec<(usize, &'static str)> {
 }
 
 /// `std::<m>` for each of `STD_MODULES`, as the hits name them.
-const STD_PATHS: [&str; 4] = ["std::fs", "std::process", "std::net", "std::thread"];
+const STD_PATHS: [&str; 5] = [
+    "std::fs",
+    "std::process",
+    "std::net",
+    "std::thread",
+    "std::env",
+];
 
 /// `line` with the whitespace around each `::` removed, so `std :: fs` is `std::fs`.
 fn squeezed(line: &str) -> String {
@@ -148,6 +162,12 @@ fn the_purity_scan_finds_each_forbidden_form() {
         ("let t = std::time::Instant::now();", "Instant::now"),
         ("use std::{collections::BTreeMap, fs};", "std::fs"),
         ("use std::{\n    io,\n    net::TcpStream,\n};", "std::net"),
+        ("let z = std::env::var(\"TZ\").ok();", "std::env"),
+        ("use std::{collections::BTreeMap, env};", "std::env"),
+        ("let z = env::var(\"TZ\");", "env::var"),
+        ("unsafe { libc::localtime_r(&t, &mut tm) };", "libc::"),
+        ("use libc::localtime_r;", "libc::"),
+        ("localtime_r(&t, &mut tm);", "localtime_r"),
     ];
     for (text, name) in forbidden {
         let found = pure_scan(text);
@@ -170,6 +190,7 @@ fn the_purity_scan_finds_each_forbidden_form() {
         "/// tokio::spawn and Instant::now() are not used here",
         "let s = \"std::process and SystemTime\";",
         "fn my_tokio() {} struct MyCommand; MyCommand::new_one();",
+        "fn environment() {} let v = my_env::var_x(); let l = mylibc::x;",
         "#[cfg(test)]\nmod tests {\n    use std::fs;\n}\n",
         "#[cfg(test)]\nfn now() -> std::time::Instant { std::time::Instant::now() }\n",
     ];
@@ -257,6 +278,19 @@ fn the_common_number_modules_are_pure() {
         "{}",
         hits[0]
     );
+    // The environment and the libc clock are named too (the review's I1).
+    for (body, name) in [
+        ("std::env::var(\"TZ\").ok()", "std::env"),
+        ("unsafe { libc::localtime_r(&0, &mut tm) }", "libc::"),
+    ] {
+        std::fs::write(&file, format!("pub fn f() {{\n    {body};\n}}\n")).unwrap();
+        let hits = number_hits(&file, "numbers.rs");
+        assert!(
+            hits.iter()
+                .any(|h| h.contains(&format!(":2: {name} in a pure number module"))),
+            "{name}: {hits:#?}"
+        );
+    }
 }
 
 /// One line per forbidden name in `file`, named as `common/src/<name>`.
