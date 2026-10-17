@@ -14,13 +14,6 @@ pub(super) const PREPARE: &str = "PrepareWorktree";
 /// end, and holds the turn should it never be released: a hang guard only.
 pub(super) const HOLD_MAX: std::time::Duration = std::time::Duration::from_secs(60);
 
-/// The promote test's teardown bound: `RunService::stop`'s acknowledgement wait
-/// (`STOP_WAIT`), plus 30 s for the last saves, the loop's join and the checkout op
-/// (a few git commands on a local repository) on a loaded machine. No window is ever
-/// started (the gate is closed), so there is no kill grace or window clean-up.
-const STOP_BOUND: std::time::Duration =
-    std::time::Duration::from_secs(30).saturating_add(crate::run::driver::STOP_WAIT);
-
 pub(super) type Ended = Arc<std::sync::Mutex<Vec<&'static str>>>;
 
 /// The names of the ops of `service` that have ended, in order (the driver's
@@ -77,24 +70,18 @@ pub(super) async fn hold_write_turn(
 /// The promote test's teardown, as the daemon stops (`lifecycle.rs`): the run service
 /// (its last `run.json` written) and its loop; then the wait for the checkout op the
 /// loop started, which runs on its own task that neither awaits (the daemon's process
-/// exit ends it; a test's directory must outlive it); only then the directory. The
-/// orchestrator's launch, parked for good at the closed gate, is not waited for: it
-/// never passes the gate, and the runtime drops it.
+/// exit ends it; a test's directory must outlive it); only then the directory
+/// (`RunService::stop_and_settle`). The orchestrator's launch, parked for good at the
+/// closed gate, is not waited for: it never passes the gate, and the runtime drops it.
+/// No window is ever started, so none is killed (`SETTLE_BOUND`).
 pub(super) async fn teardown(
     service: &Arc<RunService>,
     run_loop: tokio::task::JoinHandle<()>,
     shutdown: tokio_util::sync::CancellationToken,
-    ended: &Ended,
     tmp: crate::run::git::TestDir,
 ) {
-    shutdown.cancel();
-    let stopping = async {
-        service.stop().await;
-        let _ = run_loop.await;
-        wait_ended(ended, PREPARE).await;
-    };
-    if tokio::time::timeout(STOP_BOUND, stopping).await.is_err() {
-        panic!("the promote test's engine did not stop within {STOP_BOUND:?}");
-    }
+    service
+        .stop_and_settle(run_loop, &shutdown, crate::run::driver::stop::SETTLE_BOUND)
+        .await;
     drop(tmp);
 }

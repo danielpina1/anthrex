@@ -16,6 +16,9 @@ impl RunService {
     /// op on its own task, whose result is journaled before its `OpDone` is sent.
     pub(super) async fn start_op(self: &Arc<Self>, ctx: OpCtx, op: OpId, kind: OpKind) {
         let order = self.op_lock(&ctx.run_id);
+        let name = kind.name();
+        // Left when the op's task ends, however it ends (`stop_and_settle`).
+        let entered = self.in_flight.enter(&ctx.run_id, op, name);
         let exclusive = matches!(kind, OpKind::Accept { .. } | OpKind::Discard { .. });
         // Taken now, in emission order, so a later `Accept` or `Discard` waits for it.
         let shared = if exclusive {
@@ -23,7 +26,6 @@ impl RunService {
         } else {
             order.clone().try_read_owned().ok()
         };
-        let name = kind.name();
         let hold = self.done_holds.of(&kind);
         let line = JournalLine::Intent {
             op,
@@ -35,6 +37,7 @@ impl RunService {
         self.crash_injection(name);
         let service = self.clone();
         tokio::spawn(async move {
+            let _entered = entered;
             // Held for the life of the op.
             let _order = match (exclusive, shared) {
                 (true, _) => (None, Some(order.write_owned().await)),
