@@ -185,6 +185,9 @@ format (6) are unchanged.
   `CARGO_TARGET_<triple>_RUSTFLAGS`, `CARGO_BUILD_RUSTFLAGS` and `CARGO_INCREMENTAL` are
   now part of the tier cache key. If you set any of them, your next tier run misses the
   cache once.
+- **A task's own `[task.budget]` raises its size ceiling.** The budget ladder's next-size
+  check now uses, per axis, the larger of the task's budget and its class's, so a task
+  given more room is not stopped at its class's limit. Token totals no longer overflow.
 - **A wheel scroll no longer holds the orchestrator's wake-up.** Mouse reports sent
   while a wake-up is pasted no longer count as typing, so the wake-up is submitted.
 - **Dialogs wrap in display columns**, so a path with CJK characters or emoji no longer
