@@ -249,3 +249,64 @@ fn a_failure_with_no_error_says_failed() {
         assert_eq!(result.summary, "failed", "{error:?} {is_interrupt:?}");
     }
 }
+
+/// Task 11's review, M3: the ordering cases the failure path inherits from
+/// `post_tool_use` (its `Pending` filter and strict id tier), pinned so a failure path
+/// that stopped going through it could not regress them silently.
+#[test]
+fn a_redelivered_failure_or_a_later_post_leaves_the_failed_call() {
+    let t0 = Instant::now();
+    let mut draft = open_call("toolu_7", t0);
+    let first = failure("toolu_7", Some("Exit code 1"), Some(false));
+    assert!(run(&mut draft, &first, 3, t0));
+    let (turns, started) = (draft.turns.clone(), draft.tool_started.clone());
+
+    // The same failure delivered twice.
+    let again = failure("toolu_7", Some("Exit code 2"), Some(false));
+    assert!(!run(&mut draft, &again, 4, t0));
+    assert_eq!(draft.turns, turns, "a second failure");
+    assert_eq!(draft.tool_started, started, "a second failure");
+
+    // A `PostToolUse` for the same id after the failure.
+    let post = ParsedHook {
+        tool_use_id: Some("toolu_7".into()),
+        tool_name: Some("Bash".into()),
+        tool_response: Some(json!({"stdout": "ok"})),
+        ..hook(HookKind::PostToolUse)
+    };
+    assert!(!run(&mut draft, &post, 5, t0));
+    assert_eq!(draft.turns, turns, "a later PostToolUse");
+    let Block::ToolCall { state, result, .. } = only_call(&draft) else {
+        panic!("a ToolCall expected");
+    };
+    assert_eq!(*state, ToolState::Failed);
+    assert_eq!(
+        result.as_ref().map(|r| r.summary.as_str()),
+        Some("Exit code 1")
+    );
+}
+
+/// Task 11's review, M3: a failure that arrives before its `PreToolUse` is a no-op, and
+/// the later `PreToolUse` opens a `Pending` call, as with `PostToolUse` today.
+#[test]
+fn a_failure_before_its_pre_tool_use_changes_nothing() {
+    let t0 = Instant::now();
+    let mut draft = Draft::new(4, None, proto::Runtime::Claude);
+    run(&mut draft, &prompt("run the tests"), 1, t0);
+    let (turns, started) = (draft.turns.clone(), draft.tool_started.clone());
+    let early = failure("toolu_8", Some("Exit code 1"), Some(false));
+    assert!(!run(&mut draft, &early, 2, t0));
+    assert_eq!(draft.turns, turns);
+    assert_eq!(draft.tool_started, started);
+
+    assert!(run(&mut draft, &pre("toolu_8"), 3, t0));
+    let Block::ToolCall {
+        id, state, result, ..
+    } = only_call(&draft)
+    else {
+        panic!("a ToolCall expected");
+    };
+    assert_eq!(id.as_deref(), Some("toolu_8"));
+    assert_eq!(*state, ToolState::Pending);
+    assert_eq!(*result, None);
+}
