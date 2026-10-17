@@ -202,3 +202,21 @@ fn a_read_never_cuts_a_request_wake() {
     assert_eq!(taken.len(), 1);
     assert_eq!(taken[0].1.text, request.text, "a request wake was cut");
 }
+
+/// A trimmed digest answer showed only the oldest notes (`orch_read_tests_notes.rs`):
+/// its read keeps the waiting wake-up that holds newer ones, which pastes only those.
+#[test]
+fn a_read_of_the_oldest_notes_keeps_the_wake_of_the_rest() {
+    let wakes = Wakes::default();
+    wakes.insert("r1".into(), noted(20));
+    wakes.read("r1", 5);
+    let taken = check(&wakes, 20);
+    assert_eq!(
+        taken.len(),
+        1,
+        "the read dropped the wake-up of the cut notes"
+    );
+    let seqs: Vec<u64> = taken[0].1.notes.iter().map(|(s, _)| *s).collect();
+    assert_eq!(seqs, (6..=20).collect::<Vec<_>>());
+    assert_eq!(taken[0].1.notes_seq, 20);
+}
