@@ -247,6 +247,47 @@ fn a_two_session_agent_contributes_its_per_session_mean() {
     assert_eq!(file.budgets["brainstorm"].tool_calls, 78);
 }
 
+/// Milestone 9.19 decision 2: a phase line's agent tokens are billed tokens from
+/// `HISTORY_VERSION` 6; before it they counted cache reads. The token refit takes its
+/// samples from `v >= 6` lines only; calls and seconds still come from every line.
+#[test]
+fn the_design_refit_takes_tokens_from_version_6_only() {
+    let mut cfg = config::Orchestrator::default();
+    cfg.tuning.table.refit_tokens = true;
+    let at_version = |v: u32, run: u32, (calls, secs, tokens)| {
+        let HistoryLine::Phase(mut record) = phase(
+            run,
+            "brainstorming",
+            1_000 + u64::from(run),
+            vec![agent(AgentRole::Brainstormer, (calls, secs, tokens), "ok")],
+        ) else {
+            unreachable!()
+        };
+        record.v = v;
+        HistoryLine::Phase(record)
+    };
+    // 40 version-5 lines, inflated by cache reads, and 32 version-6 lines.
+    let old: Vec<HistoryLine> = (0..40)
+        .map(|run| at_version(5, run, (10, 600, 1_000_000)))
+        .collect();
+    let new: Vec<HistoryLine> = (40..72)
+        .map(|run| at_version(6, run, (50, 1_200, 40_000)))
+        .collect();
+    let all: Vec<HistoryLine> = old.iter().chain(&new).cloned().collect();
+    let (file, _) = refit(&all, &TuningFile::default(), &cfg, NOW);
+    let fit = &file.budgets["brainstorm"];
+    // Calls and minutes: the lower median of all 72 is a version-5 sample's (10 calls,
+    // 10 min), × 250%.
+    assert_eq!((fit.tool_calls, fit.minutes, fit.samples), (25, 25, 72));
+    // Tokens: the version-6 median only (40 000 × 250%).
+    assert_eq!(fit.tokens, Some(100_000));
+    let (alone, _) = refit(&new, &TuningFile::default(), &cfg, NOW);
+    assert_eq!(fit.tokens, alone.budgets["brainstorm"].tokens);
+    // Version 5 alone: no token samples, so no token budget.
+    let (old_only, _) = refit(&old, &TuningFile::default(), &cfg, NOW);
+    assert_eq!(old_only.budgets["brainstorm"].tokens, None);
+}
+
 /// Ruling T13-4: a phase approved again after a back is a new record, `…/v<n>`; the
 /// refit keeps only the highest version per run, round and phase.
 #[test]

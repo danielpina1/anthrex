@@ -7,14 +7,14 @@
 //! was given at startup (`local_hhmm`). No clock is read here.
 
 use super::run_format::{
-    billable, clean, format_duration, format_tokens, kind_glyph, local_hhmm, progress_text,
-    reason_text, rows, session_text,
+    clean, format_duration, kind_glyph, local_hhmm, progress_text, reason_text, rows, session_text,
 };
 use super::run_orch::{handled_rows, handoff_text, orchestrator_text, untrusted_text};
 use super::{Field, Inspection, field};
 use crate::app::{App, state_text};
 use crate::tree::RowKind;
 use common::labels::{kinds_scale, source_label};
+use common::numbers::tokens;
 use proto::{
     AgentRoundInfo, IdleOrchestrator, PlannerInfo, PlannerState, RoundInfo, RoundOrigin,
     RoundOutcome, RunInfo, RunPath, RunState, Runtime, ScoutInfo, ScoutState, TaskInfo, TaskState,
@@ -270,31 +270,35 @@ fn agents_text(run: &RunInfo, app: &App) -> String {
     text
 }
 
+/// Milestone 9.19 decision 2: `tokens <billed> (all roles)` from the daemon's usage,
+/// or, without it, `tokens ≥<billed> (tasks only)` from the task rounds' (a lower
+/// bound: the orchestrator's, the deciders' and the design agents' are not there); the
+/// cache share of input; the workers' tool calls.
 fn spend_text(run: &RunInfo) -> String {
-    let usage = run
-        .usage
-        .as_ref()
-        .map(|usage| usage.total)
-        .unwrap_or_else(|| {
+    let (usage, scope) = match run.usage.as_ref() {
+        Some(usage) => (usage.total, ("", "all roles")),
+        None => {
             let mut sum = TokenUsage::default();
             for round in run.tasks.iter().flat_map(|task| &task.rounds) {
                 sum += round.usage;
             }
-            sum
-        });
-    let mut text = format!("tokens {}", format_tokens(billable(&usage)));
+            (sum, ("≥", "tasks only"))
+        }
+    };
+    let (at_least, covers) = scope;
+    let mut text = format!("tokens {at_least}{} ({covers})", tokens(usage.billable()));
     let denominator =
         u128::from(usage.input) + u128::from(usage.cache_read) + u128::from(usage.cache_write);
     // Omitted when the denominator is 0 (decision 31).
     if let Some(share) = (u128::from(usage.cache_read) * 100).checked_div(denominator) {
-        text.push_str(&format!(" (cache {share}%)"));
+        text.push_str(&format!(" · cache hits {share}% of input"));
     }
     let calls: u64 = run
         .tasks
         .iter()
         .map(|task| u64::from(task.spent_total.tool_calls))
         .sum();
-    text.push_str(&format!(" · tool calls {calls}"));
+    text.push_str(&format!(" · worker tool calls {calls}"));
     if let Some(left) = run.estimate_left_secs {
         text.push_str(&format!(" · est. left ~{}", format_duration(left)));
     }

@@ -270,7 +270,7 @@ fn settings_doc_brakes_default_when_missing() {
 
 #[test]
 fn run_record_handoff_is_optional_and_history_version_stays() {
-    assert_eq!(HISTORY_VERSION, 5);
+    assert_eq!(HISTORY_VERSION, 6);
     let mut runs = history_lines(include_str!("m914_history.jsonl"))
         .into_iter()
         .filter_map(|line| match line {

@@ -78,7 +78,7 @@ fn task_record_marks_the_pattern_and_round() {
         "before the crown, a raced task records the winner's route"
     );
     assert_eq!(r.writer_failures, 0);
-    // HISTORY_VERSION stays 5: the line it writes reads back unchanged.
+    // HISTORY_VERSION stayed 5 for it: the line it writes reads back unchanged.
     let line = serde_json::to_string(&HistoryLine::Task(r.clone())).unwrap();
     let back: HistoryLine = serde_json::from_str(&line).unwrap();
     assert_eq!(back, HistoryLine::Task(r));

@@ -92,7 +92,9 @@ pub struct PhaseSecs {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunUsage {
     pub total: TokenUsage,
-    /// Keyed `worker`, `reviewer`, `scout`, `decider`, `orchestrator`.
+    /// Keyed `worker`, `reviewer`, `scout`, `decider`, `orchestrator`, `planner`,
+    /// `brainstormer` and `doc_reviewer` (the design roles from milestone 9.19, decision
+    /// 2); `total` sums every key.
     pub by_role: BTreeMap<String, TokenUsage>,
     pub decider_calls: u32,
     pub decider_fallbacks: u32,

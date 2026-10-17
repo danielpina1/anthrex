@@ -49,7 +49,9 @@ fn run_usage_sums_roles() {
     assert_eq!(
         by_role,
         vec![
+            ("brainstormer", TokenUsage::default()),
             ("decider", usage(8 + 16)),
+            ("doc_reviewer", TokenUsage::default()),
             ("orchestrator", usage(64)),
             ("planner", usage(128)),
             ("reviewer", usage(4)),
@@ -69,7 +71,9 @@ fn a_new_run_shows_every_role_at_zero() {
     assert_eq!(
         roles,
         [
+            "brainstormer",
             "decider",
+            "doc_reviewer",
             "orchestrator",
             "planner",
             "reviewer",

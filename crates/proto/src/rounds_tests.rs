@@ -122,7 +122,7 @@ fn round_types_round_trip() {
     assert_eq!(
         serde_json::to_value(a_round_line()).unwrap(),
         json!({
-            "v": 5, "record_id": "run-a1b2/round/2", "at": 1_700_009_000u64,
+            "v": 6, "record_id": "run-a1b2/round/2", "at": 1_700_009_000u64,
             "run_id": "run-a1b2", "round": 2, "origin": "user", "outcome": "rejected",
             "tasks": 4, "merged": 3, "calls": 17, "minutes": 42
         })
@@ -316,7 +316,7 @@ fn old_snapshot_still_decodes() {
 
 #[test]
 fn round_history_line_round_trips() {
-    assert_eq!(HISTORY_VERSION, 5);
+    assert_eq!(HISTORY_VERSION, 6);
     let line = HistoryLine::Round(a_round_line());
     let json = serde_json::to_string(&line).unwrap();
     assert!(json.starts_with(r#"{"type":"round","#), "{json}");

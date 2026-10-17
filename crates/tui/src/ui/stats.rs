@@ -66,18 +66,6 @@ pub(crate) fn title(s: &StatsScreen, p: Palette) -> String {
     format!("stats {} {}", dot(p), one_line(&name))
 }
 
-/// Tokens as `anthrex run stats` writes them (`daemon/src/run/stats.rs::tokens`, the
-/// rule copied, not linked): `<n>`, `<n>.<d>k` under 10k, `<n>k`, or `<n>.<d>M`,
-/// rounded down.
-pub(crate) fn tokens(n: u64) -> String {
-    match n {
-        0..1_000 => n.to_string(),
-        1_000..10_000 => format!("{}.{}k", n / 1_000, n % 1_000 / 100),
-        10_000..1_000_000 => format!("{}k", n / 1_000),
-        _ => format!("{}.{}M", n / 1_000_000, n % 1_000_000 / 100_000),
-    }
-}
-
 /// Work time in minutes, rounded to the nearest minute as `anthrex run stats` does.
 pub(crate) fn work(secs: u64) -> String {
     format!("{}m", secs.saturating_add(30) / 60)
@@ -94,7 +82,7 @@ fn table(stats: &HistoryStats, p: Palette) -> Vec<Vec<String>> {
             r.merged.to_string(),
             or(r.median_lines.map(|n| n.to_string())),
             or(r.median_tool_calls.map(|n| n.to_string())),
-            or(r.median_tokens.map(tokens)),
+            or(r.median_tokens.map(common::numbers::tokens)),
             or(r.median_work_secs.map(work)),
             r.bounces.to_string(),
             r.reverted.to_string(),

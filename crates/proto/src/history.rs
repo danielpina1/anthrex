@@ -18,9 +18,12 @@ use crate::tuning::{RaceLane, TaskPattern, TuningReport};
 /// The `v` every record written now carries. Milestone 9 (decision 43) raised it from
 /// 1 with the `role_route` line, milestone 9.1 (decision 57) to 3 with the `tier`,
 /// `flaky` and `bisect` lines, milestone 9.2 (decision 44) to 4 with the `stage` line,
-/// milestone 9.3 (KG §2.6) to 5 with the `round` line; older lines still decode
+/// milestone 9.3 (KG §2.6) to 5 with the `round` line, milestone 9.19 (decision 2) to 6:
+/// from `v` 6 a `phase` line's `agents[].tokens` are billed tokens (input, cache writes
+/// and output; before, they counted cache reads too), and a `run` line's `usage`
+/// includes the design roles (`brainstormer`, `doc_reviewer`). Older lines still decode
 /// unchanged.
-pub const HISTORY_VERSION: u32 = 5;
+pub const HISTORY_VERSION: u32 = 6;
 
 /// One line of `history.jsonl`, tagged `"type": "task" | "run" | "revert" |
 /// "role_route" | "tier" | "flaky" | "bisect" | "stage" | "round" | "phase"`.
@@ -40,7 +43,8 @@ pub enum HistoryLine {
     Stage(StageLine),
     /// Milestone 9.3 (KG §2.6).
     Round(crate::rounds::RoundLine),
-    /// Milestone 9.6 decision 32; `HISTORY_VERSION` stays 5 (an older reader skips it).
+    /// Milestone 9.6 decision 32; the history version stayed 5 (an older reader skips it).
+    /// From `v` 6 its agents' tokens are billed tokens (milestone 9.19 decision 2).
     Phase(crate::design::PhaseRecord),
 }
 

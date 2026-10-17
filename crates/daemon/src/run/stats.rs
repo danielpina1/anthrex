@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
-pub(crate) use common::text::tokens;
+pub(crate) use common::numbers::tokens;
 
 use proto::{
     DeciderSource, FlakyProposal, HistoryLine, HistoryStats, StatsRow, TaskOutcome, TaskRecord,
@@ -52,7 +52,8 @@ fn billable(task: &TaskRecord) -> u64 {
 }
 
 /// One class's row over its tasks. Medians are over the merged tasks (lines over
-/// those with a measured diff).
+/// those with a measured diff; milestone 9.19 decision 2: tokens over those that
+/// recorded billed tokens, as the refit's ruling T8-5, `None` when none did).
 fn row(class: &str, tasks: &[&TaskRecord], reverted: &dyn Fn(&TaskRecord) -> bool) -> StatsRow {
     let merged: Vec<&TaskRecord> = tasks.iter().copied().filter(|t| is_merged(t)).collect();
     StatsRow {
@@ -66,7 +67,13 @@ fn row(class: &str, tasks: &[&TaskRecord], reverted: &dyn Fn(&TaskRecord) -> boo
                 .collect(),
         ),
         median_tool_calls: median(merged.iter().map(|t| t.tool_calls).collect()),
-        median_tokens: median(merged.iter().map(|t| billable(t)).collect()),
+        median_tokens: median(
+            merged
+                .iter()
+                .map(|t| billable(t))
+                .filter(|&n| n > 0)
+                .collect(),
+        ),
         median_work_secs: median(merged.iter().map(|t| t.phases.working).collect()),
         bounces: tasks.iter().map(|t| bounces(t)).sum(),
         reverted: merged.iter().filter(|t| reverted(t)).count() as u32,

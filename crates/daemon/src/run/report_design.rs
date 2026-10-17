@@ -14,7 +14,8 @@ const NOT_READ_BACK: &str = "The approved spec's requirements could not be read 
 /// The section, after the tasks (`report.rs::render`): the table of the approved
 /// spec's requirements (none before its approval or its read-back), then the spend
 /// line, exactly `design phases: <calls> calls, <tokens> tokens, <m> min, <v> gate versions`: the
-/// design agents' calls and tokens, the orchestrator phases' clock time in whole
+/// design agents' calls and billed tokens (`numbers::tokens`, milestone 9.19 decision 2),
+/// the orchestrator phases' clock time in whole
 /// minutes, and the three gates' versions.
 pub fn section(run: &Run, out: &mut String) {
     let Some(design) = run.orch.design.as_ref() else {
@@ -56,7 +57,7 @@ pub fn section(run: &Run, out: &mut String) {
     out.push_str(&format!(
         "\ndesign phases: {} calls, {} tokens, {} min, {versions} gate versions\n",
         totals.calls,
-        totals.tokens,
+        common::numbers::tokens(totals.tokens),
         totals.secs / 60
     ));
 }

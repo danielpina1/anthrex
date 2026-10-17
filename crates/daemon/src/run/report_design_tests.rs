@@ -27,6 +27,11 @@ fn spend(label: &str, role: AgentRole, (calls, tokens): (u32, u64)) -> AgentSpen
         sessions: 1,
         calls,
         tokens,
+        usage: proto::TokenUsage {
+            input: tokens,
+            cache_read: 1_000_000,
+            ..proto::TokenUsage::default()
+        },
         secs: 0,
         outcome: "ok".into(),
     }
@@ -93,7 +98,7 @@ const SECTION: &str = "
 | R3 | t3 | merged |
 | R4 | - | not covered |
 
-design phases: 64 calls, 750000 tokens, 25 min, 4 gate versions
+design phases: 64 calls, 750k tokens, 25 min, 4 gate versions
 ";
 
 /// Decision 27: a row per approved requirement, its covering tasks and their outcome

@@ -32,9 +32,9 @@ fn run_file(data: &Path) -> std::path::PathBuf {
 #[test]
 fn a_saved_run_records_its_format() {
     let data = tempfile::tempdir().unwrap();
-    assert_eq!(RUN_FORMAT, 6);
+    assert_eq!(RUN_FORMAT, 7);
     let json = saved_json(data.path());
-    assert_eq!(json["format"], serde_json::json!(6), "{json}");
+    assert_eq!(json["format"], serde_json::json!(7), "{json}");
 }
 
 /// Pinning (milestone 9.13, decision 36's bump to 2): a `run.json` a 9.11 or 9.12
@@ -148,15 +148,106 @@ fn a_format_5_run_loads() {
     save_run(&again).unwrap();
     let saved: serde_json::Value =
         serde_json::from_slice(&std::fs::read(again.data_dir.join(RUN_FILE)).unwrap()).unwrap();
-    assert_eq!(saved["format"], serde_json::json!(6));
+    assert_eq!(saved["format"], serde_json::json!(7));
     let text = saved.to_string();
     for key in ["plan_frames", "\"frame\"", "replaces", "non_goals"] {
         assert!(!text.contains(key), "{key} in {text}");
     }
 }
 
+/// Pinning (milestone 9.19, ruling R10's bump to 7): the `run.json` a 9.18 daemon
+/// writes (stamped format 6; a brainstorming run whose two brainstormers' sessions
+/// ended, captured by a throwaway engine test on 9.18's code before the bump, task
+/// M9.19.4) still loads. Its design spend has no raw `usage`: its stored tokens
+/// counted cache reads and cannot be split, so its history line reads 0 tokens, which
+/// the refit's `tokens > 0` filter skips. Saved again, it is format 7 with `usage`.
+#[test]
+fn a_format_6_run_loads() {
+    let text = include_str!("../fixtures/run/m918-run.json");
+    let json: serde_json::Value = serde_json::from_str(text).unwrap();
+    assert_eq!(json["format"], serde_json::json!(6));
+    let agents = &json["orch"]["design"]["spend"][0]["agents"];
+    assert!(
+        agents.as_array().is_some_and(|a| !a.is_empty()),
+        "9.18 spend"
+    );
+    assert!(agents[0].get("usage").is_none(), "{agents}");
+    let id = json["id"].as_str().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let dir = data.path().join("runs").join(id);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(RUN_FILE), text).unwrap();
+    let (runs, problems) = load_all(data.path());
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(runs.len(), 1);
+    let run = &runs[0].0;
+    assert_eq!(run.id, id);
+    let design = run.orch.design.as_ref().expect("its design state");
+    let loaded = &design.spend[0].agents;
+    assert_eq!(loaded.len(), 2);
+    for agent in loaded {
+        assert!(agent.tokens > 0, "{agent:?}");
+        assert_eq!(agent.usage, proto::TokenUsage::default());
+        assert_eq!(agent.phase_agent().tokens, 0, "{agent:?}");
+    }
+    let mut again = run.clone();
+    again.data_dir = data.path().join("again");
+    save_run(&again).unwrap();
+    let saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(again.data_dir.join(RUN_FILE)).unwrap()).unwrap();
+    assert_eq!(saved["format"], serde_json::json!(7));
+    assert!(saved["orch"]["design"]["spend"][0]["agents"][0]["usage"].is_object());
+}
+
+/// Milestone 9.19 decision 2: a design agent's raw usage reaches `run.json`, stamped
+/// format 7, and survives a load.
+#[test]
+fn a_format_7_run_round_trips() {
+    let data = tempfile::tempdir().unwrap();
+    let mut run = plain_run(data.path());
+    let usage = proto::TokenUsage {
+        input: 3_000,
+        output: 1_000,
+        cache_read: 1_000_000,
+        cache_write: 500,
+    };
+    let mut design = daemon::run::design::state::DesignState::default();
+    design.add_session(
+        1,
+        "brainstorming",
+        daemon::run::design::spend::AgentSpend {
+            label: "claude".into(),
+            role: proto::AgentRole::Brainstormer,
+            route: proto::Route {
+                runtime: proto::Runtime::Claude,
+                model: "claude-opus-5-5".into(),
+                effort: proto::Effort::HIGH,
+            },
+            sessions: 0,
+            calls: 12,
+            tokens: usage.billable(),
+            usage,
+            secs: 300,
+            outcome: daemon::run::design::spend::OK.into(),
+        },
+    );
+    run.orch.design = Some(design);
+    save_run(&run).unwrap();
+    let json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(run_file(data.path())).unwrap()).unwrap();
+    assert_eq!(json["format"], serde_json::json!(7));
+    let saved = &json["orch"]["design"]["spend"][0]["agents"][0];
+    assert_eq!(saved["usage"]["cache_read"], serde_json::json!(1_000_000));
+    assert_eq!(saved["tokens"], serde_json::json!(4_500));
+    let (runs, problems) = load_all(data.path());
+    assert!(problems.is_empty(), "{problems:?}");
+    let loaded = &runs[0].0.orch.design.as_ref().unwrap().spend[0].agents[0];
+    assert_eq!(loaded.usage, usage);
+    assert_eq!(runs[0].0.orch.design, run.orch.design);
+}
+
 /// Milestone 9.16 (ruling C2): a run's failovers reach `run.json` stamped with this
-/// build's format (5 then, 6 since milestone 9.17) and survive a load.
+/// build's format (5 then, 6 since milestone 9.17, 7 since 9.19) and survive a load.
 #[test]
 fn failovers_are_saved_as_format_5() {
     let data = tempfile::tempdir().unwrap();
@@ -295,7 +386,7 @@ async fn a_run_from_a_newer_anthrex_is_left_alone() {
     let data = dir.path().join("data");
     let mut json = saved_json(&data);
     let object = json.as_object_mut().unwrap();
-    object.insert("format".into(), serde_json::json!(7));
+    object.insert("format".into(), serde_json::json!(8));
     object.insert(
         "a_field_from_the_future".into(),
         serde_json::json!({"kept": true}),
@@ -312,7 +403,7 @@ async fn a_run_from_a_newer_anthrex_is_left_alone() {
     assert_eq!(
         problems,
         [format!(
-            "run {RUN_ID} skipped: written by a newer anthrex (run format 7; this one reads up to 6); left as it is"
+            "run {RUN_ID} skipped: written by a newer anthrex (run format 8; this one reads up to 7); left as it is"
         )]
     );
     assert!(
@@ -370,7 +461,7 @@ fn a_run_whose_format_is_not_a_whole_number_is_left_alone() {
         assert_eq!(
             problems,
             [format!(
-                "run {RUN_ID} skipped: written by a newer anthrex (run format {format}; this one reads up to 6); left as it is"
+                "run {RUN_ID} skipped: written by a newer anthrex (run format {format}; this one reads up to 7); left as it is"
             )],
             "{format}"
         );

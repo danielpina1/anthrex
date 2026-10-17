@@ -275,6 +275,13 @@ fn the_state_survives_save_and_load() {
                 sessions: 2,
                 calls: 11,
                 tokens: 1_200,
+                // Milestone 9.19 decision 2: the sessions' raw usage.
+                usage: proto::TokenUsage {
+                    input: 700,
+                    output: 300,
+                    cache_read: 90_000,
+                    cache_write: 200,
+                },
                 secs: 300,
                 outcome: "ok".into(),
             }],

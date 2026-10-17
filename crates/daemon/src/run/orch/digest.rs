@@ -459,11 +459,7 @@ fn task_notes(run: &Run) -> Vec<Value> {
 
 /// Billable tokens across the run (saturating) and every round's tool calls.
 fn spend(run: &Run) -> Value {
-    let usage = crate::run::snapshot::run_usage(run).total;
-    let tokens = usage
-        .input
-        .saturating_add(usage.cache_write)
-        .saturating_add(usage.output);
+    let tokens = crate::run::snapshot::run_usage(run).total.billable();
     let tool_calls: u64 = run
         .tasks
         .iter()

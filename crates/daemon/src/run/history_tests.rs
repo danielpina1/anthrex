@@ -25,10 +25,11 @@ mod routing;
 mod signatures;
 
 /// M9.8.14: the checked-in milestone-9 history (its routes carry `strength`) still
-/// decodes with `HISTORY_VERSION` 5; the key is ignored and never written back.
+/// decodes (written at `HISTORY_VERSION` 2, read by 6); the key is ignored and never written
+/// back.
 #[test]
 fn an_old_routing_line_still_decodes() {
-    assert_eq!(HISTORY_VERSION, 5);
+    assert_eq!(HISTORY_VERSION, 6);
     let text = include_str!("../../../proto/src/m9_history_v2.jsonl");
     let lines: Vec<proto::HistoryLine> = (text.lines())
         .map(|l| serde_json::from_str(l).unwrap_or_else(|e| panic!("{e}: {l}")))

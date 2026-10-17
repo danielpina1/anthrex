@@ -1,6 +1,7 @@
 //! One task's section of the run report (`## <id>: <title>`). Split out of `report.rs`
 //! by AGENTS.md's file-size rule. Pure, same terms as `report.rs`.
 
+use common::numbers::tokens;
 use proto::{DeciderSource, Effort, LaneInfo, LaneState, PairPhase, Route, Runtime, Severity};
 
 use super::contract::{mode_label, sha7, size_label};
@@ -180,7 +181,8 @@ fn race_lines(task: &Task, out: &mut String) {
             let cost = race_cost(task);
             format!(
                 "{head}; race cost: {} calls, {} tokens",
-                cost.tool_calls, cost.tokens
+                cost.tool_calls,
+                tokens(cost.tokens)
             )
         }
         None => head,
@@ -267,14 +269,14 @@ fn budget_and_spend(task: &Task, now: u64, out: &mut String) {
         budget.minutes,
         budget
             .tokens
-            .map_or(String::new(), |t| format!(", {t} tokens"))
+            .map_or(String::new(), |t| format!(", {} tokens", tokens(t)))
     ));
     let total = ladder::total_spend(task, now);
     out.push_str(&format!(
         "Spent: {} tool calls, {}m, {} tokens (billable)\n",
         total.tool_calls,
         total.secs / 60,
-        total.tokens
+        tokens(total.tokens)
     ));
     if task.epoch.is_some() {
         let since_retry = epoch_spend(task, now);
@@ -283,7 +285,7 @@ fn budget_and_spend(task: &Task, now: u64, out: &mut String) {
                 "Spent since last retry: {} tool calls, {}m, {} tokens (billable)\n",
                 since_retry.tool_calls,
                 since_retry.secs / 60,
-                since_retry.tokens
+                tokens(since_retry.tokens)
             ));
         }
     }
@@ -295,7 +297,7 @@ fn budget_and_spend(task: &Task, now: u64, out: &mut String) {
             round.round,
             round.turns,
             round.tool_calls,
-            round.usage.billable(),
+            tokens(round.usage.billable()),
             round.denials
         ));
     }

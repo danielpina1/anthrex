@@ -303,12 +303,9 @@ pub(super) fn ended(
     if agent.session != session {
         return;
     }
-    // Ruling T13-1: its calls are summed over its sessions, as its tokens are.
-    agent.tokens = (agent.tokens)
-        .saturating_add(usage.input)
-        .saturating_add(usage.output)
-        .saturating_add(usage.cache_read)
-        .saturating_add(usage.cache_write);
+    // Ruling T13-1: its calls are summed over its sessions, as its tokens are; billed
+    // tokens (milestone 9.19 decision 2).
+    agent.tokens = agent.tokens.saturating_add(usage.billable());
     agent.calls += calls;
     let done = matches!(
         agent.state,

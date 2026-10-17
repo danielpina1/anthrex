@@ -2,13 +2,14 @@
 //! Interfaces "Inspector contents, exact": Agent round). Pure, as `run.rs` is.
 
 use super::run_format::{
-    billable, clean, counts_text, finding_text, format_duration, format_tokens, kind_glyph,
-    local_hhmm, most_severe, rank, route_label, rows, session_text,
+    clean, counts_text, finding_text, format_duration, kind_glyph, local_hhmm, most_severe, rank,
+    route_label, rows, session_text,
 };
 use super::run_patterns;
 use super::{Field, Inspection, field};
 use crate::app::App;
 use crate::tree::{DisplayRound, RowKind, display_rounds, round_label_with_lane};
+use common::numbers::tokens;
 use proto::{AgentRole, RaceLane, Route, RunInfo, Severity, TaskInfo};
 
 /// An agent round (Interfaces "Agent round").
@@ -130,7 +131,7 @@ fn worker_fields(
             "turns {} · tool calls {} · tokens {}",
             info.turns,
             info.tool_calls,
-            format_tokens(billable(&info.usage))
+            tokens(info.usage.billable())
         );
         if info.denials > 0 {
             activity.push_str(&format!(" · {} denied", info.denials));

@@ -1,5 +1,5 @@
 //! What every run inspection shares (milestone 8c decisions 30 and 31): durations,
-//! token counts, local `hh:mm`, progress bars and lines, bounded free text, the words
+//! local `hh:mm` (token counts are `common::numbers::tokens`, milestone 9.19 decision 2), progress bars and lines, bounded free text, the words
 //! for routes, sizes and findings, and the `session` field. Pure: no clock is read.
 
 use super::{Field, FieldLayout, Inspection};
@@ -7,8 +7,7 @@ use crate::app::App;
 use crate::graph::paint::style::node_glyph;
 use crate::tree::{NodeKey, Row, RowKind};
 use proto::{
-    BlockReason, Effort, Finding, Severity, Size, TaskInfo, TaskState, TestMode, TokenUsage,
-    WindowKind,
+    BlockReason, Effort, Finding, Severity, Size, TaskInfo, TaskState, TestMode, WindowKind,
 };
 use ratatui::text::Span;
 use std::path::Path;
@@ -25,17 +24,6 @@ pub fn format_duration(secs: u64) -> String {
         format!("{}m", secs / 60)
     } else {
         format!("{}h{:02}m", secs / 3600, secs % 3600 / 60)
-    }
-}
-
-/// Decision 31: `{n}`, `{n/1000}k`, or `{n/1 000 000}.{tenths}M`.
-pub fn format_tokens(n: u64) -> String {
-    if n < 1000 {
-        n.to_string()
-    } else if n < 1_000_000 {
-        format!("{}k", n / 1000)
-    } else {
-        format!("{}.{}M", n / 1_000_000, n % 1_000_000 / 100_000)
     }
 }
 
@@ -102,15 +90,6 @@ pub(super) fn rows(
         layout: FieldLayout::Rows,
         ..Default::default()
     }
-}
-
-/// Tokens actually billed, as `TokenUsage::billable` counts them, but saturating: the
-/// numbers come from a stream or an OTLP export and must never panic the view.
-pub(super) fn billable(usage: &TokenUsage) -> u64 {
-    usage
-        .input
-        .saturating_add(usage.cache_write)
-        .saturating_add(usage.output)
 }
 
 /// `waiting`, `working`, … — decision 30's category of a task state, `None` for merged

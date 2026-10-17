@@ -67,9 +67,13 @@ pub(super) fn breached(spend: Spend, budget: Budget) -> Option<String> {
         ));
     }
     match budget.tokens {
-        Some(tokens) if spend.tokens.saturating_mul(2) >= tokens.saturating_mul(3) => Some(
-            format!("{} tokens against a budget of {tokens}", spend.tokens),
-        ),
+        Some(tokens) if spend.tokens.saturating_mul(2) >= tokens.saturating_mul(3) => {
+            Some(format!(
+                "{} tokens against a budget of {}",
+                common::numbers::tokens(spend.tokens),
+                common::numbers::tokens(tokens)
+            ))
+        }
         _ => None,
     }
 }
@@ -134,4 +138,28 @@ pub(super) fn check_budget(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Effec
         outbox::queue(run, &id, budget_wrap_up(spend, budget), now);
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use proto::{Budget, Spend};
+
+    /// Milestone 9.19 decision 2: a token breach prints its tokens shortened.
+    #[test]
+    fn a_token_breach_is_shortened() {
+        let spend = Spend {
+            tool_calls: 1,
+            secs: 1,
+            tokens: 1_800_000,
+        };
+        let budget = Budget {
+            tool_calls: 100,
+            minutes: 100,
+            tokens: Some(1_200_000),
+        };
+        assert_eq!(
+            super::breached(spend, budget).as_deref(),
+            Some("1.8M tokens against a budget of 1.2M")
+        );
+    }
 }

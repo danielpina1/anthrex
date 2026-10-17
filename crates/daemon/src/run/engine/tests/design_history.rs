@@ -47,6 +47,21 @@ fn end_after(
     outcome: ScoutEnd,
     (secs, calls, tokens): (u64, u32, u64),
 ) {
+    let usage = TokenUsage {
+        input: tokens - tokens / 4,
+        output: tokens / 4,
+        ..TokenUsage::default()
+    };
+    end_using(fx, (role, label, session), outcome, (secs, calls, usage));
+}
+
+/// [`end_after`] with the session's usage given whole.
+fn end_using(
+    fx: &mut Fixture,
+    (role, label, session): (AgentRole, &str, u32),
+    outcome: ScoutEnd,
+    (secs, calls, usage): (u64, u32, TokenUsage),
+) {
     let design = fx.run().orch.design.as_ref().unwrap();
     let agent = (design.brainstormers.iter().chain(&design.reviewer))
         .find(|a| a.label == label)
@@ -61,11 +76,7 @@ fn end_after(
             label: label.into(),
             session,
             outcome,
-            usage: TokenUsage {
-                input: tokens - tokens / 4,
-                output: tokens / 4,
-                ..TokenUsage::default()
-            },
+            usage,
             calls,
         }),
     );
@@ -190,6 +201,64 @@ fn a_phase_record_is_written_per_phase_with_agents_and_versions() {
     assert_eq!((record.gate_versions, record.disputed), (1, 0));
     assert_eq!(agent(record, 0), (AgentRole::DocReviewer, 2, 500, 40, "ok"));
     assert_eq!(lines.len(), 3);
+}
+
+/// Milestone 9.19 decision 2: a design agent's tokens are billed tokens (input, cache
+/// writes and output); its cache reads are kept in its raw `usage` only. The live sums
+/// (`DesignAgent.tokens`), the phase's spend and its history line all agree.
+#[test]
+fn design_spend_counts_billed_tokens() {
+    let mut fx = brainstorming();
+    fx.run_mut().repo_dir = REPO.into();
+    let heavy = TokenUsage {
+        input: 3_000,
+        output: 1_000,
+        cache_read: 1_000_000,
+        cache_write: 500,
+    };
+    let current = |fx: &Fixture, k: usize| {
+        let a = &agents(fx)[k];
+        (a.session, a.window_id.unwrap())
+    };
+    let ((a, wa), (b, wb)) = (current(&fx, 0), current(&fx, 1));
+    assert!(answered(&submit_draft(&mut fx, wa, DRAFT)).0);
+    assert!(answered(&submit_draft(&mut fx, wb, &codex_draft())).0);
+    end_using(
+        &mut fx,
+        brainstormer("claude", a),
+        ScoutEnd::Reported,
+        (300, 12, heavy),
+    );
+    end_after(
+        &mut fx,
+        brainstormer("codex", b),
+        ScoutEnd::Reported,
+        (400, 20, 8_000),
+    );
+    let design = fx.run().orch.design.as_ref().unwrap();
+    let claude = (design.brainstormers.iter()).find(|x| x.label == "claude");
+    assert_eq!(claude.unwrap().tokens, 4_500);
+    let spend = &design.phase_spend(1, "brainstorming").unwrap().agents[0];
+    assert_eq!((spend.label.as_str(), spend.tokens), ("claude", 4_500));
+    assert_eq!(spend.usage, heavy);
+    assert_eq!(design.spend_totals().tokens, 4_500 + 8_000);
+
+    later(&mut fx, 100);
+    submitted(&mut fx, "brainstorm", REPORT);
+    later(&mut fx, 10);
+    act(&mut fx, DocGateKind::Brainstorm, DocGateAction::APPROVE).unwrap();
+    let lines = phase_lines(&fx);
+    assert_eq!(agent(&lines[0].1, 0).2, 4_500, "{lines:?}");
+
+    // A document reviewer's the same way.
+    later(&mut fx, 30);
+    reviewed(&mut fx, REVIEWER, three_findings());
+    let reviewer = (AgentRole::DocReviewer, "spec-r1", 1);
+    end_using(&mut fx, reviewer, ScoutEnd::Reported, (60, 5, heavy));
+    let design = fx.run().orch.design.as_ref().unwrap();
+    assert_eq!(design.reviewer.as_ref().unwrap().tokens, 4_500);
+    let spend = &design.phase_spend(1, "specifying").unwrap().agents[0];
+    assert_eq!((spend.tokens, spend.usage), (4_500, heavy));
 }
 
 /// A run with history off (no repository data directory) writes no phase line.

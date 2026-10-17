@@ -51,8 +51,9 @@ pub const RUN_TMP: &str = "run.json.tmp";
 /// in a pending `AppendHistory`, and the milestone's later `Run.handoff`. Format 6
 /// (milestone 9.17, pre-flight ruling C2): `RunOrch.plan_frames`, `EpicRecord.frame`,
 /// `DesignState.non_goals_section`, `DesignRound.non_goals_before`, `Task.replaces`,
-/// and the milestone's later `Finding.target` and `TaskNoteKind::Brief` notes.
-pub const RUN_FORMAT: u32 = 6;
+/// and the milestone's later `Finding.target` and `TaskNoteKind::Brief` notes. Format 7
+/// (milestone 9.19 decision 2): `AgentSpend.usage` in `DesignState.spend`.
+pub const RUN_FORMAT: u32 = 7;
 pub const JOURNAL_FILE: &str = "journal.jsonl";
 const JOURNAL_TMP: &str = "journal.jsonl.tmp";
 

@@ -62,7 +62,7 @@ fn gate_with(change: impl FnOnce(&mut proto::RunInfo)) -> App {
 
 const GATE_PROGRESS: &str = "░░░░░░░░░░░░░░░░░░  0/2 merged · 2 waiting";
 const GATE_AGENTS: &str = "workers 0/3 · readers 0/3 · claude ok";
-const NO_SPEND: &str = "tokens 0 · tool calls 0";
+const NO_SPEND: &str = "tokens ≥0 (tasks only) · worker tool calls 0";
 
 #[test]
 fn run_fields_match_the_mockup() {
@@ -89,7 +89,8 @@ fn run_fields_match_the_mockup() {
             ),
             (
                 "spend",
-                "tokens 1.8M (cache 71%) · tool calls 612 · est. left ~40m"
+                "tokens 1.8M (all roles) · cache hits 71% of input · worker tool calls 612 · est. \
+                 left ~40m"
             ),
             (
                 "gate",
@@ -222,7 +223,44 @@ fn run_spend_without_cache_or_estimate() {
     let inspection = inspect_node(&app, &run_key(RUN_ID));
     assert_eq!(
         value(&inspection, "spend"),
-        Some("tokens 1k (cache 25%) · tool calls 7")
+        Some("tokens ≥1.5k (tasks only) · cache hits 25% of input · worker tool calls 7")
+    );
+}
+
+/// Milestone 9.19 decision 2: the spend row says what its tokens cover. The daemon's
+/// `usage` covers every role; without it, only the task rounds' usage is known, a lower
+/// bound. The cache share is a share of input, and the calls are the workers'.
+#[test]
+fn the_spend_row_labels_its_scope() {
+    let app = gemini_with(|run| {
+        run.estimate_left_secs = None;
+        for task in &mut run.tasks {
+            task.spent_total.tool_calls = 0;
+        }
+        run.tasks[0].spent_total.tool_calls = 412;
+    });
+    let inspection = inspect_node(&app, &run_key("r1"));
+    assert_eq!(
+        value(&inspection, "spend"),
+        Some("tokens 1.8M (all roles) · cache hits 71% of input · worker tool calls 412")
+    );
+
+    let app = gate_with(|run| {
+        run.usage = None;
+        let mut round = crate::tree::run_fixtures::worker(1, None, proto::Runtime::Claude, 1);
+        round.usage = TokenUsage {
+            input: 1_000_000,
+            output: 200_000,
+            cache_read: 3_000_000,
+            cache_write: 50_000,
+        };
+        run.tasks[0].rounds = vec![round];
+        run.tasks[0].spent_total.tool_calls = 7;
+    });
+    let inspection = inspect_node(&app, &run_key(RUN_ID));
+    assert_eq!(
+        value(&inspection, "spend"),
+        Some("tokens ≥1.2M (tasks only) · cache hits 74% of input · worker tool calls 7")
     );
 }
 
@@ -481,8 +519,8 @@ fn hostile_run_values_never_panic_and_stay_one_line() {
     assert_eq!(
         value(&inspection, "spend"),
         Some(
-            "tokens 18446744073709.5M (cache 33%) · tool calls 38654705655 · est. left \
-             ~5124095576030431h00m"
+            "tokens 18446744073709.5M (all roles) · cache hits 33% of input · worker tool calls \
+             38654705655 · est. left ~5124095576030431h00m"
         )
     );
     assert_eq!(inspection.right.as_deref(), Some("running · 0s"));

@@ -439,7 +439,7 @@ pub use panel::render;
 pub use panel::render_in;
 #[cfg(test)]
 pub use run_format::progress_bar;
-pub use run_format::{format_duration, format_tokens, local_hhmm};
+pub use run_format::{format_duration, local_hhmm};
 pub(crate) use run_stage_pr::delivering;
 
 #[cfg(test)]

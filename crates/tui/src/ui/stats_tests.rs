@@ -173,7 +173,7 @@ fn stats_cells_use_the_clis_units() {
         (2_345_678, "2.3M"),
     ];
     for (n, want) in cases {
-        assert_eq!(super::tokens(n), want, "{n}");
+        assert_eq!(common::numbers::tokens(n), want, "{n}");
     }
     for (secs, want) in [
         (0, "0m"),

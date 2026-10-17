@@ -312,6 +312,43 @@ fn tokens_are_shown_as_n_k_or_m() {
     }
 }
 
+/// Milestone 9.19 decision 2: the token median leaves out the merged tasks that
+/// recorded no billed tokens (as the refit does, ruling T8-5); a class with none left
+/// shows `-`. Lines, calls and work time still count every merged task.
+#[test]
+fn stats_median_tokens_skips_unrecorded() {
+    let lines: Vec<HistoryLine> = [
+        merged("r1", "a1", Size::S, (10, 5, 2_000, 60)),
+        merged("r1", "a2", Size::S, (20, 7, 0, 120)),
+        merged("r1", "a3", Size::S, (30, 9, 6_000, 180)),
+    ]
+    .into_iter()
+    .map(HistoryLine::Task)
+    .collect();
+    let stats = aggregate(&lines, Path::new(PATH));
+    let s = row(&stats, "S");
+    // The lower median of 2 000 and 6 000, not of 0, 2 000 and 6 000.
+    assert_eq!(s.median_tokens, Some(2_000));
+    assert_eq!(
+        (s.median_tool_calls, s.median_work_secs),
+        (Some(7), Some(120))
+    );
+
+    let lines: Vec<HistoryLine> = [
+        merged("r1", "a1", Size::S, (10, 5, 0, 60)),
+        merged("r1", "a2", Size::S, (20, 7, 0, 120)),
+    ]
+    .into_iter()
+    .map(HistoryLine::Task)
+    .collect();
+    let stats = aggregate(&lines, Path::new(PATH));
+    assert_eq!(row(&stats, "S").median_tokens, None);
+    let text = render(&stats);
+    let s_line = text.lines().find(|l| l.starts_with("S ")).unwrap();
+    let cells: Vec<&str> = s_line.split_whitespace().collect();
+    assert_eq!(cells[5], "-", "{text}");
+}
+
 fn revert(run: &str, task: Option<&str>, n: u32) -> HistoryLine {
     HistoryLine::Revert(RevertRecord {
         v: HISTORY_VERSION,

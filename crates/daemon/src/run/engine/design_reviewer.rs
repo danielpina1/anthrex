@@ -260,12 +260,9 @@ pub(super) fn ended(
     let Some(agent) = current(run, label, session) else {
         return;
     };
-    // Ruling T13-1: its calls are summed over its sessions, as its tokens are.
-    agent.tokens = (agent.tokens)
-        .saturating_add(usage.input)
-        .saturating_add(usage.output)
-        .saturating_add(usage.cache_read)
-        .saturating_add(usage.cache_write);
+    // Ruling T13-1: its calls are summed over its sessions, as its tokens are; billed
+    // tokens (milestone 9.19 decision 2).
+    agent.tokens = agent.tokens.saturating_add(usage.billable());
     agent.calls += calls;
     // Ruling WB-A-W1: held findings are submitted ones.
     let (done, running) = (

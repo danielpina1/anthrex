@@ -2,9 +2,10 @@
 //! sub-agent in the run view (decisions 29–31, Interfaces "Inspector contents, exact").
 
 use super::run_tests::{app_of, inspect_node, pairs, value};
-use crate::inspector::{FieldLayout, format_duration, format_tokens, progress_bar};
+use crate::inspector::{FieldLayout, format_duration, progress_bar};
 use crate::tree::NodeKey;
 use crate::tree::run_fixtures::{GEMINI_NOW, gemini_fixture, planner_fixture, three_task_fixture};
+use common::numbers::tokens;
 use proto::{PlannerState, SubagentInfo, SubagentState};
 
 #[test]
@@ -199,12 +200,15 @@ fn format_duration_cases() {
     assert!(format_duration(u64::MAX).ends_with('m'));
 }
 
+/// Milestone 9.19 decision 2: the inspector's tokens are `numbers::tokens`, whose
+/// `<n>.<d>k` band under 10k replaces decision 31's `<n>k` there.
 #[test]
-fn format_tokens_cases() {
+fn tokens_cases() {
     let cases = [
         (0, "0"),
         (999, "999"),
-        (1000, "1k"),
+        (1000, "1.0k"),
+        (1_500, "1.5k"),
         (410_000, "410k"),
         (999_999, "999k"),
         (1_000_000, "1.0M"),
@@ -213,7 +217,7 @@ fn format_tokens_cases() {
         (u64::MAX, "18446744073709.5M"),
     ];
     for (n, text) in cases {
-        assert_eq!(format_tokens(n), text, "{n}");
+        assert_eq!(tokens(n), text, "{n}");
     }
 }
 

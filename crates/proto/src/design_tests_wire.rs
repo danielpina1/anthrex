@@ -152,7 +152,7 @@ fn run_info_without_design_decodes() {
 
 #[test]
 fn phase_history_line_round_trips() {
-    assert_eq!(HISTORY_VERSION, 5);
+    assert_eq!(HISTORY_VERSION, 6);
     let line = HistoryLine::Phase(a_phase_record());
     both_ways(&line);
     let json = serde_json::to_value(&line).unwrap();

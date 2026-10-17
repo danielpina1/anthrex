@@ -313,3 +313,76 @@ fn a_waiting_failed_turn_is_in_the_snapshot() {
     let plain = &info(&snap, &id, "t0").rounds[0];
     assert_eq!((&plain.failed_error, plain.failed_until), (&None, None));
 }
+
+/// Milestone 9.19 decision 2: the design agents' raw usage is credited under
+/// `brainstormer` and `doc_reviewer`, so the run's total covers every role.
+#[test]
+fn run_usage_credits_design_agents() {
+    use crate::run::design::spend::{AgentSpend, OK};
+    use crate::run::design::state::DesignState;
+    let usage = |n: u64| TokenUsage {
+        input: n,
+        output: 10 * n,
+        cache_read: 100 * n,
+        cache_write: 1000 * n,
+    };
+    let spend = |label: &str, role, n| AgentSpend {
+        label: label.into(),
+        role,
+        route: proto::Route {
+            runtime: proto::Runtime::Codex,
+            model: "m".into(),
+            effort: proto::Effort::HIGH,
+        },
+        sessions: 0,
+        calls: 1,
+        tokens: usage(n).billable(),
+        usage: usage(n),
+        secs: 1,
+        outcome: OK.into(),
+    };
+    let mut run = run_of(1);
+    run.orchestrator_usage = usage(1);
+    let mut design = DesignState::default();
+    design.add_session(
+        1,
+        "brainstorming",
+        spend("claude", AgentRole::Brainstormer, 2),
+    );
+    design.add_session(
+        1,
+        "brainstorming",
+        spend("claude", AgentRole::Brainstormer, 4),
+    );
+    design.add_session(1, "specifying", spend("spec-r1", AgentRole::DocReviewer, 8));
+    design.add_session(2, "planning", spend("plan-r1", AgentRole::DocReviewer, 16));
+    run.orch.design = Some(design);
+    let got = run_usage(&run);
+    assert_eq!(got.by_role["brainstormer"], usage(2 + 4));
+    assert_eq!(got.by_role["doc_reviewer"], usage(8 + 16));
+    assert_eq!(got.total, usage(1 + 2 + 4 + 8 + 16));
+}
+
+/// Milestone 9.19 decision 2: a format-6 `run.json` (captured from 9.18's engine) has
+/// design spend without `usage`; its stored tokens counted cache reads and cannot be
+/// split, so it loads and credits nothing.
+#[test]
+fn a_format_6_runs_design_spend_credits_nothing() {
+    let text = include_str!("../../tests/fixtures/run/m918-run.json");
+    let id = serde_json::from_str::<serde_json::Value>(text).unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let data = tempfile::tempdir().unwrap();
+    let dir = crate::run::journal::runs_dir(data.path()).join(&id);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(crate::run::journal::RUN_FILE), text).unwrap();
+    let (runs, problems) = crate::run::journal::load_all(data.path());
+    assert!(problems.is_empty(), "{problems:?}");
+    let run = &runs[0].0;
+    let design = run.orch.design.as_ref().unwrap();
+    assert!(design.spend[0].agents.iter().all(|a| a.tokens > 0));
+    let got = run_usage(run);
+    assert_eq!(got.by_role["brainstormer"], TokenUsage::default());
+    assert_eq!(got.by_role["doc_reviewer"], TokenUsage::default());
+}

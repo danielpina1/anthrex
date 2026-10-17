@@ -207,7 +207,7 @@ fn history_lines_are_tagged() {
         assert!(json.starts_with(&format!("{{\"type\":\"{tag}\"")), "{json}");
         assert_eq!(serde_json::from_str::<HistoryLine>(&json).unwrap(), line);
     }
-    assert_eq!(HISTORY_VERSION, 5);
+    assert_eq!(HISTORY_VERSION, 6);
 }
 
 #[test]

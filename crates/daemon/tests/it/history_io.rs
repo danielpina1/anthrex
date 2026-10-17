@@ -182,7 +182,7 @@ fn older_readers_skip_a_phase_line_with_a_problem() {
         Stage(serde_json::Value),
         Round(serde_json::Value),
     }
-    assert_eq!(proto::HISTORY_VERSION, 5);
+    assert_eq!(proto::HISTORY_VERSION, 6);
     let phase = serde_json::to_string(&phase_line()).unwrap();
     let older = serde_json::from_str::<NineFiveLine>(&phase).unwrap_err();
     assert!(

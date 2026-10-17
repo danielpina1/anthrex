@@ -229,6 +229,8 @@ pub fn fold(text: &str, ascii: bool) -> String {
             '↓' => out.push('v'),
             '⏎' => out.push_str("enter"),
             '☐' => out.push_str("[ ]"),
+            // Milestone 9.19 decision 2: the spend row's lower bound.
+            '≥' => out.push_str(">="),
             other => out.push(other),
         }
     }

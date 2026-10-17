@@ -2,8 +2,8 @@
 //! "Inspector contents, exact": Task). Pure, as `run.rs` is.
 
 use super::run_format::{
-    clean, format_tokens, kind_glyph, local_hhmm, progress_bar_in, reason_text, route_label, rows,
-    size_letter, test_mode_text,
+    clean, kind_glyph, local_hhmm, progress_bar_in, reason_text, route_label, rows, size_letter,
+    test_mode_text,
 };
 use super::run_orch::{messages_text, notes_text, replaced_by_text, replaces_text};
 use super::run_patterns;
@@ -13,6 +13,7 @@ use crate::actions_request::ActionTarget;
 use crate::app::App;
 use crate::theme;
 use crate::tree::{NodeKey, RowKind};
+use common::numbers::tokens;
 use proto::{DeciderSource, RunInfo, RunState, TaskInfo, TaskState};
 
 /// The history entries shown: the snapshot sends at most this many, newest first, and
@@ -248,12 +249,12 @@ fn budget_text(task: &TaskInfo, ascii: bool) -> String {
     } else {
         b
     };
-    let mut tokens = format_tokens(spent.tokens);
+    let mut spent_tokens = tokens(spent.tokens);
     if let Some(limit) = budget.tokens {
-        tokens.push_str(&format!("/{}", format_tokens(limit)));
+        spent_tokens.push_str(&format!("/{}", tokens(limit)));
     }
     format!(
-        "{} {}/{} tool calls · {}/{} min · {tokens} tokens",
+        "{} {}/{} tool calls · {}/{} min · {spent_tokens} tokens",
         progress_bar_in(done, total, super::PROGRESS_WIDTH, ascii),
         spent.tool_calls,
         budget.tool_calls,

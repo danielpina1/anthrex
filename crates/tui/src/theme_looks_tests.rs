@@ -127,6 +127,7 @@ fn ascii_twins_cover_the_table_the_spinner_and_the_git_marks() {
 #[test]
 fn every_fold_twin_is_decision_5s() {
     assert_eq!(fold("← − — ↑ ↓ ☐", true), "<- - - ^ v [ ]");
+    assert_eq!(fold("tokens ≥1.2M", true), "tokens >=1.2M");
     assert_eq!(guides("│ ├─└─", true), "| |-`-");
     assert_eq!(guides("│ ├─└─", false), "│ ├─└─");
     assert_eq!(bar(2, 3, false), "██░░░");

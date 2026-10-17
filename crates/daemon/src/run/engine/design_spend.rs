@@ -7,7 +7,9 @@
 //!   time left out as decision 8 counts it.
 //! - **The design agents.** Each ended session of a brainstormer or a document
 //!   reviewer ([`session_ended`]) adds its tool calls, tokens and active time (start to
-//!   end) to its agent's sums in its phase; its outcome is its latest session's.
+//!   end) to its agent's sums in its phase; its outcome is its latest session's. Its
+//!   tokens are billed tokens, its raw usage kept beside them (milestone 9.19
+//!   decision 2).
 //! - **The record** ([`approved`]): `<run>/phase/<round>/<phase>/v<n>`, `n` the
 //!   version approved, appended as any history line. A phase approved again after a
 //!   back is a new record with everything since added (ruling T13-4), so a restart
@@ -91,10 +93,9 @@ pub(super) fn session_ended(
         route: agent.route.clone(),
         sessions: 0,
         calls,
-        tokens: (usage.input)
-            .saturating_add(usage.output)
-            .saturating_add(usage.cache_read)
-            .saturating_add(usage.cache_write),
+        // Milestone 9.19 decision 2: billed tokens; the raw usage is kept beside them.
+        tokens: usage.billable(),
+        usage: *usage,
         secs,
         outcome,
     };
