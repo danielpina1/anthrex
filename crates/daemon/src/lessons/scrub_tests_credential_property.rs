@@ -62,14 +62,14 @@ fn password(rng: &mut Rng) -> Vec<u8> {
     pass
 }
 
-fn basic_credential(rng: &mut Rng) -> String {
+pub(super) fn basic_credential(rng: &mut Rng) -> String {
     base64(&[user(rng), b":".to_vec(), password(rng)].concat())
 }
 
 /// A token of 16 to 40 bearer characters holding a digit, an uppercase and a
 /// lowercase letter; a quarter start with one to three of the characters an escape
 /// takes as parameters or intermediates.
-fn bearer_credential(rng: &mut Rng) -> String {
+pub(super) fn bearer_credential(rng: &mut Rng) -> String {
     let all: Vec<u8> = (b'A'..=b'Z')
         .chain(b'a'..=b'z')
         .chain(b'0'..=b'9')
@@ -94,7 +94,7 @@ fn bearer_credential(rng: &mut Rng) -> String {
 }
 
 /// Where a credential goes, for `scheme` (`Basic` or `Bearer`).
-fn place(scheme: &str, context: usize, body: &str) -> String {
+pub(super) fn place(scheme: &str, context: usize, body: &str) -> String {
     match context {
         0 => format!("Authorization: {scheme} {body}"),
         1 => format!("{} {body}", scheme.to_lowercase()),
@@ -103,7 +103,7 @@ fn place(scheme: &str, context: usize, body: &str) -> String {
     }
 }
 
-const CONTEXTS: usize = 4;
+pub(super) const CONTEXTS: usize = 4;
 
 /// The property at `seed` for `scheme`: (cases run, cases excluded). The exclusions are
 /// the AWS property's, a lone ESC that opens a string and a glued CSI with parameters

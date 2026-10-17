@@ -115,20 +115,18 @@ pub(super) fn run_at(
     }
 }
 
-/// A run's three readings, each with where the last part it read ends.
+/// A run's three readings (the AWS rules judge each window of them,
+/// `redact_windows.rs`; `Basic` and `Bearer` the whole run's).
 pub(super) struct Readings {
-    /// The visible characters (what the strip leaves), and where the last piece ends.
+    /// The visible characters (what the strip leaves).
     pub(super) visible: String,
-    pub(super) visible_end: Option<usize>,
     /// The visible characters and each escape's final byte of the alphabet (task 6's
     /// review, I1: the escape took the secret's next character as its final).
     pub(super) kept: String,
-    pub(super) kept_end: usize,
     /// The visible characters and every byte of the alphabet each escape ate (task 9's
     /// review, A-I1: a CSI takes a secret's leading digits as parameters, and an escape
     /// its `/` or `+` as intermediates).
     pub(super) all: String,
-    pub(super) all_end: usize,
 }
 
 impl Run<'_> {
@@ -139,6 +137,11 @@ impl Run<'_> {
             .iter()
             .copied()
             .filter(|b| (self.alphabet)(*b))
+    }
+
+    /// The final byte of the invisible part `a..b` when the alphabet holds it.
+    pub(super) fn kept_of(&self, a: usize, b: usize) -> Option<u8> {
+        kept_final(self.text, a, b - a, self.alphabet)
     }
 
     /// The text of the part `a..b`.
@@ -154,14 +157,11 @@ impl Run<'_> {
         })
     }
 
-    pub(super) fn readings(&self, start: usize) -> Readings {
+    pub(super) fn readings(&self) -> Readings {
         let mut r = Readings {
             visible: String::new(),
-            visible_end: None,
             kept: String::new(),
-            kept_end: start,
             all: String::new(),
-            all_end: start,
         };
         for part in &self.parts {
             match *part {
@@ -170,18 +170,10 @@ impl Run<'_> {
                     for reading in [&mut r.visible, &mut r.kept, &mut r.all] {
                         reading.push_str(piece);
                     }
-                    (r.visible_end, r.kept_end, r.all_end) = (Some(b), b, b);
                 }
                 Part::Invisible(a, b) => {
-                    if let Some(f) = kept_final(self.text, a, b - a, self.alphabet) {
-                        r.kept.push(char::from(f));
-                        r.kept_end = b;
-                    }
-                    let before = r.all.len();
+                    r.kept.extend(self.kept_of(a, b).map(char::from));
                     r.all.extend(self.eaten_of(a, b).map(char::from));
-                    if r.all.len() > before {
-                        r.all_end = b;
-                    }
                 }
             }
         }

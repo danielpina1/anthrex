@@ -140,11 +140,18 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
 /// an error is a file left as it was. The caller runs [`sync_parent`], and so can tell
 /// a failure there, after `path` was replaced, from one before.
 pub fn replace_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    replace_atomic_mode(path, bytes, 0o600)
+}
+
+/// [`replace_atomic`] with the replacement's mode `mode` (PR #80's review, item 1: the
+/// lessons compaction keeps the store's own mode). The temp file is still created
+/// `0600`; its mode is set before the rename.
+pub fn replace_atomic_mode(path: &Path, bytes: &[u8], mode: u32) -> io::Result<()> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(dir)?;
     let (tmp, mut file) = create_tmp(path)?;
     let written = (|| {
-        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        file.set_permissions(std::fs::Permissions::from_mode(mode))?;
         file.write_all(bytes)?;
         file.sync_all()?;
         drop(file);

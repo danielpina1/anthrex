@@ -19,7 +19,7 @@ use super::super::service::{DAY_SECS, capped};
 use super::{Compacted, LESSONS_COMPACT_BYTES, compact};
 
 /// The compaction's clock.
-const NOW: u64 = 1_800_000_000;
+pub(super) const NOW: u64 = 1_800_000_000;
 /// Two days before [`NOW`]: an attempt this old is outside the daily cap's window.
 const OLD: u64 = NOW - 2 * DAY_SECS;
 
@@ -98,12 +98,12 @@ fn verdict(record_id: &str, id: &str, approved: bool) -> LessonLine {
     })
 }
 
-fn json(line: &LessonLine) -> String {
+pub(super) fn json(line: &LessonLine) -> String {
     serde_json::to_string(line).unwrap()
 }
 
 /// `raw` written one per line, each with its newline.
-fn write_lines(path: &Path, raw: &[String]) {
+pub(super) fn write_lines(path: &Path, raw: &[String]) {
     let text: String = raw.iter().map(|l| format!("{l}\n")).collect();
     std::fs::write(path, text).unwrap();
 }
@@ -115,7 +115,7 @@ fn raw_lines(path: &Path) -> Vec<String> {
 
 /// A closed entry over the threshold: its `queued` line (kept), three old attempts
 /// (dropped) and its `gave_up` (kept).
-fn padding() -> Vec<String> {
+pub(super) fn padding() -> Vec<String> {
     vec![
         json(&queued("pad", big())),
         json(&attempt("pad", 1, OLD)),

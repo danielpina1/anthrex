@@ -208,10 +208,77 @@ pub(super) fn placed(
             vec![a.min(b), a.max(b)]
         }
     };
-    let mut body = String::new();
+    let events: Vec<(usize, Form)> = cuts.into_iter().map(|at| (at, form)).collect();
+    at_cuts(rng, secret, "", &events, "")
+}
+
+/// Where one escape event goes: in front of the secret, inside it, or after it.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum Spot {
+    Before,
+    Inside,
+    After,
+}
+
+/// The pairs of escape events the two-event properties draw: an escape that eats or
+/// splits the secret, then a second one somewhere else (the round-2 re-review's m1
+/// and m2, each two separate escape events).
+pub(super) const SPOT_PAIRS: [[Spot; 2]; 4] = [
+    [Spot::Before, Spot::Inside],
+    [Spot::Inside, Spot::After],
+    [Spot::Inside, Spot::Inside],
+    [Spot::Before, Spot::After],
+];
+
+/// `secret` with two escape events, each of its own form at its own spot, `head` glued
+/// in front of a `Before` escape and `tail` glued after an `After` one; and each
+/// escape. A glue is left out when its spot is not drawn.
+pub(super) fn placed_two(
+    rng: &mut Rng,
+    secret: &str,
+    events: [(Form, Spot); 2],
+    head: &str,
+    tail: &str,
+) -> (String, Vec<Placed>) {
+    let mut cuts: Vec<(usize, Form)> = events
+        .iter()
+        .map(|&(form, spot)| {
+            let at = match spot {
+                Spot::Before => 0,
+                Spot::Inside => 1 + rng.below(secret.len() - 1),
+                Spot::After => secret.len(),
+            };
+            (at, form)
+        })
+        .collect();
+    cuts.sort_by_key(|&(at, _)| at);
+    let spot = |s: fn(&Spot) -> bool| events.iter().any(|(_, e)| s(e));
+    let head = if spot(|e| matches!(e, Spot::Before)) {
+        head
+    } else {
+        ""
+    };
+    let tail = if spot(|e| matches!(e, Spot::After)) {
+        tail
+    } else {
+        ""
+    };
+    at_cuts(rng, secret, head, &cuts, tail)
+}
+
+/// `head`, then `secret` with an escape of its form drawn at each cut (in order), then
+/// `tail`; and each escape, its `rest` the whole body after it.
+fn at_cuts(
+    rng: &mut Rng,
+    secret: &str,
+    head: &str,
+    cuts: &[(usize, Form)],
+    tail: &str,
+) -> (String, Vec<Placed>) {
+    let mut body = head.to_string();
     let mut inside = Vec::new();
     let mut last = 0;
-    for &at in &cuts {
+    for &(at, form) in cuts {
         body.push_str(&secret[last..at]);
         let e = escape(rng, form);
         body.push_str(&e);
@@ -220,6 +287,7 @@ pub(super) fn placed(
         last = at;
     }
     body.push_str(&secret[last..]);
+    body.push_str(tail);
     let escapes = inside
         .into_iter()
         .map(|(escape, end, inside)| Placed {

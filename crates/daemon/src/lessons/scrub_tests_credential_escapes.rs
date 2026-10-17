@@ -146,3 +146,48 @@ fn the_credentials_read_through_every_hidden_character() {
         .collect();
     assert_eq!(missed, Vec::<char>::new());
 }
+
+#[test]
+fn a_lone_esc_before_a_lowercase_p_or_x_is_no_string_in_the_credential_patterns() {
+    // The two-event property at 10 × 16 seeds (scratch): `(?i)` on the whole `Bearer`
+    // and `Basic` patterns folded into their escape forms, so `ESC p` and `ESC x` read
+    // as a DCS or SOS to the next escape, and the capture ended inside a later OSC
+    // (`bearer ESC pK4kx… OSC …BEL Oi` left 15 characters).
+    let token = ["pK4kxXZb", "BbYZE2Oi"].concat();
+    let osc = "\u{1b}]2;Ot%hG[K0j2*\u{7}";
+    let input = format!("bearer \u{1b}{}{osc}{}", &token[..14], &token[14..]);
+    assert_eq!(scrub(&input), BEARER, "{input:?}");
+    // A `Basic` credential whose base64 starts with `x` (`Ąna:…`).
+    let cred = basic_for("Ąna".as_bytes());
+    assert!(cred.starts_with('x'), "{cred}");
+    let input = format!("basic \u{1b}{}{osc}{}", &cred[..10], &cred[10..]);
+    assert_eq!(scrub(&input), BASIC, "{input:?}");
+}
+
+#[test]
+fn text_glued_after_a_credentials_colour_reset_goes_with_it() {
+    // PR #80's review, item 4, a pin: the `Bearer` and `Basic` captures read through
+    // escapes, so a word glued on after the reset that ends a coloured credential is
+    // replaced with it. Stopping at the reset would reopen a leak: a reset inside the
+    // credential (`<tok[..12]> ESC[0m <tok[12..]>`) is the same shape, and its rest
+    // would stay. A padded `Basic` credential ends at its `=`, so only an unpadded one
+    // takes the word.
+    let token = ["abcd1234", "EFGH5678", "ijkl"].concat();
+    let reset = "\u{1b}[0m";
+    for (input, want) in [
+        (
+            format!("Bearer \u{1b}[1m{token}{reset}done"),
+            BEARER.to_string(),
+        ),
+        (
+            format!("Bearer {}{reset}{}", &token[..12], &token[12..]),
+            BEARER.to_string(),
+        ),
+        (
+            format!("Basic \u{1b}[1m{}{reset}done", basic_for(b"admin1")),
+            BASIC.to_string(),
+        ),
+    ] {
+        assert_eq!(scrub(&input), want, "{input:?}");
+    }
+}

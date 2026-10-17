@@ -171,6 +171,28 @@ fn an_escaped_url_credential_is_redacted() {
 }
 
 #[test]
+fn an_encoded_url_in_compact_json_stops_at_its_quote() {
+    // PR #80's review, item 2: the authority ran past the JSON string's closing quote
+    // to a later field's `@`, so an address after a URL was redacted with it.
+    for json in [
+        r#"{"url":"https:\/\/github.com","author":"dan@x.com"}"#,
+        r#"{\"url\":\"https:\/\/github.com\",\"author\":\"dan@x.com\"}"#,
+        r#"{"url":"https%3A%2F%2Fgithub.com","author":"dan%40x.com"}"#,
+    ] {
+        assert_left(json);
+    }
+    // A real encoded `user:pass@` inside the string is still user information.
+    assert_becomes(
+        r#"{"url":"https:\/\/user:pass@host\/x","author":"dan@x.com"}"#,
+        r#"{"url":"https:\/\/***@host\/x","author":"dan@x.com"}"#,
+    );
+    assert_becomes(
+        r#"{"url":"https%3A%2F%2Fuser%3Atok%40host","a":"b"}"#,
+        r#"{"url":"https%3A%2F%2F***%40host","a":"b"}"#,
+    );
+}
+
+#[test]
 fn scrub_stays_idempotent_and_linear_on_the_new_rules() {
     for input in inputs() {
         let once = scrub(&input);
@@ -230,6 +252,27 @@ fn scrub_stays_idempotent_and_linear_on_the_new_rules() {
             format!("{} \u{1b}[42{} ", "Bearer", "abcdEFGH".repeat(2)),
             true,
         ),
+        // The round-2 re-review's m1 and m2: every window of an escape-joined run,
+        // and one long run of short coloured pieces on an id's line.
+        (
+            format!(
+                "{} \u{1b}[1;{}\u{1b}[0m{} ",
+                aws_id(),
+                aws_secret(),
+                aws_secret()
+            ),
+            true,
+        ),
+        (
+            format!(
+                "{}={}\u{1b}[0m{}\u{1b}[38;5; ",
+                "secret_access_key",
+                &aws_secret()[..20],
+                &aws_secret()[20..]
+            ),
+            true,
+        ),
+        (format!("{} {}", aws_id(), "aB3\u{1b}[0m".repeat(64)), true),
     ] {
         for size in [16 * 1024, 64 * 1024] {
             let text = unit.repeat(size / unit.len());
@@ -302,7 +345,10 @@ fn an_escape_beside_an_aws_secret_or_inside_its_id_still_redacts_it() {
         assert_eq!(scrub(&out), out, "{input:?}");
     }
     let mut want = vec![format!("{TOKEN} {TOKEN}"); 4];
-    want.push(format!("{TOKEN}{TOKEN}"));
+    // The round-2 re-review's m1 and m2: every window of a run is judged, and the id's
+    // first 40 visible characters with the secret glued on by the escape are one, so
+    // the id and its secret become one marker.
+    want.push(TOKEN.to_string());
     let got: Vec<String> = escaped_aws_inputs().iter().map(|s| scrub(s)).collect();
     assert_eq!(got, want);
 }
@@ -417,4 +463,22 @@ fn coloured_text_on_an_ids_line_with_few_visible_characters_stays() {
         )),
         "secret_access_key=Short"
     );
+    // The round-2 re-review's m3: the bound covers the whole run's exact kept and all
+    // readings too. Here `all` is exactly 40 (the colour codes' `0134m` and `0m`) with
+    // 19 visible characters.
+    let short = ["src", "Components", "User"]
+        .map(|dir| format!("{}{dir}{}", sgr("01;34"), sgr("0")))
+        .join("/");
+    assert_eq!(
+        scrub(&format!("{id} {short}")),
+        format!("{TOKEN} src/Components/User")
+    );
+    // The cost of that bound (a pin): a secret whose first 12 characters a glued CSI
+    // takes (11 digits as parameters, then its final) leaves its other 28, under the
+    // 30 the properties bound. Before, its exact `all` reading was redacted.
+    let secret = aws_secret();
+    let digits = ["1234", "5678", "901"].concat();
+    let eaten = [digits.as_str(), &secret[11..]].concat();
+    let out = scrub(&format!("{id} \u{1b}[{eaten}"));
+    assert_eq!(out, format!("{TOKEN} {}", &secret[12..]));
 }

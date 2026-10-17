@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::io;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -132,16 +133,16 @@ pub enum Compacted {
 /// skipped under [`LESSONS_COMPACT_BYTES`], or when less than a quarter of the lines
 /// would go. The rewrite is `write_atomic`'s temporary file and rename, so a lock-free
 /// reader reads the whole old file or the whole new one, and an error leaves the file
-/// as it was. A failed `fsync` of the directory after the rename is no error: the file
+/// as it was, and the store keeps its mode. A failed `fsync` of the directory after the rename is no error: the file
 /// is compacted, so it is a warning and `Rewrote`. Blocking; the caller holds the
 /// repository's [`LessonLocks`] entry ([`compact_locked`]).
 pub fn compact(path: &Path, now: u64) -> io::Result<Compacted> {
-    match std::fs::metadata(path) {
-        Ok(meta) if meta.len() >= LESSONS_COMPACT_BYTES => {}
+    let mode = match std::fs::metadata(path) {
+        Ok(meta) if meta.len() >= LESSONS_COMPACT_BYTES => meta.permissions().mode() & 0o7777,
         Ok(_) => return Ok(Compacted::Skipped),
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Compacted::Skipped),
         Err(error) => return Err(error),
-    }
+    };
     let bytes = std::fs::read(path)?;
     let segments: Vec<&[u8]> = bytes.split_inclusive(|b| *b == b'\n').collect();
     let keep = kept(&segments, now);
@@ -154,7 +155,9 @@ pub fn compact(path: &Path, now: u64) -> io::Result<Compacted> {
     for (segment, _) in segments.iter().zip(&keep).filter(|(_, k)| **k) {
         out.extend_from_slice(segment);
     }
-    crate::profile::store::replace_atomic(path, &out)?;
+    // PR #80's review, item 1: the store keeps its own mode (`append` creates it with
+    // the umask's), not `write_atomic`'s `0600`.
+    crate::profile::store::replace_atomic_mode(path, &out, mode)?;
     // M9.18.3's review, M2: past the rename the store is compacted; a failed directory
     // `fsync` only leaves the rename's durability to the file system.
     if let Err(error) = crate::profile::store::sync_parent(path) {
@@ -168,12 +171,22 @@ pub fn compact(path: &Path, now: u64) -> io::Result<Compacted> {
 /// `spawn_blocking`. A failure is a warning and `None`, the file as it was. The lock is
 /// held untimed across the rewrite's `fsync`s, as [`append`] holds it across its own
 /// (AGENTS.md rule 2 is kept: no tokio worker blocks, only this repository's writers
-/// wait).
+/// wait). PR #80's review, item 1: first, under the same lock, [`sweep_rewrites`]; its
+/// failure is a warning and the compaction still runs.
 pub async fn compact_locked(locks: &LessonLocks, repo_dir: &Path, now: u64) -> Option<Compacted> {
     let path = repo_dir.join(LESSONS_FILE);
     let shown = path.display().to_string();
     let _guard = locks.lock(repo_dir).await;
-    match blocking(move || compact(&path, now)).await {
+    let dir = repo_dir.to_path_buf();
+    match blocking(move || {
+        if let Err(error) = sweep_rewrites(&dir) {
+            let shown = dir.display();
+            tracing::warn!("lessons: {shown}'s crashed rewrites were not swept: {error}");
+        }
+        compact(&path, now)
+    })
+    .await
+    {
         Ok(done) => {
             if let Compacted::Rewrote { before, after } = done {
                 tracing::info!("lessons: compacted {shown} from {before} lines to {after}");
@@ -185,6 +198,44 @@ pub async fn compact_locked(locks: &LessonLocks, repo_dir: &Path, now: u64) -> O
             None
         }
     }
+}
+
+/// PR #80's review, item 1: removes every crashed compaction's temporary file in
+/// `repo_dir` (`lessons.jsonl.<pid>.<n>.tmp`, `write_atomic`'s name for the store; a
+/// file of exactly that shape, nothing else). The caller holds the repository's
+/// [`LessonLocks`] entry, under which no rewrite is in flight, so every such file is a
+/// crashed one's. It runs before each compaction, so a worker's start sweeps before
+/// compaction can run again. Blocking. A missing directory has nothing to sweep.
+fn sweep_rewrites(repo_dir: &Path) -> io::Result<()> {
+    let entries = match std::fs::read_dir(repo_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    for entry in entries {
+        let entry = entry?;
+        if !is_rewrite_tmp(&entry.file_name().to_string_lossy()) || !entry.file_type()?.is_file() {
+            continue;
+        }
+        match std::fs::remove_file(entry.path()) {
+            Ok(()) => tracing::info!("lessons: removed {}", entry.path().display()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
+/// Whether `name` is `lessons.jsonl.<pid>.<n>.tmp`, both numbers decimal.
+fn is_rewrite_tmp(name: &str) -> bool {
+    let decimal = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    let Some(middle) = (name.strip_prefix(LESSONS_FILE))
+        .and_then(|rest| rest.strip_prefix('.'))
+        .and_then(|rest| rest.strip_suffix(".tmp"))
+    else {
+        return false;
+    };
+    matches!(middle.split_once('.'), Some((pid, n)) if decimal(pid) && decimal(n))
 }
 
 /// Which of the store's raw lines (`\n` included) [`compact`] keeps. Each line parses
@@ -230,3 +281,7 @@ mod tests;
 #[cfg(test)]
 #[path = "store_tests_compact.rs"]
 mod tests_compact;
+
+#[cfg(test)]
+#[path = "store_tests_sweep.rs"]
+mod tests_sweep;

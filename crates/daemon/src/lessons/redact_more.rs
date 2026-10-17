@@ -10,7 +10,7 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
-use super::runs::{invisible_at, kept_final, read, run_at};
+use super::runs::{Part, invisible_at, kept_final, read, run_at};
 use super::{TOKEN, USERINFO, re};
 
 /// An AWS secret access key's length, exactly.
@@ -19,52 +19,6 @@ pub const AWS_SECRET_LEN: usize = 40;
 /// An AWS secret access key's alphabet.
 fn aws_char(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'/' || b == b'+'
-}
-
-/// A whole run of [`aws_char`]s that is a secret access key: exactly
-/// [`AWS_SECRET_LEN`] characters holding a digit, an uppercase and a lowercase letter
-/// (so a hex sha stays).
-fn is_aws_secret(run: &str) -> bool {
-    run.len() == AWS_SECRET_LEN
-        && run.bytes().any(|b| b.is_ascii_digit())
-        && run.bytes().any(|b| b.is_ascii_uppercase())
-        && run.bytes().any(|b| b.is_ascii_lowercase())
-}
-
-/// Whether the last [`AWS_SECRET_LEN`] characters of `run` are a secret access key:
-/// task 6's review, I2. A written-out escape that `decode` leaves as text (`^[[1m`,
-/// `\e[1m`, `&#27;[1m`, `%1b%5B1m`) glues its tail (`1m`, `B1m`) to the secret's run.
-fn ends_in_secret(run: &str) -> bool {
-    run.len() > AWS_SECRET_LEN && is_aws_secret(&run[run.len() - AWS_SECRET_LEN..])
-}
-
-/// Whether the first [`AWS_SECRET_LEN`] characters of `run` are a secret access key:
-/// task 9's review, A-M1 (`<id> <secret>abcdef…` on an id's line).
-fn starts_in_secret(run: &str) -> bool {
-    run.len() > AWS_SECRET_LEN && is_aws_secret(&run[..AWS_SECRET_LEN])
-}
-
-/// The fewest visible characters a run needs for [`restores_a_secret`], and for its
-/// restored readings' first or last 40 characters to be judged: fix round 2
-/// for task 9's review, m3. A run with fewer leaves no piece of a secret this long
-/// (milestone 9.18's leak bound, the property tests' 30), so restoring it can only
-/// redact text: a colour code's own parameters count toward 40, and one visible
-/// character after enough of them was a "secret" (`ls --color` paths on an id's line).
-pub const RESTORE_VISIBLE_MIN: usize = 30;
-
-/// Whether restoring some of what a run's escapes ate makes its visible characters a
-/// secret: task 9's review, A-I1. Fewer than [`AWS_SECRET_LEN`] are visible, but at
-/// least [`RESTORE_VISIBLE_MIN`], and the [`aws_char`]s its escapes ate (`all` holds
-/// them with the visible ones) reach it. An escape's own parameters can sit before the
-/// secret's characters it took (`ESC[5;7` then `M…`), and its final can be the text
-/// after the secret (`ESC,` then `+/"}`), so which of its bytes were the secret's is
-/// not known, only how many could be.
-fn restores_a_secret(visible: &str, all: &str) -> bool {
-    (RESTORE_VISIBLE_MIN..AWS_SECRET_LEN).contains(&visible.len())
-        && all.len() >= AWS_SECRET_LEN
-        && all.bytes().any(|b| b.is_ascii_digit())
-        && all.bytes().any(|b| b.is_ascii_uppercase())
-        && all.bytes().any(|b| b.is_ascii_lowercase())
 }
 
 /// Rule (a): a key name (any case), then `=` or `:` with optional spaces and quotes.
@@ -80,7 +34,8 @@ static AWS_KEY_ID: LazyLock<Regex> = LazyLock::new(|| re(r"A[KS]IA"));
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Judge {
     /// Exactly [`AWS_SECRET_LEN`] characters: the whole value right after a key name,
-    /// so a longer value is not cut to 40.
+    /// so a longer value is not cut to 40. Only while no escape or hidden character is
+    /// in the run: one that is judged as [`Judge::Tail`] (the round-2 re-review's m2).
     Exact,
     /// Also a longer run whose last 40 characters are a secret (task 6's review, I2):
     /// after the key name once something stands before the run.
@@ -181,73 +136,41 @@ fn secrets_in(text: &str, start: usize, out: &mut String, value: bool) -> usize 
 }
 
 /// The run that starts at `start` (an [`aws_char`], or an escape whose final is one)
-/// onto `out`, as [`secrets_in`] says; returns where the part that made it a secret
-/// ends, else where its last visible piece ends, else (no visible piece) where its
-/// walk ended, so the scan stays linear. The run is a secret when one of three readings
-/// ([`super::runs::Readings`]) is: its visible characters; its characters with each escape's eaten final kept
-/// (task 6's review, I1); or its characters with every [`aws_char`] byte of each
-/// escape kept (task 9's review, A-I1: a CSI takes a secret's leading digits as
-/// parameters, and an escape its `/` or `+` as intermediates). Otherwise each visible
-/// piece that is a secret is replaced (an id glued to its secret by an escape).
-/// [`Judge::Tail`] also takes a run or piece whose last 40 characters are a secret, and
-/// [`Judge::Ends`] one whose first 40 are.
+/// onto `out`, as [`secrets_in`] says, each of its windows that is a secret replaced
+/// ([`super::windows`]: the round-2 re-review's m1 and m2); returns where the last
+/// replaced window or the last visible piece ends, else (no visible piece and nothing
+/// replaced) where its walk ended, so the scan stays linear. A window is a secret when
+/// one of its three readings ([`super::runs::Readings`]) is: its visible characters;
+/// its characters with each escape's eaten final kept (task 6's review, I1); or its
+/// characters with every [`aws_char`] byte of each escape kept (task 9's review, A-I1:
+/// a CSI takes a secret's leading digits as parameters, and an escape its `/` or `+`
+/// as intermediates); or when restoring what its escapes ate makes it one.
+/// [`Judge::Tail`] also takes a window that starts inside a piece (a glued head), and
+/// [`Judge::Ends`] one that ends inside a piece (a glued tail).
 fn secret_run(line: &str, start: usize, out: &mut String, judge: Judge) -> usize {
     let run = run_at(line, start, aws_char, false);
-    let at = run.end;
-    let pieces: Vec<(usize, usize)> = run.pieces().collect();
-    let r = run.readings(start);
-    let (visible, kept, all) = (&r.visible, &r.kept, &r.all);
-    let (kept_end, all_end) = (r.kept_end, r.all_end);
-    let tail = judge != Judge::Exact;
-    let head = judge == Judge::Ends;
-    let visible_end = r.visible_end;
-    if let Some(end) = visible_end.filter(|_| is_aws_secret(visible)) {
-        out.push_str(TOKEN);
-        return end;
+    // The round-2 re-review's m2: a value an escape reaches is no longer the plain
+    // value [`Judge::Exact`] keeps whole, so it is judged as [`Judge::Tail`].
+    let escaped = run.parts.iter().any(|p| matches!(p, Part::Invisible(..)));
+    let tail = judge != Judge::Exact || escaped;
+    let ranges = super::windows::secret_ranges(&run, tail, judge == Judge::Ends);
+    let visible_end = run.pieces().last().map(|(_, b)| b);
+    if ranges.is_empty() && visible_end.is_none() {
+        out.push_str(&line[start..run.end]);
+        return run.end;
     }
-    for (reading, end) in [(kept, kept_end), (all, all_end)] {
-        if is_aws_secret(reading) {
-            out.push_str(TOKEN);
-            return end;
-        }
-    }
-    if restores_a_secret(visible, all) {
-        out.push_str(TOKEN);
-        return all_end;
-    }
-    let Some(visible_end) = visible_end else {
-        out.push_str(&line[start..at]);
-        return at;
-    };
-    let mut each = String::new();
-    let mut any = false;
+    let end = ranges
+        .last()
+        .map_or(start, |r| r.1)
+        .max(visible_end.unwrap_or(start));
     let mut last = start;
-    for &(a, b) in &pieces {
-        each.push_str(&line[last..a]);
-        let word = &line[a..b];
-        let secret = is_aws_secret(word)
-            || (tail && ends_in_secret(word))
-            || (head && starts_in_secret(word));
-        any |= secret;
-        each.push_str(if secret { TOKEN } else { word });
+    for (a, b) in ranges {
+        out.push_str(&line[last..a]);
+        out.push_str(TOKEN);
         last = b;
     }
-    if !any && tail {
-        // Fix round 2's m3: the restored readings only with [`RESTORE_VISIBLE_MIN`]
-        // visible characters, as [`restores_a_secret`].
-        let restored = visible.len() >= RESTORE_VISIBLE_MIN;
-        let readings = [(visible, visible_end), (kept, kept_end), (all, all_end)];
-        for (i, (reading, end)) in readings.into_iter().enumerate() {
-            if (i == 0 || restored)
-                && (ends_in_secret(reading) || (head && starts_in_secret(reading)))
-            {
-                out.push_str(TOKEN);
-                return end;
-            }
-        }
-    }
-    out.push_str(&each);
-    visible_end
+    out.push_str(&line[last..end]);
+    end
 }
 
 /// A scheme then `://` spelled JSON-escaped (`:\/\/`) or percent-encoded (any case).
@@ -277,15 +200,17 @@ pub(super) fn encoded_userinfo(text: &str) -> String {
     out
 }
 
-/// The end of the authority that starts at `start` (whitespace, `/`, `?`, `#` or
-/// their `%2F`, `%3F`, `%23`), and where its last `@` or `%40` is.
+/// The end of the authority that starts at `start` (whitespace, `/`, `?`, `#`, `"` or
+/// the first three's `%2F`, `%3F`, `%23`), and where its last `@` or `%40` is.
 fn authority(text: &str, start: usize) -> (usize, Option<usize>) {
     let bytes = text.as_bytes();
     let mut at = start;
     let mut last = None;
     while at < bytes.len() {
         let b = bytes[at];
-        if b.is_ascii_whitespace() || matches!(b, b'/' | b'?' | b'#') {
+        // PR #80's review, item 2: a `"` ends the JSON string the URL is in, so a
+        // later field's `@` is not this authority's.
+        if b.is_ascii_whitespace() || matches!(b, b'/' | b'?' | b'#' | b'"') {
             break;
         }
         if b == b'@' {

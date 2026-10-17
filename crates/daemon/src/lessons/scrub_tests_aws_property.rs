@@ -83,7 +83,7 @@ fn an_escape_whose_parameters_are_secret_characters_still_redacts_it() {
 }
 
 /// The secret's alphabet, built at run time.
-fn alphabet() -> Vec<u8> {
+pub(super) fn alphabet() -> Vec<u8> {
     (b'A'..=b'Z')
         .chain(b'a'..=b'z')
         .chain(b'0'..=b'9')
@@ -100,7 +100,7 @@ const HELD_HEADS: [&str; 12] = [
 /// A random 40-character secret holding a digit, an uppercase and a lowercase letter.
 /// A quarter start with one to three of `0-9/+`, the characters an escape takes as
 /// parameters or intermediates, and an eighth with one of [`HELD_HEADS`].
-fn secret(rng: &mut Rng) -> String {
+pub(super) fn secret(rng: &mut Rng) -> String {
     let all = alphabet();
     let eaten: Vec<u8> = (b'0'..=b'9').chain(*b"/+").collect();
     loop {
