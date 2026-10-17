@@ -2,6 +2,7 @@
 
 pub mod brakes;
 pub mod decider;
+pub mod hook_wire;
 pub mod lessons;
 pub mod models;
 pub mod orch_script;

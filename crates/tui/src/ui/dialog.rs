@@ -38,6 +38,10 @@ mod tests;
 #[path = "dialog_kit_tests.rs"]
 mod kit_tests;
 
+#[cfg(test)]
+#[path = "dialog_tests_width.rs"]
+mod width_tests;
+
 /// The label column's width: the longest label, `directory` (and the edit form's `test
 /// mode`), and two spaces.
 pub(crate) const LABEL_WIDTH: usize = 11;
@@ -93,10 +97,12 @@ fn render_dialog(
     inner
 }
 
-/// Greedy word-wrap capped at `max_lines`. Used for the new-agent form's inline error
-/// (arbitrary validation or daemon text, decisions 32 and 33) and the force prompt's
-/// dirty message (arbitrary git stderr via decision 14): neither is written for a fixed
-/// width, so both need to fit whatever box this milestone draws them into.
+/// Greedy word-wrap capped at `max_lines`, measured in display columns (decision 12:
+/// the box is sized in columns, so a CJK path counts two per character). Used for the
+/// new-agent form's inline error (arbitrary validation or daemon text, decisions 32 and
+/// 33) and the force prompt's dirty message (arbitrary git stderr via decision 14):
+/// neither is written for a fixed width, so both need to fit whatever box this
+/// milestone draws them into.
 fn wrap(text: &str, width: usize, max_lines: usize) -> Vec<String> {
     if width == 0 || max_lines == 0 {
         return Vec::new();
@@ -105,7 +111,7 @@ fn wrap(text: &str, width: usize, max_lines: usize) -> Vec<String> {
     let mut current = String::new();
     for word in text.split_whitespace() {
         let extra = usize::from(!current.is_empty());
-        if current.chars().count() + extra + word.chars().count() <= width {
+        if current.width() + extra + word.width() <= width {
             if extra == 1 {
                 current.push(' ');
             }
@@ -118,30 +124,36 @@ fn wrap(text: &str, width: usize, max_lines: usize) -> Vec<String> {
                 return lines;
             }
         }
-        if word.chars().count() > width {
-            // A single word wider than the whole line: hard-cut it into `width`-wide
-            // pieces across as many lines as it takes, continuing the remainder on the
-            // lines that follow rather than dropping it. The word that hits this in
-            // practice is the worktree path in the force-remove message, and macOS's
-            // default data-directory path is long enough to hit it routinely — the
-            // dialog exists to tell the user *which* worktree holds uncommitted work
-            // immediately before offering to delete it, so losing the tail of that path
-            // undercuts the one question it answers.
+        if word.width() > width {
+            // A single word wider than the whole line: hard-cut it into pieces of at
+            // most `width` columns across as many lines as it takes, continuing the
+            // remainder on the lines that follow rather than dropping it. The word that
+            // hits this in practice is the worktree path in the force-remove message,
+            // and macOS's default data-directory path is long enough to hit it
+            // routinely: the dialog exists to tell the user *which* worktree holds
+            // uncommitted work immediately before offering to delete it, so losing the
+            // tail of that path undercuts the one question it answers. A character wider
+            // than the whole line is placed alone on its line (it overflows by its own
+            // excess; dropping it would lose the path's character).
             let mut remainder: &str = word;
-            loop {
-                let take = remainder.chars().take(width).count();
-                let split_at = remainder
-                    .char_indices()
-                    .nth(take)
-                    .map(|(i, _)| i)
-                    .unwrap_or(remainder.len());
+            while !remainder.is_empty() {
+                let mut columns = 0;
+                let mut split_at = 0;
+                // By grapheme, measured as a string (task 10's review, m2): a heart and
+                // its VS16 are one grapheme two columns wide, though each `char` is one
+                // column or none, so the cut matches `word.width()` above.
+                for (i, g) in remainder.grapheme_indices(true) {
+                    let w = g.width();
+                    if split_at > 0 && columns + w > width {
+                        break;
+                    }
+                    columns += w;
+                    split_at = i + g.len();
+                }
                 let (piece, rest) = remainder.split_at(split_at);
                 lines.push(piece.to_string());
                 if lines.len() == max_lines {
                     return lines;
-                }
-                if rest.is_empty() {
-                    break;
                 }
                 remainder = rest;
             }

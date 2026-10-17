@@ -3,7 +3,7 @@
 //! any kept graph keeps the module commands; `module_dirs` agrees with `path_module`.
 
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use proto::{CommandCheck, ModuleNames, ProfileVerification, RepoProfile};
 
@@ -13,6 +13,7 @@ use super::proposal_tiers::{
 };
 use super::tests_tiers::{check_of, log, scratch, steps, strings};
 use super::verify::run_commands;
+use super::verify_tiers::{module_dirs, module_dirs_until};
 use crate::run::globs::path_module;
 
 fn ok(command: &str) -> Option<CommandCheck> {
@@ -232,6 +233,27 @@ fn a_partial_wildcard_component_names_no_module_for_verification_or_path_module(
         "{test:?}"
     );
     assert!(!log(dir.path()).iter().any(|l| l.starts_with("test.sh")));
+}
+
+/// Milestone 9.18 decision 11 (task M9.18.9): past its deadline the walk gives up;
+/// before it, it finds what `module_dirs` finds.
+#[test]
+fn module_dirs_until_a_past_deadline_is_none() {
+    let tmp = tempfile::Builder::new()
+        .prefix("ax-module-dirs")
+        .tempdir_in("/tmp")
+        .unwrap();
+    for module in ["a", "b"] {
+        std::fs::create_dir_all(tmp.path().join("crates").join(module)).unwrap();
+    }
+    let modules = strings(&["crates/*"]);
+    let now = Instant::now();
+    let past = now.checked_sub(Duration::from_secs(1)).unwrap_or(now);
+    assert_eq!(module_dirs_until(tmp.path(), &modules, past), None);
+    let ahead = Instant::now() + Duration::from_secs(3600);
+    let found = module_dirs_until(tmp.path(), &modules, ahead);
+    assert_eq!(found, Some(strings(&["crates/a", "crates/b"])));
+    assert_eq!(found, Some(module_dirs(tmp.path(), &modules)));
 }
 
 /// Ruling C-4 (1): a tiered proposal that ends untiered loses a `check` holding any

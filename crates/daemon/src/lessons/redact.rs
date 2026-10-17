@@ -2,7 +2,9 @@
 //! never carry. Its scope is the brief's: PEM private keys, prefixed tokens, JWTs,
 //! bearer credentials, and a URL's user information (as `host::remote::redact` does).
 //! Portuguese IBAN/NIF and daemon tokens are not ported. Pure; the patterns compile
-//! once.
+//! once. Milestone 9.18 decision 6 adds Stripe's `sk_live_`/`sk_test_` here, and AWS
+//! secret access keys, `Basic` credentials and encoded URL user information in
+//! `redact_more.rs`.
 //!
 //! The text it sees may already have been clipped (a check's tail, a signature's
 //! headline, decision 5) or rewritten by decision 5's normaliser, so each pattern also
@@ -30,12 +32,27 @@ use std::sync::LazyLock;
 use proto::safe_text::is_hidden_format;
 use regex::{Captures, Regex};
 
+/// Milestone 9.18 decision 6's rules, beside these (task M9.18.4).
+#[path = "redact_more.rs"]
+mod more;
+
+/// Decision 6's `Basic` credential (task M9.18.4).
+#[path = "redact_basic.rs"]
+mod basic;
+
+/// A run read through escapes, and its readings, which the AWS, `Basic` and `Bearer`
+/// rules share (fix round 2 for task 9's review, I2).
+#[path = "redact_runs.rs"]
+mod runs;
+
 /// What a private key block becomes.
 pub const PRIVATE_KEY: &str = "[redacted private key]";
 /// What a prefixed token or a JWT becomes.
 pub const TOKEN: &str = "[redacted token]";
 /// What a bearer credential becomes, with its scheme.
 pub const BEARER: &str = "Bearer [redacted]";
+/// What a basic credential becomes, with its scheme (milestone 9.18 decision 6).
+pub const BASIC: &str = "Basic [redacted]";
 /// A URL's user information.
 const USERINFO: &str = "***";
 
@@ -94,11 +111,23 @@ static URL_CUT: LazyLock<Regex> =
 /// anywhere, with no left boundary; [`bearer`] keeps it only when the credential is at
 /// least [`BEARER_MIN`] characters holding a digit, so `Bearer authentication-required`
 /// is prose and no escape spelling before `Bearer` can hide a credential.
+/// Task 6's review, M1, and fix round 2's I2: the credential is read through escapes,
+/// whose parameters, intermediates and final may be its first characters
+/// ([`runs::Readings`]), and through hidden characters ([`HIDDEN_FORMS`]). The pattern
+/// counts an escape as one element, so it takes half of [`BEARER_MIN`] (an escape that
+/// ate more than half of a credential leaves fewer than 8 of its characters), and
+/// [`bearer`] judges the length.
 static BEARER_RE: LazyLock<Regex> = LazyLock::new(|| {
     re(&format!(
-        r"(?i)bearer[ \t]+([A-Za-z0-9._~+/=-]{{{BEARER_MIN},}})"
+        r"(?i)bearer[ \t]+((?:[A-Za-z0-9._~+/=-]|{ESCAPE_FORMS}|{HIDDEN_FORMS}){{{},}})",
+        BEARER_MIN / 2
     ))
 });
+
+/// A bearer credential's characters.
+fn bearer_char(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'~' | b'+' | b'/' | b'=' | b'-')
+}
 /// Three dot-separated base64url segments, the first two JSON objects (`eyJ`); a clip
 /// may have cut the signature. Task 9's review, I2 (the controller's ruling): the shape
 /// is unambiguous, so whatever stands before it (an escape that ends in a letter, an
@@ -112,10 +141,12 @@ static JWT: LazyLock<Regex> =
 /// 10's review, I1: OpenAI's `sk-proj-`, `sk-svcacct-` and `sk-admin-`. A clipped or
 /// placeholder-split token of these prefixes is [`PREFIXED`]'s. The controller's
 /// ruling after task 13's fix: a body with no uppercase letter and no digit is a word
-/// ([`unambiguous`]).
+/// ([`unambiguous`]). Milestone 9.18 decision 6: Stripe's `sk_live_` and `sk_test_`,
+/// their body base62. Task 6's review, concern 2: an STS `ASIA` id in its full shape
+/// (not in [`PREFIXED`], which would take uppercase words such as `ASIAPAC2`).
 static UNAMBIGUOUS: LazyLock<Regex> = LazyLock::new(|| {
     re(
-        r"(?:github_pat_|gh[pousr]_|glpat-|sk-ant-|sk-proj-|sk-svcacct-|sk-admin-|xox[abprs]-)([A-Za-z0-9_-]{16,})|AKIA[0-9A-Z]{16}[A-Za-z0-9_-]*",
+        r"(?:github_pat_|gh[pousr]_|glpat-|sk-ant-|sk-proj-|sk-svcacct-|sk-admin-|xox[abprs]-)([A-Za-z0-9_-]{16,})|A[KS]IA[0-9A-Z]{16}[A-Za-z0-9_-]*|sk_(?:live|test)_([A-Za-z0-9]{16,})",
     )
 });
 /// Task 12's review, I2 and M7 (the controller's ruling): the ambiguous `sk-` (any
@@ -137,15 +168,23 @@ pub const UNAMBIGUOUS_BODY_MIN: usize = 4;
 /// `^[[31m`, `\33[31m`, `&#27;[31m`, `%1b%5B31m` each end in a letter). [`prefixed`]
 /// reads its body.
 static PREFIXED: LazyLock<Regex> = LazyLock::new(|| {
-    re(r"github_pat_|gh[pousr]_|glpat-|sk-ant-|sk-proj-|sk-svcacct-|sk-admin-|xox[abprs]-|AKIA")
+    re(
+        r"github_pat_|gh[pousr]_|glpat-|sk-ant-|sk-proj-|sk-svcacct-|sk-admin-|xox[abprs]-|AKIA|sk_live_|sk_test_",
+    )
 });
+/// [`ESCAPE`]'s forms, which [`ESCAPE_HERE`] and the `Basic` and `Bearer` credentials
+/// (task 6's review, M1) read too.
+const ESCAPE_FORMS: &str = concat!(
+    r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b[\]PX^_][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[ -/]*[0-~]?",
+    r"|\x{9b}[0-?]*[ -/]*[@-~]|\x{9b}"
+);
+/// The hidden format characters (`is_hidden_format`'s, and a few more default-ignorable
+/// ones), which the line breakers drop after `scrub`: fix round 2 for task 9's review,
+/// I2. The `Basic` and `Bearer` credentials are read through them, as the AWS runs
+/// are, so a credential that one splits is replaced whole, not its head alone.
+const HIDDEN_FORMS: &str = r"[\p{Default_Ignorable_Code_Point}\x{FFF9}-\x{FFFB}]";
 /// A real escape sequence at the start of the text, in [`ESCAPE`]'s forms.
-static ESCAPE_HERE: LazyLock<Regex> = LazyLock::new(|| {
-    re(concat!(
-        r"^(?:\x1b\[[0-?]*[ -/]*[@-~]|\x1b[\]PX^_][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[ -/]*[0-~]?",
-        r"|\x{9b}[0-?]*[ -/]*[@-~]|\x{9b})"
-    ))
-});
+static ESCAPE_HERE: LazyLock<Regex> = LazyLock::new(|| re(&format!("^(?:{ESCAPE_FORMS})")));
 /// Decision 5's placeholders, which count as a token's characters.
 const PLACEHOLDERS: [&str; 8] = [
     "<sha>", "<id>", "<dur>", "<l>", "<c>", "<tmp>", "<time>", "<tid>",
@@ -154,20 +193,18 @@ const PLACEHOLDERS: [&str; 8] = [
 /// The end of an unambiguous token's body that starts at `start`, how many body
 /// characters it holds, and whether it holds an uppercase letter, a digit or a
 /// placeholder (the controller's ruling after task 13's fix: real token bodies are
-/// random base62; a placeholder stands for normalised digits or hex): the prefix's own alphabet (`AKIA`'s is `[0-9A-Z]`, the others'
-/// `[A-Za-z0-9_-]`) and decision 5's placeholders count; a real escape sequence (which
+/// random base62; a placeholder stands for normalised digits or hex): the prefix's own alphabet (`body`: `AKIA`'s is `[0-9A-Z]`,
+/// Stripe's `[A-Za-z0-9]`, the others' `[A-Za-z0-9_-]`) and decision 5's placeholders count; a real escape sequence (which
 /// [`scrub`] strips) and a hidden format character (which `multi_line` and `one_line`
 /// drop) are read through without counting, so a token they split is replaced whole and
 /// leaves no remainder once they are gone. One pass; each character is read once.
-fn body_end(text: &str, start: usize, aws: bool) -> (usize, usize, bool) {
+fn body_end(text: &str, start: usize, body: fn(char) -> bool) -> (usize, usize, bool) {
     let mut at = start;
     let mut count = 0;
     let mut strong = false;
     while let Some(c) = text[at..].chars().next() {
         let rest = &text[at..];
-        let step = if (aws && (c.is_ascii_uppercase() || c.is_ascii_digit()))
-            || (!aws && (c.is_ascii_alphanumeric() || c == '_' || c == '-'))
-        {
+        let step = if body(c) {
             count += 1;
             strong |= c.is_ascii_uppercase() || c.is_ascii_digit();
             1
@@ -200,7 +237,13 @@ fn prefixed(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut from = 0;
     while let Some(m) = PREFIXED.find_at(text, from) {
-        let (end, count, strong) = body_end(text, m.end(), m.as_str() == "AKIA");
+        let body: fn(char) -> bool = match m.as_str() {
+            "AKIA" => |c| c.is_ascii_uppercase() || c.is_ascii_digit(),
+            // Milestone 9.18 decision 6: Stripe's body is base62.
+            "sk_live_" | "sk_test_" => |c| c.is_ascii_alphanumeric(),
+            _ => |c| c.is_ascii_alphanumeric() || c == '_' || c == '-',
+        };
+        let (end, count, strong) = body_end(text, m.end(), body);
         out.push_str(&text[from..m.start()]);
         if count >= UNAMBIGUOUS_BODY_MIN && strong {
             out.push_str(TOKEN);
@@ -224,7 +267,7 @@ fn has_digit(body: &str) -> bool {
 /// a digit (`AKIA`'s always does); an all-lowercase one is a word.
 fn unambiguous(text: &str) -> String {
     UNAMBIGUOUS
-        .replace_all(text, |c: &Captures| match c.get(1) {
+        .replace_all(text, |c: &Captures| match c.get(1).or_else(|| c.get(2)) {
             Some(body)
                 if !body
                     .as_str()
@@ -250,10 +293,30 @@ fn ambiguous(text: &str) -> String {
         .into_owned()
 }
 
+/// Whether `run` holds an uppercase and a lowercase letter.
+fn mixed_case(run: &str) -> bool {
+    run.bytes().any(|b| b.is_ascii_uppercase()) && run.bytes().any(|b| b.is_ascii_lowercase())
+}
+
+/// A `Bearer` credential: its visible characters, or those with each escape's eaten
+/// final kept, are at least [`BEARER_MIN`] holding a digit. Fix round 2 for task 9's
+/// review, I2: or with every byte of the credential's alphabet each escape ate kept
+/// (`ESC[42abc…` took `42`), when the visible characters with the eaten finals are
+/// random-looking (an uppercase and a lowercase letter; the finals count, since an
+/// escape can take a token's only capitals), so that a colour code's own digits before
+/// a lowercase word (`ESC[1mauthentication-required`) do not make it a credential. The
+/// capture is read once.
 fn bearer(text: &str) -> String {
     BEARER_RE
         .replace_all(text, |c: &Captures| {
-            if has_digit(&c[1]) {
+            runs::read(c[1].len());
+            let r = runs::run_at(&c[1], 0, bearer_char, true).readings(0);
+            let credential =
+                |run: &str| run.len() >= BEARER_MIN && run.bytes().any(|b| b.is_ascii_digit());
+            if credential(&r.visible)
+                || credential(&r.kept)
+                || (credential(&r.all) && mixed_case(&r.kept))
+            {
                 BEARER.to_string()
             } else {
                 c[0].to_string()
@@ -286,9 +349,14 @@ pub fn redact(text: &str) -> String {
     let text = PEM_BEGIN.replace_all(&text, PRIVATE_KEY);
     let text = PEM_END.replace_all(&text, PRIVATE_KEY);
     let text = URL_USERINFO.replace_all(&text, format!("${{1}}{USERINFO}@"));
+    let text = more::encoded_userinfo(&text);
     let text = url_cut(&text);
     let text = bearer(&text);
+    let text = basic::basic(&text);
     let text = jwt(&text);
+    let text = more::aws_named(&text);
+    // Ruling C5: before `unambiguous`, which replaces the key id.
+    let text = more::aws_beside_id(&text);
     let text = unambiguous(&text);
     let text = ambiguous(&text);
     prefixed(&text)
@@ -313,13 +381,28 @@ const DECODE_ROUNDS: usize = 8;
 /// `\u{1b}`, `\x1b`, `\033` or `%1B`) decoded, and `%25` decoded to `%`, until stable
 /// or [`DECODE_ROUNDS`]. Anything else written out is kept as it is, so `%20`, `\u00e9`
 /// and a path's `\x` stay, and a redaction's placeholder (letters, brackets, `*`) is
-/// never touched. Each round is one linear pass.
+/// never touched. Each round is one linear pass. Task 9's review, A-I1 (found by its
+/// property test), and fix round 2's I1: a text escape whose `\` or `%` is a byte of a
+/// real escape sequence (an ST's `\`, an nF intermediate `%`) is kept as text, whatever
+/// it decodes to. The secret after such an escape supplies the text escape's digits: an
+/// ST before `226…` would make U+0096, which nothing strips, and an ST before `033…` or
+/// `ESC %` before `1B…` would make an ESC or a CSI that eats the secret's next
+/// characters with it. The strip removes the `\` or `%` with its own sequence.
 fn decode(text: &str) -> String {
     let mut text = text.to_string();
     for _ in 0..DECODE_ROUNDS {
+        let spans: Vec<(usize, usize)> = ESCAPE
+            .find_iter(&text)
+            .map(|m| (m.start(), m.end()))
+            .collect();
+        let inside = |at: usize| {
+            let i = spans.partition_point(|s| s.1 <= at);
+            spans.get(i).is_some_and(|s| s.0 < at)
+        };
         let next = TEXT_ESCAPE
             .replace_all(&text, |c: &Captures| {
                 let whole = &c[0];
+                let held = inside(c.get(0).map_or(0, |m| m.start()));
                 let value = [(1, 16), (2, 16), (3, 16), (4, 8), (5, 16)]
                     .iter()
                     .find_map(|&(group, radix)| {
@@ -327,6 +410,7 @@ fn decode(text: &str) -> String {
                         Some((group, u32::from_str_radix(digits, radix).ok()?))
                     });
                 match value.and_then(|(group, v)| Some((group, char::from_u32(v)?))) {
+                    Some(_) if held => whole.to_string(),
                     Some((_, ch)) if ch.is_control() => ch.to_string(),
                     Some((5, '%')) => "%".to_string(),
                     _ => whole.to_string(),
@@ -348,15 +432,10 @@ fn decode(text: &str) -> String {
 /// single-byte CSI (U+009B), with its sequence or alone. The general form can take a
 /// token's first character as its final (`ESC g…`), so it is private: only [`scrub`]
 /// strips, after it redacts.
-static ESCAPE: LazyLock<Regex> = LazyLock::new(|| {
-    re(concat!(
-        r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b[\]PX^_][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[ -/]*[0-~]?",
-        r"|\x{9b}[0-?]*[ -/]*[@-~]|\x{9b}"
-    ))
-});
+static ESCAPE: LazyLock<Regex> = LazyLock::new(|| re(ESCAPE_FORMS));
 
 /// `text` without its escape sequences ([`ESCAPE`]). An ESC right before a redaction's
-/// placeholder (`[redacted …]`, `Bearer [redacted]`, which a redaction before the strip
+/// placeholder (`[redacted …]`, `Bearer [redacted]`, `Basic [redacted]`, which a redaction before the strip
 /// leaves) goes alone, so the strip cannot eat the placeholder's first characters.
 fn strip_escapes(text: &str) -> String {
     ESCAPE
@@ -365,7 +444,11 @@ fn strip_escapes(text: &str) -> String {
             // ESC is one byte, the single-byte CSI two.
             let lead = m.as_str().chars().next().map_or(1, char::len_utf8);
             let after = &text[m.start() + lead..];
-            if after.starts_with("[redacted") || after.starts_with("Bearer [redacted") {
+            // Ruling C8: `Basic [redacted]` too.
+            if ["[redacted", "Bearer [redacted", "Basic [redacted"]
+                .iter()
+                .any(|p| after.starts_with(p))
+            {
                 m.as_str()[lead..].to_string()
             } else {
                 String::new()
@@ -398,3 +481,31 @@ mod scrub_tests_spellings;
 #[cfg(test)]
 #[path = "scrub_tests_unambiguous.rs"]
 mod scrub_tests_unambiguous;
+
+#[cfg(test)]
+#[path = "scrub_tests_residuals.rs"]
+mod scrub_tests_residuals;
+
+#[cfg(test)]
+#[path = "scrub_tests_escapes.rs"]
+mod scrub_tests_escapes;
+
+#[cfg(test)]
+#[path = "scrub_tests_aws_property.rs"]
+mod scrub_tests_aws_property;
+
+#[cfg(test)]
+#[path = "scrub_tests_aws_held.rs"]
+mod scrub_tests_aws_held;
+
+#[cfg(test)]
+#[path = "scrub_tests_credential_escapes.rs"]
+mod scrub_tests_credential_escapes;
+
+#[cfg(test)]
+#[path = "scrub_tests_gen.rs"]
+mod scrub_tests_gen;
+
+#[cfg(test)]
+#[path = "scrub_tests_credential_property.rs"]
+mod scrub_tests_credential_property;

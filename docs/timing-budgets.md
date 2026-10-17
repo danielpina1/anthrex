@@ -1085,6 +1085,13 @@ Smoke stage 11n (`scripts/pty_smoke_lessons.py`), its daemon its own child under
 | Stage 11o: ` HELD ` drawn or gone after `y` (`HOLD_WAIT`) | `scripts/pty_smoke_brakes.py` | `15s` | The daemon saves `brakes.json` within `BRAKES_IO_WAIT` (5 s), steps the engine and publishes; the client draws the snapshot on its next tick: 5 s plus the frame's 10 s. | **Recorded.** The coupling to `BRAKES_IO_WAIT` is a comment (a language boundary). |
 | Stage 11o: `anthrex hold status`'s exit (`HOLD_STATUS_WAIT`) | `scripts/pty_smoke_brakes.py` | `210s` | `ensure_daemon` (0.25 s + `ENSURE_DAEMON_SOCKET_WAIT` 10 s) + `HANDSHAKE_TIMEOUT` (5 s) + its `List` within `HOLD_REQUEST_TIMEOUT` (`RUN_REQUEST_TIMEOUT`, 180 s, ruling C34) = 195.25 s. | **Recorded.** A comment coupling, as above. |
 
+### Recorded, from M9.18.9 (the lessons graph's module walk, 2026-10-17)
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| The lessons graph's module walk (`GRAPH_MODULES_BOUND`, not a test) | `common/src/bounds.rs`, used by `crates/daemon/src/run/driver/lessons_requests.rs` (`graph_at`, `modules_at`) | `2s` | Milestone 9.18 decision 11 and ruling C17: the stored profile's `modules` patterns walked in the checkout, the deadline checked before each `read_dir`; past it the graph has no modules (`ModuleSource::None`), silently. A single hung `read_dir` is not bounded; the request runs on `spawn_blocking`, so it holds a blocking thread, never a tokio worker. Since the fix round for task 9's review (B2), `graph_at` takes the deadline after the store read and the consolidation, right before the walk, so the store does not spend it. | **Recorded.** Tests that pass only if a two-entry walk of two temporary directories finishes within it: `module_source_prefers_cache_then_profile_then_none`, `a_slow_profile_walk_falls_back_to_no_modules`'s last line and `graph_is_answered` (`run/driver/lessons_requests_tests.rs`). A separation: a walk of milliseconds against 2 s. The other tests pass a deadline already past or an hour ahead. |
+| `the_module_walk_bound_starts_after_the_store_read` | `crates/daemon/src/run/driver/lessons_requests_tests.rs` | the walk's bound `1s` (`WALK_BOUND`); the store read held `2s` (`STORE_HOLD`, a FIFO a writer thread opens and closes after it) | The store read cannot end before the writer opens the FIFO, so it takes at least 2 s; with the deadline taken before the read (the bug) the walk always starts past it, and the test fails deterministically. After the fix the walk (one cache read, one profile read, two `read_dir`s) must end within 1 s of the read's end: milliseconds. | **Recorded** (task 9's review, B2). A separation: milliseconds against 1 s; the 2 s hold is the injected slowness, not a synchronisation (the FIFO is). It runs alone, in nextest's `timing` group (entry 74 in `.config/nextest.toml`; that review's fix round 2, m5), since its 1 s holds the post-read work of a history read, a consolidate, the cache read, the profile load and two `read_dir`s while other tests would run beside it. |
+
 ### Fixed, from the environment-block flake on macOS CI (2026-10-12)
 
 | Test | Site | Bound | The code's own legal worst case | Status |
@@ -1290,6 +1297,18 @@ close to genuine danger today.
    passed. Run the suite in the foreground, or check first that SIGINT is not ignored where it
    runs (M9.12.3: the Bash tool's background mode left it at its default, and both passed).
    Such a failure is in the harness, not in the tree, so it is never fixed by changing a bound.
+
+7. **`--stress-count` runs one copy at a time.** `cargo nextest run --stress-count N
+   --test-threads T` on one test runs its N iterations one after another, each "1 test
+   run", whatever `T` is: the threads only spread the tests of one iteration. A race that
+   needs parallel copies of the same test (two processes contending for a CPU, a lock or
+   the blocking pool) never shows under it, and a clean result proves nothing about that
+   race. Stress such a race with concurrent nextest invocations, or by looping the test
+   binary in parallel (task 5's review of milestone 9.18 used a script that keeps 16
+   copies running). Source: that review's m3. During 9.18,
+   `serve_compacts_a_large_store_under_its_lock`'s flake reproduced only with 16 parallel
+   copies (8 in 400 runs; 32 in 400 in the reviewer's run) and passed 300 of 300 one copy
+   at a time.
 
 ## What this document deliberately does not recommend
 

@@ -10,7 +10,7 @@ use daemon::run::driver::tuning::{
     TUNING_BUSY, TUNING_START_BOUND, TuningLocks, tune_for_start, tune_within,
 };
 use daemon::run::refit_render::render;
-use daemon::run::tuning_io::{Loaded, TUNING_FILE, load, save, thresholds};
+use daemon::run::tuning_io::{Loaded, TUNING_BAD_KEEP, TUNING_FILE, load, save, thresholds};
 use proto::{ClassBudget, PathWeights, SizeThresholds, TuningFile, TuningReport};
 
 /// M9.5.8's injected clock (review ruling I5).
@@ -196,6 +196,48 @@ async fn an_unparseable_file_is_moved_aside_and_tuning_restarts() {
         moved.display()
     );
     assert!(text.starts_with(&line), "{text}");
+}
+
+/// The `tuning.toml.bad-<secs>[-n]` files in `dir`, sorted.
+fn moved_aside(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = (std::fs::read_dir(dir).unwrap().flatten())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with(&format!("{TUNING_FILE}.bad-")))
+        .collect();
+    names.sort();
+    names
+}
+
+/// Milestone 9.18 decision 5 and ruling C20: a move keeps the file it just moved and
+/// the two newest others by the name's `<secs>[-n]`; a name that does not parse stays.
+#[test]
+fn only_the_newest_three_moved_aside_files_are_kept() {
+    let (_tmp, dir) = repo_dir(false);
+    let bad = |suffix: &str| format!("{TUNING_FILE}.bad-{suffix}");
+    for suffix in ["100", "200", "300", "300-1", "400", "notes"] {
+        std::fs::write(dir.join(bad(suffix)), "old").unwrap();
+    }
+    std::fs::write(dir.join(TUNING_FILE), "not toml at all [").unwrap();
+    let Loaded::MovedBad { moved_to, .. } = load(&dir, 500).unwrap() else {
+        panic!("moved");
+    };
+    assert_eq!(moved_to, dir.join(bad("500")));
+    assert_eq!(
+        moved_aside(&dir),
+        [bad("300-1"), bad("400"), bad("500"), bad("notes")]
+    );
+    assert_eq!(moved_aside(&dir).len(), TUNING_BAD_KEEP + 1);
+
+    // The clock went back: the file just moved is the oldest by name, and kept.
+    std::fs::write(dir.join(TUNING_FILE), "not toml at all [").unwrap();
+    let Loaded::MovedBad { moved_to, .. } = load(&dir, 50).unwrap() else {
+        panic!("moved");
+    };
+    assert_eq!(moved_to, dir.join(bad("50")));
+    assert_eq!(
+        moved_aside(&dir),
+        [bad("400"), bad("50"), bad("500"), bad("notes")]
+    );
 }
 
 /// Two starts in one repository at once, one refitting the budgets and the other the

@@ -120,6 +120,27 @@ pub(super) fn ended(fx: &mut Fixture, label: &str, session: u32, outcome: ScoutE
     }))
 }
 
+/// Milestone 9.18 task 7: a usage whose four-field sum overflows a `u64`.
+pub(super) const HUGE: TokenUsage = TokenUsage {
+    input: u64::MAX - 1,
+    output: 5,
+    cache_read: 0,
+    cache_write: 0,
+};
+
+/// `role`'s session `session` of `label` ended, reporting [`HUGE`].
+pub(super) fn ended_huge(fx: &mut Fixture, role: AgentRole, label: &str, session: u32) {
+    fx.next(EventKind::Orch(OrchEvent::DesignAgentEnded {
+        run_id: RUN_ID.into(),
+        role,
+        label: label.into(),
+        session,
+        outcome: ScoutEnd::Reported,
+        usage: HUGE,
+        calls: 1,
+    }));
+}
+
 pub(super) fn agents(fx: &Fixture) -> Vec<DesignAgent> {
     fx.run().orch.design.as_ref().unwrap().brainstormers.clone()
 }

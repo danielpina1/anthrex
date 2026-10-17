@@ -11,6 +11,7 @@ mod headless_end;
 mod headless_terminal;
 mod headless_turns;
 mod id_flush;
+mod input_kind;
 mod remove;
 mod restart;
 mod restore;

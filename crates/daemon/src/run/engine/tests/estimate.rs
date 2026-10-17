@@ -34,7 +34,8 @@ fn weighted(s_secs: u64, m_secs: u64) -> Tuned {
 }
 
 /// One S task (6000 s) working in its window, its plan approved by `--yes`. Its own
-/// budget is roomy; rung 4's ceiling (M's 60 minutes) still bounds a test's span.
+/// budget is roomy, and rung 4's ceiling is never below it (milestone 9.18 decision 9),
+/// so its 1000 minutes bound a test's span.
 fn working_weighted() -> (Fixture, u32) {
     let roomy = "[task.budget]\ntool_calls = 1000\nminutes = 1000";
     let plan = plan_with(&profile_with("max_writers = 1"), &[doc_task("t1", roomy)]);
@@ -78,7 +79,7 @@ fn paused_time_is_not_work() {
     assert_eq!(approved, 2_001);
     // t1 has worked since 2101 (its phase's start; no pause yet). Every step below
     // comes within `stall_after_secs` of the worker's last event, so no stall, and
-    // within rung 4's 60 minutes of session time.
+    // within the task's 1000 minutes (rung 4's ceiling) of session time.
     let task = fx.task_mut("t1");
     (task.phases, task.phase_since) = (Default::default(), 2_101);
     fx.now = 2_500;

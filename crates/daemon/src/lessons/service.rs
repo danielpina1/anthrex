@@ -44,7 +44,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use super::LESSONS_FILE;
-use super::store::{LessonLocks, append_once, read_store};
+use super::store::{LessonLocks, append_once, compact_locked, read_store};
 use crate::decider::call::{Routed, decide_within};
 use crate::decider::fallback::OFF_REASON;
 use crate::decider::{DeciderAnswer, DeciderContext, DeciderRequest, Decision, DistillInput};
@@ -263,6 +263,10 @@ impl Worker {
     /// Serves `repo`'s due entries, one call at a time, until none is due. With
     /// distillation off, nothing: the entries stay open, untouched.
     async fn serve(&self, repo: &Path) -> Served {
+        // Milestone 9.18 ruling C19: once per call, before the loop.
+        if self.distilling() {
+            compact_locked(&self.parts.locks, repo, self.now()).await;
+        }
         loop {
             if self.cancel.is_cancelled() {
                 return Served::Stopped;
@@ -520,7 +524,7 @@ fn last_reason(entry: &Entry) -> String {
 
 /// Ruling C19: when the repository has `max` attempts within the last day, the time
 /// the oldest of them ages out.
-fn capped(lines: &[LessonLine], now: u64, max: u64) -> Option<u64> {
+pub(super) fn capped(lines: &[LessonLine], now: u64, max: u64) -> Option<u64> {
     let recent: Vec<u64> = (lines.iter())
         .filter_map(|l| match l {
             LessonLine::Attempt(a) if now.saturating_sub(a.at) < DAY_SECS => Some(a.at),

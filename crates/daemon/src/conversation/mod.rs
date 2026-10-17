@@ -12,6 +12,7 @@ use std::time::Instant;
 /// text the way enrichment does (M8a.7, ruling T7-N1).
 pub(crate) mod align;
 mod build;
+mod build_failure;
 mod enrich;
 mod entry;
 mod store;

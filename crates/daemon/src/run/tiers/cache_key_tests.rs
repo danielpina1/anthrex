@@ -104,7 +104,12 @@ mod toolchain_env {
     }
 
     fn part(step: &[(&str, &str)], daemon: &dyn Fn(&str) -> Option<String>) -> String {
-        with_env_from("rustc 1", &env(step), daemon)
+        with_env_from("rustc 1", &env(step), daemon, &[])
+    }
+
+    /// The part with the daemon's matching variables given as a list (decision 8).
+    fn part_with(step: &[(&str, &str)], daemon_vars: &[(&str, &str)]) -> String {
+        with_env_from("rustc 1", &env(step), &none, &env(daemon_vars))
     }
 
     #[test]
@@ -153,12 +158,106 @@ mod toolchain_env {
             "ANTHREX_TEST_SLOTS",
             "ANTHREX_TEST_LOAD",
             "CARGO_TARGET_DIR",
+            // M9.18.6: `CARGO_TARGET_` counts only with `_RUSTFLAGS` after a triple.
+            "CARGO_TARGET_TMPDIR",
+            "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER",
+            "CARGO_TARGET_RUSTFLAGS",
         ] {
             assert_eq!(
                 part(&[("PATH", "/bin"), (name, "7")], &none),
                 base,
                 "{name}"
             );
+            assert_eq!(
+                part_with(&[("PATH", "/bin")], &[(name, "7")]),
+                base,
+                "{name}"
+            );
         }
+    }
+
+    #[test]
+    fn a_cargo_profile_variable_moves_the_toolchain() {
+        let base = part(&[("PATH", "/bin")], &none);
+        let step = part(
+            &[("PATH", "/bin"), ("CARGO_PROFILE_DEV_OPT_LEVEL", "1")],
+            &none,
+        );
+        assert_ne!(base, step);
+        // From the daemon's list it moves the part the same way.
+        assert_eq!(
+            part_with(&[("PATH", "/bin")], &[("CARGO_PROFILE_DEV_OPT_LEVEL", "1")]),
+            step
+        );
+        // The step env's value wins over the daemon's.
+        assert_eq!(
+            part_with(
+                &[("PATH", "/bin"), ("CARGO_PROFILE_DEV_OPT_LEVEL", "1")],
+                &[("CARGO_PROFILE_DEV_OPT_LEVEL", "3")]
+            ),
+            step
+        );
+    }
+
+    #[test]
+    fn target_rustflags_build_rustflags_and_incremental_count() {
+        let base = part(&[("PATH", "/bin")], &none);
+        let mut seen = vec![base.clone()];
+        for (name, value) in [
+            (
+                "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS",
+                "-Copt-level=1",
+            ),
+            ("CARGO_BUILD_RUSTFLAGS", "-Copt-level=1"),
+            ("CARGO_INCREMENTAL", "0"),
+        ] {
+            let moved = part(&[("PATH", "/bin"), (name, value)], &none);
+            assert_ne!(moved, base, "{name}");
+            assert!(!seen.contains(&moved), "{name} collides");
+            assert_eq!(part_with(&[("PATH", "/bin")], &[(name, value)]), moved);
+            seen.push(moved);
+        }
+    }
+
+    #[test]
+    fn the_order_of_variables_does_not_matter() {
+        let (a, b) = (
+            ("CARGO_PROFILE_DEV_DEBUG", "0"),
+            ("CARGO_PROFILE_TEST_OPT_LEVEL", "2"),
+        );
+        let one = part(&[("PATH", "/bin"), a, b], &none);
+        assert_eq!(part(&[("PATH", "/bin"), b, a], &none), one);
+        assert_eq!(part_with(&[("PATH", "/bin")], &[b, a]), one);
+        assert_eq!(part_with(&[("PATH", "/bin"), b], &[a]), one);
+    }
+
+    #[test]
+    fn the_five_keep_todays_key_and_the_new_ones_follow_sorted() {
+        // Ruling C10 (a): two of the five, set in the reverse of their array order,
+        // hash in array order, as before M9.18.6 (pinned from that code).
+        assert_eq!(
+            part(
+                &[
+                    ("PATH", "/bin"),
+                    ("RUSTC_WRAPPER", "sccache"),
+                    ("RUSTFLAGS", "-Copt-level=1"),
+                ],
+                &none
+            ),
+            "rustc 1 path:1e38b39ca6823f4b env:44a7def3d03c3543"
+        );
+        // FNV-1a of `RUSTFLAGS=a\nCARGO_INCREMENTAL=0\nCARGO_PROFILE_DEV_DEBUG=0\n`.
+        assert_eq!(
+            part(
+                &[
+                    ("PATH", "/bin"),
+                    ("CARGO_PROFILE_DEV_DEBUG", "0"),
+                    ("RUSTFLAGS", "a"),
+                    ("CARGO_INCREMENTAL", "0"),
+                ],
+                &none
+            ),
+            "rustc 1 path:1e38b39ca6823f4b env:6f724e2a72bcdf35"
+        );
     }
 }

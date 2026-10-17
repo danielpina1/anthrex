@@ -413,3 +413,28 @@ fn a_resume_that_ends_in_a_halt_says_so() {
         vec![Ok(format!("run {RUN_ID} resumed and halted: {reason}"))]
     );
 }
+
+/// Milestone 9.18 task 7 (decision 9): a brainstormer's tokens saturate, over one
+/// report and a second.
+#[test]
+fn design_agents_saturates_a_huge_usage() {
+    let mut fx = brainstorming();
+    ended_huge(&mut fx, AgentRole::Brainstormer, "claude", 1);
+    assert_eq!(agents(&fx)[0].tokens, u64::MAX);
+    ended_huge(&mut fx, AgentRole::Brainstormer, "claude", 1);
+    assert_eq!(agents(&fx)[0].tokens, u64::MAX);
+}
+
+/// Milestone 9.18 task 7 (decision 9): a design agent's session spend saturates.
+#[test]
+fn design_spend_saturates_a_huge_usage() {
+    let mut fx = brainstorming();
+    let agent = agents(&fx)[0].clone();
+    let (round, now) = (fx.run().round(), fx.now);
+    let usage = HUGE;
+    crate::run::engine::design_spend::session_ended(fx.run_mut(), &agent, (1, &usage), None, now);
+    let design = fx.run().orch.design.as_ref().unwrap();
+    let spend = design.phase_spend(round, "brainstorming").unwrap();
+    let session = (spend.agents.iter()).find(|a| a.label == agent.label);
+    assert_eq!(session.unwrap().tokens, u64::MAX);
+}

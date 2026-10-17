@@ -431,6 +431,67 @@ fn module_source_prefers_cache_then_profile_then_none() {
     assert_eq!(modules_at(&repo_dir, &checkout).1, ModuleSource::Profile);
 }
 
+/// Milestone 9.18 decision 11 (task M9.18.9): a deadline already past.
+fn past() -> std::time::Instant {
+    let now = std::time::Instant::now();
+    now.checked_sub(Duration::from_secs(1)).unwrap_or(now)
+}
+
+#[test]
+fn a_slow_profile_walk_falls_back_to_no_modules() {
+    let (_tmp, checkout, project, repo_dir) = git_repo();
+    let seeded = repo();
+    for file in [LESSONS_FILE, HISTORY_FILE] {
+        std::fs::copy(seeded.path().join(file), repo_dir.join(file)).unwrap();
+    }
+    write_profile(&repo_dir, &["crates/*"]);
+    assert_eq!(
+        modules_at_until(&repo_dir, &checkout, past()),
+        (Vec::new(), ModuleSource::None)
+    );
+    // The graph is still built, with its lessons and no module of the profile's.
+    // A zero bound: the walk's deadline is already reached when it starts.
+    let graph = graph_within(
+        &repo_dir,
+        &checkout,
+        project.clone(),
+        NOW,
+        &cfg(),
+        Duration::ZERO,
+    );
+    assert_eq!(graph.project, project);
+    assert_eq!(graph.module_source, ModuleSource::None);
+    assert!(!graph.nodes.iter().any(|n| n.id == "m:a" || n.id == "m:b"));
+    let drawn: Vec<&str> = graph.lessons.iter().map(|l| l.id.as_str()).collect();
+    let (kf, alpha, beta) = (format!("kf-{FP}"), id(ALPHA), id(BETA));
+    assert_eq!(drawn, [kf.as_str(), alpha.as_str(), beta.as_str()]);
+    // Within the bound, the profile's modules are drawn as before.
+    assert_eq!(modules_at(&repo_dir, &checkout).1, ModuleSource::Profile);
+}
+
+#[test]
+fn the_graph_cache_still_wins() {
+    let (_tmp, checkout, _, repo_dir) = git_repo();
+    write_profile(&repo_dir, &["crates/*"]);
+    let cache = repo_dir.join(super::super::graph::GRAPH_CACHE_FILE);
+    super::super::graph::cache_put(
+        &cache,
+        "0000000000000001",
+        &module_graph(&[("anthrex-tui", Some("crates/tui"))]),
+    );
+    for deadline in [
+        past(),
+        std::time::Instant::now() + Duration::from_secs(3600),
+    ] {
+        let (modules, source) = modules_at_until(&repo_dir, &checkout, deadline);
+        assert_eq!(source, ModuleSource::CargoCache);
+        assert_eq!(
+            modules,
+            vec![("anthrex-tui".to_string(), Some("crates/tui".to_string()))]
+        );
+    }
+}
+
 #[tokio::test]
 async fn graph_is_answered() {
     let (tmp, checkout, project, repo_dir) = git_repo();
@@ -491,4 +552,30 @@ async fn graph_is_answered() {
             format!("not a git repository: {}", outside.display())
         )
     );
+}
+
+/// How long the store read is held, and the module walk's bound, in
+/// `the_module_walk_bound_starts_after_the_store_read` (docs/timing-budgets.md).
+const STORE_HOLD: Duration = Duration::from_secs(2);
+const WALK_BOUND: Duration = Duration::from_secs(1);
+
+#[test]
+fn the_module_walk_bound_starts_after_the_store_read() {
+    // Task 9's review, B2: a store read slower than the bound still draws the modules.
+    use std::os::unix::ffi::OsStrExt;
+    let (_tmp, checkout, project, repo_dir) = git_repo();
+    write_profile(&repo_dir, &["crates/*"]);
+    let path = store_path(&repo_dir);
+    let fifo = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    // SAFETY: a plain mkfifo on a path this test owns.
+    assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+    // The read blocks until this writer opens the FIFO and closes it (an empty store).
+    let writer = std::thread::spawn(move || {
+        std::thread::sleep(STORE_HOLD);
+        drop(std::fs::OpenOptions::new().write(true).open(path).unwrap());
+    });
+    let graph = graph_within(&repo_dir, &checkout, project, NOW, &cfg(), WALK_BOUND);
+    writer.join().unwrap();
+    assert_eq!(graph.module_source, ModuleSource::Profile);
+    assert!(graph.nodes.iter().any(|n| n.id == "m:a"));
 }

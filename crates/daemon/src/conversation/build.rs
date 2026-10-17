@@ -41,9 +41,10 @@ pub(super) fn apply(
         HookKind::UserPromptSubmit => user_prompt_submit(draft, hook, now_unix_secs),
         HookKind::PreToolUse => pre_tool_use(draft, hook, now_unix_secs, now, caps),
         HookKind::PostToolUse => post_tool_use(draft, hook, now, caps),
-        // Milestone 9.14 (F4): registered for admission's release only; the
-        // conversation keeps reading the failed call's result from the transcript.
-        HookKind::PostToolUseFailure => false,
+        // Milestone 9.18 decision 13: a failed call closes as `Failed`.
+        HookKind::PostToolUseFailure => {
+            super::build_failure::post_tool_use_failure(draft, hook, now, caps)
+        }
         HookKind::PermissionRequest => permission_request(draft, hook, now_unix_secs),
         HookKind::Notification => notification(draft, hook, now_unix_secs),
         HookKind::Stop | HookKind::StopFailure | HookKind::SessionEnd | HookKind::TurnComplete => {
@@ -240,7 +241,12 @@ fn take_tool_start(draft: &mut Draft, hook: &ParsedHook) -> Option<Instant> {
     Some(draft.tool_started.remove(index).2)
 }
 
-fn post_tool_use(draft: &mut Draft, hook: &ParsedHook, now: Instant, caps: Caps) -> bool {
+pub(super) fn post_tool_use(
+    draft: &mut Draft,
+    hook: &ParsedHook,
+    now: Instant,
+    caps: Caps,
+) -> bool {
     let Some(open) = draft.open_turn_index() else {
         return false;
     };
@@ -450,6 +456,8 @@ mod test_support {
             tool_result_stringified: None,
             prompt: None,
             session_source: None,
+            error: None,
+            is_interrupt: None,
         }
     }
 

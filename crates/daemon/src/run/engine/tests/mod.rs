@@ -166,6 +166,7 @@ mod kinds_end;
 mod kinds_integration;
 mod kinds_limits;
 mod kinds_research;
+mod ladder_ceiling;
 mod ladder_roles;
 mod launch_pid;
 mod lessons_queue;

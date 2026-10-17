@@ -21,6 +21,8 @@ fn hook(kind: HookKind) -> ParsedHook {
         tool_result_stringified: None,
         prompt: None,
         session_source: None,
+        error: None,
+        is_interrupt: None,
     }
 }
 

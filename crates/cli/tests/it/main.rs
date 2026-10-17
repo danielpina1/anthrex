@@ -24,6 +24,8 @@ mod empty_session_tui;
 mod filter_hook;
 mod filter_run;
 mod hook_command;
+mod hook_command_bounds;
+mod hook_command_bounds_objects;
 mod lessons_cli;
 mod lessons_harness;
 mod lessons_service;

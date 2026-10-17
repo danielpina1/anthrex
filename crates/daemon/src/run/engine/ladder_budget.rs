@@ -75,13 +75,24 @@ pub(super) fn breached(spend: Spend, budget: Budget) -> Option<String> {
 }
 
 /// Rung 4's ceiling (milestone 9.5 rulings RH-4 and T9-1), from the run's frozen
-/// budgets: `refit::ceiling`, the one rule.
+/// budgets: `refit::ceiling`, the one rule. Milestone 9.18 decision 9: its `own` is,
+/// per axis, the larger of the class's budget and the task's own `budget` (tokens: the
+/// larger when both are set, the one that is set otherwise), so rung 4 never lowers a
+/// task's budget.
 pub(super) fn ceiling(run: &Run, task: &Task) -> Budget {
     let l = &run.limits;
-    let (class, own) = match (task.hub, task.size) {
+    let (class, class_budget) = match (task.hub, task.size) {
         (true, _) => (SizeClass::Hub, l.budget_hub.unwrap_or(l.budget_m)),
         (false, Size::S) => (SizeClass::S, l.budget_s),
         _ => (SizeClass::M, l.budget_m),
+    };
+    let own = Budget {
+        tool_calls: class_budget.tool_calls.max(task.budget.tool_calls),
+        minutes: class_budget.minutes.max(task.budget.minutes),
+        tokens: match (class_budget.tokens, task.budget.tokens) {
+            (Some(c), Some(t)) => Some(c.max(t)),
+            (c, t) => c.or(t),
+        },
     };
     refit::ceiling(class, own, l.budget_m, l.budget_l)
 }

@@ -14,6 +14,7 @@ mod conversation_resume_races;
 mod git_probe;
 mod git_registry;
 mod git_registry_arming;
+mod git_registry_wall_clock;
 mod git_schedule;
 mod headless_sessions;
 mod headless_turns;

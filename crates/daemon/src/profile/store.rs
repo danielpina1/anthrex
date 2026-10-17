@@ -132,6 +132,14 @@ fn create_tmp(path: &Path) -> io::Result<(PathBuf, File)> {
 /// write. The directory is created when missing; on failure the temp file this call
 /// created is removed, and no other.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    replace_atomic(path, bytes)?;
+    sync_parent(path)
+}
+
+/// [`write_atomic`] up to and including the rename, without the directory's `fsync`:
+/// an error is a file left as it was. The caller runs [`sync_parent`], and so can tell
+/// a failure there, after `path` was replaced, from one before.
+pub fn replace_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(dir)?;
     let (tmp, mut file) = create_tmp(path)?;
@@ -146,7 +154,12 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
         let _ = std::fs::remove_file(&tmp);
         return Err(e);
     }
-    sync_dir(dir)
+    Ok(())
+}
+
+/// The `fsync` of `path`'s directory that makes [`replace_atomic`]'s rename durable.
+pub fn sync_parent(path: &Path) -> io::Result<()> {
+    sync_dir(path.parent().unwrap_or_else(|| Path::new(".")))
 }
 
 /// Removes every leftover temp file of this module's files in `repo_dir` (a crashed
