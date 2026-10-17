@@ -230,6 +230,27 @@ fn scrub_stays_idempotent_and_linear_on_the_new_rules() {
             format!("{} \u{1b}[42{} ", "Bearer", "abcdEFGH".repeat(2)),
             true,
         ),
+        // The round-2 re-review's m1 and m2: every window of an escape-joined run,
+        // and one long run of short coloured pieces on an id's line.
+        (
+            format!(
+                "{} \u{1b}[1;{}\u{1b}[0m{} ",
+                aws_id(),
+                aws_secret(),
+                aws_secret()
+            ),
+            true,
+        ),
+        (
+            format!(
+                "{}={}\u{1b}[0m{}\u{1b}[38;5; ",
+                "secret_access_key",
+                &aws_secret()[..20],
+                &aws_secret()[20..]
+            ),
+            true,
+        ),
+        (format!("{} {}", aws_id(), "aB3\u{1b}[0m".repeat(64)), true),
     ] {
         for size in [16 * 1024, 64 * 1024] {
             let text = unit.repeat(size / unit.len());
@@ -302,7 +323,10 @@ fn an_escape_beside_an_aws_secret_or_inside_its_id_still_redacts_it() {
         assert_eq!(scrub(&out), out, "{input:?}");
     }
     let mut want = vec![format!("{TOKEN} {TOKEN}"); 4];
-    want.push(format!("{TOKEN}{TOKEN}"));
+    // The round-2 re-review's m1 and m2: every window of a run is judged, and the id's
+    // first 40 visible characters with the secret glued on by the escape are one, so
+    // the id and its secret become one marker.
+    want.push(TOKEN.to_string());
     let got: Vec<String> = escaped_aws_inputs().iter().map(|s| scrub(s)).collect();
     assert_eq!(got, want);
 }

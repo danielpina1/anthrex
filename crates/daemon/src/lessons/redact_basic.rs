@@ -43,7 +43,7 @@ pub(super) fn basic(text: &str) -> String {
         .replace_all(text, |c: &Captures| {
             read(c[1].len());
             let run = run_at(&c[1], 0, basic_char, true);
-            let all = run.readings(0).all;
+            let all = run.readings().all;
             if all.trim_end_matches('=').len() >= BASIC_MIN && holds_colon(&run) {
                 BASIC.to_string()
             } else {

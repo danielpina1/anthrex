@@ -45,6 +45,10 @@ mod basic;
 #[path = "redact_runs.rs"]
 mod runs;
 
+/// An AWS run's windows, each judged (the round-2 re-review's m1 and m2).
+#[path = "redact_windows.rs"]
+mod windows;
+
 /// What a private key block becomes.
 pub const PRIVATE_KEY: &str = "[redacted private key]";
 /// What a prefixed token or a JWT becomes.
@@ -310,7 +314,7 @@ fn bearer(text: &str) -> String {
     BEARER_RE
         .replace_all(text, |c: &Captures| {
             runs::read(c[1].len());
-            let r = runs::run_at(&c[1], 0, bearer_char, true).readings(0);
+            let r = runs::run_at(&c[1], 0, bearer_char, true).readings();
             let credential =
                 |run: &str| run.len() >= BEARER_MIN && run.bytes().any(|b| b.is_ascii_digit());
             if credential(&r.visible)
