@@ -116,6 +116,8 @@ real-io = { max-threads = 8 }
 # 71 hook_timeout_includes_blocked_stdin_delivery: fake-agent/tests/script.rs:671, < 8 s; the hook's 5 s timeout is the property.
 # 72 send_never_suspends_and_reports_a_dead_connection: cli/tests/it/tui_connection.rs:121, < 500 ms for 5000 sends; never suspending is the property.
 # 73 e2e_plan_path_scouts_plans_and_reads_the_approval: cli/tests/it/run_e2e_orch/gate.rs:98, each logged `run_status` call's `ms` <= (wait_secs + 5) * 1000 (decision 16); row "Every scripted run_status answered within wait_secs + 5 s" (M9.12.3 review, Important 1: a logged duration, a shape the first sweep did not parse).
+# daemon (unit tests, from M9.18.9's review, m5 of its fix round 2):
+# 74 the_module_walk_bound_starts_after_the_store_read: daemon/src/run/driver/lessons_requests_tests.rs:563, the walk within WALK_BOUND (1 s) after a 2 s store hold; row of that name ("Recorded, from M9.18.9").
 [[profile.default.overrides]]
 filter = '''
     test(/(^|::)create_repo_gives_up_on_a_git_that_does_not_answer$/)
@@ -191,6 +193,7 @@ filter = '''
   | test(/(^|::)hook_timeout_includes_blocked_stdin_delivery$/)
   | test(/(^|::)send_never_suspends_and_reports_a_dead_connection$/)
   | test(/(^|::)e2e_plan_path_scouts_plans_and_reads_the_approval$/)
+  | test(/(^|::)the_module_walk_bound_starts_after_the_store_read$/)
 '''
 threads-required = "num-test-threads"
 test-group = "timing"
