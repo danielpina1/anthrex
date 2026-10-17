@@ -306,3 +306,45 @@ fn the_release_confirm_names_the_queued_goals_and_rechecks_them() {
         Some("the dispatch hold changed; press C-b H again")
     );
 }
+
+/// Milestone 9.19 (M9.19.4 review, Minor 2): the ASCII fold's `≥` → `>=` reaches a
+/// quota trip's alert detail, the one user text with `≥`; the Unicode form keeps `≥`.
+#[test]
+fn a_quota_alerts_threshold_folds_to_ascii() {
+    let screen = |app: &App| {
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal
+            .draw(|f| {
+                crate::ui::draw(f, app);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        (0..40)
+            .map(|y| {
+                (0..120)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    for (ascii, want) in [(true, "(>=95%)"), (false, "(≥95%)")] {
+        let mut app = app_with(codex_braked());
+        app.settings.badges.ascii = ascii;
+        press(&mut app, KeyCode::Char('b'), KeyModifiers::CONTROL);
+        press(&mut app, KeyCode::Char('a'), KeyModifiers::NONE);
+        let mut found = false;
+        for _ in 0..8 {
+            let text = screen(&app);
+            if ascii {
+                assert!(!text.contains('≥'), "{text}");
+            }
+            if text.contains(want) {
+                found = true;
+                break;
+            }
+            press(&mut app, KeyCode::Char('j'), KeyModifiers::NONE);
+        }
+        assert!(found, "no {want} in the alerts view (ascii {ascii})");
+    }
+}

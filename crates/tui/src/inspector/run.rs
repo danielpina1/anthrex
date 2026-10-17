@@ -47,6 +47,11 @@ pub(crate) fn run_inspection(
     }
     fields.push(field("agents", agents_text(run, app)));
     fields.push(field("spend", spend_text(run)));
+    // M9.19.4 review, I2: decision 2's spend labels fill a row, so the estimate has
+    // its own.
+    if let Some(left) = run.estimate_left_secs {
+        fields.push(field("est. left", format!("~{}", format_duration(left))));
+    }
     fields.push(field("gate", gate_text(run, app)));
     // Milestone 9.6 task 17: `anthrex run status`'s two design lines.
     if let Some(text) = design_text(run) {
@@ -272,8 +277,9 @@ fn agents_text(run: &RunInfo, app: &App) -> String {
 
 /// Milestone 9.19 decision 2: `tokens <billed> (all roles)` from the daemon's usage,
 /// or, without it, `tokens ≥<billed> (tasks only)` from the task rounds' (a lower
-/// bound: the orchestrator's, the deciders' and the design agents' are not there); the
-/// cache share of input; the workers' tool calls.
+/// bound: the orchestrator's, the deciders' and the design agents' are not there;
+/// `unknown` when they bill nothing); the cache share of input; the workers' tool calls.
+/// The estimate is its own field, `est. left`.
 fn spend_text(run: &RunInfo) -> String {
     let (usage, scope) = match run.usage.as_ref() {
         Some(usage) => (usage.total, ("", "all roles")),
@@ -286,7 +292,13 @@ fn spend_text(run: &RunInfo) -> String {
         }
     };
     let (at_least, covers) = scope;
-    let mut text = format!("tokens {at_least}{} ({covers})", tokens(usage.billable()));
+    let billed = usage.billable();
+    // M9.19.4 review, M1: no usage and none in the rounds is unknown, never `≥0`.
+    let shown = match (at_least, billed) {
+        ("≥", 0) => common::numbers::UNKNOWN.to_owned(),
+        _ => format!("{at_least}{}", tokens(billed)),
+    };
+    let mut text = format!("tokens {shown} ({covers})");
     let denominator =
         u128::from(usage.input) + u128::from(usage.cache_read) + u128::from(usage.cache_write);
     // Omitted when the denominator is 0 (decision 31).
@@ -299,9 +311,6 @@ fn spend_text(run: &RunInfo) -> String {
         .map(|task| u64::from(task.spent_total.tool_calls))
         .sum();
     text.push_str(&format!(" · worker tool calls {calls}"));
-    if let Some(left) = run.estimate_left_secs {
-        text.push_str(&format!(" · est. left ~{}", format_duration(left)));
-    }
     text
 }
 

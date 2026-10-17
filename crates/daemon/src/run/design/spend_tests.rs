@@ -109,3 +109,39 @@ fn tokens_are_the_summed_usages_billed_tokens() {
     });
     assert_eq!(old.spend_totals().tokens, 0);
 }
+
+/// M9.19.4 review, Important 1: a format-6 agent (tokens with cache reads, no `usage`)
+/// that gains a session after the upgrade keeps its tokens apart from its new usage,
+/// and its history line carries 0 tokens, so no mixed sample reaches a `v` 6 line.
+#[test]
+fn a_format_6_agent_with_a_new_session_writes_no_token_sample() {
+    let mut legacy: AgentSpend = serde_json::from_value(serde_json::json!({
+        "label": "claude", "role": "brainstormer",
+        "route": {"runtime": "claude", "model": "m", "effort": "high"},
+        "sessions": 1, "calls": 12, "tokens": 209_000, "secs": 300, "outcome": "ok"
+    }))
+    .unwrap();
+    legacy.outcome = OK.into();
+    let mut design = DesignState::default();
+    design.spend.push(PhaseSpend {
+        round: 1,
+        phase: "brainstorming".into(),
+        secs: 0,
+        agents: vec![legacy],
+    });
+    let new = TokenUsage {
+        input: 3_000,
+        output: 1_000,
+        ..TokenUsage::default()
+    };
+    let mut session = session("claude", (5, 0, 60), OK);
+    session.tokens = new.billable();
+    session.usage = new;
+    design.add_session(1, "brainstorming", session);
+    let claude = &design.phase_spend(1, "brainstorming").unwrap().agents[0];
+    assert_eq!((claude.sessions, claude.calls), (2, 17));
+    assert_eq!(claude.usage, new);
+    assert_eq!(claude.tokens, 209_000 + 4_000);
+    assert_eq!(claude.phase_agent().tokens, 0);
+    assert_eq!(design.spend_totals().tokens, 4_000);
+}

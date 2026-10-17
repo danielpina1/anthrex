@@ -108,9 +108,11 @@ fn the_run_view_gets_the_tall_panel() {
     assert_eq!(footer_at(&mut app, 30), INSPECTOR_HEIGHT);
     let panel = below_the_canvas(&mut app, 30);
     assert!(panel.contains("◉ r1  Add Gemini runtime"), "{panel}");
-    assert!(panel.contains("gate      plan approved 11:02"), "{panel}");
+    // M9.19.4 review, I2: the estimate's own row comes after the spend, so the five
+    // fields shown end with it, and the gate is dropped with the attention.
+    assert!(panel.contains("est. left ~40m"), "{panel}");
     assert!(
-        !panel.contains("attention"),
+        !panel.contains("gate      ") && !panel.contains("attention"),
         "five fields, then dropped:\n{panel}"
     );
 }

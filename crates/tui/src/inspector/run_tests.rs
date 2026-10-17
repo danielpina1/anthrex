@@ -62,7 +62,7 @@ fn gate_with(change: impl FnOnce(&mut proto::RunInfo)) -> App {
 
 const GATE_PROGRESS: &str = "░░░░░░░░░░░░░░░░░░  0/2 merged · 2 waiting";
 const GATE_AGENTS: &str = "workers 0/3 · readers 0/3 · claude ok";
-const NO_SPEND: &str = "tokens ≥0 (tasks only) · worker tool calls 0";
+const NO_SPEND: &str = "tokens unknown (tasks only) · worker tool calls 0";
 
 #[test]
 fn run_fields_match_the_mockup() {
@@ -89,9 +89,9 @@ fn run_fields_match_the_mockup() {
             ),
             (
                 "spend",
-                "tokens 1.8M (all roles) · cache hits 71% of input · worker tool calls 612 · est. \
-                 left ~40m"
+                "tokens 1.8M (all roles) · cache hits 71% of input · worker tool calls 612"
             ),
+            ("est. left", "~40m"),
             (
                 "gate",
                 "plan approved 11:02 · 2 plan edits since · last: split t2"
@@ -207,6 +207,7 @@ fn run_spend_without_cache_or_estimate() {
     let app = app_of(gate_fixture());
     let inspection = inspect_node(&app, &run_key(RUN_ID));
     assert_eq!(value(&inspection, "spend"), Some(NO_SPEND));
+    assert_eq!(value(&inspection, "est. left"), None);
 
     // With no `usage`, the rounds' own usage is summed, cache share included.
     let app = gate_with(|run| {
@@ -520,8 +521,12 @@ fn hostile_run_values_never_panic_and_stay_one_line() {
         value(&inspection, "spend"),
         Some(
             "tokens 18446744073709.5M (all roles) · cache hits 33% of input · worker tool calls \
-             38654705655 · est. left ~5124095576030431h00m"
+             38654705655"
         )
+    );
+    assert_eq!(
+        value(&inspection, "est. left"),
+        Some("~5124095576030431h00m")
     );
     assert_eq!(inspection.right.as_deref(), Some("running · 0s"));
     // An approval stamp 400 days ahead of the daemon's `now` is formatted, not aged.

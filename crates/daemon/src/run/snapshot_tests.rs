@@ -381,8 +381,14 @@ fn a_format_6_runs_design_spend_credits_nothing() {
     assert!(problems.is_empty(), "{problems:?}");
     let run = &runs[0].0;
     let design = run.orch.design.as_ref().unwrap();
-    assert!(design.spend[0].agents.iter().all(|a| a.tokens > 0));
+    let tokens: Vec<u64> = (design.spend[0].agents.iter()).map(|a| a.tokens).collect();
+    assert_eq!(tokens, [209_000, 98_000]);
+    // The capture holds no other usage, so nothing at all is credited.
+    let mut others = run.clone();
+    others.orch.design = None;
+    assert_eq!(run_usage(&others).total, TokenUsage::default());
     let got = run_usage(run);
     assert_eq!(got.by_role["brainstormer"], TokenUsage::default());
     assert_eq!(got.by_role["doc_reviewer"], TokenUsage::default());
+    assert_eq!(got.total, TokenUsage::default());
 }

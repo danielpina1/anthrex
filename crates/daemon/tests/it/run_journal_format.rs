@@ -184,9 +184,11 @@ fn a_format_6_run_loads() {
     assert_eq!(run.id, id);
     let design = run.orch.design.as_ref().expect("its design state");
     let loaded = &design.spend[0].agents;
-    assert_eq!(loaded.len(), 2);
+    let tokens: Vec<u64> = loaded.iter().map(|a| a.tokens).collect();
+    assert_eq!(tokens, [209_000, 98_000], "kept as loaded");
+    // A load never writes a format-6 run back.
+    assert_eq!(std::fs::read_to_string(dir.join(RUN_FILE)).unwrap(), text);
     for agent in loaded {
-        assert!(agent.tokens > 0, "{agent:?}");
         assert_eq!(agent.usage, proto::TokenUsage::default());
         assert_eq!(agent.phase_agent().tokens, 0, "{agent:?}");
     }

@@ -109,9 +109,9 @@ const RUN: [&str; 12] = [
     "│ path      critical path t0 → t6 → t2 → t3 · 2 tasks left · 1.2× the bound          │",
     "│ agents    workers 3/3 · readers 1/3 · claude ok · codex rate-limited 4m            │",
     "│ spend     tokens 1.8M (all roles) · cache hits 71% of input · worker tool calls 6… │",
+    "│ est. left ~40m                                                                     │",
     "│ gate      plan approved 11:02 · 2 plan edits since · last: split t2                │",
     "│ attention t5 blocked: question — \"Gemini has no subagent-stop event\"               │",
-    "│                                                                                    │",
     "│                                                                                    │",
     "│                                                                                    │",
     "╰────────────────────────────────────────────────────────────────────────────────────╯",
@@ -261,6 +261,18 @@ fn scout_panel_wraps_the_question() {
 
 /// Milestone 4.7's eight rows: the title and five fields, `attention` dropped from the
 /// end.
+/// M9.19.4 review, Important 2: decision 2's spend labels outgrow a panel row, so the
+/// estimate has its own row and is never cut, in the 84-column panel and at 80×24.
+#[test]
+fn the_estimate_keeps_its_own_row() {
+    let inspection = node(gemini_fixture(), run_key("r1"));
+    for (width, height) in [(86, M8C_PANEL_HEIGHT), (80, 24)] {
+        let rows = panel(&inspection, width, height);
+        let want = format!("│ est. left ~40m{}│", " ".repeat(usize::from(width) - 17));
+        assert!(rows.contains(&want), "{width}×{height}: {rows:#?}");
+    }
+}
+
 #[test]
 fn run_panel_in_eight_rows_drops_from_the_end() {
     let inspection = node(gemini_fixture(), run_key("r1"));

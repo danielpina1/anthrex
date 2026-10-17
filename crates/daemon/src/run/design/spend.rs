@@ -52,9 +52,12 @@ pub struct AgentSpend {
     pub sessions: u32,
     #[serde(default)]
     pub calls: u32,
-    /// Milestone 9.19 decision 2: `usage.billable()`. A format-6 agent (no `usage`)
-    /// keeps the sum it was saved with, cache reads included; nothing reads it as
-    /// tokens (`phase_agent`, `spend_totals` and the run's usage read `usage`).
+    /// Milestone 9.19 decision 2: the sessions' billed tokens, equal to
+    /// `usage.billable()` for an agent started by this build. A format-6 agent (no
+    /// `usage`) keeps the sum it was saved with, cache reads included, and adds each
+    /// later session's billed tokens to it, so it never equals its `usage.billable()`
+    /// again; nothing reads it as tokens (`phase_agent`, `spend_totals` and the run's
+    /// usage read `usage`).
     #[serde(default)]
     pub tokens: u64,
     /// Milestone 9.19 decision 2: its sessions' raw usage, summed (zero in a format-6
@@ -69,13 +72,16 @@ pub struct AgentSpend {
 
 impl AgentSpend {
     /// As the history line carries it: billed tokens from `HISTORY_VERSION` 6, so a
-    /// format-6 agent (no `usage`) carries 0, which the design refit skips (ruling R10).
+    /// format-6 agent (no `usage`, or sessions before the upgrade: its `tokens` differ
+    /// from its `usage.billable()`) carries 0, which the design refit skips (ruling R10;
+    /// M9.19.4 review, I1).
     pub fn phase_agent(&self) -> PhaseAgent {
+        let billed = self.usage.billable();
         PhaseAgent {
             role: self.role,
             route: self.route.clone(),
             calls: self.calls,
-            tokens: self.usage.billable(),
+            tokens: if self.tokens == billed { billed } else { 0 },
             outcome: self.outcome.clone(),
             secs: self.secs,
             sessions: self.sessions,
@@ -119,7 +125,8 @@ impl DesignState {
 
     /// One session of `session.label` ended in round `round`'s `phase`: added to that
     /// agent's sums (`sessions` counts it), its route and outcome replacing the earlier.
-    /// Its tokens are its summed usage's billed tokens.
+    /// Its tokens add the session's billed tokens (a format-6 agent's stay apart from its
+    /// usage, M9.19.4 review I1).
     pub fn add_session(&mut self, round: u32, phase: &str, session: AgentSpend) {
         let spend = self.phase_spend_mut(round, phase);
         let found = (spend.agents.iter_mut()).find(|a| a.label == session.label);
@@ -134,7 +141,7 @@ impl DesignState {
         agent.sessions += 1;
         agent.calls = agent.calls.saturating_add(session.calls);
         agent.usage += session.usage;
-        agent.tokens = agent.usage.billable();
+        agent.tokens = agent.tokens.saturating_add(session.usage.billable());
         agent.secs = agent.secs.saturating_add(session.secs);
         agent.route = session.route;
         agent.outcome = session.outcome;
