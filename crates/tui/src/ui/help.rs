@@ -254,7 +254,14 @@ fn lines(groups: &[HelpGroup], width: usize, p: Palette) -> Vec<Line<'static>> {
     // The glossary's rows hold glyphs (`✓`, `⚑`): their twins first, then the punctuation.
     let clean = |s: &str| {
         let s = one_line(s);
-        fold(&if p.ascii { ascii_twins(&s) } else { s }, p.ascii)
+        let s = if p.ascii {
+            // `fold` is shared with other screens, so the glossary's `×` and `÷` are
+            // folded here only.
+            ascii_twins(&s).replace('×', "x").replace('÷', "/")
+        } else {
+            s
+        };
+        fold(&s, p.ascii)
     };
     let key_width = |numbers: bool| {
         groups

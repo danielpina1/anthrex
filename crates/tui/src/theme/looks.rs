@@ -229,9 +229,6 @@ pub fn fold(text: &str, ascii: bool) -> String {
             '↓' => out.push('v'),
             '⏎' => out.push_str("enter"),
             '☐' => out.push_str("[ ]"),
-            '×' => out.push('x'),
-            '÷' => out.push('/'),
-            '–' => out.push('-'),
             other => out.push(other),
         }
     }

@@ -171,3 +171,26 @@ fn every_numbers_row_is_reachable_at_80x24_cut_to_the_box() {
         assert!(seen.iter().any(|r| r.contains(&row)), "{row:?}");
     }
 }
+
+/// Opened on the last group, the view holds its header at the top where the end of the
+/// help lies above it (120x60), and `j` and PgDn stop there.
+#[test]
+fn opened_on_numbers_the_view_holds_its_place() {
+    let groups = help_groups("C-b");
+    let top = group_tops(&groups)[groups.len() - 1];
+    let mut app = app_at(0);
+    app.set_body_area(ratatui::layout::Rect::new(0, 0, 120, 59));
+    app.modal = Some(Modal::Help(HelpView {
+        scroll: top as u16,
+        opened: top as u16,
+    }));
+    let scroll = |app: &App| match &app.modal {
+        Some(Modal::Help(v)) => usize::from(v.scroll),
+        _ => panic!("no help"),
+    };
+    app.on_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
+    app.on_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
+    assert_eq!(scroll(&app), top);
+    let rows = audit::rows(&audit::draw(&app, 120, 60));
+    assert!(rows[2].contains("│ numbers"), "{rows:#?}");
+}
