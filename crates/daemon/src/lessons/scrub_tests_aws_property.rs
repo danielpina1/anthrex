@@ -12,7 +12,7 @@ use super::scrub_tests_residuals::{aws_id, aws_secret, sts_id};
 const LEAK_RUN: usize = 30;
 
 /// The longest piece of `secret` that `out` still holds.
-fn longest_leak(out: &str, secret: &str) -> usize {
+pub(super) fn longest_leak(out: &str, secret: &str) -> usize {
     (1..=secret.len())
         .rev()
         .find(|&len| (0..=secret.len() - len).any(|at| out.contains(&secret[at..at + len])))
@@ -25,7 +25,7 @@ fn rotated(secret: &str, by: usize) -> String {
 }
 
 /// `secret` with its first characters replaced by `head`.
-fn headed(secret: &str, head: &str) -> String {
+pub(super) fn headed(secret: &str, head: &str) -> String {
     [head, &secret[head.len()..]].concat()
 }
 
@@ -213,7 +213,7 @@ fn escape(rng: &mut Rng, form: Form) -> String {
 }
 
 /// Where a secret goes: after an id, after the key name, or in JSON.
-fn place(context: usize, body: &str) -> String {
+pub(super) fn place(context: usize, body: &str) -> String {
     match context {
         0 => format!("{} {body}", aws_id()),
         1 => format!("{} {body}", sts_id()),
@@ -223,7 +223,7 @@ fn place(context: usize, body: &str) -> String {
     }
 }
 
-const CONTEXTS: usize = 5;
+pub(super) const CONTEXTS: usize = 5;
 
 /// Whether `escape` then `rest` opens a DCS or SOS string (ESC P, ESC X), which the
 /// strip removes up to the next BEL or ESC.

@@ -345,12 +345,12 @@ const DECODE_ROUNDS: usize = 8;
 /// or [`DECODE_ROUNDS`]. Anything else written out is kept as it is, so `%20`, `\u00e9`
 /// and a path's `\x` stay, and a redaction's placeholder (letters, brackets, `*`) is
 /// never touched. Each round is one linear pass. Task 9's review, A-I1 (found by its
-/// property test): a text escape whose `\` or `%` is a byte of a real escape sequence
-/// (an ST's `\`, an nF intermediate `%`) is kept unless it is an ESC or a single-byte
-/// CSI. An ST before a secret that starts with three octal digits (`ESC \ 226…`) would
-/// otherwise turn them into U+0096, which nothing strips, and the secret would lose
-/// three characters; the strip removes the `\` with its sequence. An ESC is still
-/// decoded there, so its strip is unchanged.
+/// property test), and fix round 2's I1: a text escape whose `\` or `%` is a byte of a
+/// real escape sequence (an ST's `\`, an nF intermediate `%`) is kept as text, whatever
+/// it decodes to. The secret after such an escape supplies the text escape's digits: an
+/// ST before `226…` would make U+0096, which nothing strips, and an ST before `033…` or
+/// `ESC %` before `1B…` would make an ESC or a CSI that eats the secret's next
+/// characters with it. The strip removes the `\` or `%` with its own sequence.
 fn decode(text: &str) -> String {
     let mut text = text.to_string();
     for _ in 0..DECODE_ROUNDS {
@@ -373,9 +373,7 @@ fn decode(text: &str) -> String {
                         Some((group, u32::from_str_radix(digits, radix).ok()?))
                     });
                 match value.and_then(|(group, v)| Some((group, char::from_u32(v)?))) {
-                    Some((_, ch)) if held && !matches!(ch, '\u{1b}' | '\u{9b}') => {
-                        whole.to_string()
-                    }
+                    Some(_) if held => whole.to_string(),
                     Some((_, ch)) if ch.is_control() => ch.to_string(),
                     Some((5, '%')) => "%".to_string(),
                     _ => whole.to_string(),
@@ -458,3 +456,7 @@ mod scrub_tests_escapes;
 #[cfg(test)]
 #[path = "scrub_tests_aws_property.rs"]
 mod scrub_tests_aws_property;
+
+#[cfg(test)]
+#[path = "scrub_tests_aws_held.rs"]
+mod scrub_tests_aws_held;
