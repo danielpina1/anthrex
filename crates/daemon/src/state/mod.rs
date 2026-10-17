@@ -28,7 +28,10 @@ mod persist;
 #[cfg(test)]
 use load::aside_path_with;
 pub use load::{load, load_with};
-pub use persist::{SAVE_DEBOUNCE, SAVE_MAX_DELAY, save, spawn_persister};
+pub use persist::{
+    FLUSH_TIMEOUT, FlushHandle, RestoreGate, SAVE_DEBOUNCE, SAVE_MAX_DELAY, save, spawn_persister,
+    spawn_persister_during_restore,
+};
 
 use proto::{Runtime, Status, WindowKind};
 use serde::{Deserialize, Deserializer, Serialize};

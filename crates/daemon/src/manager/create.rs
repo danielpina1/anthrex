@@ -74,10 +74,23 @@ pub(super) struct Reservation<'a> {
     held: bool,
 }
 
-impl Reservation<'_> {
+impl<'a> Reservation<'a> {
+    /// A name held for `id` with no worktree: a headless create's, between spending its
+    /// id and listing its window (`headless.rs`). The caller has inserted the name into
+    /// `Inner::reserved_names` under the lock.
+    pub(super) fn name_only(manager: &'a WindowManager, id: u32, name: String) -> Self {
+        Self {
+            manager,
+            id,
+            name,
+            worktree_path: None,
+            held: true,
+        }
+    }
+
     /// Gives both claims back under a lock the caller already holds, so there is no
     /// instant in which neither the reservation nor an entry holds the name.
-    fn release(mut self, inner: &mut Inner) {
+    pub(super) fn release(mut self, inner: &mut Inner) {
         Self::clear(inner, self.id, &self.name, self.worktree_path.as_deref());
         self.held = false;
     }
@@ -153,6 +166,8 @@ impl WindowManager {
         // Phase A: under the lock, and nothing here can block.
         let (id, reservation) = self.admit(&spec, &roots.project)?;
         let name = reservation.name.clone();
+        // The id is on disk before anything can learn it (`id_flush.rs`); no lock held.
+        self.record_spent_id(id).await?;
 
         // Phase B: no lock, not on a tokio worker.
         let config = self.config.clone();

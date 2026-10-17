@@ -58,6 +58,8 @@ async fn a_restart_never_hands_out_a_window_id_a_restored_run_names() {
     s.restore().await;
     let named = crate::lock(&s.state).runs["r1"].tasks[0].rounds[0].window_id;
     assert_eq!(named, Some(1), "the restored round names window 1");
+    // The `== 2` below holds only because this restore opened no window of its own.
+    assert!(manager.list().is_empty(), "{:?}", manager.list());
 
     let spec = WindowSpec {
         name: Some("after-restart".into()),

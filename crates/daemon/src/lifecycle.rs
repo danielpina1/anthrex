@@ -413,7 +413,21 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     );
     // Decision 12/14: every restored window is listed, dormant and viewable before
     // anything can connect.
+    let loaded_for_restore = loaded_state.clone();
     manager.restore(loaded_state);
+    // Decision 9: keeps `state.json` current for as long as the daemon runs. Started
+    // here, before the runs are restored, so a window that restore opens has its id
+    // saved before it is published (`manager/id_flush.rs`); until `restoring.finish()`
+    // below it writes only a raised `next_id` over the file as loaded, never the
+    // half-restored table. Stopped, below, before decision 11's own final write — there
+    // is exactly one writer of this file at any instant.
+    let shutdown = CancellationToken::new();
+    let (persister, restoring) = crate::state::spawn_persister_during_restore(
+        manager.clone(),
+        state_path.clone(),
+        shutdown.clone(),
+        loaded_for_restore,
+    );
     // Decision 44: the runs of the last daemon are loaded, reconciled and restored
     // before the socket is bound, so the first client sees them.
     let runs = RunService::new(manager.clone(), run_context);
@@ -432,6 +446,7 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
         &loaded_config.orchestrator,
     );
     profiles.restore().await;
+    restoring.finish();
 
     prepare_socket(&opts.socket_path)?;
     let listener = bind_socket(&opts.socket_path)?;
@@ -443,7 +458,6 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     std::fs::write(&pid_path, std::process::id().to_string())?;
     tracing::info!(socket = %opts.socket_path.display(), pid = std::process::id(), "daemon started");
 
-    let shutdown = CancellationToken::new();
     // The probe's own stop signal, separate from `shutdown` on purpose. `shutdown` is
     // cancelled at a point in the teardown below that decision 11 fixes exactly (after
     // `manager.shutdown()`, before the persister is awaited); the probe has to be stopped
@@ -483,13 +497,6 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
         tracing::info!("signal received, shutting down");
         signal_token.cancel();
     });
-
-    // Decision 9: keeps `state.json` current for as long as the daemon runs. Started
-    // only after the socket is bound (nothing for it to persist could have changed
-    // before this point) and stopped, below, before decision 11's own final write —
-    // there is exactly one writer of this file at any instant.
-    let persister =
-        crate::state::spawn_persister(manager.clone(), state_path.clone(), shutdown.clone());
 
     // Complete the only version probe before any window launch is *launched* — which is
     // what `launch_gate` now says, and all it says. Awaiting the probe here, as this used
