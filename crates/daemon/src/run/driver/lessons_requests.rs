@@ -166,24 +166,25 @@ pub fn graph_at(
     now: u64,
     cfg: &config::Lessons,
 ) -> LessonGraph {
-    let deadline = Instant::now() + GRAPH_MODULES_BOUND;
-    graph_at_until(repo_dir, checkout, project, now, cfg, deadline)
+    graph_within(repo_dir, checkout, project, now, cfg, GRAPH_MODULES_BOUND)
 }
 
-/// [`graph_at`] with its module walk's deadline (the tests' seam).
-fn graph_at_until(
+/// [`graph_at`] with its module walk's bound (the tests' seam). Task 9's review, B2:
+/// the deadline is taken after the store read and the consolidation, right before
+/// [`modules_at_until`], so a slow store does not spend the walk's bound.
+fn graph_within(
     repo_dir: &Path,
     checkout: &Path,
     project: PathBuf,
     now: u64,
     cfg: &config::Lessons,
-    deadline: Instant,
+    bound: Duration,
 ) -> LessonGraph {
     let (lines, _) = read_store(&repo_dir.join(LESSONS_FILE));
     let store = fold(&lines);
     let (history, _): (Vec<HistoryLine>, _) = read_history(&repo_dir.join(HISTORY_FILE));
     let lessons = consolidate(&store, &history, now, cfg);
-    let (modules, source) = modules_at_until(repo_dir, checkout, deadline);
+    let (modules, source) = modules_at_until(repo_dir, checkout, Instant::now() + bound);
     LessonGraph {
         project,
         ..build(&store, &lessons, &modules, source)

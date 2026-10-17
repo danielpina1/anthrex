@@ -450,7 +450,15 @@ fn a_slow_profile_walk_falls_back_to_no_modules() {
         (Vec::new(), ModuleSource::None)
     );
     // The graph is still built, with its lessons and no module of the profile's.
-    let graph = graph_at_until(&repo_dir, &checkout, project.clone(), NOW, &cfg(), past());
+    // A zero bound: the walk's deadline is already reached when it starts.
+    let graph = graph_within(
+        &repo_dir,
+        &checkout,
+        project.clone(),
+        NOW,
+        &cfg(),
+        Duration::ZERO,
+    );
     assert_eq!(graph.project, project);
     assert_eq!(graph.module_source, ModuleSource::None);
     assert!(!graph.nodes.iter().any(|n| n.id == "m:a" || n.id == "m:b"));
@@ -544,4 +552,30 @@ async fn graph_is_answered() {
             format!("not a git repository: {}", outside.display())
         )
     );
+}
+
+/// How long the store read is held, and the module walk's bound, in
+/// `the_module_walk_bound_starts_after_the_store_read` (docs/timing-budgets.md).
+const STORE_HOLD: Duration = Duration::from_secs(2);
+const WALK_BOUND: Duration = Duration::from_secs(1);
+
+#[test]
+fn the_module_walk_bound_starts_after_the_store_read() {
+    // Task 9's review, B2: a store read slower than the bound still draws the modules.
+    use std::os::unix::ffi::OsStrExt;
+    let (_tmp, checkout, project, repo_dir) = git_repo();
+    write_profile(&repo_dir, &["crates/*"]);
+    let path = store_path(&repo_dir);
+    let fifo = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    // SAFETY: a plain mkfifo on a path this test owns.
+    assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+    // The read blocks until this writer opens the FIFO and closes it (an empty store).
+    let writer = std::thread::spawn(move || {
+        std::thread::sleep(STORE_HOLD);
+        drop(std::fs::OpenOptions::new().write(true).open(path).unwrap());
+    });
+    let graph = graph_within(&repo_dir, &checkout, project, NOW, &cfg(), WALK_BOUND);
+    writer.join().unwrap();
+    assert_eq!(graph.module_source, ModuleSource::Profile);
+    assert!(graph.nodes.iter().any(|n| n.id == "m:a"));
 }
