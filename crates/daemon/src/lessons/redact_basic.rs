@@ -19,13 +19,18 @@ fn basic_char(b: u8) -> bool {
 }
 
 /// `Basic` (any case, with no left boundary, as `Bearer`) and whitespace, then a
-/// base64 run of at least [`BASIC_MIN`] characters. Task 6's review, M1: the run is
+/// base64 run, which [`basic`] needs to be at least [`BASIC_MIN`] characters (fix
+/// round 2: the pattern counts an escape as one element, so it takes half as many).
+/// Task 6's review, M1: the run is
 /// read through escapes ([`super::ESCAPE_FORMS`]), whose final may be its first
-/// character.
+/// character, and (fix round 2's I2) through hidden characters
+/// ([`super::HIDDEN_FORMS`]).
 static BASIC_RE: LazyLock<Regex> = LazyLock::new(|| {
     re(&format!(
-        r"(?i)basic[ \t]+((?:[A-Za-z0-9+/]|{}){{{BASIC_MIN},}}={{0,2}})",
-        super::ESCAPE_FORMS
+        r"(?i)basic[ \t]+((?:[A-Za-z0-9+/]|{}|{}){{{},}}={{0,2}})",
+        super::ESCAPE_FORMS,
+        super::HIDDEN_FORMS,
+        BASIC_MIN / 2
     ))
 });
 

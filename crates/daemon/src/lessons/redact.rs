@@ -113,10 +113,14 @@ static URL_CUT: LazyLock<Regex> =
 /// is prose and no escape spelling before `Bearer` can hide a credential.
 /// Task 6's review, M1, and fix round 2's I2: the credential is read through escapes,
 /// whose parameters, intermediates and final may be its first characters
-/// ([`runs::Readings`]).
+/// ([`runs::Readings`]), and through hidden characters ([`HIDDEN_FORMS`]). The pattern
+/// counts an escape as one element, so it takes half of [`BEARER_MIN`] (an escape that
+/// ate more than half of a credential leaves fewer than 8 of its characters), and
+/// [`bearer`] judges the length.
 static BEARER_RE: LazyLock<Regex> = LazyLock::new(|| {
     re(&format!(
-        r"(?i)bearer[ \t]+((?:[A-Za-z0-9._~+/=-]|{ESCAPE_FORMS}){{{BEARER_MIN},}})"
+        r"(?i)bearer[ \t]+((?:[A-Za-z0-9._~+/=-]|{ESCAPE_FORMS}|{HIDDEN_FORMS}){{{},}})",
+        BEARER_MIN / 2
     ))
 });
 
@@ -174,6 +178,11 @@ const ESCAPE_FORMS: &str = concat!(
     r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b[\]PX^_][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[ -/]*[0-~]?",
     r"|\x{9b}[0-?]*[ -/]*[@-~]|\x{9b}"
 );
+/// The hidden format characters (`is_hidden_format`'s, and a few more default-ignorable
+/// ones), which the line breakers drop after `scrub`: fix round 2 for task 9's review,
+/// I2. The `Basic` and `Bearer` credentials are read through them, as the AWS runs
+/// are, so a credential that one splits is replaced whole, not its head alone.
+const HIDDEN_FORMS: &str = r"[\p{Default_Ignorable_Code_Point}\x{FFF9}-\x{FFFB}]";
 /// A real escape sequence at the start of the text, in [`ESCAPE`]'s forms.
 static ESCAPE_HERE: LazyLock<Regex> = LazyLock::new(|| re(&format!("^(?:{ESCAPE_FORMS})")));
 /// Decision 5's placeholders, which count as a token's characters.
@@ -292,9 +301,10 @@ fn mixed_case(run: &str) -> bool {
 /// A `Bearer` credential: its visible characters, or those with each escape's eaten
 /// final kept, are at least [`BEARER_MIN`] holding a digit. Fix round 2 for task 9's
 /// review, I2: or with every byte of the credential's alphabet each escape ate kept
-/// (`ESC[42abc…` took `42`), when the visible characters are random-looking (an
-/// uppercase and a lowercase letter), so that a colour code's own digits before a
-/// lowercase word (`ESC[1mauthentication-required`) do not make it a credential. The
+/// (`ESC[42abc…` took `42`), when the visible characters with the eaten finals are
+/// random-looking (an uppercase and a lowercase letter; the finals count, since an
+/// escape can take a token's only capitals), so that a colour code's own digits before
+/// a lowercase word (`ESC[1mauthentication-required`) do not make it a credential. The
 /// capture is read once.
 fn bearer(text: &str) -> String {
     BEARER_RE
@@ -305,7 +315,7 @@ fn bearer(text: &str) -> String {
                 |run: &str| run.len() >= BEARER_MIN && run.bytes().any(|b| b.is_ascii_digit());
             if credential(&r.visible)
                 || credential(&r.kept)
-                || (credential(&r.all) && mixed_case(&r.visible))
+                || (credential(&r.all) && mixed_case(&r.kept))
             {
                 BEARER.to_string()
             } else {
@@ -491,3 +501,11 @@ mod scrub_tests_aws_held;
 #[cfg(test)]
 #[path = "scrub_tests_credential_escapes.rs"]
 mod scrub_tests_credential_escapes;
+
+#[cfg(test)]
+#[path = "scrub_tests_gen.rs"]
+mod scrub_tests_gen;
+
+#[cfg(test)]
+#[path = "scrub_tests_credential_property.rs"]
+mod scrub_tests_credential_property;

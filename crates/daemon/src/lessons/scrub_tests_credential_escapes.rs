@@ -65,6 +65,15 @@ fn table() -> Vec<(String, String)> {
             format!("Authorization: Bearer \u{9b}{bearer}"),
             bearer_out.clone(),
         ),
+        // Found by the property at ten times its size: the escape took the token's only
+        // capital, so its visible characters are all lowercase.
+        (
+            format!(
+                "Authorization: Bearer \u{1b}-{}",
+                ["Er1-v4", "mor.flrhx"].concat()
+            ),
+            bearer_out.clone(),
+        ),
         (
             format!("Authorization: Bearer \u{1b}[1;31{bearer}"),
             bearer_out.clone(),
@@ -95,4 +104,45 @@ fn coloured_prose_after_the_schemes_stays() {
         let stripped = prose.replace("\u{1b}[1m", "").replace("\u{1b}[01;34m", "");
         assert_eq!(scrub(prose), stripped.replace("\u{1b}[0m", ""), "{prose:?}");
     }
+}
+
+#[test]
+fn a_hidden_character_inside_a_credential_leaves_none_of_it() {
+    // Found by the credential property (fix round 2): `scrub` redacted the head before
+    // a ZWSP, and once the line breakers dropped it the password's base64 was left.
+    let admin = basic_for(b"admin");
+    let bearer = ["abcd1234", "EFGH5678", "ijkl"].concat();
+    for hidden in ['\u{200b}', '\u{feff}', '\u{180e}', '\u{ad}'] {
+        let input = format!(
+            "Authorization: Basic {}{hidden}{}",
+            &admin[..19],
+            &admin[19..]
+        );
+        assert_eq!(
+            scrub(&input),
+            format!("Authorization: {BASIC}"),
+            "{input:?}"
+        );
+        let input = format!(
+            "Authorization: Bearer {}{hidden}{}",
+            &bearer[..9],
+            &bearer[9..]
+        );
+        assert_eq!(
+            scrub(&input),
+            format!("Authorization: {BEARER}"),
+            "{input:?}"
+        );
+    }
+}
+
+#[test]
+fn the_credentials_read_through_every_hidden_character() {
+    let hidden = regex::Regex::new(&format!("^{}$", super::HIDDEN_FORMS)).expect("a pattern");
+    let missed: Vec<char> = (0..=0x10_ffff)
+        .filter_map(char::from_u32)
+        .filter(|c| proto::safe_text::is_hidden_format(*c))
+        .filter(|c| !hidden.is_match(c.encode_utf8(&mut [0; 4])))
+        .collect();
+    assert_eq!(missed, Vec::<char>::new());
 }
