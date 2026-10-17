@@ -463,26 +463,31 @@ impl RunService {
             Err(text) => return refused(text),
         };
         let (run_id, digest_revision) = (run.id.clone(), run.orch.digest_rev);
-        // Milestone 9.13 decision 19: only the orchestrator's read taints.
-        let taints = call.role == AgentRole::Orchestrator;
+        // Milestone 9.13 decision 19: only the orchestrator's read taints; and only its
+        // read clears its notes, whichever roles `parse_call` lets read the digest.
+        let orchestrator = call.role == AgentRole::Orchestrator;
         let built = tokio::task::spawn_blocking(move || {
             let (digest, shown) = crate::run::orch::digest::digest_shown(&run, now);
-            let source = taints.then(|| digest_source(&digest, &run)).flatten();
+            let source = orchestrator.then(|| digest_source(&digest, &run)).flatten();
             (digest.to_string(), source, notes_seq_shown(&run, shown))
         })
         .await;
         match built {
             Ok((text, source, seq)) => {
                 // Decision 39: what the answer held is neither kept nor pasted.
-                self.wakes.read(&run_id, seq);
+                if orchestrator {
+                    self.wakes.read(&run_id, seq);
+                }
                 // Decision 20: before the answer, on the channel a later call takes.
                 self.untrusted_read(&run_id, now, source);
-                self.send(EventKind::Orch(OrchEvent::DigestRead {
-                    run_id,
-                    digest_revision,
-                    notes_seq: seq,
-                    at: read_at(now),
-                }));
+                if orchestrator {
+                    self.send(EventKind::Orch(OrchEvent::DigestRead {
+                        run_id,
+                        digest_revision,
+                        notes_seq: seq,
+                        at: read_at(now),
+                    }));
+                }
                 RunReply::tool_result(true, text)
             }
             Err(error) => refused(format!("a blocking step did not finish: {error}")),

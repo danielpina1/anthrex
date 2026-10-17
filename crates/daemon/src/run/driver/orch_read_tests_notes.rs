@@ -6,12 +6,13 @@
 
 use std::ops::RangeInclusive;
 
-use proto::BlockReason;
+use proto::{AgentRole, BlockReason};
 use serde_json::{Value, json};
 
-use super::read_rig::Rig;
+use super::read_rig::{PLANNER, Rig};
 use crate::run::model::Run;
 use crate::run::orch::test_support::{block, run_of};
+use crate::run::orch::{EpicRecord, PlannerPhase, PlannerSession};
 
 /// The orchestrator's pending notes, `note 1` to `note <n>`, seqs 1 to `n`.
 fn notes(run: &mut Run, n: u64) {
@@ -85,5 +86,60 @@ async fn a_trimmed_digest_read_keeps_the_notes_it_cut() {
         assert_eq!(held(&rig), (last + 1..=20).collect::<Vec<_>>());
         assert_eq!(rig.runs.wakes.remembered(&rig.run_id), Some(last));
     }
+    rig.stop().await;
+}
+
+/// A live sub-planner of epic `mail` in window [`PLANNER`].
+fn with_planner(run: &mut Run) {
+    let mut epic = EpicRecord::new("mail", PlannerPhase::Planning);
+    epic.area = vec!["crates/m0/**".into()];
+    epic.sessions.push(PlannerSession {
+        session: 1,
+        window_id: Some(PLANNER),
+        op: Some(3),
+        started_at: 1_000,
+        ended_at: None,
+        usage: Default::default(),
+        rejections: 0,
+    });
+    run.orch.epics.push(epic);
+}
+
+/// Only the orchestrator's read clears its notes. `parse_call` and the MCP gate give no
+/// other role `run_status` today; a planner's call made past both still leaves the notes
+/// in the engine and marks none read, so a waiting wake-up is neither dropped nor cut
+/// (`Wakes::read` is what does both, and it records the mark first).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_planners_run_status_clears_no_notes() {
+    let rig = Rig::new(|run, _| {
+        with_planner(run);
+        notes(run, 3);
+    })
+    .await;
+    let call = proto::ToolCall {
+        run_id: rig.run_id.clone(),
+        task_id: None,
+        role: AgentRole::Planner,
+        window_id: PLANNER,
+        tool: "run_status".into(),
+        args: json!({}),
+        scout_id: None,
+        epic: Some("mail".into()),
+        chain: None,
+        lane: None,
+    };
+    let reply = rig.runs.run_status(&call).await;
+    assert!(
+        matches!(reply, proto::RunReply::ToolResult { ok: true, .. }),
+        "{reply:?}"
+    );
+    rig.settled().await;
+    assert_eq!(held(&rig), vec![1, 2, 3], "a planner's read cleared notes");
+    assert_eq!(rig.runs.wakes.remembered(&rig.run_id), None);
+    let all: Vec<(u64, String)> = (1..=3).map(|s| (s, format!("note {s}"))).collect();
+    assert_eq!(
+        rig.runs.wakes.unpasted_seqs(&rig.run_id, &all),
+        Some(vec![1, 2, 3])
+    );
     rig.stop().await;
 }
