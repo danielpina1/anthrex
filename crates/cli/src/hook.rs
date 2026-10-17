@@ -90,6 +90,24 @@ async fn stdin_payload() -> Option<Vec<u8>> {
     receive.await.ok().flatten()
 }
 
+/// Milestone 9.18 task 11's review, M2: a `PostToolUseFailure` carries a failed call's
+/// output in `error` (milestone 9.14 fact F4), not in `tool_response`, so its string is
+/// bounded the same way, on a character boundary. The daemon summarises only its first
+/// line, so nothing it reads is lost.
+fn bound_failure_error(object: &mut serde_json::Map<String, serde_json::Value>) {
+    if object.get("hook_event_name").and_then(|v| v.as_str()) != Some("PostToolUseFailure") {
+        return;
+    }
+    if let Some(serde_json::Value::String(error)) = object.get_mut("error")
+        && error.len() > proto::conversation::TOOL_RESULT_SUMMARY_MAX
+    {
+        *error = proto::conversation::truncate_to_char_boundary(
+            error,
+            proto::conversation::TOOL_RESULT_SUMMARY_MAX,
+        );
+    }
+}
+
 async fn forward(args: Vec<OsString>) -> Option<()> {
     let args = parse(args)?;
     let bytes = match args.payload {
@@ -102,6 +120,7 @@ async fn forward(args: Vec<OsString>) -> Option<()> {
     let mut payload: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
     if let Some(object) = payload.as_object_mut() {
         proto::conversation::bound_tool_response(object);
+        bound_failure_error(object);
     }
 
     let mut stream = UnixStream::connect(proto::paths::socket_path())

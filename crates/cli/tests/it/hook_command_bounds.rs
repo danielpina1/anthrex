@@ -361,3 +361,51 @@ fn an_over_limit_object_keeps_its_shape_by_shrinking_a_string_leaf() {
         assert_silent_success(&child.finish(Duration::from_millis(500)));
     });
 }
+
+/// Task 11's review, M2: a `PostToolUseFailure`'s `error` is bounded as a string
+/// `tool_response` is, on a character boundary, so a failed command's whole output never
+/// reaches the daemon or is copied under its manager lock. Nothing else in the payload
+/// changes, and no `tool_response` is added.
+#[test]
+fn an_oversized_failure_error_is_truncated_on_a_char_boundary() {
+    let dir = tempdir();
+    let rt = runtime();
+    rt.block_on(async {
+        let listener = UnixListener::bind(dir.path().join("daemon.sock")).unwrap();
+        let error = "世".repeat(3000);
+        let payload = json!({"hook_event_name":"PostToolUseFailure", "error": error,
+            "is_interrupt": false, "tool_use_id": "toolu_9", "tool_name": "Bash",
+            "tool_input": {"command": "false"}, "session_id": "sess-failure"});
+        let child =
+            RunningCommand::start(isolated_command(dir.path(), FLAGS).arg(payload.to_string()));
+        let mut stream = accept(&listener).await;
+        hello(&mut stream).await;
+        welcome(&mut stream).await;
+        let event = tokio::time::timeout(
+            Duration::from_secs(1),
+            proto::read_frame::<_, ClientMsg>(&mut stream),
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+        let ClientMsg::HookEvent {
+            payload: forwarded, ..
+        } = event
+        else {
+            panic!("expected a HookEvent");
+        };
+        let mut expected = payload.clone();
+        expected["error"] = json!("世".repeat(4095 / 3));
+        assert_eq!(forwarded, expected);
+        proto::write_frame(
+            &mut stream,
+            &DaemonMsg::Ack {
+                request: "hook".into(),
+            },
+        )
+        .await
+        .unwrap();
+        assert_silent_success(&child.finish(Duration::from_millis(500)));
+    });
+}
