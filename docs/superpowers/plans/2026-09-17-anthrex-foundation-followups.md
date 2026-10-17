@@ -2519,3 +2519,12 @@ Each item was checked against the code at the M9.16.11 head; items the later tas
   - The headless id test calls the blocking `state::load` on a tokio worker. This is test-only.
   - The flush's fsync costs about 8 ms per window create. Accepted. Overlapping it with the spawn would mean undoing a spawned agent when a flush fails.
   - A client timeout shorter than `state::FLUSH_TIMEOUT` (5 s) hides the "the daemon's state writer may be stuck" message behind the client's own timeout.
+- **From the 9.18 redactor's round-2 re-review (2026-10-17). Next: a small redactor PR right after 9.18.**
+  - **Leak, older than 9.18 (b62ce8dc has it): a second 40-char candidate turns off restoration.** In `redact_more.rs:235`, when another 40-character candidate shares an escape-joined run, the `!any` check turns off restoration of the secret the escape ate. `<id> ESC[1;<secret>ESC[0m<other>` leaves 39 characters.
+  - **Leak, older than 9.18: a split secret under `Judge::Exact`.** In `redact_more.rs:204-251`, a secret split by an escape and followed by escape-glued characters leaks whole: `secret_access_key=<s[..20]>ESC[0m<s[20..]>ESC[38;5;` leaves all 40.
+  - The property test draws one escape form per case, so it never builds two escape events. Extend it to two before fixing these two leaks.
+  - The 30-visible bound does not cover the exact-40 `kept`/`all` check (`:208-213`), so some coloured text is still over-redacted.
+  - **Accepted, the Bearer case check.** The `all` reading needs an upper- and a lower-case letter among the visible characters plus the eaten finals. Without that check, 6 804 of 6 804 coloured dictionary words after `Bearer` were redacted; with it, 274 are. The miss: a token in a single case that lost its only digits to an escape (`Bearer ESC[42abc…` leaves 33 characters). Hex tokens are still caught.
+  - **Accepted, Basic over-redaction with colour.** With an SGR around a word, 1 865 of 177 219 dictionary words are redacted, against 1 564 before (2 090 with `ESC[01;34m`). With no escape it is still 576.
+  - **Accepted, the credential exclusion bound of 4%.** The measured rate is 2.0–2.6%.
+  - **Closed: the 53 non-idempotent outputs that held a 30-character secret piece.** The re-review checked them: each is a bare secret with no id or key name, which `scrub` leaves on purpose.
