@@ -200,15 +200,17 @@ pub(super) fn encoded_userinfo(text: &str) -> String {
     out
 }
 
-/// The end of the authority that starts at `start` (whitespace, `/`, `?`, `#` or
-/// their `%2F`, `%3F`, `%23`), and where its last `@` or `%40` is.
+/// The end of the authority that starts at `start` (whitespace, `/`, `?`, `#`, `"` or
+/// the first three's `%2F`, `%3F`, `%23`), and where its last `@` or `%40` is.
 fn authority(text: &str, start: usize) -> (usize, Option<usize>) {
     let bytes = text.as_bytes();
     let mut at = start;
     let mut last = None;
     while at < bytes.len() {
         let b = bytes[at];
-        if b.is_ascii_whitespace() || matches!(b, b'/' | b'?' | b'#') {
+        // PR #80's review, item 2: a `"` ends the JSON string the URL is in, so a
+        // later field's `@` is not this authority's.
+        if b.is_ascii_whitespace() || matches!(b, b'/' | b'?' | b'#' | b'"') {
             break;
         }
         if b == b'@' {

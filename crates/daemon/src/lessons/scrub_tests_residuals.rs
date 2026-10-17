@@ -171,6 +171,28 @@ fn an_escaped_url_credential_is_redacted() {
 }
 
 #[test]
+fn an_encoded_url_in_compact_json_stops_at_its_quote() {
+    // PR #80's review, item 2: the authority ran past the JSON string's closing quote
+    // to a later field's `@`, so an address after a URL was redacted with it.
+    for json in [
+        r#"{"url":"https:\/\/github.com","author":"dan@x.com"}"#,
+        r#"{\"url\":\"https:\/\/github.com\",\"author\":\"dan@x.com\"}"#,
+        r#"{"url":"https%3A%2F%2Fgithub.com","author":"dan%40x.com"}"#,
+    ] {
+        assert_left(json);
+    }
+    // A real encoded `user:pass@` inside the string is still user information.
+    assert_becomes(
+        r#"{"url":"https:\/\/user:pass@host\/x","author":"dan@x.com"}"#,
+        r#"{"url":"https:\/\/***@host\/x","author":"dan@x.com"}"#,
+    );
+    assert_becomes(
+        r#"{"url":"https%3A%2F%2Fuser%3Atok%40host","a":"b"}"#,
+        r#"{"url":"https%3A%2F%2F***%40host","a":"b"}"#,
+    );
+}
+
+#[test]
 fn scrub_stays_idempotent_and_linear_on_the_new_rules() {
     for input in inputs() {
         let once = scrub(&input);
