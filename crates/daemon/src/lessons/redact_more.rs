@@ -47,6 +47,20 @@ fn ends_in_secret(run: &str) -> bool {
     run.len() > AWS_SECRET_LEN && is_aws_secret(&run[run.len() - AWS_SECRET_LEN..])
 }
 
+/// Whether restoring some of what a run's escapes ate makes its visible characters a
+/// secret: task 9's review, A-I1. Fewer than [`AWS_SECRET_LEN`] are visible, and the
+/// [`aws_char`]s its escapes ate (`all` holds them with the visible ones) reach it. An
+/// escape's own parameters can sit before the secret's characters it took (`ESC[5;7`
+/// then `M…`), and its final can be the text after the secret (`ESC,` then `+/"}`), so
+/// which of its bytes were the secret's is not known, only how many could be.
+fn restores_a_secret(visible: &str, all: &str) -> bool {
+    visible.len() < AWS_SECRET_LEN
+        && all.len() >= AWS_SECRET_LEN
+        && all.bytes().any(|b| b.is_ascii_digit())
+        && all.bytes().any(|b| b.is_ascii_uppercase())
+        && all.bytes().any(|b| b.is_ascii_lowercase())
+}
+
 /// Rule (a): a key name (any case), then `=` or `:` with optional spaces and quotes.
 /// [`aws_named`] reads the value after it.
 static AWS_NAMED: LazyLock<Regex> = LazyLock::new(|| {
@@ -134,12 +148,12 @@ fn invisible_at(line: &str, at: usize) -> Option<usize> {
     }
 }
 
-/// The final byte of the escape `line[at..at + len]` when `alphabet` holds it: task 6's
-/// review, I1. ECMA-48's general form and a CSI take the next printable character as
-/// their final, so the strip eats a secret's character with the escape. An OSC, DCS,
-/// SOS, PM or APC string has no such final, and a hidden format character is no
-/// escape.
-fn kept_final(line: &str, at: usize, len: usize, alphabet: fn(u8) -> bool) -> Option<u8> {
+/// The bytes after its lead of the escape `line[at..at + len]` that can eat a secret's
+/// characters: task 6's review, I1, and task 9's review, A-I1. ECMA-48's general form
+/// and a CSI take the next printable characters as their parameters, intermediates and
+/// final, so the strip eats a secret's characters with the escape. An OSC, DCS, SOS, PM
+/// or APC string has no such bytes, and a hidden format character is no escape.
+fn eaten(line: &str, at: usize, len: usize) -> Option<&[u8]> {
     let escape = &line.as_bytes()[at..at + len];
     let lead = if escape.first() == Some(&0x1b) {
         1
@@ -151,8 +165,14 @@ fn kept_final(line: &str, at: usize, len: usize, alphabet: fn(u8) -> bool) -> Op
     if lead == 1 && matches!(escape.get(1), Some(b']' | b'P' | b'X' | b'^' | b'_')) {
         return None;
     }
-    let last = *escape.last()?;
-    (escape.len() > lead && alphabet(last)).then_some(last)
+    (escape.len() > lead).then(|| &escape[lead..])
+}
+
+/// The final byte of the escape `line[at..at + len]` ([`eaten`]) when `alphabet` holds
+/// it: task 6's review, I1.
+fn kept_final(line: &str, at: usize, len: usize, alphabet: fn(u8) -> bool) -> Option<u8> {
+    let last = *eaten(line, at, len)?.last()?;
+    alphabet(last).then_some(last)
 }
 
 /// `run`'s characters of `alphabet` with its escapes and hidden characters left out
@@ -219,25 +239,29 @@ fn secrets_in(text: &str, start: usize, out: &mut String, value: bool) -> usize 
 /// The run that starts at `start` (an [`aws_char`], or an escape whose final is one)
 /// onto `out`, as [`secrets_in`] says; returns where the part that made it a secret
 /// ends, else where its last visible piece ends, else (no visible piece) where its
-/// walk ended, so the scan stays linear. Task 6's review, I1: the run is a secret when
-/// its visible characters are, or its characters with each escape's eaten final kept
-/// are; otherwise each visible piece that is a secret is replaced (an id glued to its
-/// secret by an escape). [`Judge::Tail`] also takes a run or piece whose last 40
-/// characters are a secret.
+/// walk ended, so the scan stays linear. The run is a secret when one of three readings
+/// is: its visible characters; its characters with each escape's eaten final kept
+/// (task 6's review, I1); or its characters with every [`aws_char`] byte of each
+/// escape kept (task 9's review, A-I1: a CSI takes a secret's leading digits as
+/// parameters, and an escape its `/` or `+` as intermediates). Otherwise each visible
+/// piece that is a secret is replaced (an id glued to its secret by an escape).
+/// [`Judge::Tail`] also takes a run or piece whose last 40 characters are a secret.
 fn secret_run(line: &str, start: usize, out: &mut String, judge: Judge) -> usize {
     let bytes = line.as_bytes();
     let mut pieces: Vec<(usize, usize)> = Vec::new();
-    let (mut visible, mut kept) = (String::new(), String::new());
-    let mut kept_end = start;
+    // The kept and the all readings, each with where the part it read ends.
+    let (mut visible, mut kept, mut all) = (String::new(), String::new(), String::new());
+    let (mut kept_end, mut all_end) = (start, start);
     let mut at = start;
     loop {
         let piece = bytes[at..].iter().take_while(|b| aws_char(**b)).count();
         if piece > 0 {
             pieces.push((at, at + piece));
-            visible.push_str(&line[at..at + piece]);
-            kept.push_str(&line[at..at + piece]);
+            for reading in [&mut visible, &mut kept, &mut all] {
+                reading.push_str(&line[at..at + piece]);
+            }
             at += piece;
-            kept_end = at;
+            (kept_end, all_end) = (at, at);
             continue;
         }
         let Some(step) = invisible_at(line, at) else {
@@ -247,6 +271,16 @@ fn secret_run(line: &str, start: usize, out: &mut String, judge: Judge) -> usize
             kept.push(char::from(f));
             kept_end = at + step;
         }
+        let eaten = eaten(line, at, step).unwrap_or_default();
+        if eaten.iter().any(|b| aws_char(*b)) {
+            all.extend(
+                eaten
+                    .iter()
+                    .filter(|b| aws_char(**b))
+                    .map(|b| char::from(*b)),
+            );
+            all_end = at + step;
+        }
         at += step;
     }
     let tail = judge == Judge::Tail;
@@ -255,9 +289,15 @@ fn secret_run(line: &str, start: usize, out: &mut String, judge: Judge) -> usize
         out.push_str(TOKEN);
         return end;
     }
-    if is_aws_secret(&kept) {
+    for (reading, end) in [(&kept, kept_end), (&all, all_end)] {
+        if is_aws_secret(reading) {
+            out.push_str(TOKEN);
+            return end;
+        }
+    }
+    if restores_a_secret(&visible, &all) {
         out.push_str(TOKEN);
-        return kept_end;
+        return all_end;
     }
     let Some(visible_end) = visible_end else {
         out.push_str(&line[start..at]);
@@ -274,13 +314,13 @@ fn secret_run(line: &str, start: usize, out: &mut String, judge: Judge) -> usize
         each.push_str(if secret { TOKEN } else { word });
         last = b;
     }
-    if !any && tail && ends_in_secret(&visible) {
-        out.push_str(TOKEN);
-        return visible_end;
-    }
-    if !any && tail && ends_in_secret(&kept) {
-        out.push_str(TOKEN);
-        return kept_end;
+    if !any && tail {
+        for (reading, end) in [(&visible, visible_end), (&kept, kept_end), (&all, all_end)] {
+            if ends_in_secret(reading) {
+                out.push_str(TOKEN);
+                return end;
+            }
+        }
     }
     out.push_str(&each);
     visible_end

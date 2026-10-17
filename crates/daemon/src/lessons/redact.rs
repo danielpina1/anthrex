@@ -344,13 +344,28 @@ const DECODE_ROUNDS: usize = 8;
 /// `\u{1b}`, `\x1b`, `\033` or `%1B`) decoded, and `%25` decoded to `%`, until stable
 /// or [`DECODE_ROUNDS`]. Anything else written out is kept as it is, so `%20`, `\u00e9`
 /// and a path's `\x` stay, and a redaction's placeholder (letters, brackets, `*`) is
-/// never touched. Each round is one linear pass.
+/// never touched. Each round is one linear pass. Task 9's review, A-I1 (found by its
+/// property test): a text escape whose `\` or `%` is a byte of a real escape sequence
+/// (an ST's `\`, an nF intermediate `%`) is kept unless it is an ESC or a single-byte
+/// CSI. An ST before a secret that starts with three octal digits (`ESC \ 226…`) would
+/// otherwise turn them into U+0096, which nothing strips, and the secret would lose
+/// three characters; the strip removes the `\` with its sequence. An ESC is still
+/// decoded there, so its strip is unchanged.
 fn decode(text: &str) -> String {
     let mut text = text.to_string();
     for _ in 0..DECODE_ROUNDS {
+        let spans: Vec<(usize, usize)> = ESCAPE
+            .find_iter(&text)
+            .map(|m| (m.start(), m.end()))
+            .collect();
+        let inside = |at: usize| {
+            let i = spans.partition_point(|s| s.1 <= at);
+            spans.get(i).is_some_and(|s| s.0 < at)
+        };
         let next = TEXT_ESCAPE
             .replace_all(&text, |c: &Captures| {
                 let whole = &c[0];
+                let held = inside(c.get(0).map_or(0, |m| m.start()));
                 let value = [(1, 16), (2, 16), (3, 16), (4, 8), (5, 16)]
                     .iter()
                     .find_map(|&(group, radix)| {
@@ -358,6 +373,9 @@ fn decode(text: &str) -> String {
                         Some((group, u32::from_str_radix(digits, radix).ok()?))
                     });
                 match value.and_then(|(group, v)| Some((group, char::from_u32(v)?))) {
+                    Some((_, ch)) if held && !matches!(ch, '\u{1b}' | '\u{9b}') => {
+                        whole.to_string()
+                    }
                     Some((_, ch)) if ch.is_control() => ch.to_string(),
                     Some((5, '%')) => "%".to_string(),
                     _ => whole.to_string(),
@@ -436,3 +454,7 @@ mod scrub_tests_residuals;
 #[cfg(test)]
 #[path = "scrub_tests_escapes.rs"]
 mod scrub_tests_escapes;
+
+#[cfg(test)]
+#[path = "scrub_tests_aws_property.rs"]
+mod scrub_tests_aws_property;
