@@ -383,13 +383,36 @@ anywhere after the first kinds was always nextest's silent kill. A forced reprod
 (the restarted daemon holding every op's `done` line, nextest's limit cut to 30 s in a
 scratch config) left exactly that: a timeout with nothing past "crash after VerifyDone",
 the daemon (reparented to pid 1), the `ax-run` directory and a task temporary
-directory.
+directory. The product cause of the hang is the next section's.
 
 | Test | Site | Bound (as found) | The code's own legal worst case | Status |
 |---|---|---|---|---|
 | `e2e_crash_after_each_intent_kind_reconciles`: every wait | `crates/cli/tests/it/run_e2e_crash.rs` (`SCENARIO_WAIT`, `Scenario`) | Each step its own bound (`RUN_WAIT`, `2 * RUN_WAIT`, `REQUEST_WAIT`, `DAEMON_START_WAIT`, ...), per kind, for 8 kinds: about 14,000 s | nextest terminates a test at 600 s (`.config/nextest.toml`) with a signal, so a wait whose deadline lies past it never fires: no message, and `Drop` never stops the daemon. | **Fixed:** each wait is its own bound or what is left of `SCENARIO_WAIT` (400 s from the test's start), whichever is less, derived as `run_e2e_tuning.rs`'s: 600 s, less the teardown's worst case (105 s), less one request begun just before the deadline (`REQUEST_WAIT`), less 10 s. The harness's start for each kind (`DAEMON_START_WAIT`, 60 s) and its `git` reads (a local repository of one commit, milliseconds) are not cut; one of them begun before the deadline overshoots it by less than the request it stands in for, and the next step then has nothing left. Each step is named (`Scenario::step`), and its failure prints the run's state from disk (`run.json`'s state, each round's turn, stall and fallback fields, the outbox, the pending ops, the journal's last lines), with the tails of `daemon.log` and `daemon.out`: nothing that needs the daemon, which may be what hangs. Measured: 34 to 51 s on CI, 8 to 12 s per kind locally. |
 | `RunHarness::request_unanswered`'s handshake | `crates/cli/tests/support/run_crash.rs` (moved from `run_harness.rs`) | None: `connect` waited for the `Welcome` with no bound; only the reply had `request_wait` | As `RunHarness::request`'s row above: `Welcome` follows `Hello` in milliseconds. | **Fixed:** the connection, the handshake and the reply share one bound (`request_unanswered_within`), `request_wait` by default, the scenario's remainder in the crash test. `forget_dead_daemon_within`, `restart_daemon_within` and `anthrex_within` cut their own bounds (`REQUEST_WAIT` then `DAEMON_EXIT_WAIT`, `DAEMON_START_WAIT`, `REQUEST_WAIT`) to a given wait the same way. |
 | `e2e_a_restored_run_that_cannot_finish_fails_by_the_deadline_with_its_state`: the hold and the cut | `run_e2e_crash.rs` (`HELD_MS`, `HELD_WAIT`) | `3600000` ms, a **lower** bound on the hold; `10s` after the restart | Not waits on product work: the restarted daemon holds every op's `done` line an hour, past any bound here, so the restored run cannot complete and every finite cut fails it. The cut applies only after the restart, so the steps before it keep the full `SCENARIO_WAIT` their legal worst case needs; the test then accepts a failure in any step after the restart ("the restored run ..."), whichever one the cut lands in under load. | **Recorded.** It checks the failure's message (the step, `daemon.log` with the hold, the run's state) and that the restarted daemon's pid names no process once the test has unwound. Measured: 16 s. |
+
+### Fixed, from the same hang's product cause (2026-10-17)
+
+No bound was involved: the restored run could never finish. After the crash after
+`VerifyDone`, the restored worker round still names window 1, its resume fails (the
+window died with the old daemon), and a fresh session starts. The window table's state
+file is saved with a debounce (`SAVE_DEBOUNCE`, 100 ms, at most `SAVE_MAX_DELAY`, 1 s),
+and the old daemon died 75 ms after opening window 1, so the new daemon handed the
+fresh session window id 1 again. The engine routes a window's events to the latest
+round naming it: the fresh session's first turn end went to the restored round, ended,
+and was dropped, instead of waiting for its own round's `CreateWindow` result
+(`early.rs` holds only a window no round names). The fresh round's turn stayed open, so
+no turn-end fallback counted its commits; only the stall clock (`stall_after_secs`, 600 s
+by default) could have moved it, past nextest's 600 s. That needs the session's turn to end
+before its `CreateWindow` result is stepped: rare on a fast disk (300 of 300 runs on
+macOS passed under load), and what Ubuntu CI hit once. Holding that result
+(`ANTHREX_TEST_DELAY_WINDOW_MS`) reproduces it every time, with the stuck state
+the new failure output prints: round 1 `window_id=1 ended=true`, round 2 `window_id=1
+turn_open=true turns=1`, `fallback="None"`, no pending op.
+
+| Test | Site | Bound (as found) | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| `e2e_a_fresh_session_after_a_crash_is_heard_before_its_window_result` | `crates/cli/tests/it/run_e2e_crash.rs` (`LATE_WINDOW_MS`, `2000ms`) | a **lower** bound on every `CreateWindow`'s `done` line in the restarted daemon | Not a wait: as `WINDOW_HOLD_MS` in `run_e2e_sessions.rs`, the hold only needs to outlast `fake-agent`'s start and its scripted turn (tens of ms). A loaded machine can only make the session slower to start, which at worst leaves the race unexercised; it can never fail a correct daemon. The test runs under `SCENARIO_WAIT`. | **Fixed** in the daemon: `RunService::restore` reserves every window id its loaded runs and replayed results name (`WindowManager::reserve_ids_through`) before anything can open a window, so the fresh session gets window 2. Before the fix it failed at `SCENARIO_WAIT` (400 s) at "the restored run complete" with that state; after it, 14 s. `a_restart_never_hands_out_a_window_id_a_restored_run_names` shows the same in the driver (id 1 before, 2 after). |
 
 ### Fixed, from the chain long-poll flake (2026-10-13)
 

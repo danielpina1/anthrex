@@ -282,6 +282,16 @@ impl WindowManager {
         self.publish(&inner);
     }
 
+    /// Never hands out an id up to `highest` from now on: the restored runs name those
+    /// windows (`RunService::restore`), and the state file, saved with a debounce
+    /// (`state::SAVE_DEBOUNCE`), may not have recorded them before the old daemon died.
+    /// A new window with such an id would get the events, the tool calls and the
+    /// resumes meant for the run's record of the old one. Under the lock, no I/O.
+    pub fn reserve_ids_through(&self, highest: u32) {
+        let mut inner = crate::lock(&self.inner);
+        inner.next_id = inner.next_id.max(highest.saturating_add(1));
+    }
+
     /// A clone of the live window table as a [`StateFile`] (decision 9), taken under the
     /// manager lock with no I/O of any kind — every field below is already resident in
     /// `Entry`, `Entry.spec`, `Entry.state` or `Inner` itself, so this is a handful of

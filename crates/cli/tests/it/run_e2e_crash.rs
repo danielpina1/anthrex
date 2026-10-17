@@ -117,6 +117,39 @@ const SCENARIO_WAIT: Duration = Duration::from_secs(400);
 const HELD_MS: &str = "3600000";
 const HELD_WAIT: Duration = Duration::from_secs(10);
 
+/// How long the restarted daemon holds a `CreateWindow`'s `done` line (the debug builds'
+/// `ANTHREX_TEST_DELAY_WINDOW_MS`): far over `fake-agent`'s start and scripted turn
+/// (tens of milliseconds), so a fresh session's events reach the engine before its
+/// round has the window, as `run_e2e_sessions.rs`'s `WINDOW_HOLD_MS`.
+const LATE_WINDOW_MS: &str = "2000";
+
+/// How the restarted daemon runs.
+#[derive(Clone, Copy)]
+struct Restart {
+    /// The daemon's extra environment from the restart on.
+    env: &'static [(&'static str, &'static str)],
+    /// The scenario ends this long after the restart, if that is sooner.
+    cut: Option<Duration>,
+}
+
+/// As the crashed daemon ran, without its abort.
+const AS_BEFORE: Restart = Restart {
+    env: &[],
+    cut: None,
+};
+
+/// Every op's `done` line held an hour: the restored run cannot finish.
+const HELD: Restart = Restart {
+    env: &[("ANTHREX_TEST_DELAY_DONE_MS", HELD_MS)],
+    cut: Some(HELD_WAIT),
+};
+
+/// Every `CreateWindow`'s `done` line held `LATE_WINDOW_MS`.
+const LATE_WINDOW: Restart = Restart {
+    env: &[("ANTHREX_TEST_DELAY_WINDOW_MS", LATE_WINDOW_MS)],
+    cut: None,
+};
+
 thread_local! {
     /// The restarted daemon's pid, for the forced failure's leak check.
     static RESTARTED: Cell<Option<u32>> = const { Cell::new(None) };
@@ -290,11 +323,9 @@ fn hash_blob(h: &RunHarness, content: &str) -> String {
     git_read(&h.repo, &["hash-object", file.to_str().unwrap()]).expect("git hash-object")
 }
 
-/// Kind `kind`'s crash and its restore, every wait ending by `deadline`. With `held`
-/// (the forced failure), the restarted daemon holds every op's `done` line for an hour,
-/// so the restored run cannot finish, and the scenario ends `HELD_WAIT` after the
-/// restart.
-fn crash_after(kind: &'static str, deadline: Instant, held: bool) {
+/// Kind `kind`'s crash and its restore, every wait ending by `deadline`; the restarted
+/// daemon runs as `restart` says.
+fn crash_after(kind: &'static str, deadline: Instant, restart: Restart) {
     let mut h = RunHarness::with_env(
         "",
         &[
@@ -346,17 +377,18 @@ fn crash_after(kind: &'static str, deadline: Instant, held: bool) {
     );
 
     h.unset_env("ANTHREX_TEST_ABORT_AFTER_INTENT");
-    let extra: &[(&str, &str)] = match held {
-        true => &[("ANTHREX_TEST_DELAY_DONE_MS", HELD_MS)],
-        false => &[],
-    };
     s.step("the daemon's restart", || {
-        h.restart_daemon_within(extra, s.within(DAEMON_START_WAIT))
+        h.restart_daemon_within(restart.env, s.within(DAEMON_START_WAIT))
     });
     RESTARTED.set(h.daemon_pid());
-    if held {
-        s.deadline
-            .set(s.deadline.get().min(Instant::now() + HELD_WAIT));
+    for (key, ms) in restart.env {
+        let line = format!("{key}: holding op done lines ms={ms}");
+        s.step("the restart's hold armed", || {
+            h.wait_daemon_log(kind, &line)
+        });
+    }
+    if let Some(cut) = restart.cut {
+        s.deadline.set(s.deadline.get().min(Instant::now() + cut));
     }
     let id = s.step("the restored run listed", || {
         let runs = listed(&h, s.within(REQUEST_WAIT));
@@ -453,7 +485,7 @@ fn e2e_crash_after_each_intent_kind_reconciles() {
             continue;
         }
         eprintln!("crash after {kind}");
-        crash_after(kind, deadline, false);
+        crash_after(kind, deadline, AS_BEFORE);
     }
 }
 
@@ -465,7 +497,7 @@ fn e2e_crash_after_each_intent_kind_reconciles() {
 /// leaks the daemon (`docs/timing-budgets.md`).
 #[test]
 fn e2e_a_restored_run_that_cannot_finish_fails_by_the_deadline_with_its_state() {
-    let failed = catch_unwind(|| crash_after("VerifyDone", Instant::now() + SCENARIO_WAIT, true));
+    let failed = catch_unwind(|| crash_after("VerifyDone", Instant::now() + SCENARIO_WAIT, HELD));
     let payload = failed.expect_err("a run whose done lines are all held completed");
     let message = (payload.downcast_ref::<String>().cloned()).unwrap_or_default();
     assert!(
@@ -483,4 +515,16 @@ fn e2e_a_restored_run_that_cannot_finish_fails_by_the_deadline_with_its_state() 
     // SAFETY: signal 0 only checks that the pid exists; nothing is sent.
     let alive = unsafe { libc::kill(pid, 0) } == 0;
     assert!(!alive, "the restarted daemon {pid} outlived the test");
+}
+
+/// The Ubuntu CI hang (PR #75), forced: after a crash after `VerifyDone`, the restored
+/// worker's resume fails (its window died with the old daemon) and a fresh session
+/// starts, whose first turn ends before its `CreateWindow` result is stepped. The new
+/// daemon handed that session the window id the restored worker round still named, so
+/// its turn's end went to that ended round and was dropped instead of waiting for its
+/// own: the fresh round's turn stayed open, and nothing counted its commits before the
+/// stall clock (600 s by default), past nextest's limit.
+#[test]
+fn e2e_a_fresh_session_after_a_crash_is_heard_before_its_window_result() {
+    crash_after("VerifyDone", Instant::now() + SCENARIO_WAIT, LATE_WINDOW);
 }
