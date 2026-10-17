@@ -146,3 +146,20 @@ fn the_credentials_read_through_every_hidden_character() {
         .collect();
     assert_eq!(missed, Vec::<char>::new());
 }
+
+#[test]
+fn a_lone_esc_before_a_lowercase_p_or_x_is_no_string_in_the_credential_patterns() {
+    // The two-event property at 10 × 16 seeds (scratch): `(?i)` on the whole `Bearer`
+    // and `Basic` patterns folded into their escape forms, so `ESC p` and `ESC x` read
+    // as a DCS or SOS to the next escape, and the capture ended inside a later OSC
+    // (`bearer ESC pK4kx… OSC …BEL Oi` left 15 characters).
+    let token = ["pK4kxXZb", "BbYZE2Oi"].concat();
+    let osc = "\u{1b}]2;Ot%hG[K0j2*\u{7}";
+    let input = format!("bearer \u{1b}{}{osc}{}", &token[..14], &token[14..]);
+    assert_eq!(scrub(&input), BEARER, "{input:?}");
+    // A `Basic` credential whose base64 starts with `x` (`Ąna:…`).
+    let cred = basic_for("Ąna".as_bytes());
+    assert!(cred.starts_with('x'), "{cred}");
+    let input = format!("basic \u{1b}{}{osc}{}", &cred[..10], &cred[10..]);
+    assert_eq!(scrub(&input), BASIC, "{input:?}");
+}

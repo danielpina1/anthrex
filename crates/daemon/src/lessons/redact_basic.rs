@@ -27,7 +27,7 @@ fn basic_char(b: u8) -> bool {
 /// ([`super::HIDDEN_FORMS`]).
 static BASIC_RE: LazyLock<Regex> = LazyLock::new(|| {
     re(&format!(
-        r"(?i)basic[ \t]+((?:[A-Za-z0-9+/]|{}|{}){{{},}}={{0,2}})",
+        r"(?i:basic)[ \t]+((?:[A-Za-z0-9+/]|{}|{}){{{},}}={{0,2}})",
         super::ESCAPE_FORMS,
         super::HIDDEN_FORMS,
         BASIC_MIN / 2

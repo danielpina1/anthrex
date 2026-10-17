@@ -123,7 +123,7 @@ static URL_CUT: LazyLock<Regex> =
 /// [`bearer`] judges the length.
 static BEARER_RE: LazyLock<Regex> = LazyLock::new(|| {
     re(&format!(
-        r"(?i)bearer[ \t]+((?:[A-Za-z0-9._~+/=-]|{ESCAPE_FORMS}|{HIDDEN_FORMS}){{{},}})",
+        r"(?i:bearer)[ \t]+((?:[A-Za-z0-9._~+/=-]|{ESCAPE_FORMS}|{HIDDEN_FORMS}){{{},}})",
         BEARER_MIN / 2
     ))
 });
