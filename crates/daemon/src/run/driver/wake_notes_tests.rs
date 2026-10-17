@@ -153,3 +153,70 @@ fn a_runs_pasted_notes_are_forgotten_when_it_ends() {
         "ended or discarded"
     );
 }
+
+/// The CI flake of `e2e_pr_closed_without_merging_pauses_the_stages_above`: the
+/// orchestrator's `run_status` read the approval's note (`Wakes::read`) before the
+/// approval's own `WakeOrchestrator` effect was applied, so there was no wake-up to
+/// drop yet. The effect then queued it, and its check ran while the engine still held
+/// the note: the read's `DigestRead` waits behind the very event whose effects are
+/// running. A note a digest answer returned is never pasted (decision 39, "a read
+/// clears too").
+#[test]
+fn a_wake_queued_after_a_read_of_its_notes_is_not_pasted() {
+    let wakes = Wakes::default();
+    wakes.read("r1", 5);
+    wakes.insert("r1".into(), noted(5));
+    assert!(
+        check(&wakes, 5).is_empty(),
+        "a note the orchestrator read was pasted"
+    );
+}
+
+/// A wake-up queued after a read holds the read notes and a newer one: only the newer
+/// is pasted, and its `OrchestratorWoken` still covers every note.
+#[test]
+fn a_wake_queued_after_a_read_pastes_only_the_unread_notes() {
+    let wakes = Wakes::default();
+    wakes.read("r1", 2);
+    wakes.insert("r1".into(), noted(3));
+    let taken = check(&wakes, 3);
+    assert_eq!(taken.len(), 1);
+    let p = &taken[0].1;
+    assert_eq!(p.text, wake_text("r1", &["note 3".to_string()]));
+    assert_eq!(p.notes, [(3, "note 3".to_string())]);
+    assert_eq!(p.notes_seq, 3);
+}
+
+/// A round's request wake is not the read's to drop or cut (D13).
+#[test]
+fn a_read_never_cuts_a_request_wake() {
+    let wakes = Wakes::default();
+    wakes.read("r1", 3);
+    let request = Pending {
+        request: Some(2),
+        ..noted(3)
+    };
+    wakes.insert("r1".into(), request.clone());
+    let (judged, _) = (wakes.generations(), wakes.epoch());
+    let taken = wakes.take(wakes.deliverable(&judged));
+    assert_eq!(taken.len(), 1);
+    assert_eq!(taken[0].1.text, request.text, "a request wake was cut");
+}
+
+/// A trimmed digest answer showed only the oldest notes (`orch_read_tests_notes.rs`):
+/// its read keeps the waiting wake-up that holds newer ones, which pastes only those.
+#[test]
+fn a_read_of_the_oldest_notes_keeps_the_wake_of_the_rest() {
+    let wakes = Wakes::default();
+    wakes.insert("r1".into(), noted(20));
+    wakes.read("r1", 5);
+    let taken = check(&wakes, 20);
+    assert_eq!(
+        taken.len(),
+        1,
+        "the read dropped the wake-up of the cut notes"
+    );
+    let seqs: Vec<u64> = taken[0].1.notes.iter().map(|(s, _)| *s).collect();
+    assert_eq!(seqs, (6..=20).collect::<Vec<_>>());
+    assert_eq!(taken[0].1.notes_seq, 20);
+}

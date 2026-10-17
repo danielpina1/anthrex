@@ -32,6 +32,42 @@ pub(super) fn merge_outcome(merged: &str) -> &str {
         .map_or(merged, |(merge, _)| merge)
 }
 
+/// The highest window id the loaded runs and the journal's replayed results name
+/// (0 for none), in their persisted form: under a `window_id` key at any depth (a
+/// round's, a claim's, an outbox message's, the orchestrator's, a planner's, a run
+/// scout's, a design agent's, a pending op's, a launch's `Window` result), or a handoff's
+/// `from_window`. Read from the serialized form so that a window a later record names
+/// is never missed.
+fn named_windows(runs: &[Run], replay: &[(String, OpId, OpResult)]) -> u32 {
+    let runs = runs.iter().filter_map(|run| serde_json::to_value(run).ok());
+    let results = replay
+        .iter()
+        .filter_map(|(_, _, result)| serde_json::to_value(result).ok());
+    runs.chain(results)
+        .map(|value| highest_window(&value))
+        .max()
+        .unwrap_or(0)
+}
+
+/// The highest window id `value` names (see [`named_windows`]); an id past `u32::MAX`
+/// counts as `u32::MAX`.
+fn highest_window(value: &serde_json::Value) -> u32 {
+    match value {
+        serde_json::Value::Object(map) => (map.iter())
+            .map(|(key, value)| {
+                let named = (key == "window_id" || key == "from_window")
+                    .then(|| value.as_u64())
+                    .flatten()
+                    .map_or(0, |id| u32::try_from(id).unwrap_or(u32::MAX));
+                named.max(highest_window(value))
+            })
+            .max()
+            .unwrap_or(0),
+        serde_json::Value::Array(items) => items.iter().map(highest_window).max().unwrap_or(0),
+        _ => 0,
+    }
+}
+
 /// The engine's cap on a run's log (Interfaces, `LogEntry`).
 const LOG_MAX: usize = 500;
 
@@ -164,6 +200,10 @@ impl RunService {
             self.remove_stale_windows(&BTreeSet::new());
             return;
         }
+        // The Ubuntu CI hang of the crash test (PR #75): no window this daemon opens
+        // takes an id a restored run names, before any op of the restore can open one.
+        self.manager
+            .reserve_ids_through(named_windows(&runs, &replay));
         let (mut prepared, skipped) = self.restore_step(runs, replay, held, now);
         crate::lock(&self.held_accepts).retain(|c| !skipped.contains(&c.ctx.run_id));
         // A run the restore left exactly as loaded is already on disk. The base the
@@ -478,6 +518,10 @@ mod sweep_tests;
 #[cfg(test)]
 #[path = "restore_lanes_tests.rs"]
 mod lanes_tests;
+
+#[cfg(test)]
+#[path = "restore_windows_tests.rs"]
+mod windows_tests;
 
 #[cfg(test)]
 mod tests {

@@ -14,8 +14,13 @@ use proto::{DeliveryMode, RunReply, RunRequest};
 use super::super::super::host_ops::tests::NoRoots;
 use super::{Rig, git};
 use crate::manager::{ManagerConfig, WindowManager};
+use crate::run::driver::stop::SETTLE_BOUND;
 use crate::run::driver::{RunContext, RunService};
 use crate::run::test_support::{PROFILE, plan_with, task_toml};
+
+#[path = "delivery_tests_start_hold.rs"]
+mod hold;
+use hold::{PREPARE, hold_after_run_branch, wait_parked};
 
 const LOGGED_OUT: &str =
     "gh is not logged in to github.com; run gh auth login, or use --delivery local";
@@ -182,13 +187,21 @@ async fn a_pr_run_freezes_its_delivery_at_start() {
     assert_eq!(gh_calls(&rig, &["auth", "status"]), 1, "one preflight");
 }
 
+/// The leak the teardown audit found (after main 636f0a40's): the run's checkout op
+/// (`PrepareWorktree`, `checkout::ensure`) makes the task's temporary directory in the
+/// shared root, and the test used to end on `stop()` and `abort()` with that op still
+/// running and nothing to remove what it made. The op is forced in flight here (the run
+/// branch's op takes the project's write turn as it ends), and let go once the teardown
+/// has begun; the teardown must outlive it, and nothing may be left in the shared root.
 #[tokio::test(flavor = "multi_thread")]
 async fn local_mode_calls_no_host() {
     for asked in [None, Some(DeliveryMode::Local)] {
         let rig = Rig::ready(true);
         let data = rig.tmp.path().join("data");
         let s = service(rig.host(), &data);
-        let handle = s.spawn(tokio_util::sync::CancellationToken::new());
+        let held = hold_after_run_branch(&s);
+        let shutdown = tokio_util::sync::CancellationToken::new();
+        let handle = s.spawn(shutdown.clone());
         let reply = ask(&s, start(&rig, false, asked)).await;
         let RunReply::Started { run_id, .. } = reply else {
             panic!("{asked:?}: {reply:?}");
@@ -228,9 +241,54 @@ async fn local_mode_calls_no_host() {
             "{asked:?}: a local run called the host: {:?}",
             rig.ctl.calls()
         );
-        s.stop().await;
-        handle.abort();
+        wait_parked(&s).await;
+        let task_repo = crate::lock(&s.state).runs[&run_id]
+            .data_dir
+            .join("tasks")
+            .join("t1");
+
+        // The teardown is polled first; the turn is let go once the service has stopped,
+        // so the checkout op runs only after the teardown has begun.
+        let tearing = async {
+            teardown(&s, handle, shutdown).await;
+            held.has_ended(PREPARE)
+        };
+        let release = async {
+            while !s.stopped.load(std::sync::atomic::Ordering::SeqCst) {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+            held.release();
+        };
+        let (outlived, ()) = tokio::join!(tearing, release);
+        drop(rig);
+        // Whatever the teardown did, the checkout op is let end before the shared root is
+        // read, so a leak is seen, never raced.
+        held.wait_ended(PREPARE).await;
+        let leaked = crate::run::git::task_tmp(&task_repo);
+        let left = std::fs::symlink_metadata(&leaked).is_ok();
+        crate::run::git::remove_task_tmp(&task_repo).unwrap();
+        assert!(
+            !left,
+            "{asked:?}: {} (the checkout of {}) outlived the test",
+            leaked.display(),
+            task_repo.display()
+        );
+        assert!(
+            outlived,
+            "{asked:?}: the test's directory went while its checkout op was still running"
+        );
     }
+}
+
+/// The test's teardown: the service stopped and every op it started ended, before the
+/// rig's directory goes (which sweeps the task temporary directories under it). Its
+/// window launches fail at once (no agent binary exists), so no window is killed.
+async fn teardown(
+    s: &Arc<RunService>,
+    handle: tokio::task::JoinHandle<()>,
+    shutdown: tokio_util::sync::CancellationToken,
+) {
+    s.stop_and_settle(handle, &shutdown, SETTLE_BOUND).await;
 }
 
 /// A decider stand-in that records each call in `marker`, with what it read on stdin (a

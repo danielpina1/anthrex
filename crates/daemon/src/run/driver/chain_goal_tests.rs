@@ -86,6 +86,7 @@ pub(in crate::run::driver) struct ChainRig {
     pub s: Arc<RunService>,
     pub manager: Arc<WindowManager>,
     shutdown: CancellationToken,
+    run_loop: Option<tokio::task::JoinHandle<()>>,
     pub marker: PathBuf,
     pub window: u32,
     project: PathBuf,
@@ -188,7 +189,7 @@ impl ChainRig {
             }
         }
         let shutdown = CancellationToken::new();
-        s.spawn(shutdown.clone());
+        let run_loop = Some(s.spawn(shutdown.clone()));
         tokio::spawn(serve(
             listener,
             manager.clone(),
@@ -203,6 +204,7 @@ impl ChainRig {
             s,
             manager,
             shutdown,
+            run_loop,
             marker,
             window,
             project: pre.project,
@@ -237,9 +239,14 @@ impl ChainRig {
             .collect()
     }
 
-    pub(in crate::run::driver) async fn stop(self) {
-        self.shutdown.cancel();
-        self.s.stop().await;
+    /// The service stopped and its ops ended before the checkout goes (its window is
+    /// killed by `Drop`, after: `SETTLE_BOUND`).
+    pub(in crate::run::driver) async fn stop(mut self) {
+        let run_loop = self.run_loop.take().expect("the loop");
+        let bound = crate::run::driver::stop::SETTLE_BOUND;
+        self.s
+            .stop_and_settle(run_loop, &self.shutdown, bound)
+            .await;
     }
 }
 

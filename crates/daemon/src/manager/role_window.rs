@@ -139,6 +139,7 @@ impl WindowManager {
         self.config.launch_gate.wait().await;
         let (id, reservation) = self.admit(&spec, &roots.project)?;
         let name = reservation.name.clone();
+        self.record_spent_id(id).await?;
         let config = self.config.clone();
         let events = self.events.clone();
         let phase_b_name = name.clone();

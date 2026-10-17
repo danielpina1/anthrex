@@ -8,6 +8,7 @@ pub mod models;
 pub mod orch_script;
 pub mod profile_rig;
 pub mod run_adapt;
+pub mod run_crash;
 pub mod run_daemon;
 pub mod run_design;
 pub mod run_design_orch;

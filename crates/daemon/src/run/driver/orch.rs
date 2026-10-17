@@ -20,7 +20,7 @@ use tokio::sync::broadcast::error::RecvError;
 use super::{RunService, unix_now};
 use crate::run::chain::{idle_refusal, resolve};
 use crate::run::engine::early::{awaits_launch, holds_planner_call};
-use crate::run::engine::{EventKind, HOLD_LIMIT_SECS, OrchEvent, notes_seq, read_at};
+use crate::run::engine::{EventKind, HOLD_LIMIT_SECS, OrchEvent, notes_seq_shown, read_at};
 use crate::run::model::{Run, task_branch};
 use crate::run::orch::context::Asker;
 use crate::run::orch::result::{TaskGit, task_result};
@@ -452,7 +452,9 @@ impl RunService {
 
     /// The digest of a clone of the run, built on `spawn_blocking`; then the read
     /// receipt with that clone's revision and wake-note seq (decision 16; M9.9 review
-    /// M6), so a note added after the clone stays. The read is recorded at
+    /// M6), so a note added after the clone stays. The seq is the newest of the notes
+    /// the answer kept, from the same clone: a trimmed digest keeps only the oldest, and
+    /// the rest go with the next wake-up or read. The read is recorded at
     /// `read_at(now)`, `now` taken before the clone (milestone 9.7 ruling T3-1).
     async fn run_status(&self, call: &ToolCall) -> RunReply {
         let now = unix_now();
@@ -460,27 +462,32 @@ impl RunService {
             Ok(run) => run,
             Err(text) => return refused(text),
         };
-        let (run_id, digest_revision, seq) = (run.id.clone(), run.orch.digest_rev, notes_seq(&run));
-        // Milestone 9.13 decision 19: only the orchestrator's read taints.
-        let taints = call.role == AgentRole::Orchestrator;
+        let (run_id, digest_revision) = (run.id.clone(), run.orch.digest_rev);
+        // Milestone 9.13 decision 19: only the orchestrator's read taints; and only its
+        // read clears its notes, whichever roles `parse_call` lets read the digest.
+        let orchestrator = call.role == AgentRole::Orchestrator;
         let built = tokio::task::spawn_blocking(move || {
-            let digest = crate::run::orch::digest::digest(&run, now);
-            let source = taints.then(|| digest_source(&digest, &run)).flatten();
-            (digest.to_string(), source)
+            let (digest, shown) = crate::run::orch::digest::digest_shown(&run, now);
+            let source = orchestrator.then(|| digest_source(&digest, &run)).flatten();
+            (digest.to_string(), source, notes_seq_shown(&run, shown))
         })
         .await;
         match built {
-            Ok((text, source)) => {
+            Ok((text, source, seq)) => {
                 // Decision 39: what the answer held is neither kept nor pasted.
-                self.wakes.read(&run_id, seq);
+                if orchestrator {
+                    self.wakes.read(&run_id, seq);
+                }
                 // Decision 20: before the answer, on the channel a later call takes.
                 self.untrusted_read(&run_id, now, source);
-                self.send(EventKind::Orch(OrchEvent::DigestRead {
-                    run_id,
-                    digest_revision,
-                    notes_seq: seq,
-                    at: read_at(now),
-                }));
+                if orchestrator {
+                    self.send(EventKind::Orch(OrchEvent::DigestRead {
+                        run_id,
+                        digest_revision,
+                        notes_seq: seq,
+                        at: read_at(now),
+                    }));
+                }
                 RunReply::tool_result(true, text)
             }
             Err(error) => refused(format!("a blocking step did not finish: {error}")),
@@ -586,6 +593,10 @@ mod read_tests_design;
 #[cfg(test)]
 #[path = "orch_read_tests_taint.rs"]
 mod read_tests_taint;
+
+#[cfg(test)]
+#[path = "orch_read_tests_notes.rs"]
+mod read_tests_notes;
 
 #[cfg(test)]
 #[path = "design_ops_tests.rs"]

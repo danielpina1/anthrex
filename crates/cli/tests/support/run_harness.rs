@@ -16,7 +16,7 @@ use proto::{
 use serde_json::Value;
 use tokio::net::UnixStream;
 
-use super::run_daemon::{DAEMON_EXIT_WAIT, DAEMON_START_WAIT, DaemonProcess};
+use super::run_daemon::{DAEMON_START_WAIT, DaemonProcess};
 pub use super::run_git::{git_in, init_repo};
 pub use super::run_watcher::RunWatcher;
 use super::{ANTHREX, RunningCommand, fake_agent_bin, runtime};
@@ -53,7 +53,7 @@ pub const REQUEST_WAIT: Duration = Duration::from_secs(75);
 pub const FINISH_WAIT: Duration = Duration::from_secs(600 + RUN_WAIT.as_secs());
 
 /// The bound for `request`'s reply.
-fn request_wait(request: &RunRequest) -> Duration {
+pub(super) fn request_wait(request: &RunRequest) -> Duration {
     match request {
         RunRequest::Finish { .. } => FINISH_WAIT,
         _ => REQUEST_WAIT,
@@ -260,7 +260,12 @@ impl RunHarness {
 
     /// `anthrex <args>` against this harness's daemon.
     pub fn anthrex(&self, args: &[&str]) -> Output {
-        RunningCommand::start(&mut self.command(args)).finish(REQUEST_WAIT)
+        self.anthrex_within(args, REQUEST_WAIT)
+    }
+
+    /// [`Self::anthrex`], waiting at most `wait` (a scenario's deadline, say).
+    pub fn anthrex_within(&self, args: &[&str], wait: Duration) -> Output {
+        RunningCommand::start(&mut self.command(args)).finish(wait)
     }
 
     /// `anthrex <args>` with `input` on its stdin (M8a.23's prompts), waiting at most
@@ -285,7 +290,7 @@ impl RunHarness {
 
     /// The owned daemon's slot, recovering from a poisoned lock (N1): `Drop` must
     /// always reach the daemon.
-    fn daemon(&self) -> std::sync::MutexGuard<'_, Option<DaemonProcess>> {
+    pub(super) fn daemon(&self) -> std::sync::MutexGuard<'_, Option<DaemonProcess>> {
         self.daemon
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -316,11 +321,16 @@ impl RunHarness {
 
     /// Stops the daemon and starts it again with the same environment plus `extra`.
     pub fn restart_daemon(&mut self, extra: &[(&str, &str)]) {
+        self.restart_daemon_within(extra, DAEMON_START_WAIT);
+    }
+
+    /// [`Self::restart_daemon`], waiting at most `wait` for the new daemon's socket.
+    pub fn restart_daemon_within(&mut self, extra: &[(&str, &str)], wait: Duration) {
         self.stop_daemon();
         assert!(!self.socket().exists(), "the daemon did not stop");
         self.env
             .extend(extra.iter().map(|(k, v)| (k.to_string(), v.to_string())));
-        if let Err(error) = self.start_daemon(DAEMON_START_WAIT) {
+        if let Err(error) = self.start_daemon(wait.min(DAEMON_START_WAIT)) {
             panic!("the daemon did not restart: {error}\n{}", self.log_tail());
         }
     }
@@ -417,50 +427,6 @@ impl RunHarness {
                 self.log_tail()
             )
         })
-    }
-
-    /// Sends one raw run request whose daemon may die before answering (decision 48's
-    /// crash injection); the reply, if one came.
-    pub fn request_unanswered(&self, request: RunRequest) -> Option<RunReply> {
-        let socket = self.socket();
-        let wait = request_wait(&request);
-        runtime().block_on(async move {
-            let mut stream = connect(&socket).await;
-            proto::write_frame(&mut stream, &ClientMsg::Run(request))
-                .await
-                .ok()?;
-            tokio::time::timeout(wait, async {
-                loop {
-                    match proto::read_frame::<_, DaemonMsg>(&mut stream).await {
-                        Ok(Some(DaemonMsg::Run(reply))) => return Some(reply),
-                        Ok(Some(_)) => {}
-                        _ => return None,
-                    }
-                }
-            })
-            .await
-            .expect("the daemon neither answered nor died")
-        })
-    }
-
-    /// After the daemon died without its shutdown (decision 48's abort): waits until
-    /// its socket refuses connections, then removes the socket file, so the next
-    /// [`Self::restart_daemon`] starts a fresh one.
-    pub fn forget_dead_daemon(&self) {
-        let deadline = Instant::now() + REQUEST_WAIT;
-        while std::os::unix::net::UnixStream::connect(self.socket()).is_ok() {
-            assert!(Instant::now() < deadline, "the daemon did not die");
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        // M8a.24 fix round 2 (N1): taken out of the lock first, and killed before the
-        // assertion, so a failure neither poisons the lock nor leaks the process.
-        let taken = self.daemon().take();
-        if let Some(mut daemon) = taken {
-            let exited = daemon.wait_exit(DAEMON_EXIT_WAIT);
-            daemon.kill();
-            assert!(exited, "the dead daemon's process was still running");
-        }
-        let _ = std::fs::remove_file(self.socket());
     }
 
     /// `Start` in the harness repository; the run id.

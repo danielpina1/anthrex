@@ -24,7 +24,8 @@ const ENTRY_STRINGS_TRIMMED: usize = 40;
 /// (decision 10, [`drop_decided_holds`]) and milestone 9.2's delivery steps
 /// (decision 29, `delivery::trim`): finished tasks dropped oldest first
 /// (counted in `omitted_tasks`), `edits` cut to 3, `task_notes` to 3, `block.text` to
-/// 200 characters (and the attention lines with it), `notes` to 5. Beyond the
+/// 200 characters (and the attention lines with it), `notes` to its oldest 5 (counted
+/// in `omitted_notes`). Beyond the
 /// Interfaces, so the cap always holds, texts and lists are cut before an unfinished
 /// task goes: `attention` cut to 10 lines (those of tasks already dropped first, and
 /// the run-wide lines kept ahead of the blocked tasks' ones), every string cut to 120
@@ -90,7 +91,7 @@ pub(super) fn trim(digest: &mut Value, run: &Run) {
     if fits(digest) {
         return;
     }
-    truncate(digest, "notes", NOTES_TRIMMED);
+    cut_notes(digest, NOTES_TRIMMED);
     if fits(digest) {
         return;
     }
@@ -108,7 +109,10 @@ pub(super) fn trim(digest: &mut Value, run: &Run) {
         if fits(digest) {
             return;
         }
-        truncate(digest, key, ENTRIES_TRIMMED);
+        match key {
+            "notes" => cut_notes(digest, ENTRIES_TRIMMED),
+            _ => truncate(digest, key, ENTRIES_TRIMMED),
+        }
     }
     // Second review, Minor 1: a second shortening pass before any unfinished task goes.
     for key in ["scouts", "planners"] {
@@ -261,6 +265,24 @@ fn shorten_stage_lists(digest: &mut Value, keep: usize) {
                 items.truncate(keep);
             }
         }
+    }
+}
+
+/// `notes` cut to its oldest `keep`, the cut counted in the top-level `omitted_notes`,
+/// written only when a note is cut (as `omitted_holds` is): the orchestrator learns
+/// that more notes wait, and its read clears only the ones kept (`digest_shown`).
+fn cut_notes(digest: &mut Value, keep: usize) {
+    let Some(Value::Array(notes)) = digest.get_mut("notes") else {
+        return;
+    };
+    let cut = notes.len().saturating_sub(keep) as u64;
+    notes.truncate(keep);
+    if cut > 0 {
+        let before = digest
+            .get("omitted_notes")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        digest["omitted_notes"] = json!(before + cut);
     }
 }
 

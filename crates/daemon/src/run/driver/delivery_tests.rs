@@ -41,9 +41,10 @@ pub(in crate::run::driver) fn git(dir: &Path, args: &[&str]) -> String {
 
 /// A repository whose `origin` is a GitHub URL that its own config maps onto a local
 /// bare repository (fetch and push), and the fake GitHub's directory. Nothing is known
-/// to the fake GitHub until the test says so.
+/// to the fake GitHub until the test says so. A `TestDir`, so the task temporary
+/// directories of the checkouts a run made under it go with it.
 pub(in crate::run::driver) struct Rig {
-    pub tmp: tempfile::TempDir,
+    pub tmp: crate::run::git::TestDir,
     pub work: PathBuf,
     pub bare: PathBuf,
     pub ctl: FakeGithubCtl,
@@ -52,7 +53,7 @@ pub(in crate::run::driver) struct Rig {
 
 impl Rig {
     pub(in crate::run::driver) fn new(push_base: bool) -> Rig {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::run::git::TestDir::new();
         let (bare, work) = (tmp.path().join("remote.git"), tmp.path().join("work"));
         std::fs::create_dir_all(&bare).unwrap();
         std::fs::create_dir_all(work.join("crates/a/src")).unwrap();

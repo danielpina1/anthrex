@@ -8,13 +8,18 @@
 //! built again from the rest; with none left it is not pasted. A failed or stopped
 //! paste is not remembered, so its notes go with the next wake-up. A round's request
 //! wake is D13's (`Wakes::pasted`) and is never cut; its notes count as pasted.
+//!
+//! A digest read counts too (decision 39, "a read clears too"; [`NotesPasted::read`]):
+//! a wake-up queued after the read, holding the notes it returned, is cut the same
+//! way. The engine's own clear, `DigestRead`, waits its turn in the event queue, and
+//! may wait behind the very event whose effect queues that wake-up.
 
 use std::collections::HashMap;
 
 use super::Pending;
 use crate::run::orch::contract::wake_text;
 
-/// The newest note seq pasted, per run.
+/// The newest note seq pasted or read, per run.
 #[derive(Default)]
 pub(super) struct NotesPasted(std::sync::Mutex<HashMap<String, u64>>);
 
@@ -27,6 +32,16 @@ impl NotesPasted {
         let mut pasted = crate::lock(&self.0);
         let seq = pasted.entry(run_id.to_string()).or_default();
         *seq = (*seq).max(p.notes_seq);
+    }
+
+    /// A digest answer returned `run_id`'s notes up to `notes_seq`: they are delivered.
+    pub(super) fn read(&self, run_id: &str, notes_seq: u64) {
+        if notes_seq == 0 {
+            return;
+        }
+        let mut seen = crate::lock(&self.0);
+        let seq = seen.entry(run_id.to_string()).or_default();
+        *seq = (*seq).max(notes_seq);
     }
 
     /// `p`, about to be pasted into `run_id`'s window, without the notes already

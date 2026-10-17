@@ -196,8 +196,12 @@ impl Wakes {
     /// answer that held every note of `run_id`'s waiting wake-up (`notes_seq`, as the
     /// engine's `DigestRead` drops them) drops it, so an orchestrator that read the
     /// change by polling is not pasted at once its turn ends.
-    /// A request wake is not the read's to drop (milestone 9.3, D13).
+    /// A request wake is not the read's to drop (milestone 9.3, D13). The notes it
+    /// returned are remembered as delivered, so a wake-up queued after it (the
+    /// approval's own effect, applied once its step's lock is released) does not paste
+    /// them either.
     pub(super) fn read(&self, run_id: &str, notes_seq: u64) {
+        self.notes_pasted.read(run_id, notes_seq);
         let mut pending = crate::lock(&self.pending);
         if pending
             .get(run_id)
@@ -205,6 +209,32 @@ impl Wakes {
         {
             pending.remove(run_id);
         }
+    }
+}
+
+/// Tests only: what the driver remembers of a run's pasted and read notes.
+#[cfg(test)]
+impl Wakes {
+    /// The newest note seq pasted or read for `run_id`.
+    pub(super) fn remembered(&self, run_id: &str) -> Option<u64> {
+        self.notes_pasted.remembered(run_id)
+    }
+
+    /// The seqs a notes-only wake-up for `run_id` holding `notes` would paste now;
+    /// `None` when it would not be pasted.
+    pub(super) fn unpasted_seqs(&self, run_id: &str, notes: &[(u64, String)]) -> Option<Vec<u64>> {
+        let p = Pending {
+            window_id: 0,
+            text: String::new(),
+            digest_revision: 0,
+            notes_seq: notes.iter().map(|(s, _)| *s).max().unwrap_or(0),
+            quiet: Duration::ZERO,
+            generation: 0,
+            request: None,
+            notes: notes.to_vec(),
+        };
+        let p = self.notes_pasted.unpasted(run_id, p)?;
+        Some(p.notes.iter().map(|(s, _)| *s).collect())
     }
 }
 

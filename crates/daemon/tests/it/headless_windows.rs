@@ -361,3 +361,42 @@ async fn an_event_of_another_process_does_not_move_the_window() {
     assert_eq!(m.child_pid(info.id).unwrap(), Some(pid));
     m.remove(info.id).unwrap();
 }
+
+/// A headless window is listed in phase A, before its process starts, so its id must be
+/// in `state.json` by the first publish that lists it: after a crash inside the
+/// persister's debounce the next daemon would otherwise reissue it.
+#[tokio::test]
+async fn a_headless_window_id_is_on_disk_when_it_is_first_listed() {
+    let dir = tempfile::tempdir().unwrap();
+    let claude = script(dir.path(), "claude", "exec sleep 30");
+    let m = manager(&claude, &claude, |_| {});
+    let path = dir.path().join("state.json");
+    let shutdown = tokio_util::sync::CancellationToken::new();
+    let persister = daemon::state::spawn_persister(m.clone(), path.clone(), shutdown.clone());
+
+    let mut changes = m.watch();
+    let read_path = path.clone();
+    let first_listing = tokio::spawn(async move {
+        loop {
+            changes.changed().await.unwrap();
+            let listed = changes.borrow_and_update().first().map(|w| w.id);
+            if let Some(id) = listed {
+                return (id, daemon::state::load(&read_path).0.next_id);
+            }
+        }
+    });
+    let info = create(&m, "h1", spec(Runtime::Claude, dir.path()), "hello").await;
+    let (listed, next_id_on_disk) = tokio::time::timeout(Duration::from_secs(10), first_listing)
+        .await
+        .expect("the window was listed")
+        .unwrap();
+    m.remove(info.id).unwrap();
+    shutdown.cancel();
+    persister.await.unwrap();
+    assert_eq!(listed, info.id);
+    assert!(
+        next_id_on_disk > info.id,
+        "headless window {} was listed before state.json recorded its id (next_id {next_id_on_disk})",
+        info.id
+    );
+}
