@@ -229,6 +229,28 @@ def run_self(*args):
     return done.returncode, done.stdout
 
 
+def wait_visible(pid, within=10.0):
+    """Whether `ps` shows `pid` as a matching process within `within` seconds."""
+    import time
+
+    deadline = time.monotonic() + within
+    while True:
+        if pid in matching_processes():
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
+
+
+def snapshot_pids(path):
+    """The pids a snapshot file holds; none when it cannot be read."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            return set(json.load(f)["pids"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return set()
+
+
 def system_temp():
     return os.environ.get("TMPDIR") or "/tmp"
 
@@ -245,6 +267,10 @@ def selftest():
     before_dir = os.path.join(temp, f"ax-leakgate-selftest-before-{os.getpid()}")
     os.makedirs(before_dir, exist_ok=True)
     before = subprocess.Popen(["fake-agent", "60"], executable="/bin/sleep")
+    # The snapshot must hold it, or every check below reports it as leaked: CI once took
+    # the snapshot before `ps` showed the new child under its final argv (d1ff4734).
+    if not wait_visible(before.pid):
+        failures.append(f"the pre-existing process {before.pid} never showed in ps")
     leaked_dir = os.path.join(temp, f"ax-leakgate-selftest-{os.getpid()}")
     # A stand-in under a directory whose name has a space: `ps` shows its argv[0] as
     # several words, and the gate must still match it.
@@ -288,6 +314,8 @@ def selftest():
         status, out = run_self("snapshot", snap)
         if status != 0:
             failures.append(f"snapshot exited {status}:\n{out}")
+        if before.pid not in snapshot_pids(snap):
+            failures.append(f"the snapshot did not hold the pre-existing process {before.pid}")
         os.makedirs(leaked_dir, exist_ok=True)
         child = subprocess.Popen(["fake-agent", "60"], executable="/bin/sleep")
         spaced = subprocess.Popen([spaced_program, "60"], executable="/bin/sleep")
@@ -308,7 +336,7 @@ def selftest():
         lines = out.splitlines()
         if f"leaked temporary entry: {os.path.realpath(leaked_dir)}" not in lines:
             failures.append(f"check did not name the leaked directory {leaked_dir}")
-        if f"pid {before.pid} " in out:
+        if any(line.startswith(f"leaked process: pid {before.pid} ") for line in lines):
             failures.append(f"check named the pre-existing process {before.pid}")
         if f"leaked temporary entry: {os.path.realpath(before_dir)}" in lines:
             failures.append(f"check named the pre-existing directory {before_dir}")

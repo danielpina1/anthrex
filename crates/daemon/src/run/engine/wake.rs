@@ -57,6 +57,19 @@ pub fn notes_seq(run: &Run) -> u64 {
         .unwrap_or(0)
 }
 
+/// The highest seq among the first `shown` pending notes, 0 with none: what a digest
+/// answer that kept only those includes. The notes are in seq order (`note` appends the
+/// next seq, its fold line takes the highest of those it replaced, and every drop
+/// keeps order), so a kept prefix is exactly the notes up to that seq, and the read's
+/// mark (`drop_up_to`, the driver's `NotesPasted`) clears none of those it cut.
+pub fn notes_seq_shown(run: &Run, shown: usize) -> u64 {
+    let Some(o) = run.orch.orchestrator.as_ref() else {
+        return 0;
+    };
+    debug_assert!(o.note_seqs.is_sorted(), "note seqs out of order");
+    o.note_seqs.iter().take(shown).copied().max().unwrap_or(0)
+}
+
 /// Drops the notes of seq `seq` and lower: the orchestrator has seen them. A note
 /// added after the answer or wake-up was built has a higher seq and stays.
 fn drop_up_to(run: &mut Run, seq: u64) {

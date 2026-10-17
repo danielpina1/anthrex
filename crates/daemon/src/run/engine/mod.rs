@@ -150,7 +150,7 @@ pub(crate) use propagate::{attention as propagate_attention, undelivered, undeli
 pub use signals::INTERRUPT_GRACE_SECS;
 pub use stages::Rebaseline;
 pub(crate) use tiers::cache_enabled;
-pub use wake::{notes_seq, read_at};
+pub use wake::{notes_seq, notes_seq_shown, read_at};
 
 /// Identifies a client request waiting for its [`Effect::Reply`].
 pub type ReplyId = u64;
