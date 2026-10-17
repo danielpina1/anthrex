@@ -73,6 +73,9 @@ pub fn pin_agents(command: &mut Command) -> &mut Command {
         .env("ANTHREX_DECIDER_BIN", "/nonexistent/anthrex-test/decider")
         .env("ANTHREX_CODE_HOST", "gh")
         .env("ANTHREX_GH_BIN", daemon::manager::TEST_GH_BIN)
+        // Milestone 9.19 ruling R6: the CLI prints local time; pinned to UTC, so a test
+        // reads the same text on CI (UTC) and on a developer's machine (any zone).
+        .env("TZ", "UTC0")
 }
 
 /// An `anthrex` command isolated to `dir`. It calls [`warm_anthrex`] first, so whatever

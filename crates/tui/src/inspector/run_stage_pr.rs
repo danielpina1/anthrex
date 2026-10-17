@@ -2,10 +2,10 @@
 //! pull request (`pr`, `url`), its CI per check of the most recent head, its threads
 //! and its fix tasks by origin; the run's `delivery` row, and a single-stage run's PR
 //! lines (it has no stage node); and the header's `running (delivering)`. Pure: the
-//! time is formatted with the offset the `App` was given (`local_hhmm`), and every
+//! time is the viewer's labelled local clock (`App::local_clock`), and every
 //! text the host or an agent wrote goes through `clean`.
 
-use super::run_format::{clean, local_hhmm};
+use super::run_format::clean;
 use super::{Field, field};
 use crate::app::App;
 use crate::theme::{self, Role, ci_look};
@@ -139,7 +139,7 @@ fn pr_text(pr: &StagePrInfo, app: &App) -> String {
         PrState::Merged => "merged",
         PrState::Closed => "closed",
     };
-    let at = |secs| local_hhmm(secs, app.utc_offset_secs);
+    let at = |secs| app.local_clock(secs);
     let mut text = format!(
         "#{} {state}, based on {}, opened {}",
         pr.number,

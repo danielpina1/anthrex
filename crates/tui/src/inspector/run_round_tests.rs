@@ -11,7 +11,7 @@ use proto::{AgentRole, CheckInfo, TaskState};
 
 const T2_SESSION: &str = "#7 · headless · worktree anthrex/r1/t2 · Enter: conversation";
 
-fn round_key(task: &str, role: AgentRole, session: u32, round: u32) -> NodeKey {
+pub(super) fn round_key(task: &str, role: AgentRole, session: u32, round: u32) -> NodeKey {
     NodeKey::AgentRound {
         run: "r1".into(),
         task: task.into(),
@@ -188,7 +188,7 @@ fn hostile_check_summaries_stay_one_bounded_line() {
 }
 
 /// `t7`'s Codex worker, rate-limited in the fixture, on a listed `Idle` window 11.
-fn t7_on_window(change: impl FnOnce(&mut proto::AgentRoundInfo)) -> App {
+pub(super) fn t7_on_window(change: impl FnOnce(&mut proto::AgentRoundInfo)) -> App {
     let (mut snapshot, mut windows) = gemini_fixture();
     let task = &mut snapshot.runs[0].tasks[7];
     task.branch = "anthrex/r1/t7".into();
@@ -290,7 +290,7 @@ fn a_failed_round_is_drawn_like_a_rate_limited_one() {
     );
     assert_eq!(
         inspection.right.as_deref(),
-        Some("failed: overloaded · retries 12:50 · 15m · t7")
+        Some("failed: overloaded · retries 12:50 +00:00 · 15m · t7")
     );
     // A long error on several lines: one line, its first 80 characters and `…`.
     let long = format!("{}\n{}", "e".repeat(70), "f".repeat(30));
@@ -299,7 +299,7 @@ fn a_failed_round_is_drawn_like_a_rate_limited_one() {
     let shown = format!("{} {}…", "e".repeat(70), "f".repeat(9));
     assert_eq!(
         inspection.right.as_deref(),
-        Some(format!("failed: {shown} · retries 12:50 · 15m · t7").as_str())
+        Some(format!("failed: {shown} · retries 12:50 +00:00 · 15m · t7").as_str())
     );
     // Without a failed turn the round is an ordinary live one.
     let app = t7_on_window(|round| {
@@ -333,7 +333,7 @@ fn a_failed_round_hides_a_past_retry_and_a_missing_error() {
     let app = failed(Some("overloaded"), GEMINI_NOW - 60);
     assert_eq!(right(&app), "failed: overloaded · 15m · t7");
     let app = failed(None, GEMINI_NOW + 600);
-    assert_eq!(right(&app), "failed · retries 12:50 · 15m · t7");
+    assert_eq!(right(&app), "failed · retries 12:50 +00:00 · 15m · t7");
     let app = failed(None, GEMINI_NOW - 60);
     assert_eq!(right(&app), "failed · 15m · t7");
 }

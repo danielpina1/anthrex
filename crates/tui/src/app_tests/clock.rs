@@ -12,11 +12,11 @@ fn a_resize_waits_exactly_the_debounce() {
     let t0 = Instant::now();
     assert!(app.set_terminal_size_at(120, 40, t0).is_empty());
     assert!(
-        app.on_tick_at(t0 + RESIZE_DEBOUNCE - MS).is_empty(),
+        app.on_tick_at(t0 + RESIZE_DEBOUNCE - MS, 0).is_empty(),
         "one millisecond short of the debounce sends nothing"
     );
     assert_eq!(
-        app.on_tick_at(t0 + RESIZE_DEBOUNCE),
+        app.on_tick_at(t0 + RESIZE_DEBOUNCE, 0),
         vec![Effect::Send(ClientMsg::Resize {
             window_id: 1,
             cols: 120,
@@ -33,9 +33,9 @@ fn a_later_size_change_restarts_the_debounce() {
     assert!(app.set_terminal_size_at(120, 40, t0).is_empty());
     let t1 = t0 + RESIZE_DEBOUNCE - MS;
     assert!(app.set_terminal_size_at(100, 30, t1).is_empty());
-    assert!(app.on_tick_at(t0 + RESIZE_DEBOUNCE).is_empty());
+    assert!(app.on_tick_at(t0 + RESIZE_DEBOUNCE, 0).is_empty());
     assert_eq!(
-        app.on_tick_at(t1 + RESIZE_DEBOUNCE),
+        app.on_tick_at(t1 + RESIZE_DEBOUNCE, 0),
         vec![Effect::Send(ClientMsg::Resize {
             window_id: 1,
             cols: 100,
@@ -49,9 +49,9 @@ fn a_toast_expires_at_its_ttl() {
     let mut app = app_with(vec![win(1, "a", Status::Idle)]);
     app.toast("hello");
     let at = app.toast.as_ref().expect("the toast is shown").at;
-    app.on_tick_at(at + TOAST_TTL - MS);
+    app.on_tick_at(at + TOAST_TTL - MS, 0);
     assert_eq!(app.toast_text(), Some("hello"), "still shown just before");
-    app.on_tick_at(at + TOAST_TTL);
+    app.on_tick_at(at + TOAST_TTL, 0);
     assert_eq!(app.toast_text(), None, "gone at its time to live");
 }
 
@@ -59,7 +59,7 @@ fn a_toast_expires_at_its_ttl() {
 fn the_tick_stamps_the_given_now() {
     let mut app = app_with(vec![win(1, "a", Status::Idle)]);
     let later = Instant::now() + Duration::from_secs(3600);
-    app.on_tick_at(later);
+    app.on_tick_at(later, 0);
     assert_eq!(app.ticked_at, later);
 }
 

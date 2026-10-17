@@ -36,7 +36,12 @@ pub(super) fn brake_alerts(app: &App, out: &mut Vec<Alert>) {
     }
     for quota in &brakes.quota {
         if let Some(trip) = &quota.trip {
-            let text = common::brakes_text::quota_held_text(quota.runtime, trip);
+            let text = common::brakes_text::quota_held_text(
+                quota.runtime,
+                trip,
+                app.run_now(),
+                app.zone(),
+            );
             push(DispatchHeldKind::Quota(quota.runtime), text, None);
         }
     }

@@ -334,10 +334,13 @@ impl LessonsGraphScreen {
             // lower half is wider, so it never needs more).
             Some(n) => self.lesson(&n.id).map_or(0, |l| {
                 let width = crate::ui::lessons_graph::PANEL_WIDTH - 2;
+                // The zone's label only lengthens the one-line `last seen` row, which
+                // never wraps at this width, so the count is the same in every zone.
                 let lines = crate::ui::lessons_graph_panel::lesson_lines(
                     l,
                     width,
                     crate::theme::Palette::PLAIN,
+                    common::numbers::Zone::Utc,
                 );
                 lines.len().saturating_sub(1)
             }),

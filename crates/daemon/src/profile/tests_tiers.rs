@@ -317,7 +317,7 @@ full_shards = 2
 toolchain_id = "sh toolchain.sh"
 
 # protected: built-in .claude/**, .mcp.json, .codex/**, **/CLAUDE.md, **/AGENTS.md, **/AGENTS.override.md, **/CLAUDE.local.md, .agents/**, .github/workflows/**, .github/actions/**, .gitlab-ci.yml, .circleci/**, .buildkite/**, Jenkinsfile, azure-pipelines.yml, .githooks/**, .husky/**, .pre-commit-config.yaml, **/.cargo/**, **/rust-toolchain, **/rust-toolchain.toml + no extras
-# verification 1970-01-01 00:00 (unconfined)
+# verification 1970-01-01 00:00 UTC (unconfined)
 #   build_check  fail   2s   sh build.sh
 #   module_graph ok     2s   sh graph.sh
 #   module_test  ok     2s   sh test.sh {module} {filter:--filter %}

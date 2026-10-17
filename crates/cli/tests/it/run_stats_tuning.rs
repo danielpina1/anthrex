@@ -107,8 +107,10 @@ fn budget(tool_calls: u32, minutes: u32) -> Budget {
 }
 
 /// `yyyy-mm-dd hh:mm` (the brief's `\d{4}-\d{2}-\d{2} \d{2}:\d{2}`).
+/// `2026-10-12 14:30 UTC`: the `REFIT` column is daemon text, UTC and labelled
+/// (milestone 9.19 decision 3).
 fn is_minute(text: &str) -> bool {
-    let shape = "dddd-dd-dd dd:dd";
+    let shape = "dddd-dd-dd dd:dd UTC";
     text.len() == shape.len()
         && text
             .chars()

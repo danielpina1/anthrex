@@ -4,8 +4,8 @@
 
 use proto::{ClassTuning, RefitState, TuningReport};
 
+use crate::numbers::{Zone, clock_full};
 use crate::text::budget_text;
-use crate::text::format_utc;
 
 /// Decision 10's line for a `tuning.toml` that did not parse (`error`, ruling T8-2) and
 /// was moved to `moved`: the first line of the block, and a run log line at a start.
@@ -105,11 +105,27 @@ fn weight(c: &ClassTuning) -> String {
 
 fn refit(state: RefitState) -> String {
     match state {
-        // `yyyy-mm-dd hh:mm` UTC.
-        RefitState::Written { at } => format_utc(at).chars().take(16).collect(),
+        // Daemon text (decision 3): `yyyy-mm-dd hh:mm UTC`.
+        RefitState::Written { at } => clock_full(at, Zone::Utc),
         RefitState::NotYet => "not yet".to_string(),
         RefitState::Kept => "kept".to_string(),
         RefitState::Configured => "configured".to_string(),
         RefitState::Off => "off".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use proto::RefitState;
+
+    /// Decision 3: the `REFIT` column is daemon text, UTC and labelled, whatever `now`.
+    #[test]
+    fn refit_column_keeps_its_zone() {
+        // 2026-10-12 14:30:59 UTC.
+        assert_eq!(
+            super::refit(RefitState::Written { at: 1_791_815_459 }),
+            "2026-10-12 14:30 UTC"
+        );
+        assert_eq!(super::refit(RefitState::NotYet), "not yet");
     }
 }

@@ -138,6 +138,14 @@ pub fn clock_full(at: u64, zone: Zone) -> String {
     full(day, secs, &zone.label())
 }
 
+/// `2026-10-12 +02:00`: the day `at` falls on in `zone`, labelled as [`clock`] labels
+/// (ruling R17).
+pub fn date(at: u64, zone: Zone) -> String {
+    let (day, _) = local_parts(at, zone);
+    let (y, mo, d) = civil_from_days(day);
+    format!("{y:04}-{mo:02}-{d:02} {}", zone.label())
+}
+
 fn full(day: i64, secs: u64, label: &str) -> String {
     let (y, mo, d) = civil_from_days(day);
     format!(

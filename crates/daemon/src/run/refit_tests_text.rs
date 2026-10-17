@@ -84,7 +84,7 @@ fn render_matches_the_cli_text() {
     let expected = "\
 tuning: /tmp/ax-repo/tuning.toml  (refit after 30 samples per class)
   CLASS  SAMPLES  BUDGET          WEIGHT  REFIT
-  S      34       55 calls 18m    9m      2026-09-27 09:06
+  S      34       55 calls 18m    9m      2026-09-27 09:06 UTC
   M      12/30    150 calls 60m   27m*    not yet
   hub    3/30     150 calls 60m   27m*    not yet
   * derived from another class's median

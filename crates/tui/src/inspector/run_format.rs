@@ -1,6 +1,8 @@
 //! What every run inspection shares (milestone 8c decisions 30 and 31): durations,
-//! local `hh:mm` (token counts are `common::numbers::tokens`, milestone 9.19 decision 2), progress bars and lines, bounded free text, the words
-//! for routes, sizes and findings, and the `session` field. Pure: no clock is read.
+//! progress bars and lines, bounded free text, the words for routes, sizes and
+//! findings, and the `session` field. Token counts are `common::numbers::tokens`
+//! (milestone 9.19 decision 2) and clock times `App::local_clock` (decision 3). Pure: no
+//! clock is read.
 
 use super::{Field, FieldLayout, Inspection};
 use crate::app::App;
@@ -25,12 +27,6 @@ pub fn format_duration(secs: u64) -> String {
     } else {
         format!("{}h{:02}m", secs / 3600, secs % 3600 / 60)
     }
-}
-
-/// Decision 31: a unix time as local `hh:mm`, the offset given, never read here.
-pub fn local_hhmm(at: u64, utc_offset_secs: i64) -> String {
-    let secs = (i128::from(at) + i128::from(utc_offset_secs)).rem_euclid(86_400);
-    format!("{:02}:{:02}", secs / 3600, secs % 3600 / 60)
 }
 
 /// Decision 30: `filled = (width × done + total / 2) / total` cells of `█`, then `░`.

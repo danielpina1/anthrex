@@ -91,7 +91,7 @@ fn the_run_view_gets_the_tall_panel() {
         "{panel}"
     );
     assert!(
-        lines[18].contains("│ history   12:31 review r1 changes"),
+        lines[18].contains("│ history   12:31 +00:00 review r1 changes"),
         "{panel}"
     );
     assert!(lines[19].contains("│ cx default · M · tdd "), "{panel}");
@@ -364,11 +364,12 @@ fn task_panel_renders_at_80x24() {
     );
 }
 
-/// Decision 17 at 120x40: the whole panel, 24 rows, nothing below it.
+/// Decision 17 at 120x40: the whole panel, 25 rows (the labelled history wraps once,
+/// milestone 9.19 decision 3), nothing below it.
 #[test]
 fn task_panel_renders_at_120x40() {
     let rows = task_panel(120, 40);
-    assert_eq!(rows.len(), 24, "{rows:#?}");
+    assert_eq!(rows.len(), 25, "{rows:#?}");
     let inner: Vec<&str> = rows[1..rows.len() - 1]
         .iter()
         .map(|row| row.trim_start_matches("│ ").trim_end_matches(['│', ' ']))
@@ -396,13 +397,14 @@ fn task_panel_renders_at_120x40() {
             "budget    ███████░░░ 104/150 tool calls · 38/60 min · 410k tokens",
             "tries     review 1/2 bounces · check 0/2 · escalation step 1",
             "route     codex · high → reviewer claude · claude-opus-5 · high",
-            "history   12:31 review r1 changes · 12:20 check passed · 12:02 started",
+            "history   12:31 +00:00 review r1 changes · 12:20 +00:00 check passed · 12:02",
+            "          +00:00 started",
             "cx default · M · tdd",
         ]
     );
-    assert!(rows[0].starts_with('╭') && rows[23].starts_with('╰'));
+    assert!(rows[0].starts_with('╭') && rows[24].starts_with('╰'));
     // Decision 16: nothing lies below, so the border names only the actions.
-    assert!(rows[23].ends_with("─ . actions ╯"), "{}", rows[23]);
+    assert!(rows[24].ends_with("─ . actions ╯"), "{}", rows[24]);
     assert!(!rows[0].contains("PgUp"), "{}", rows[0]);
 }
 

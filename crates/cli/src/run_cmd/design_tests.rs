@@ -4,6 +4,7 @@
 
 use clap::Parser;
 use clap::error::ErrorKind;
+use common::numbers::Zone;
 use proto::{
     ApproachTag, DesignMode, DocAuthor, DocFinding, DocGateInfo, DocGateKind, DocInfo, DocKind,
     DocSeverity, DocView, ReportSummary, RevisingCause, RoundDesign, RunInfo, RunState,
@@ -216,7 +217,7 @@ fn show_prints_the_stored_bytes_exactly() {
 #[test]
 fn status_names_the_waiting_gate() {
     let run = design_run();
-    let block = run_block(&run, 0);
+    let block = run_block(&run, 0, Zone::Local(0));
     let lines = "  design: at the spec gate\n  \
         waiting for you: spec v2 (anthrex run show add-reset-3f9a --doc spec)\n";
     assert_eq!(status_lines(&run), lines);
@@ -327,7 +328,7 @@ fn status_names_an_off_round_and_a_halted_phase() {
             status_lines(&halted),
             format!("  design: halted in {word}\n")
         );
-        let block = run_block(&halted, 0);
+        let block = run_block(&halted, 0, Zone::Local(0));
         assert!(
             block.contains(&format!("  design: halted in {word}\n")),
             "{block}"
@@ -359,7 +360,7 @@ fn status_names_an_off_round_and_a_halted_phase() {
 #[test]
 fn a_non_design_runs_status_is_unchanged() {
     assert_eq!(
-        run_block(&example(), 0),
+        run_block(&example(), 0, Zone::Local(0)),
         include_str!("status_single_golden.txt")
     );
     for state in [
@@ -373,7 +374,7 @@ fn a_non_design_runs_status_is_unchanged() {
             ..design_run()
         };
         assert_eq!(status_lines(&off), "", "{state:?}");
-        let block = run_block(&off, 0);
+        let block = run_block(&off, 0, Zone::Local(0));
         assert!(!block.contains("design:") && !block.contains("waiting for you"));
     }
 }

@@ -99,15 +99,17 @@ fn the_task_panel_renders_outcome_first_at_120x40() {
             "tries     review 1/2 bounces · check 0/2 · escalation step 1",
             "stage     1 of 2",
             "route     codex · gpt-6-sol · high → reviewer claude · claude-opus-5 · high",
-            "history   12:31 review r1 changes · 12:20 check passed · 12:02 started",
+            "history   12:31 +00:00 review r1 changes · 12:20 +00:00 check passed · 12:02",
+            "          +00:00 started",
             "stage 1 of 2 · cx gpt-6-sol · M · tdd",
         ]
     );
-    // Milestone 9.0.7 decision 17: the panel takes all 22 rows it needs, so nothing
-    // lies below and the border names only the actions.
-    assert_eq!(rows.len(), 24);
+    // Milestone 9.0.7 decision 17: the panel takes all 23 rows it needs (the labelled
+    // history wraps once, milestone 9.19 decision 3), so nothing lies below and the
+    // border names only the actions.
+    assert_eq!(rows.len(), 25);
     assert!(rows[0].starts_with('╭'), "{}", rows[0]);
-    assert!(rows[23].ends_with("─ . actions ╯"), "{}", rows[23]);
+    assert!(rows[24].ends_with("─ . actions ╯"), "{}", rows[24]);
 }
 
 /// Decision 13: each step's mark in its role, the current step's word bold `Working`.

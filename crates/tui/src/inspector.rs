@@ -437,9 +437,9 @@ pub use run_task::{task_panel_room, task_panel_rows};
 #[cfg(test)]
 pub use panel::render;
 pub use panel::render_in;
+pub use run_format::format_duration;
 #[cfg(test)]
 pub use run_format::progress_bar;
-pub use run_format::{format_duration, local_hhmm};
 pub(crate) use run_stage_pr::delivering;
 
 #[cfg(test)]
@@ -447,6 +447,9 @@ mod tests;
 
 #[cfg(test)]
 mod run_tests;
+
+#[cfg(test)]
+mod run_clock_tests;
 
 #[cfg(test)]
 mod run_nodes_tests;

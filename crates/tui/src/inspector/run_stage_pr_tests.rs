@@ -39,7 +39,7 @@ fn stage_inspector_lines_are_exact() {
             ("tier 3", "green · 38s"),
             (
                 "pr",
-                "#142 open, based on anthrex/add-reset-3f9a/stage-1, opened 02:30"
+                "#142 open, based on anthrex/add-reset-3f9a/stage-1, opened 02:30 +00:00"
             ),
             ("url", "https://github.com/fake/app/pull/142"),
             ("ci", "✓ build · ✗ test (fix3)"),
@@ -51,7 +51,7 @@ fn stage_inspector_lines_are_exact() {
     let one = inspect_node(&app, &stage_key(1));
     assert_eq!(
         value(&one, "pr"),
-        Some("#141 merged, based on main, opened 02:30, merged 03:00")
+        Some("#141 merged, based on main, opened 02:30 +00:00, merged 03:00 +00:00")
     );
     assert_eq!(value(&one, "ci"), Some("green"));
     assert_eq!(value(&one, "threads"), Some("none"));
@@ -83,7 +83,7 @@ fn stage_inspector_shows_each_ci_state_and_a_paused_or_closed_pr() {
     assert_eq!(value(&two, "ci"), Some("… lint · – docs"));
     assert_eq!(
         value(&two, "pr"),
-        Some("#142 open, based on anthrex/add-reset-3f9a/stage-1, opened 02:30 · paused")
+        Some("#142 open, based on anthrex/add-reset-3f9a/stage-1, opened 02:30 +00:00 · paused")
     );
     assert_eq!(
         value(&two, "fix tasks"),
@@ -92,7 +92,7 @@ fn stage_inspector_shows_each_ci_state_and_a_paused_or_closed_pr() {
     let three = inspect_node(&app, &stage_key(3));
     assert_eq!(
         value(&three, "pr"),
-        Some("#143 closed, based on anthrex/add-reset-3f9a/stage-2, opened 02:30")
+        Some("#143 closed, based on anthrex/add-reset-3f9a/stage-2, opened 02:30 +00:00")
     );
     assert_eq!(value(&three, "ci"), Some("no checks"));
 }
@@ -117,7 +117,7 @@ fn stage_inspector_cleans_host_text() {
     assert_eq!(value(&two, "ci"), Some("✗ testx (fix3)"));
     assert_eq!(
         value(&two, "pr"),
-        Some("#142 open, based on main [2J, opened 02:30")
+        Some("#142 open, based on main [2J, opened 02:30 +00:00")
     );
     assert_eq!(value(&two, "url"), Some("https://ex.com/1"));
     assert_eq!(value(&two, "fix tasks"), Some("ci: fix3 working"));
@@ -152,7 +152,7 @@ fn single_stage_run_shows_its_pr_in_the_run_inspector() {
         shown,
         [
             ("delivery", "pr to origin (fake/app) · watching every 60 s"),
-            ("pr", "#7 open, based on main, opened 02:30"),
+            ("pr", "#7 open, based on main, opened 02:30 +00:00"),
             ("url", "https://github.com/fake/app/pull/7"),
             ("ci", "✓ build"),
             ("threads", "none"),

@@ -213,6 +213,9 @@ impl RunHarness {
             ),
             ("GIT_CONFIG_GLOBAL".into(), "/dev/null".into()),
             ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
+            // Milestone 9.19 ruling R6: every CLI child runs in UTC, whatever the machine's
+            // zone, so its local clock times print `+00:00` everywhere.
+            ("TZ".into(), "UTC0".into()),
             // Milestone 9.16 decision 9: the daemon reads Codex rollouts under
             // `$CODEX_HOME/sessions`; never the developer's `~/.codex`.
             ("CODEX_HOME".into(), path(&dir.path().join("codex-home"))),

@@ -3,10 +3,22 @@
 
 use super::{App, Effect, RESIZE_DEBOUNCE, TOAST_TTL};
 use crate::tree;
+use common::numbers::{self, Zone};
 use proto::ClientMsg;
 use std::time::Instant;
 
 impl App {
+    /// The viewer's zone, for every clock time the client prints (decision 3).
+    pub fn zone(&self) -> Zone {
+        Zone::Local(self.utc_offset_secs)
+    }
+
+    /// `at` (unix seconds) as a local clock time against the daemon's `now`
+    /// ([`App::run_now`]): `14:30 +02:00`, `Thu 14:30 +02:00`, `2026-10-12 14:30 +02:00`.
+    pub fn local_clock(&self, at: u64) -> String {
+        numbers::clock(at, self.run_now(), self.zone())
+    }
+
     /// The renderer calls this with the main inner area after every draw.
     pub fn set_terminal_size(&mut self, cols: u16, rows: u16) -> Vec<Effect> {
         self.set_terminal_size_at(cols, rows, Instant::now())
@@ -57,16 +69,19 @@ impl App {
         }
     }
 
-    /// Called every 100 ms: advances the spinner, expires toasts, retries a dropped
-    /// `Subscribe`, flushes a debounced resize.
+    /// [`App::on_tick_at`] now, keeping the zone offset it has.
     pub fn on_tick(&mut self) -> Vec<Effect> {
-        self.on_tick_at(Instant::now())
+        self.on_tick_at(Instant::now(), self.utc_offset_secs)
     }
 
-    /// [`App::on_tick`] at a given instant (milestone 9.11 decision 23): the toast's
-    /// time to live and the resize debounce are measured against `now`.
-    pub fn on_tick_at(&mut self, now: Instant) -> Vec<Effect> {
+    /// Called every 100 ms: advances the spinner, expires toasts, retries a dropped
+    /// `Subscribe`, flushes a debounced resize. At a given instant (milestone 9.11
+    /// decision 23): the toast's time to live and the resize debounce are measured
+    /// against `now`. `utc_offset_secs` is the local zone's offset, which the event loop
+    /// reads (milestone 9.19 decision 3, ruling R4); it is stored, never read here.
+    pub fn on_tick_at(&mut self, now: Instant, utc_offset_secs: i32) -> Vec<Effect> {
         self.ticked_at = now;
+        self.utc_offset_secs = utc_offset_secs;
         let mut effects = self.expire_replies();
         effects.extend(self.screens_tick(now));
         effects.extend(self.tick(now));

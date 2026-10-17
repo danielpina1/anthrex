@@ -26,7 +26,7 @@
   "edits": [
     {
       "accepted": true,
-      "at": "11:40",
+      "at": "2026-09-21 11:40 UTC",
       "error": null,
       "recipients": [
         "t1"
@@ -36,7 +36,7 @@
     }
   ],
   "gate": {
-    "at": "11:02",
+    "at": "2026-09-21 11:02 UTC",
     "holds": [
       {
         "id": "epic:c",
@@ -131,7 +131,7 @@
   ],
   "task_notes": [
     {
-      "at": "12:29",
+      "at": "2026-09-21 12:29 UTC",
       "kind": "discovery",
       "task": "t1",
       "text": "the hook fires twice"
@@ -146,7 +146,7 @@
       "hub": true,
       "id": "t0",
       "kind": "code",
-      "last": "11:30 merged",
+      "last": "2026-09-21 11:30 UTC merged",
       "messages": {
         "count": 0,
         "refresh": null,
@@ -201,7 +201,7 @@
       "hub": false,
       "id": "t2",
       "kind": "code",
-      "last": "12:31 review r1 changes",
+      "last": "2026-09-21 12:31 UTC review r1 changes",
       "messages": {
         "count": 0,
         "refresh": null,

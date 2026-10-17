@@ -3,7 +3,7 @@
 //! exact `(label, value)` list, the name and the right-hand text.
 
 use crate::app::App;
-use crate::inspector::{FieldLayout, Inspection, inspect, local_hhmm};
+use crate::inspector::{FieldLayout, Inspection, inspect};
 use crate::settings::UiSettings;
 use crate::tree::run_fixtures::{GEMINI_DAY, GEMINI_NOW, RUN_ID, gate_fixture, gemini_fixture};
 use crate::tree::{NodeKey, RunFilter, run_rows};
@@ -48,7 +48,7 @@ fn run_key(id: &str) -> NodeKey {
     NodeKey::Run(id.into())
 }
 
-fn gemini_with(change: impl FnOnce(&mut proto::RunInfo)) -> App {
+pub(super) fn gemini_with(change: impl FnOnce(&mut proto::RunInfo)) -> App {
     let (mut snapshot, windows) = gemini_fixture();
     change(&mut snapshot.runs[0]);
     app_of((snapshot, windows))
@@ -93,7 +93,7 @@ fn run_fields_match_the_mockup() {
             ),
             (
                 "gate",
-                "plan approved 11:02 · 2 plan edits since · last: split t2"
+                "plan approved 11:02 +00:00 · 2 plan edits since · last: split t2"
             ),
             (
                 "attention",
@@ -198,7 +198,9 @@ fn run_fields_with_one_edit_and_yes() {
     let inspection = inspect_node(&app, &run_key(RUN_ID));
     assert_eq!(
         value(&inspection, "gate"),
-        Some("plan approved by --yes 09:15 · 1 plan edit since · last: cancel t3")
+        Some(
+            "plan approved by --yes 2024-10-04 09:15 +02:00 · 1 plan edit since · last: cancel t3"
+        )
     );
 }
 
@@ -369,22 +371,6 @@ fn a_paused_run_says_where_from() {
 }
 
 #[test]
-fn local_hhmm_cases() {
-    assert_eq!(local_hhmm(39_720, 0), "11:02");
-    assert_eq!(local_hhmm(39_720, 3600), "12:02");
-    assert_eq!(local_hhmm(39_720, -43_200), "23:02");
-    assert_eq!(local_hhmm(39_720, 50_400), "01:02");
-    // A negative offset that crosses midnight backwards, and hostile extremes.
-    assert_eq!(local_hhmm(GEMINI_DAY + 600, -3600), "23:10");
-    assert_eq!(local_hhmm(0, -1), "23:59");
-    assert_eq!(local_hhmm(u64::MAX, 0), "07:00");
-    assert_eq!(
-        local_hhmm(u64::MAX, i64::MIN),
-        local_hhmm(u64::MAX, i64::MIN)
-    );
-}
-
-#[test]
 fn run_with_no_tasks_says_so() {
     let app = gate_with(|run| run.tasks.clear());
     let inspection = inspect_node(&app, &run_key(RUN_ID));
@@ -532,7 +518,7 @@ fn hostile_run_values_never_panic_and_stay_one_line() {
     // An approval stamp 400 days ahead of the daemon's `now` is formatted, not aged.
     assert_eq!(
         value(&inspection, "gate"),
-        Some("plan approved 12:40 · 2 plan edits since · last: split t2")
+        Some("plan approved 2025-11-08 12:40 +00:00 · 2 plan edits since · last: split t2")
     );
     for field in &inspection.fields {
         assert!(

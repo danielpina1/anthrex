@@ -351,8 +351,8 @@ fn notes_section_is_exact() {
     assert_eq!(
         notes_section(&messages()),
         "Notes from the orchestrator:\n\
-         - 13:07 (change, from orchestrator) use the v2 token API\n\
-         - 13:09 (info, from user) the CI is slow today"
+         - 1970-01-04 13:07 UTC (change, from orchestrator) use the v2 token API\n\
+         - 1970-01-04 13:09 UTC (info, from user) the CI is slow today"
     );
 }
 
@@ -363,6 +363,6 @@ fn worker_messages_for_review_is_exact() {
     assert_eq!(worker_messages_for_review(info_only), "");
     assert_eq!(
         worker_messages_for_review(&messages()),
-        "Messages the worker received:\n- 13:07 (change) use the v2 token API"
+        "Messages the worker received:\n- 1970-01-04 13:07 UTC (change) use the v2 token API"
     );
 }

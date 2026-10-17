@@ -62,7 +62,7 @@ fn a_pr_run_view_draws_its_prs_at_both_sizes() {
         "stage 1/3  tier 3 ✓ 38s  #141  merged",
         "▌ ✓ stage 2/3  tier 3 ✓ 38s  #142  ci ✗  3 threads",
         "stage 3/3  tier 3 ✓ 38s  #143  ci …",
-        "pr        #142 open, based on anthrex/add-reset-3f9a/stage-1, opened 02:30",
+        "pr        #142 open, based on anthrex/add-reset-3f9a/stage-1, opened 02:30 +00:…",
         "ci        ✓ build · ✗ test (fix3)",
         "fix tasks ci: fix3 working; review: fix4 merged",
     ] {

@@ -142,12 +142,12 @@ pub fn codex_home() -> Result<PathBuf> {
 /// **local time**, as codex-cli names it (M9.16.1 finding 3, ruling C27), starting with
 /// its `session_meta` line. The file's path.
 pub fn append_rollout(home: &Path, thread: &str, line: &Value, now: u64) -> Result<PathBuf> {
-    let t = local(now);
+    let t = common::localtime::parts(now);
     let dir = home
         .join("sessions")
-        .join(format!("{:04}", t.tm_year + 1900))
-        .join(format!("{:02}", t.tm_mon + 1))
-        .join(format!("{:02}", t.tm_mday));
+        .join(format!("{:04}", t.year))
+        .join(format!("{:02}", t.month))
+        .join(format!("{:02}", t.day));
     fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
     let suffix = format!("-{thread}.jsonl");
     let existing = fs::read_dir(&dir)?.flatten().map(|e| e.path()).find(|p| {
@@ -160,12 +160,7 @@ pub fn append_rollout(home: &Path, thread: &str, line: &Value, now: u64) -> Resu
         None => {
             let name = format!(
                 "rollout-{:04}-{:02}-{:02}T{:02}-{:02}-{:02}{suffix}",
-                t.tm_year + 1900,
-                t.tm_mon + 1,
-                t.tm_mday,
-                t.tm_hour,
-                t.tm_min,
-                t.tm_sec
+                t.year, t.month, t.day, t.hour, t.min, t.sec
             );
             (dir.join(name), true)
         }
@@ -185,17 +180,6 @@ pub fn append_rollout(home: &Path, thread: &str, line: &Value, now: u64) -> Resu
     file.write_all(text.as_bytes())?;
     file.flush()?;
     Ok(path)
-}
-
-/// `now` in the local zone.
-fn local(now: u64) -> libc::tm {
-    let secs = libc::time_t::try_from(now).unwrap_or(0);
-    // SAFETY: `localtime_r` writes only into `tm`, a plain C struct zeroed here.
-    unsafe {
-        let mut tm: libc::tm = std::mem::zeroed();
-        libc::localtime_r(&secs, &mut tm);
-        tm
-    }
 }
 
 #[cfg(test)]

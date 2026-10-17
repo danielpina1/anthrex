@@ -236,7 +236,8 @@ fn section_lines(
     let (mut lines, at) = limit_lines(s, keys, p);
     // Milestone 9.16 decision 33: the hold, read-only (not a row the keys select).
     let prefix = &app.settings.prefix_label;
-    let hold = crate::app::brakes::hold_row(&app.runs.brakes, prefix, dot(p));
+    let hold =
+        crate::app::brakes::hold_row(&app.runs.brakes, prefix, dot(p), app.run_now(), app.zone());
     lines.push(Line::styled(format!("  {hold}"), role(Role::Muted, p)));
     (lines, at)
 }

@@ -13,7 +13,6 @@ use proto::{CommandCheck, DroppedCommand, ProfileVerification, RepoProfile};
 use super::confined_hint;
 use crate::run::globs::validate_glob;
 use crate::run::plan::builtin_protected;
-use crate::run::report::format_utc;
 pub use common::profile_keys::REVERIFY_KEYS;
 
 /// What `anthrex profile edit` accepts: every `RepoProfile` field, and `env.<NAME>` for
@@ -465,12 +464,11 @@ pub fn show_text(
     }
     out.push_str(&format!("# {}\n", protected_line(profile)));
     if let Some(v) = verification {
-        let at = format_utc(v.at);
+        // Milestone 9.19 decision 3: daemon text, UTC, labelled; the long form, so the
+        // text a proposal was shown as never moves with the clock.
+        let at = common::numbers::clock_full(v.at, common::numbers::Zone::Utc);
         let confined = if v.confined { "confined" } else { "unconfined" };
-        out.push_str(&format!(
-            "# verification {} ({confined})\n",
-            at.get(..16).unwrap_or(&at)
-        ));
+        out.push_str(&format!("# verification {at} ({confined})\n"));
         for (key, check) in [
             ("setup", &v.setup),
             ("check", &v.check),

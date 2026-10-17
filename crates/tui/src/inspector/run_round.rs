@@ -2,8 +2,8 @@
 //! Interfaces "Inspector contents, exact": Agent round). Pure, as `run.rs` is.
 
 use super::run_format::{
-    clean, counts_text, finding_text, format_duration, kind_glyph, local_hhmm, most_severe, rank,
-    route_label, rows, session_text,
+    clean, counts_text, finding_text, format_duration, kind_glyph, most_severe, rank, route_label,
+    rows, session_text,
 };
 use super::run_patterns;
 use super::{Field, Inspection, field};
@@ -76,7 +76,7 @@ pub(crate) fn round_inspection(
 /// Decision 43: the most of a failed turn's error the round's status shows.
 const FAILED_ERROR_CHARS: usize = 80;
 
-/// Decision 43: `failed: <error> · retries <hh:mm>`, the error one line and cut to
+/// Decision 43: `failed: <error> · retries <clock>`, the error one line and cut to
 /// [`FAILED_ERROR_CHARS`] characters; `failed` alone without an error, and no retry
 /// time once it has passed (a paused run's round keeps its failed turn).
 fn failed_text(error: Option<&str>, until: u64, app: &App) -> String {
@@ -89,10 +89,7 @@ fn failed_text(error: Option<&str>, until: u64, app: &App) -> String {
         }
     }
     if until > app.run_now() {
-        text.push_str(&format!(
-            " · retries {}",
-            local_hhmm(until, app.utc_offset_secs)
-        ));
+        text.push_str(&format!(" · retries {}", app.local_clock(until)));
     }
     text
 }

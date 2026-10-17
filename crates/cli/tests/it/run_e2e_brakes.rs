@@ -56,14 +56,20 @@ fn hold_persists_across_daemon_restart() {
     assert_eq!(first.by, "user");
     h.restart_daemon(&[]);
     assert_eq!(h.snapshot().brakes.hold, Some(first.clone()));
+    // Milestone 9.19 decision 3 (ruling R6): the CLI prints its own zone, which the
+    // harness pins to `TZ=UTC0`, so `+00:00`; against the daemon's `now`, which may
+    // pass midnight between the snapshots, so either day's form is right.
+    let before = h.snapshot().now;
     let status = cli(&h, &["hold", "status"]);
-    let since = format!(
-        "hold: on since {} UTC (user)",
-        common::text::hh_mm(first.since)
-    );
-    assert_eq!(status.lines().next(), Some(since.as_str()), "{status}");
     let runs = cli(&h, &["run", "status"]);
-    assert!(runs.starts_with(&format!("{since}\n")), "{runs}");
+    let after = h.snapshot().now;
+    let forms = [before, after].map(|now| {
+        let since = common::numbers::clock(first.since, now, common::numbers::Zone::Local(0));
+        format!("hold: on since {since} (user)")
+    });
+    let first_line = status.lines().next().unwrap_or_default().to_owned();
+    assert!(forms.contains(&first_line), "{status}");
+    assert!(runs.starts_with(&format!("{first_line}\n")), "{runs}");
 
     assert_eq!(cli(&h, &["hold", "off"]).trim_end(), "dispatch released");
     assert_eq!(cli(&h, &["hold", "off"]).trim_end(), "dispatch is not held");

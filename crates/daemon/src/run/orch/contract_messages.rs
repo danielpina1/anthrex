@@ -31,7 +31,7 @@ pub fn notes_section(messages: &[TaskMessage]) -> String {
     lines.extend(sorted.iter().map(|m| {
         format!(
             "- {} ({}, from {}) {}",
-            hh_mm(m.at),
+            stamp(m.at),
             message_kind_label(m.kind),
             sender(&m.source),
             m.text
@@ -54,7 +54,7 @@ pub fn worker_messages_for_review(messages: &[TaskMessage]) -> String {
     lines.extend(
         changes
             .iter()
-            .map(|m| format!("- {} (change) {}", hh_mm(m.at), m.text)),
+            .map(|m| format!("- {} (change) {}", stamp(m.at), m.text)),
     );
     lines.join("\n")
 }
@@ -127,7 +127,9 @@ fn sender(source: &EditSource) -> &'static str {
     }
 }
 
-/// `hh:mm` of a Unix time, in UTC, as M8a's prompts write times.
-fn hh_mm(at: u64) -> String {
-    format!("{:02}:{:02}", at % 86_400 / 3600, at % 3600 / 60)
+/// A message's time in a prompt (milestone 9.19 decision 3): `2026-10-12 14:30 UTC`,
+/// the long form, labelled; a prompt never depends on the viewer's zone (9.13 ruling
+/// C17), and these builders are given no `now`.
+fn stamp(at: u64) -> String {
+    common::numbers::clock_full(at, common::numbers::Zone::Utc)
 }

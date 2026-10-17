@@ -327,7 +327,7 @@ pub fn render(frame: &mut Frame, app: &App, s: &LessonsGraphScreen, area: Rect) 
     let a = areas(s, area);
     draw_canvas(frame, s, a.canvas, p);
     if let (Some(rect), Some(_)) = (a.panel, s.panel) {
-        super::lessons_graph_panel::render(frame, s, rect, keys, p);
+        super::lessons_graph_panel::render(frame, s, rect, (keys, app.zone()), p);
     }
     if let (Some(rect), Some((text, r))) = (a.footer, footer_line(s)) {
         let text = cut(

@@ -436,6 +436,7 @@ fn the_engine_imports_no_runtime_io_or_clock() {
     );
 }
 
+mod clock;
 mod manifest_dir;
 mod purity;
 

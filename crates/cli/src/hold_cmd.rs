@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use clap::{Args, Subcommand};
-use common::text::hh_mm;
+use common::numbers::{Zone, clock};
 use proto::brakes::{BrakesInfo, QuotaInfo};
 use proto::safe_text::one_line;
 use proto::{ClientMsg, DaemonMsg, RunReply, RunRequest};
@@ -67,7 +67,9 @@ async fn dispatch(command: HoldCommand, socket: &Path) -> anyhow::Result<()> {
             }
         }
         RunReply::Snapshot(snapshot) => {
-            for line in brake_lines(&snapshot.brakes, snapshot.now) {
+            // Milestone 9.19 decision 3: the viewer's zone, read once per command.
+            let zone = Zone::Local(common::localtime::offset_secs(snapshot.now));
+            for line in brake_lines(&snapshot.brakes, snapshot.now, zone) {
                 println!("{}", printable(&line));
             }
         }
@@ -100,13 +102,14 @@ async fn request_of(client: &mut CliClient, request: RunRequest) -> anyhow::Resu
     }
 }
 
-/// Decision 34: `hold: off` or `hold: on since <HH:MM> UTC (<by>)`; then `quota brake:
-/// off` when disabled, else one line per runtime.
-pub fn brake_lines(brakes: &BrakesInfo, now: u64) -> Vec<String> {
+/// Decision 34: `hold: off` or `hold: on since <clock> (<by>)`; then `quota brake:
+/// off` when disabled, else one line per runtime. Every clock time is the viewer's, in
+/// `zone`, against the daemon's `now` (milestone 9.19 decision 3).
+pub fn brake_lines(brakes: &BrakesInfo, now: u64, zone: Zone) -> Vec<String> {
     let mut lines = vec![match &brakes.hold {
         Some(hold) => format!(
-            "hold: on since {} UTC ({})",
-            hh_mm(hold.since),
+            "hold: on since {} ({})",
+            clock(hold.since, now, zone),
             one_line(&hold.by)
         ),
         None => "hold: off".to_owned(),
@@ -115,14 +118,19 @@ pub fn brake_lines(brakes: &BrakesInfo, now: u64) -> Vec<String> {
         lines.push("quota brake: off".to_owned());
         return lines;
     }
-    lines.extend(brakes.quota.iter().map(|quota| quota_line(quota, now)));
+    lines.extend(
+        brakes
+            .quota
+            .iter()
+            .map(|quota| quota_line(quota, now, zone)),
+    );
     lines
 }
 
 /// `<runtime> quota: 5h <n>% · 7d <n>% (read <m> min ago) · not braked`, `… · braked
-/// until <HH:MM> UTC (<window> at <n>% ≥ <t>%)`, or `<runtime> quota: unmeasured · not
+/// until <clock> (<window> at <n>% ≥ <t>%)`, or `<runtime> quota: unmeasured · not
 /// braked`.
-fn quota_line(quota: &QuotaInfo, now: u64) -> String {
+fn quota_line(quota: &QuotaInfo, now: u64, zone: Zone) -> String {
     let runtime = quota.runtime;
     let (Some(read_at), false) = (quota.read_at, quota.windows.is_empty()) else {
         return format!("{runtime} quota: unmeasured \u{b7} not braked");
@@ -132,8 +140,8 @@ fn quota_line(quota: &QuotaInfo, now: u64) -> String {
         .collect();
     let state = match &quota.trip {
         Some(trip) => format!(
-            "braked until {} UTC ({} at {}% \u{2265} {}%)",
-            hh_mm(trip.until),
+            "braked until {} ({} at {}% \u{2265} {}%)",
+            clock(trip.until, now, zone),
             trip.window.label(),
             trip.used.percent(),
             trip.threshold_percent

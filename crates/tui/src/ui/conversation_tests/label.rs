@@ -6,12 +6,13 @@
 use super::*;
 
 /// The header text of the turn at `at`: the first word on the header row whose time is
-/// `hh_mm`.
-fn header_label(buf: &Buffer, hh_mm: &str) -> String {
+/// `clock` (milestone 9.19 decision 3: labelled, `10:00 +00:00`).
+fn header_label(buf: &Buffer, clock: &str) -> String {
+    let clock = format!("{clock} +00:00");
     let row = all_rows(buf)
         .into_iter()
-        .find(|r| r.trim_end_matches(['│', ' ']).ends_with(hh_mm))
-        .unwrap_or_else(|| panic!("no header at {hh_mm}:\n{}", text_of(buf)));
+        .find(|r| r.trim_end_matches(['│', ' ']).ends_with(&clock))
+        .unwrap_or_else(|| panic!("no header at {clock}:\n{}", text_of(buf)));
     row.trim_start_matches('│')
         .split_whitespace()
         .next()

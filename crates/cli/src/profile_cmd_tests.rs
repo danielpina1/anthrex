@@ -3,6 +3,7 @@
 //! (`AGENTS.md` rule 8).
 
 use super::*;
+use common::numbers::Zone;
 use proto::{DroppedGoal, ProfileSource, QueuedGoalInfo, RowEdit, SetupState};
 
 fn status() -> ProfileStatus {
@@ -46,7 +47,7 @@ fn status_text_has_the_status_line_second() {
         reason: "the profile was rejected".into(),
         at: 960,
     }];
-    let text = status_text(&s, 1000);
+    let text = status_text(&s, 1000, Zone::Local(0));
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(lines[0], "profile: /work/app");
     assert_eq!(lines[1], "  Ready · verified 1m ago");
@@ -73,7 +74,7 @@ fn status_text_draws_daemon_text_safely() {
         at: 1,
     }];
     s.unparseable = Some("bad\u{1b}[1m toml".into());
-    let text = status_text(&s, 1000);
+    let text = status_text(&s, 1000, Zone::Local(0));
     assert!(
         !text.chars().any(|c| c.is_control() && c != '\n'),
         "{text:?}"
@@ -136,7 +137,7 @@ fn status_text_prints_the_row_edit() {
         keys: vec!["check".into()],
     };
     let line = |s: &ProfileStatus| {
-        let text = status_text(s, 1000);
+        let text = status_text(s, 1000, Zone::Local(0));
         let lines: Vec<String> = text.lines().map(str::to_string).collect();
         let at = lines
             .iter()
@@ -161,7 +162,7 @@ fn status_text_prints_the_row_edit() {
     let unset = with_edit(edit(), None, RowEditState::Verifying);
     assert_eq!(line(&unset), "  edit: unset check, checking");
     // No row edit: no line.
-    assert!(!status_text(&status(), 1000).contains("  edit:"));
+    assert!(!status_text(&status(), 1000, Zone::Local(0)).contains("  edit:"));
 }
 
 /// Final review C-I2 and task 11 review M1: every daemon-supplied field is one line
@@ -190,13 +191,13 @@ fn status_text_keeps_every_field_on_its_line() {
         reason: forged.into(),
         at: 1,
     }];
-    let text = status_text(&s, 1000);
+    let text = status_text(&s, 1000, Zone::Local(0));
     assert!(
         text.lines().all(|l| !l.trim_start().starts_with("forged")),
         "{text}"
     );
     s.unparseable = Some(forged.into());
-    let text = status_text(&s, 1000);
+    let text = status_text(&s, 1000, Zone::Local(0));
     assert!(
         text.lines().all(|l| !l.trim_start().starts_with("forged")),
         "{text}"

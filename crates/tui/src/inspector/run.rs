@@ -3,11 +3,11 @@
 //! with tasks and rounds is in `run_format.rs`.
 //!
 //! Pure: every time is the snapshot's, aged through `App::run_age` and compared through
-//! `App::rate_limited`, and a wall-clock stamp is formatted with the offset the `App`
-//! was given at startup (`local_hhmm`). No clock is read here.
+//! `App::rate_limited`, and a wall-clock stamp is the viewer's labelled local clock
+//! (`App::local_clock`, milestone 9.19 decision 3). No clock is read here.
 
 use super::run_format::{
-    clean, format_duration, kind_glyph, local_hhmm, progress_text, reason_text, rows, session_text,
+    clean, format_duration, kind_glyph, progress_text, reason_text, rows, session_text,
 };
 use super::run_orch::{handled_rows, handoff_text, orchestrator_text, untrusted_text};
 use super::{Field, Inspection, field};
@@ -56,7 +56,7 @@ pub(crate) fn run_inspection(
     fields.extend(super::run_stage_pr::run_fields(run, app));
     if let Some(orchestrator) = &run.orchestrator {
         fields.push(field("orchestrator", orchestrator_text(orchestrator)));
-        if let Some(text) = untrusted_text(orchestrator) {
+        if let Some(text) = untrusted_text(orchestrator, app) {
             fields.push(field("untrusted", text));
         }
         if let Some(summary) = &orchestrator.summary {
@@ -345,7 +345,7 @@ fn gate_text(run: &RunInfo, app: &App) -> String {
         "plan approved".to_owned()
     };
     if let Some(at) = run.approved_at {
-        text.push_str(&format!(" {}", local_hhmm(at, app.utc_offset_secs)));
+        text.push_str(&format!(" {}", app.local_clock(at)));
     }
     match run.plan_edits_since_approval {
         0 => {}

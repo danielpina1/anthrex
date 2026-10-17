@@ -297,18 +297,18 @@ fn later_size_changes_are_debounced_into_a_resize() {
     let t0 = Instant::now();
     assert!(app.set_terminal_size_at(120, 40, t0).is_empty());
     assert!(
-        app.on_tick_at(t0).is_empty(),
+        app.on_tick_at(t0, 0).is_empty(),
         "resize is not sent before the debounce window"
     );
     assert_eq!(
-        app.on_tick_at(t0 + RESIZE_DEBOUNCE),
+        app.on_tick_at(t0 + RESIZE_DEBOUNCE, 0),
         vec![Effect::Send(ClientMsg::Resize {
             window_id: 1,
             cols: 120,
             rows: 40
         })]
     );
-    assert!(app.on_tick_at(t0 + RESIZE_DEBOUNCE * 2).is_empty());
+    assert!(app.on_tick_at(t0 + RESIZE_DEBOUNCE * 2, 0).is_empty());
 }
 
 #[test]

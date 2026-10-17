@@ -2,8 +2,7 @@
 //! "Inspector contents, exact": Task). Pure, as `run.rs` is.
 
 use super::run_format::{
-    clean, kind_glyph, local_hhmm, progress_bar_in, reason_text, route_label, rows, size_letter,
-    test_mode_text,
+    clean, kind_glyph, progress_bar_in, reason_text, route_label, rows, size_letter, test_mode_text,
 };
 use super::run_orch::{messages_text, notes_text, replaced_by_text, replaces_text};
 use super::run_patterns;
@@ -62,7 +61,7 @@ pub(crate) fn task_inspection(run: &RunInfo, task: &TaskInfo, app: &App) -> Insp
             .iter()
             .take(HISTORY_SHOWN)
             .map(|event| {
-                let at = local_hhmm(event.at, app.utc_offset_secs);
+                let at = app.local_clock(event.at);
                 format!("{at} {}", clean(&event.text))
             })
             .collect();

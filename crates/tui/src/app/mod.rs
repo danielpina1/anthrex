@@ -119,9 +119,10 @@ pub struct App {
     pub modal: Option<Modal>,
     pub link: Link,
     pub spinner_frame: usize,
-    /// The local zone's offset from UTC, in seconds, for the conversation view's turn
-    /// times. `lib.rs` reads it once at start (reading the zone is I/O); 0 until then.
-    pub utc_offset_secs: i64,
+    /// The local zone's offset from UTC, in seconds, for every clock time the client
+    /// prints (milestone 9.19 decision 3). `lib.rs` reads it (reading the zone is I/O)
+    /// and the tick stores it, so a DST change mid-session is picked up; 0 until then.
+    pub utc_offset_secs: i32,
     pub scroll_offset: usize,
     pub default_dir: PathBuf,
     /// Set by `tui::run` from `dirs::home_dir()`.

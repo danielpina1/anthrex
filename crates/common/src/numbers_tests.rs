@@ -155,6 +155,21 @@ fn clock_full_is_always_the_long_form() {
     assert_eq!(clock_full(0, Zone::Local(-3600)), "1969-12-31 23:00 -01:00");
 }
 
+/// Ruling R17: a date alone, in a zone, labelled the way a clock time is.
+#[test]
+fn date_is_labelled_with_its_zone() {
+    assert_eq!(date(NOW, UTC), "2026-10-17 UTC");
+    assert_eq!(date(NOW, Zone::Local(0)), "2026-10-17 +00:00");
+    // 14:30 UTC is already the next day at +10:00, still the day before at -15:00.
+    assert_eq!(date(NOW, Zone::Local(36_000)), "2026-10-18 +10:00");
+    assert_eq!(
+        date(NOW - 15 * 3600, Zone::Local(-3600)),
+        "2026-10-16 -01:00"
+    );
+    assert_eq!(date(0, Zone::Local(-3600)), "1969-12-31 -01:00");
+    assert_eq!(date(u64::MAX, UTC), "292277026596-12-04 UTC");
+}
+
 #[test]
 fn fill_and_context_text() {
     assert_eq!(fill(183_400, 200_000), Fill::Percent(91));

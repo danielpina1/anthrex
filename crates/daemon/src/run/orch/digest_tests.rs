@@ -388,7 +388,7 @@ fn gate_states() {
     assert_eq!(gate(&run)["at"], Value::Null);
     run.state = RunState::Running;
     assert_eq!(gate(&run)["state"], "approved");
-    assert_eq!(gate(&run)["at"], "11:02");
+    assert_eq!(gate(&run)["at"], "2026-09-21 11:02 UTC");
     assert_eq!(digest(&run, NOW)["run"]["approved_by"], "user");
     // A fast-path run the orchestrator has not taken over.
     run.path = Some(RunPath::Fast);

@@ -241,7 +241,8 @@ fn row_spans(ctx: &Ctx, row: &Row, user_turn: bool) -> (u16, Spans, Spans) {
                 Role::Assistant => vec![badge(ctx.badge), Span::styled(" assistant", bold)],
                 Role::System => vec![Span::styled("system", bold)],
             };
-            let time = clock(*at_unix_secs, ctx.app.utc_offset_secs);
+            // Milestone 9.19 decision 3: the viewer's labelled local clock.
+            let time = ctx.app.local_clock(*at_unix_secs);
             (ROW_INDENT, left, vec![Span::styled(time, muted)])
         }
         Row::Text { line, text, .. } => {
@@ -306,14 +307,6 @@ fn block_at<'a>(ctx: &Ctx<'a>, turn_id: u64, block: usize) -> Option<&'a ConvBlo
 
 fn badge(badge: &Badge) -> Span<'static> {
     Span::styled(badge.text.clone(), Style::default().fg(badge.color))
-}
-
-/// `HH:MM` in the zone `offset` seconds from UTC.
-fn clock(at_unix_secs: u64, offset: i64) -> String {
-    let secs = (at_unix_secs as i64)
-        .saturating_add(offset)
-        .rem_euclid(86_400);
-    format!("{:02}:{:02}", secs / 3600, secs % 3600 / 60)
 }
 
 /// `▸ Name  summary` left, `✓ 0.3s` right (spec §6); `▾` once unfolded.

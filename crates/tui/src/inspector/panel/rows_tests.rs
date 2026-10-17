@@ -109,7 +109,7 @@ const RUN: [&str; 12] = [
     "│ path      critical path t0 → t6 → t2 → t3 · 2 tasks left · 1.2× the bound          │",
     "│ agents    workers 3/3 · readers 1/3 · claude ok · codex rate-limited 4m            │",
     "│ spend     tokens 1.8M (all roles) · cache hits 71% of input · worker tool calls 6… │",
-    "│ gate      plan approved 11:02 · 2 plan edits since · last: split t2                │",
+    "│ gate      plan approved 11:02 +00:00 · 2 plan edits since · last: split t2         │",
     "│ attention t5 blocked: question — \"Gemini has no subagent-stop event\"               │",
     "│ est. left ~40m                                                                     │",
     "│                                                                                    │",
@@ -143,7 +143,7 @@ const TASK: [&str; 12] = [
     "│ tries     review 1/2 bounces · check 0/2 · escalation step 1                       │",
     "│ diff      +212 −31 · 4 files · test `status::gemini_stop_marks_idle` red a1b2c3d ✓ │",
     "│ review    in review · r2                                                           │",
-    "│ history   12:31 review r1 changes · 12:20 check passed · 12:02 started             │",
+    "│ history   12:31 +00:00 review r1 changes · 12:20 +00:00 check passed · 12:02 +00:… │",
     "│                                                                                    │",
     "╰────────────────────────────────────────────────────────────────────────────────────╯",
 ];
@@ -158,7 +158,7 @@ const TASK_NARROW: [&str; 12] = [
     "│ tries     review 1/2 bounces · check 0/2 · esca… │",
     "│ diff      +212 −31 · 4 files · test `status::ge… │",
     "│ review    in review · r2                         │",
-    "│ history   12:31 review r1 changes · 12:20 check… │",
+    "│ history   12:31 +00:00 review r1 changes · 12:2… │",
     "│                                                  │",
     "╰──────────────────────────────────────────────────╯",
 ];

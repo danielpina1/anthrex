@@ -188,11 +188,11 @@ fn task_result_carries_every_field() {
     assert!(r.get("git").is_none());
     assert_eq!(
         r["checks"],
-        json!([{"at": "12:20", "ok": true, "code": 0, "timed_out": false, "summary": "test result: ok. 3 passed"}])
+        json!([{"at": "2026-09-21 12:20 UTC", "ok": true, "code": 0, "timed_out": false, "summary": "test result: ok. 3 passed"}])
     );
     assert_eq!(
         r["proofs"],
-        json!([{"at": "12:10", "test": "b::parses", "red": "a1b2c3d", "ok": true, "red_only": false}])
+        json!([{"at": "2026-09-21 12:10 UTC", "test": "b::parses", "red": "a1b2c3d", "ok": true, "red_only": false}])
     );
     assert_eq!(
         r["reviews"],
@@ -210,7 +210,10 @@ fn task_result_carries_every_field() {
                "files": [{"path": "src/lib.rs", "why": "the entry point"}],
                "modules": ["src"], "interfaces": [], "risks": ["none"]})
     );
-    assert_eq!(r["history"], json!(["12:31 review r1 changes"]));
+    assert_eq!(
+        r["history"],
+        json!(["2026-09-21 12:31 UTC review r1 changes"])
+    );
 }
 
 #[test]
@@ -257,7 +260,7 @@ fn task_result_is_capped() {
     assert!(size(&r) <= TASK_RESULT_MAX_BYTES, "{}", size(&r));
     let checks = r["checks"].as_array().unwrap();
     assert_eq!(checks.len(), 3);
-    assert_eq!(checks[2]["at"], crate::run::orch::json::hh_mm(AT + 19));
+    assert_eq!(checks[2]["at"], crate::run::orch::json::at_text(AT + 19));
     let rounds = r["rounds"].as_array().unwrap();
     assert_eq!(rounds.len(), 5);
     assert_eq!(rounds[4]["session"], 12);

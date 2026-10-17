@@ -1,6 +1,7 @@
 //! Milestone 9.1 task M9.1.20: `run status`'s stage lines and task suffixes for a
 //! `Multi` run (Interfaces "CLI").
 
+use common::numbers::Zone;
 use proto::{FullInfo, FullState, StageInfo, TaskOrigin, TaskState};
 
 use super::run_block;
@@ -41,7 +42,7 @@ fn status_prints_stage_lines_for_a_multi_run_only() {
     }];
     single.tasks[0].stage = 1;
     assert_eq!(
-        run_block(&single, 0),
+        run_block(&single, 0, Zone::Local(0)),
         include_str!("status_single_golden.txt")
     );
 
@@ -59,7 +60,7 @@ fn status_prints_stage_lines_for_a_multi_run_only() {
         s2,
         stage(3, None, (0, 0), FullInfo::default()),
     ];
-    let text = run_block(&multi, 0);
+    let text = run_block(&multi, 0, Zone::Local(0));
     let expected = "\
 add-reset-3f9a  running  2/4 merged  base main@1a2b3c4  writers 2/3  readers 1/3  rev 57
   goal: Add password reset
@@ -93,7 +94,7 @@ fn stage_lines_show_each_tier3_state() {
         ),
         stage(4, Some("4"), (0, 0), full(FullState::None, None)),
     ];
-    let text = run_block(&multi, 0);
+    let text = run_block(&multi, 0, Zone::Local(0));
     let lines: Vec<&str> = text.lines().filter(|l| l.starts_with("stage ")).collect();
     assert_eq!(
         lines,

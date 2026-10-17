@@ -194,7 +194,7 @@ fn dispatch_held_alerts_are_the_users() {
     );
     assert_eq!(
         list[0].text,
-        "codex dispatch held: 7d at 96% (≥95%) until 14:30 UTC"
+        "codex dispatch held: 7d at 96% (≥95%) until Fri 14:30 +00:00"
     );
     assert_eq!((list[0].priority, &list[0].who), (2, &AlertWho::Daemon));
 

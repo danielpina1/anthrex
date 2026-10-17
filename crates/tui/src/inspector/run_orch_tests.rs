@@ -265,7 +265,9 @@ fn message_pause_and_notes_render_with_attribution() {
     );
     assert_eq!(
         value(&inspection, "notes"),
-        Some("02:45 risk from t1: migration may lock · 02:44 discovery from t1: the API is shared")
+        Some(
+            "02:45 +00:00 risk from t1: migration may lock · 02:44 +00:00 discovery from t1: the API is shared"
+        )
     );
 }
 
@@ -283,7 +285,7 @@ fn notes_row_labels_brief() {
     let app = app_of((snapshot, windows));
     assert_eq!(
         value(&inspect_node(&app, &task_key("t1")), "notes"),
-        Some("02:45 brief from t1: review round 1 (critical): wrong table")
+        Some("02:45 +00:00 brief from t1: review round 1 (critical): wrong table")
     );
 }
 
@@ -433,7 +435,7 @@ fn handled_rows_list_newest_first() {
 }
 
 /// Milestone 9.13 decision 22: the `untrusted` row after the orchestrator's, its source
-/// drawn without a control character, its time UTC (`common::text::hh_mm`, C17); no row
+/// drawn without a control character, its time the viewer's labelled clock (9.19); no row
 /// while the session read nothing from outside the run.
 #[test]
 fn run_orch_shows_the_untrusted_row() {
@@ -463,7 +465,9 @@ fn run_orch_shows_the_untrusted_row() {
         "{text}"
     );
     assert!(
-        text.ends_with(" at 14:07; override, accept_red and approve_hold go to you"),
+        text.ends_with(
+            " at 2026-10-12 14:07 +00:00; override, accept_red and approve_hold go to you"
+        ),
         "{text}"
     );
 }

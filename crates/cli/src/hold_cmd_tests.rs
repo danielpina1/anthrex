@@ -1,6 +1,7 @@
 //! Milestone 9.16 decision 34: `brake_lines` in every state, and the request's bound
 //! (ruling C34). Pure.
 
+use common::numbers::Zone;
 use proto::Runtime;
 use proto::brakes::{
     BrakeTripInfo, BrakesInfo, DispatchHold, Permille, QuotaInfo, QuotaState, QuotaWindow,
@@ -48,7 +49,10 @@ fn fresh(runtime: Runtime, five: u16, seven: u16) -> QuotaInfo {
 fn brake_lines_render_every_state() {
     // Off, and the quota brake disabled.
     let mut info = BrakesInfo::default();
-    assert_eq!(brake_lines(&info, NOW), ["hold: off", "quota brake: off"]);
+    assert_eq!(
+        brake_lines(&info, NOW, Zone::Local(0)),
+        ["hold: off", "quota brake: off"]
+    );
 
     // On with its `by`; Claude unmeasured, Codex fresh and not braked.
     info.hold = Some(DispatchHold {
@@ -58,9 +62,9 @@ fn brake_lines_render_every_state() {
     info.quota_brake = true;
     info.quota = vec![unmeasured(Runtime::Claude), fresh(Runtime::Codex, 421, 637)];
     assert_eq!(
-        brake_lines(&info, NOW),
+        brake_lines(&info, NOW, Zone::Local(0)),
         [
-            "hold: on since 14:30 UTC (user)",
+            "hold: on since 14:30 +00:00 (user)",
             "claude quota: unmeasured · not braked",
             "codex quota: 5h 42% · 7d 63% (read 3 min ago) · not braked",
         ]
@@ -78,10 +82,10 @@ fn brake_lines_render_every_state() {
     });
     info.quota = vec![braked, unmeasured(Runtime::Codex)];
     assert_eq!(
-        brake_lines(&info, NOW),
+        brake_lines(&info, NOW, Zone::Local(0)),
         [
             "hold: off",
-            "claude quota: 5h 92% · 7d 50% (read 3 min ago) · braked until 15:30 UTC (5h at 92% ≥ 90%)",
+            "claude quota: 5h 92% · 7d 50% (read 3 min ago) · braked until 15:30 +00:00 (5h at 92% ≥ 90%)",
             "codex quota: unmeasured · not braked",
         ]
     );
