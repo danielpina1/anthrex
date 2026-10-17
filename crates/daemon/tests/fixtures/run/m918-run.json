@@ -1,0 +1,869 @@
+{
+  "format": 6,
+  "id": "engine-test-3f9a",
+  "goal": "Engine test",
+  "root": "/tmp/x",
+  "project": "/tmp/p",
+  "git_common_dir": "/tmp/p/.git",
+  "wt_dir": "/tmp/wt",
+  "data_dir": "/tmp/anthrex-fixture/data/runs/engine-test-3f9a",
+  "base_branch": "main",
+  "base_sha": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+  "run_head": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+  "last_green_candidate": null,
+  "base_moved": null,
+  "state": "brainstorming",
+  "paused_from": null,
+  "halted_reason": null,
+  "approved_by": null,
+  "profile": {
+    "modules": [
+      "crates/*"
+    ],
+    "hub": [
+      "crates/proto/**"
+    ],
+    "source": [
+      "crates/*/src/**"
+    ],
+    "check": "cargo test",
+    "check_timeout_secs": 1800,
+    "single_test": "cargo test -- --exact {test}",
+    "test_passed": null,
+    "setup": "make deps",
+    "generated": [],
+    "protected": [
+      ".claude/**",
+      ".mcp.json",
+      ".codex/**",
+      "**/CLAUDE.md",
+      "**/AGENTS.md",
+      "**/AGENTS.override.md",
+      "**/CLAUDE.local.md",
+      ".agents/**",
+      ".github/workflows/**",
+      ".github/actions/**",
+      ".gitlab-ci.yml",
+      ".circleci/**",
+      ".buildkite/**",
+      "Jenkinsfile",
+      "azure-pipelines.yml",
+      ".githooks/**",
+      ".husky/**",
+      ".pre-commit-config.yaml",
+      "**/.cargo/**",
+      "**/rust-toolchain",
+      "**/rust-toolchain.toml"
+    ],
+    "env": {
+      "TARGET": "{worktree}/target"
+    },
+    "cache_dirs": [],
+    "confined_network": false,
+    "confined_unix_sockets": [],
+    "confined_localhost_ports": [],
+    "tiers": {
+      "build_check": null,
+      "module_test": null,
+      "module_tests": null,
+      "module_graph": "none",
+      "module_names": "dir",
+      "full_triggers": [],
+      "slow_tests": null,
+      "timing_tests": null,
+      "skip_markers": [],
+      "test_paths": [],
+      "full_shards": 1,
+      "toolchain_id": null
+    },
+    "manifests": []
+  },
+  "limits": {
+    "max_writers": 3,
+    "max_readers": 3,
+    "max_bounces": 2,
+    "max_tasks": 50,
+    "max_windows": 60,
+    "default_runtime": "claude",
+    "review_small": true,
+    "budget_s": {
+      "tool_calls": 40,
+      "minutes": 15,
+      "tokens": null
+    },
+    "budget_m": {
+      "tool_calls": 150,
+      "minutes": 60,
+      "tokens": null
+    },
+    "budget_l": {
+      "tool_calls": 300,
+      "minutes": 120,
+      "tokens": null
+    },
+    "stall_after_secs": 600,
+    "rate_limit_retry_secs": 300,
+    "denials_before_block": 3,
+    "git_timeout_secs": 60,
+    "worker_permission_mode": "acceptEdits",
+    "worker_allowed_tools": [
+      "Bash",
+      "Edit",
+      "Write",
+      "Read",
+      "Glob",
+      "Grep",
+      "Agent",
+      "TodoWrite"
+    ],
+    "worker_codex_sandbox": "workspace-write",
+    "worker_sandbox": true,
+    "unconfined_checks": false,
+    "claude_auth": "login",
+    "api_key_helper": null,
+    "decider_mode": "off",
+    "decider_slot_wait_secs": 30,
+    "orch": {
+      "planner_task_cap": 12,
+      "max_scouts": 12,
+      "wake_orchestrator": true,
+      "wake_quiet_secs": 5,
+      "message_max_per_turn": 3,
+      "note_max_per_task": 10,
+      "planners": {
+        "runtime": null,
+        "effort": "high",
+        "max_tool_calls": 200,
+        "timeout_secs": 2400,
+        "max_rejections": 5
+      },
+      "agent": {
+        "runtime": null,
+        "model": "",
+        "effort": "high"
+      }
+    },
+    "testing": {
+      "full_idle_secs": 120,
+      "bisect_fix_max": 2,
+      "flaky_quarantine_after": 3,
+      "flaky_window_days": 14,
+      "admit_wait_secs": 300
+    },
+    "adaptive_concurrency": true,
+    "recover_after_secs": 600,
+    "halve_hold_secs": 60,
+    "race_slot_wait_secs": 120,
+    "models": {
+      "rows": {
+        "orchestrator": {
+          "model": "claude:claude-opus-5-5",
+          "effort": "high"
+        },
+        "planner": {
+          "model": "claude:claude-opus-5-5",
+          "effort": "high"
+        },
+        "implementer.small": {
+          "model": "claude:claude-sonnet-5",
+          "effort": "low"
+        },
+        "implementer.medium": {
+          "model": "claude:claude-sonnet-5",
+          "effort": "medium"
+        },
+        "implementer.hub": {
+          "model": "claude:claude-opus-5-5",
+          "effort": "high"
+        },
+        "test_writer": {
+          "model": "codex:default",
+          "effort": "medium"
+        },
+        "reviewer": {
+          "model": "codex:default",
+          "effort": "high",
+          "fallback": "claude:claude-opus-5-5"
+        },
+        "research": {
+          "model": "claude:claude-haiku-4-5"
+        },
+        "helpers": {
+          "model": "claude:claude-haiku-4-5"
+        },
+        "helpers.run_name": {
+          "model": "claude:claude-haiku-4-5"
+        },
+        "helpers.triage": {
+          "model": "claude:claude-haiku-4-5"
+        },
+        "helpers.size_check": {
+          "model": "claude:claude-haiku-4-5"
+        },
+        "helpers.check_summary": {
+          "model": "claude:claude-haiku-4-5"
+        },
+        "helpers.blocked_reason": {
+          "model": "claude:claude-haiku-4-5"
+        },
+        "helpers.ci_summary": {
+          "model": "claude:claude-haiku-4-5"
+        },
+        "helpers.distill": {
+          "model": "claude:claude-haiku-4-5"
+        },
+        "helpers.risk_note": {
+          "model": "claude:claude-haiku-4-5"
+        }
+      },
+      "brainstorm": {
+        "first": "claude:claude-opus-5-5",
+        "second": "codex:default",
+        "effort": "high"
+      }
+    }
+  },
+  "tasks": [],
+  "merge_queue": [],
+  "outbox": [],
+  "next_message": 1,
+  "pending_ops": {
+    "5": {
+      "op": 5,
+      "task_id": null,
+      "kind": {
+        "AppendHistory": {
+          "path": "/tmp/data/repos/x-3f9a/history.jsonl",
+          "record_id": "engine-test-3f9a/brainstormer/claude/1",
+          "line": {
+            "type": "role_route",
+            "v": 5,
+            "record_id": "engine-test-3f9a/brainstormer/claude/1",
+            "at": 2006,
+            "run_id": "engine-test-3f9a",
+            "task_id": null,
+            "role": "brainstormer",
+            "session_id": "claude/1",
+            "trigger": "start",
+            "source": "role_table",
+            "policy_version": "m9.8-roles-v1",
+            "pick_policy": null,
+            "input": {
+              "run_path": "plan",
+              "goal": "Engine test",
+              "languages": [],
+              "epic": null,
+              "area": [],
+              "question_kind": null
+            },
+            "chosen": {
+              "runtime": "claude",
+              "model": "claude-opus-5-5",
+              "effort": "high"
+            },
+            "selected_index": 0,
+            "candidates": [
+              {
+                "route": {
+                  "runtime": "claude",
+                  "model": "claude-opus-5-5",
+                  "effort": "high"
+                },
+                "skipped_reason": null
+              },
+              {
+                "route": {
+                  "runtime": "codex",
+                  "model": "",
+                  "effort": "high"
+                },
+                "skipped_reason": "an earlier candidate was taken"
+              }
+            ],
+            "outcome": "completed",
+            "result": "draft accepted"
+          }
+        }
+      }
+    },
+    "6": {
+      "op": 6,
+      "task_id": null,
+      "kind": {
+        "AppendHistory": {
+          "path": "/tmp/data/repos/x-3f9a/history.jsonl",
+          "record_id": "engine-test-3f9a/brainstormer/codex/1",
+          "line": {
+            "type": "role_route",
+            "v": 5,
+            "record_id": "engine-test-3f9a/brainstormer/codex/1",
+            "at": 2006,
+            "run_id": "engine-test-3f9a",
+            "task_id": null,
+            "role": "brainstormer",
+            "session_id": "codex/1",
+            "trigger": "start",
+            "source": "role_table",
+            "policy_version": "m9.8-roles-v1",
+            "pick_policy": null,
+            "input": {
+              "run_path": "plan",
+              "goal": "Engine test",
+              "languages": [],
+              "epic": null,
+              "area": [],
+              "question_kind": null
+            },
+            "chosen": {
+              "runtime": "codex",
+              "model": "",
+              "effort": "high"
+            },
+            "selected_index": 1,
+            "candidates": [
+              {
+                "route": {
+                  "runtime": "claude",
+                  "model": "claude-opus-5-5",
+                  "effort": "high"
+                },
+                "skipped_reason": "not in the configured list"
+              },
+              {
+                "route": {
+                  "runtime": "codex",
+                  "model": "",
+                  "effort": "high"
+                },
+                "skipped_reason": null
+              }
+            ],
+            "outcome": "completed",
+            "result": "draft accepted"
+          }
+        }
+      }
+    }
+  },
+  "next_op": 7,
+  "windows_created": 1,
+  "revision": 12,
+  "unverified": false,
+  "final_check_failed": false,
+  "trusted_project": [],
+  "trust_project": false,
+  "protected_files": [],
+  "rate_limits": {},
+  "outcome": null,
+  "log": [
+    {
+      "at": 2001,
+      "text": "started; brainstorming with its orchestrator"
+    },
+    {
+      "at": 2002,
+      "text": "integration worktree ready"
+    },
+    {
+      "at": 2003,
+      "text": "the orchestrator started in window 90"
+    },
+    {
+      "at": 2006,
+      "text": "the orchestrator started the brainstorm"
+    },
+    {
+      "at": 2006,
+      "text": "brainstormers queued: claude on claude claude-opus-5-5, codex on codex"
+    },
+    {
+      "at": 2006,
+      "text": "brainstormer claude session 1 starting"
+    },
+    {
+      "at": 2006,
+      "text": "brainstormer codex session 1 starting"
+    },
+    {
+      "at": 2009,
+      "text": "brainstormer claude submitted its draft"
+    },
+    {
+      "at": 2010,
+      "text": "brainstormer codex submitted its draft"
+    },
+    {
+      "at": 2010,
+      "text": "the brainstorm drafts are in"
+    }
+  ],
+  "created_at": 1000,
+  "finish_edit": false,
+  "finish_reply": null,
+  "cancelled": false,
+  "verify_failures": 0,
+  "halt_retryable": false,
+  "restored": null,
+  "session_nonce": 0,
+  "codex_project_config": null,
+  "codex_config_base": [],
+  "profile_source": null,
+  "output_filter": "failures-only",
+  "filter_prefixes": [],
+  "repo_dir": "/tmp/data/repos/x-3f9a",
+  "stale_profile": [],
+  "decider_queue": [],
+  "next_decider": 0,
+  "decider_calls": 0,
+  "decider_fallbacks": 0,
+  "decider_usage": {
+    "input": 0,
+    "output": 0,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "scout_reports": [],
+  "onboarding_report": null,
+  "path": "plan",
+  "triage": {
+    "kinds": [
+      "code"
+    ],
+    "scale": "plan",
+    "path": "plan",
+    "reason": "several modules",
+    "source": "decider",
+    "fallback_reason": null,
+    "at": 1000
+  },
+  "design_mode": "full",
+  "triage_usage": {
+    "input": 0,
+    "output": 0,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "scout_usage": {
+    "input": 0,
+    "output": 0,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "orchestrator_usage": {
+    "input": 0,
+    "output": 0,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "promote_requested_at": null,
+  "run_record_written": false,
+  "profile_languages": [],
+  "role_routing_decisions": [
+    {
+      "v": 5,
+      "record_id": "engine-test-3f9a/orchestrator/1",
+      "at": 2001,
+      "run_id": "engine-test-3f9a",
+      "task_id": null,
+      "role": "orchestrator",
+      "session_id": "1",
+      "trigger": "start",
+      "source": "role_table",
+      "policy_version": "m9.8-roles-v1",
+      "pick_policy": null,
+      "input": {
+        "run_path": "plan",
+        "goal": "Engine test",
+        "languages": [],
+        "epic": null,
+        "area": [],
+        "question_kind": null
+      },
+      "chosen": {
+        "runtime": "claude",
+        "model": "claude-opus-5-5",
+        "effort": "high"
+      },
+      "selected_index": 0,
+      "candidates": [
+        {
+          "route": {
+            "runtime": "claude",
+            "model": "claude-opus-5-5",
+            "effort": "high"
+          },
+          "skipped_reason": null
+        }
+      ],
+      "outcome": null,
+      "result": null
+    },
+    {
+      "v": 5,
+      "record_id": "engine-test-3f9a/brainstormer/claude/1",
+      "at": 2006,
+      "run_id": "engine-test-3f9a",
+      "task_id": null,
+      "role": "brainstormer",
+      "session_id": "claude/1",
+      "trigger": "start",
+      "source": "role_table",
+      "policy_version": "m9.8-roles-v1",
+      "pick_policy": null,
+      "input": {
+        "run_path": "plan",
+        "goal": "Engine test",
+        "languages": [],
+        "epic": null,
+        "area": [],
+        "question_kind": null
+      },
+      "chosen": {
+        "runtime": "claude",
+        "model": "claude-opus-5-5",
+        "effort": "high"
+      },
+      "selected_index": 0,
+      "candidates": [
+        {
+          "route": {
+            "runtime": "claude",
+            "model": "claude-opus-5-5",
+            "effort": "high"
+          },
+          "skipped_reason": null
+        },
+        {
+          "route": {
+            "runtime": "codex",
+            "model": "",
+            "effort": "high"
+          },
+          "skipped_reason": "an earlier candidate was taken"
+        }
+      ],
+      "outcome": "completed",
+      "result": "draft accepted"
+    },
+    {
+      "v": 5,
+      "record_id": "engine-test-3f9a/brainstormer/codex/1",
+      "at": 2006,
+      "run_id": "engine-test-3f9a",
+      "task_id": null,
+      "role": "brainstormer",
+      "session_id": "codex/1",
+      "trigger": "start",
+      "source": "role_table",
+      "policy_version": "m9.8-roles-v1",
+      "pick_policy": null,
+      "input": {
+        "run_path": "plan",
+        "goal": "Engine test",
+        "languages": [],
+        "epic": null,
+        "area": [],
+        "question_kind": null
+      },
+      "chosen": {
+        "runtime": "codex",
+        "model": "",
+        "effort": "high"
+      },
+      "selected_index": 1,
+      "candidates": [
+        {
+          "route": {
+            "runtime": "claude",
+            "model": "claude-opus-5-5",
+            "effort": "high"
+          },
+          "skipped_reason": "not in the configured list"
+        },
+        {
+          "route": {
+            "runtime": "codex",
+            "model": "",
+            "effort": "high"
+          },
+          "skipped_reason": null
+        }
+      ],
+      "outcome": "completed",
+      "result": "draft accepted"
+    }
+  ],
+  "history": true,
+  "approved_at": null,
+  "plan_edits": [],
+  "plan_edits_since_approval": 0,
+  "orch": {
+    "orchestrator": {
+      "route": {
+        "runtime": "claude",
+        "model": "claude-opus-5-5",
+        "effort": "high"
+      },
+      "window_id": 90,
+      "launch_op": null,
+      "live": true,
+      "started_at": 1000,
+      "exited_at": null,
+      "first_prompt": "[anthrex] You are the orchestrator of run engine-test-3f9a in /tmp/x.\nGoal: Engine test\nPath: plan (triage: code/plan, decider: several modules)\nPlan gate: the user approves each design document and your submitted plan in the run view, even if the run was started with --yes; only a round the user starts in off mode with --yes starts its plan at once\nDesign flow: brainstorming, then specifying, then planning, under rules 47 to 53 below. Its tools: start_brainstorm (in Claude: mcp__anthrex__start_brainstorm), submit_doc (in Claude: mcp__anthrex__submit_doc) and get_doc (in Claude: mcp__anthrex__get_doc).\nStart with get_context, then scout. If an anthrex tool is reported missing, call get_context again before anything else: the server may still be connecting.\n\nYour contract's rules continue, for this run:\n47. This run uses the design flow: brainstorming, then specifying, then planning. Each ends at a gate only the user opens; read verdicts with run_status, never assume one.\n48. In brainstorming, ask the user at most 5 short questions in your window, one at a time; when they answer or say skip, call start_brainstorm with their answers.\n49. When both brainstorm drafts are in, read them with get_doc and submit one merged report with submit_doc kind \"brainstorm\": where they agree, where they disagree (each side, then your judgment), the approaches tagged [<label>] or [both], one recommendation naming a listed approach, and questions for the user. Never paste a draft wholesale.\n50. In specifying, write the spec in the template you were given; every requirement is a line \"R<n> …\" with its acceptance check. Submit with ready false for review; answer every finding (\"fixed\" or \"kept: <reason>\") in the submit with ready true.\n51. In planning, every requirement must be covered by a task's covers, and every brief has the headings Files:, Tests first:, Steps:, Acceptance:, Verify:. Answer the plan review's findings in edit_plan's responses when you submit again.\n52. When the user asks for changes, revise and submit the next version; the user's note is in run_status. Never approve, and never call a gate approved.\n53. In planning, spawn_subplanner needs covers: the requirement ids its epic owns. Its sub-planner is given those requirements, and the whole plan's coverage is still checked when you submit.",
+      "plan_submitted": false,
+      "summary": null,
+      "notes": [
+        "both brainstorm drafts are in; read them with get_doc and submit the merged report",
+        "the merged report's template: ## Where they agree; ## Where they disagree (each side, then your judgment); ## Approaches, each approach a \"### <name> [claude]\" heading tagged [claude], [codex] or [both]; ## Recommendation, naming one listed approach; ## Questions for you"
+      ],
+      "note_seqs": [
+        1,
+        2
+      ],
+      "last_note_seq": 2,
+      "last_wake_rev": 0,
+      "wakes": 0,
+      "otlp_token": "",
+      "session": 1,
+      "start_error": null,
+      "launches": 1,
+      "routing": {
+        "source": "role_table",
+        "candidates": [
+          {
+            "route": {
+              "runtime": "claude",
+              "model": "claude-opus-5-5",
+              "effort": "high"
+            },
+            "skipped_reason": null
+          }
+        ]
+      }
+    },
+    "epics": [],
+    "gate_holds": [],
+    "run_scouts": [],
+    "digest_rev": 1,
+    "digest_fp": 4053661136006826065,
+    "digest_read_at": null,
+    "installed": {},
+    "yes": false,
+    "research_report": null,
+    "planner_usage": {
+      "input": 0,
+      "output": 0,
+      "cache_read": 0,
+      "cache_write": 0
+    },
+    "note_seq": 0,
+    "design": {
+      "phase_started": 2010,
+      "phase_paused_base": 0,
+      "answers": "skip",
+      "brainstormers": [
+        {
+          "label": "claude",
+          "role": "brainstormer",
+          "route": {
+            "runtime": "claude",
+            "model": "claude-opus-5-5",
+            "effort": "high"
+          },
+          "session": 1,
+          "window_id": 801,
+          "state": "done",
+          "calls": 12,
+          "tokens": 209000,
+          "started": 2006,
+          "round": 1
+        },
+        {
+          "label": "codex",
+          "role": "brainstormer",
+          "route": {
+            "runtime": "codex",
+            "model": "",
+            "effort": "high"
+          },
+          "session": 1,
+          "window_id": 802,
+          "state": "done",
+          "calls": 20,
+          "tokens": 98000,
+          "started": 2006,
+          "round": 1
+        }
+      ],
+      "reviewer": null,
+      "reviews": [],
+      "versions": [
+        {
+          "kind": "brainstorm_draft",
+          "n": 1,
+          "author": {
+            "brainstormer": {
+              "label": "claude"
+            }
+          },
+          "reason": "submitted",
+          "bytes": 298,
+          "sha256": "5971aed6cfd380f177f9692cffa3335c42d3792fc1443d3550f2d0033e0c54b7",
+          "at": 2010
+        },
+        {
+          "kind": "brainstorm_draft",
+          "n": 2,
+          "author": {
+            "brainstormer": {
+              "label": "codex"
+            }
+          },
+          "reason": "submitted",
+          "bytes": 310,
+          "sha256": "830554ddba589c1d4a80b203dab5780933ad8cbb6bb07b56ca4329c7bdec00f5",
+          "at": 2010
+        }
+      ],
+      "gate": null,
+      "requirements": [],
+      "goal_section": "",
+      "plan_review_done": false,
+      "commit_due": false,
+      "committed": null,
+      "drafts_settled": true,
+      "pack": {
+        "reports": [],
+        "round": 1,
+        "file": {
+          "bytes": 4,
+          "sha256": "abababababababababababababababababababababababababababababababab"
+        }
+      },
+      "spend": [
+        {
+          "round": 1,
+          "phase": "brainstorming",
+          "secs": 0,
+          "agents": [
+            {
+              "label": "claude",
+              "role": "brainstormer",
+              "route": {
+                "runtime": "claude",
+                "model": "claude-opus-5-5",
+                "effort": "high"
+              },
+              "sessions": 1,
+              "calls": 12,
+              "tokens": 209000,
+              "secs": 300,
+              "outcome": "ok"
+            },
+            {
+              "label": "codex",
+              "role": "brainstormer",
+              "route": {
+                "runtime": "codex",
+                "model": "",
+                "effort": "high"
+              },
+              "sessions": 1,
+              "calls": 20,
+              "tokens": 98000,
+              "secs": 400,
+              "outcome": "ok"
+            }
+          ]
+        }
+      ]
+    },
+    "waiting_since": 2010
+  },
+  "profile_hash": "466f85010d50a2cf",
+  "toolchain": null,
+  "graph_note": null,
+  "test_slots": 0,
+  "stage_layout": "single",
+  "stages": [
+    {
+      "n": 1,
+      "branch": "anthrex/engine-test-3f9a/integration",
+      "head": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+      "created_from": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+      "created_at": 1000,
+      "merges": [],
+      "floor": null,
+      "tasks_in": [],
+      "synced_from": null,
+      "last_green_candidate": null,
+      "full": {
+        "green_at": null,
+        "red_at": null,
+        "bisect_fixes": 0,
+        "last": null,
+        "note": null,
+        "infra": null,
+        "bisects": 0,
+        "ended": [],
+        "runs": 0
+      },
+      "bisect": null,
+      "propagate_red": null,
+      "propagate_note": null,
+      "round": 1
+    }
+  ],
+  "full_op": null,
+  "queue_idle_since": null,
+  "fix_seq": 0,
+  "propagate_due": [],
+  "delivery": {
+    "mode": "local",
+    "repo": null,
+    "limits": {
+      "poll_secs": 60,
+      "poll_max_secs": 300,
+      "ci_log_max_bytes": 2097152,
+      "ci_fix_max": 2,
+      "review_fix_max": 3,
+      "review_batch_secs": 120,
+      "reviewers": [],
+      "reply_to_comments": true,
+      "sync": "on_conflict",
+      "delete_merged_branches": false,
+      "stage_target_lines": [
+        300,
+        800
+      ]
+    },
+    "watching": false,
+    "poll_base_secs": 0,
+    "stages": [],
+    "permissions": {},
+    "base_synced": null,
+    "base_sync_due": {},
+    "failures": {},
+    "alerts": {},
+    "permission_retry_at": null,
+    "base_fetch_due": false,
+    "base_fetch_retry_at": null,
+    "remote_seal": null
+  },
+  "rounds": [
+    {
+      "n": 1,
+      "goal": "Engine test",
+      "origin": "user",
+      "started_at": 1000,
+      "ended_at": null,
+      "outcome": null,
+      "summary": null,
+      "first_stage": 1,
+      "windows_before": 0,
+      "scouts_before": 0
+    }
+  ],
+  "chain": "o-3f9a",
+  "last_step_at": 2406
+}
