@@ -122,3 +122,80 @@ impl Drop for Release {
         });
     }
 }
+
+/// The daemon starts its persister right after `restore`, before the runs are restored,
+/// so windows opened during that restore get their ids saved too. Until the restore
+/// finishes, the table is half-restored: here a record renamed and another removed, the
+/// way the run restore's own steps change it. None of that may reach the file, because a
+/// second crash would make the next daemon trust it; only `next_id` may move. Then a
+/// second restore from what was written gets the original windows back and a fresh id,
+/// and once the restore is finished the full table is written again.
+#[tokio::test]
+async fn a_crash_mid_restore_leaves_only_the_new_next_id_on_disk() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("state.json");
+    let cwd = std::env::temp_dir();
+    let original = StateFile {
+        version: state::STATE_VERSION,
+        next_id: 3,
+        windows: vec![
+            window_record(1, "kept", cwd.clone(), None),
+            window_record(2, "stale-run-window", cwd.clone(), None),
+        ],
+        runs: Vec::new(),
+    };
+    state::save(&path, &original).unwrap();
+    let (loaded, problems) = state::load(&path);
+    assert!(problems.is_empty(), "{problems:?}");
+
+    let m = manager();
+    m.restore(loaded.clone());
+    let shutdown = CancellationToken::new();
+    let (persister, restoring) =
+        state::spawn_persister_during_restore(m.clone(), path.clone(), shutdown.clone(), loaded);
+
+    // The half-restored table, then a window opened during the restore. Its create
+    // returns only after a write that saw every change before it.
+    m.rename(1, "half-renamed".into()).unwrap();
+    m.remove(2).unwrap();
+    let opened = create_id(&m, spec("opened-in-restore"), cwd.clone(), 80, 24).await;
+    assert_eq!(opened, 3);
+
+    let (on_disk, _problems) = state::load(&path);
+    let names: Vec<(u32, &str)> = (on_disk.windows.iter())
+        .map(|w| (w.id, w.name.as_str()))
+        .collect();
+    assert_eq!(
+        names,
+        [(1, "kept"), (2, "stale-run-window")],
+        "a half-restored table reached state.json"
+    );
+    assert!(on_disk.next_id > opened, "next_id {}", on_disk.next_id);
+
+    // The second crash, and a second restore from what was written.
+    let reborn = manager();
+    reborn.restore(on_disk);
+    let listed: Vec<(u32, String)> = reborn.list().into_iter().map(|w| (w.id, w.name)).collect();
+    assert_eq!(
+        listed,
+        [(1, "kept".to_string()), (2, "stale-run-window".to_string())]
+    );
+    let fresh = create_id(&reborn, spec("after-second-crash"), cwd.clone(), 80, 24).await;
+    reborn.remove(fresh).unwrap();
+    assert_ne!(fresh, opened, "an id spent during the restore was reissued");
+
+    // The restore is done: the next write is the whole table as it stood when that
+    // create's id was saved, before its own window was listed.
+    restoring.finish();
+    let after = create_id(&m, spec("after-restore"), cwd, 80, 24).await;
+    let (on_disk, _problems) = state::load(&path);
+    let names: Vec<(u32, &str)> = (on_disk.windows.iter())
+        .map(|w| (w.id, w.name.as_str()))
+        .collect();
+    assert_eq!(names, [(1, "half-renamed"), (3, "opened-in-restore")]);
+    assert!(on_disk.next_id > after, "next_id {}", on_disk.next_id);
+    m.remove(after).unwrap();
+    m.remove(opened).unwrap();
+    shutdown.cancel();
+    persister.await.unwrap();
+}

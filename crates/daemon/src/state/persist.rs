@@ -3,6 +3,7 @@
 //! `state` (AGENTS.md rule 8), pulling `StateFile` in via `use super::*`.
 
 use super::*;
+use std::sync::Mutex;
 use tokio::sync::{mpsc, oneshot};
 
 /// Serializes `state` and atomically replaces `path` with it (decision 10). Blocking.
@@ -136,14 +137,28 @@ pub fn spawn_persister(
     path: PathBuf,
     shutdown: CancellationToken,
 ) -> tokio::task::JoinHandle<()> {
+    start(manager, path, shutdown, Arc::new(Mutex::new(None)))
+}
+
+fn start(
+    manager: Arc<crate::manager::WindowManager>,
+    path: PathBuf,
+    shutdown: CancellationToken,
+    restoring: Arc<Mutex<Option<StateFile>>>,
+) -> tokio::task::JoinHandle<()> {
     let (flush_tx, mut flushes) = mpsc::unbounded_channel();
     manager.set_state_flusher(FlushHandle(flush_tx));
     let mut changes = manager.watch();
+    let on_disk_next_id = crate::lock(&restoring)
+        .as_ref()
+        .map_or(0, |loaded| loaded.next_id);
     tokio::spawn(async move {
         let mut writer = Writer {
             manager,
             path,
             last_written: None,
+            restoring,
+            on_disk_next_id,
         };
         // `false` once every `FlushHandle` is gone (a later persister replaced this
         // one's), so a closed channel is not polled in a loop.
@@ -186,6 +201,37 @@ pub fn spawn_persister(
             }
         }
     })
+}
+
+/// [`spawn_persister`] for a daemon whose restore is still under way: started right
+/// after `WindowManager::restore`, before the runs are restored, so a window opened by
+/// that restore gets its id saved like any other (`manager/id_flush.rs`).
+///
+/// Until [`RestoreGate::finish`], the window table is half-restored: the run restore
+/// removes windows, rewrites their run records and opens new ones in steps, and a crash
+/// between two of them would leave a file the next daemon trusts. So until then a write
+/// is `loaded`, the file exactly as this daemon read it, with only `next_id` raised to the
+/// manager's, and only when it is higher than the one on disk: a restore that opens
+/// nothing writes nothing, as before. After `finish`, writes are the live table again.
+pub fn spawn_persister_during_restore(
+    manager: Arc<crate::manager::WindowManager>,
+    path: PathBuf,
+    shutdown: CancellationToken,
+    loaded: StateFile,
+) -> (tokio::task::JoinHandle<()>, RestoreGate) {
+    let restoring = Arc::new(Mutex::new(Some(loaded)));
+    let task = start(manager, path, shutdown, restoring.clone());
+    (task, RestoreGate(restoring))
+}
+
+/// Ends [`spawn_persister_during_restore`]'s restore mode. Not ended on drop: a startup
+/// that fails before its restore is done must not write a half-restored table either.
+pub struct RestoreGate(Arc<Mutex<Option<StateFile>>>);
+
+impl RestoreGate {
+    pub fn finish(self) {
+        *crate::lock(&self.0) = None;
+    }
 }
 
 /// Collect further changes for SAVE_DEBOUNCE, restarting that wait on each one — a fresh
@@ -231,11 +277,32 @@ struct Writer {
     manager: Arc<crate::manager::WindowManager>,
     path: PathBuf,
     last_written: Option<Vec<u8>>,
+    /// The file as loaded while the restore runs ([`spawn_persister_during_restore`]),
+    /// `None` once it is finished or for [`spawn_persister`].
+    restoring: Arc<Mutex<Option<StateFile>>>,
+    /// The `next_id` of the last write, or of the loaded file before any.
+    on_disk_next_id: u32,
 }
 
 impl Writer {
+    /// What to write now, or `None` for nothing: during the restore, the loaded file
+    /// with only `next_id` moved, and only when it moved past the file's.
+    fn state(&self) -> Option<StateFile> {
+        let next_id = self.manager.next_id();
+        match &*crate::lock(&self.restoring) {
+            Some(loaded) => (next_id > self.on_disk_next_id).then(|| StateFile {
+                next_id,
+                ..loaded.clone()
+            }),
+            None => Some(self.manager.state_snapshot()),
+        }
+    }
+
     async fn write(&mut self) -> Result<(), String> {
-        let state = self.manager.state_snapshot();
+        let Some(state) = self.state() else {
+            return Ok(());
+        };
+        let next_id = state.next_id;
         let bytes = match serde_json::to_vec_pretty(&state) {
             Ok(bytes) => bytes,
             Err(error) => {
@@ -251,6 +318,7 @@ impl Writer {
         match tokio::task::spawn_blocking(move || save(&save_path, &state)).await {
             Ok(Ok(())) => {
                 self.last_written = Some(bytes);
+                self.on_disk_next_id = next_id;
                 Ok(())
             }
             Ok(Err(error)) => {

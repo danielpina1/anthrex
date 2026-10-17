@@ -29,7 +29,8 @@ mod persist;
 use load::aside_path_with;
 pub use load::{load, load_with};
 pub use persist::{
-    FLUSH_TIMEOUT, FlushHandle, SAVE_DEBOUNCE, SAVE_MAX_DELAY, save, spawn_persister,
+    FLUSH_TIMEOUT, FlushHandle, RestoreGate, SAVE_DEBOUNCE, SAVE_MAX_DELAY, save, spawn_persister,
+    spawn_persister_during_restore,
 };
 
 use proto::{Runtime, Status, WindowKind};
