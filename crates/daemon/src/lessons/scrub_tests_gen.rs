@@ -146,7 +146,7 @@ pub(super) fn escape(rng: &mut Rng, form: Form) -> String {
                 e.push(rng.pick(b"PX^_"));
             } else {
                 e.push(']');
-                e.push_str(*rng.choose(&["0;", "2;", "8;;"]));
+                e.push_str(rng.choose(&["0;", "2;", "8;;"]));
             }
             for _ in 0..rng.below(12) {
                 e.push(rng.pick(&printable));
