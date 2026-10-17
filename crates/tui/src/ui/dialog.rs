@@ -28,7 +28,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_width::UnicodeWidthStr;
 
 #[cfg(test)]
 #[path = "dialog_tests.rs"]
@@ -139,13 +139,16 @@ fn wrap(text: &str, width: usize, max_lines: usize) -> Vec<String> {
             while !remainder.is_empty() {
                 let mut columns = 0;
                 let mut split_at = 0;
-                for (i, c) in remainder.char_indices() {
-                    let w = c.width().unwrap_or(0);
+                // By grapheme, measured as a string (task 10's review, m2): a heart and
+                // its VS16 are one grapheme two columns wide, though each `char` is one
+                // column or none, so the cut matches `word.width()` above.
+                for (i, g) in remainder.grapheme_indices(true) {
+                    let w = g.width();
                     if split_at > 0 && columns + w > width {
                         break;
                     }
                     columns += w;
-                    split_at = i + c.len_utf8();
+                    split_at = i + g.len();
                 }
                 let (piece, rest) = remainder.split_at(split_at);
                 lines.push(piece.to_string());

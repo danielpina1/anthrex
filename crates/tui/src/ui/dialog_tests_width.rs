@@ -94,3 +94,23 @@ fn the_force_prompt_box_stays_aligned_with_a_cjk_path() {
         assert_eq!(*x, column, "row {y}'s right border drifted: {rights:?}");
     }
 }
+
+/// Task 10's review, m2: the hard cut measured each `char`, but a heart with VS16 is
+/// one grapheme two columns wide, so pieces of 1-column hearts drew 6 columns.
+#[test]
+fn an_emoji_with_a_variation_selector_is_cut_by_its_grapheme_width() {
+    let hearts = "\u{2764}\u{fe0f}".repeat(3);
+    assert_eq!(hearts.width(), 6);
+    for width in 1..=5 {
+        let lines = wrap(&hearts, width, 10);
+        assert_eq!(lines.concat(), hearts, "width {width}");
+        for line in &lines {
+            let alone = line.graphemes(true).count() == 1;
+            assert!(
+                line.width() <= width || alone,
+                "width {width}: {line:?} is {} columns in {lines:?}",
+                line.width()
+            );
+        }
+    }
+}
