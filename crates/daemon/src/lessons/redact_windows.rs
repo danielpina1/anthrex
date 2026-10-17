@@ -19,8 +19,9 @@ use super::runs::{Part, Run};
 /// restoration, to be judged: fix round 2 for task 9's review, m3. A window with fewer
 /// leaves no piece of a secret this long (milestone 9.18's leak bound, the property
 /// tests' 30), so judging it can only redact text: a colour code's own parameters count
-/// toward 40 (`ls --color` paths on an id's line). The whole run's exact kept and all
-/// readings are judged without it, as before.
+/// toward 40 (`ls --color` paths on an id's line). The round-2 re-review's m3: the
+/// whole run's exact kept and all readings need it too. The cost: a secret whose
+/// escapes ate 11 or more of its characters leaves the rest, fewer than 30.
 pub const RESTORE_VISIBLE_MIN: usize = 30;
 
 /// One reading of a run: its bytes, each part's span in them, which offsets a part
@@ -109,12 +110,9 @@ pub(super) fn secret_ranges(run: &Run<'_>, tail: bool, head: bool) -> Vec<(usize
     for (i, r) in readings.iter().enumerate() {
         let n = r.len();
         // The visible reading is judged as it is; the kept and all readings only with
-        // enough visible characters, or as the whole run.
+        // enough visible characters.
         let judged = |s: usize, e: usize| {
-            r.mixed(s, e)
-                && (i == 0
-                    || r.count(s, e)[3] as usize >= RESTORE_VISIBLE_MIN
-                    || (s == 0 && e == n))
+            r.mixed(s, e) && (i == 0 || r.count(s, e)[3] as usize >= RESTORE_VISIBLE_MIN)
         };
         for e in AWS_SECRET_LEN..=n {
             let s = e - AWS_SECRET_LEN;

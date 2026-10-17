@@ -441,4 +441,22 @@ fn coloured_text_on_an_ids_line_with_few_visible_characters_stays() {
         )),
         "secret_access_key=Short"
     );
+    // The round-2 re-review's m3: the bound covers the whole run's exact kept and all
+    // readings too. Here `all` is exactly 40 (the colour codes' `0134m` and `0m`) with
+    // 19 visible characters.
+    let short = ["src", "Components", "User"]
+        .map(|dir| format!("{}{dir}{}", sgr("01;34"), sgr("0")))
+        .join("/");
+    assert_eq!(
+        scrub(&format!("{id} {short}")),
+        format!("{TOKEN} src/Components/User")
+    );
+    // The cost of that bound (a pin): a secret whose first 12 characters a glued CSI
+    // takes (11 digits as parameters, then its final) leaves its other 28, under the
+    // 30 the properties bound. Before, its exact `all` reading was redacted.
+    let secret = aws_secret();
+    let digits = ["1234", "5678", "901"].concat();
+    let eaten = [digits.as_str(), &secret[11..]].concat();
+    let out = scrub(&format!("{id} \u{1b}[{eaten}"));
+    assert_eq!(out, format!("{TOKEN} {}", &secret[12..]));
 }
