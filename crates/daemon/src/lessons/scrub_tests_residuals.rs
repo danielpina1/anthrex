@@ -349,3 +349,13 @@ fn a_secret_at_the_start_of_a_longer_run_on_an_ids_line_is_redacted() {
     // After the key name the value is still judged exactly.
     assert_left(&format!("aws_secret_access_key = {secret}Z"));
 }
+
+#[test]
+fn common_words_after_basic_stay() {
+    // Task 9's review, A-M3: a pin. A word whose base64 decoding holds a `:` is
+    // redacted (`Basic Organization here`, accepted); these common ones decode to none.
+    for word in ["configuration", "authentication", "authorization"] {
+        assert_left(&format!("Basic {word}"));
+        assert_left(&format!("Authorization: Basic {word} is required"));
+    }
+}
