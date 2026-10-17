@@ -47,6 +47,12 @@ fn ends_in_secret(run: &str) -> bool {
     run.len() > AWS_SECRET_LEN && is_aws_secret(&run[run.len() - AWS_SECRET_LEN..])
 }
 
+/// Whether the first [`AWS_SECRET_LEN`] characters of `run` are a secret access key:
+/// task 9's review, A-M1 (`<id> <secret>abcdef…` on an id's line).
+fn starts_in_secret(run: &str) -> bool {
+    run.len() > AWS_SECRET_LEN && is_aws_secret(&run[..AWS_SECRET_LEN])
+}
+
 /// Whether restoring some of what a run's escapes ate makes its visible characters a
 /// secret: task 9's review, A-I1. Fewer than [`AWS_SECRET_LEN`] are visible, and the
 /// [`aws_char`]s its escapes ate (`all` holds them with the visible ones) reach it. An
@@ -77,8 +83,11 @@ enum Judge {
     /// so a longer value is not cut to 40.
     Exact,
     /// Also a longer run whose last 40 characters are a secret (task 6's review, I2):
-    /// on an id's line, and after the key name once something stands before the run.
+    /// after the key name once something stands before the run.
     Tail,
+    /// [`Judge::Tail`], and also a longer run whose first 40 characters are a secret
+    /// (task 9's review, A-M1): on an id's line.
+    Ends,
 }
 
 /// Rule (a): the value after a secret access key's name, the name kept. Task 6's
@@ -205,7 +214,8 @@ pub(super) fn visible_and_kept(run: &str, alphabet: fn(u8) -> bool) -> (String, 
 /// pass has replaced the id ([`secret_run`]). Task 6's review, I1: a run also starts at
 /// an escape whose final byte is an [`aws_char`]. A `value` (rule (a)) stops at
 /// whitespace, a quote, `,` or `}`, and a run that starts at its first character is
-/// judged [`Judge::Exact`]; every other run is judged [`Judge::Tail`]. Each byte is read at most three times: a run's
+/// judged [`Judge::Exact`]; every other run of a value is judged [`Judge::Tail`], and
+/// every run on an id's line [`Judge::Ends`]. Each byte is read at most three times: a run's
 /// trailing escapes are read again as gap, or as a run with no visible piece, which
 /// returns where its walk ended.
 fn secrets_in(text: &str, start: usize, out: &mut String, value: bool) -> usize {
@@ -221,8 +231,10 @@ fn secrets_in(text: &str, start: usize, out: &mut String, value: bool) -> usize 
             // An escape before the value's first character is something before it.
             let judge = if value && at == start && aws_char(b) {
                 Judge::Exact
-            } else {
+            } else if value {
                 Judge::Tail
+            } else {
+                Judge::Ends
             };
             at = secret_run(text, at, out, judge);
         } else {
@@ -245,7 +257,8 @@ fn secrets_in(text: &str, start: usize, out: &mut String, value: bool) -> usize 
 /// escape kept (task 9's review, A-I1: a CSI takes a secret's leading digits as
 /// parameters, and an escape its `/` or `+` as intermediates). Otherwise each visible
 /// piece that is a secret is replaced (an id glued to its secret by an escape).
-/// [`Judge::Tail`] also takes a run or piece whose last 40 characters are a secret.
+/// [`Judge::Tail`] also takes a run or piece whose last 40 characters are a secret, and
+/// [`Judge::Ends`] one whose first 40 are.
 fn secret_run(line: &str, start: usize, out: &mut String, judge: Judge) -> usize {
     let bytes = line.as_bytes();
     let mut pieces: Vec<(usize, usize)> = Vec::new();
@@ -283,7 +296,8 @@ fn secret_run(line: &str, start: usize, out: &mut String, judge: Judge) -> usize
         }
         at += step;
     }
-    let tail = judge == Judge::Tail;
+    let tail = judge != Judge::Exact;
+    let head = judge == Judge::Ends;
     let visible_end = pieces.last().map(|p| p.1);
     if let Some(end) = visible_end.filter(|_| is_aws_secret(&visible)) {
         out.push_str(TOKEN);
@@ -309,14 +323,16 @@ fn secret_run(line: &str, start: usize, out: &mut String, judge: Judge) -> usize
     for &(a, b) in &pieces {
         each.push_str(&line[last..a]);
         let word = &line[a..b];
-        let secret = is_aws_secret(word) || (tail && ends_in_secret(word));
+        let secret = is_aws_secret(word)
+            || (tail && ends_in_secret(word))
+            || (head && starts_in_secret(word));
         any |= secret;
         each.push_str(if secret { TOKEN } else { word });
         last = b;
     }
     if !any && tail {
         for (reading, end) in [(&visible, visible_end), (&kept, kept_end), (&all, all_end)] {
-            if ends_in_secret(reading) {
+            if ends_in_secret(reading) || (head && starts_in_secret(reading)) {
                 out.push_str(TOKEN);
                 return end;
             }

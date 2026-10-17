@@ -332,3 +332,20 @@ fn an_aws_secret_in_escaped_json_or_beside_an_sts_id_is_redacted() {
         &format!("id {TOKEN} secret {TOKEN}"),
     );
 }
+
+#[test]
+fn a_secret_at_the_start_of_a_longer_run_on_an_ids_line_is_redacted() {
+    // Task 9's review, A-M1: `Judge::Tail` judged only a run's last 40 characters.
+    let (id, secret) = (aws_id(), aws_secret());
+    for glued in [
+        ["abcdefghijklm", "nopqrstuvwxyz", "abcdefghijklmn"].concat(),
+        "/usr/local/share/aws/credentials/backup".to_string(),
+    ] {
+        assert_becomes(
+            &format!("{id} {secret}{glued}"),
+            &format!("{TOKEN} {TOKEN}"),
+        );
+    }
+    // After the key name the value is still judged exactly.
+    assert_left(&format!("aws_secret_access_key = {secret}Z"));
+}
