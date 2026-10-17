@@ -36,6 +36,15 @@ use regex::{Captures, Regex};
 #[path = "redact_more.rs"]
 mod more;
 
+/// Decision 6's `Basic` credential (task M9.18.4).
+#[path = "redact_basic.rs"]
+mod basic;
+
+/// A run read through escapes, and its readings, which the AWS, `Basic` and `Bearer`
+/// rules share (fix round 2 for task 9's review, I2).
+#[path = "redact_runs.rs"]
+mod runs;
+
 /// What a private key block becomes.
 pub const PRIVATE_KEY: &str = "[redacted private key]";
 /// What a prefixed token or a JWT becomes.
@@ -102,8 +111,9 @@ static URL_CUT: LazyLock<Regex> =
 /// anywhere, with no left boundary; [`bearer`] keeps it only when the credential is at
 /// least [`BEARER_MIN`] characters holding a digit, so `Bearer authentication-required`
 /// is prose and no escape spelling before `Bearer` can hide a credential.
-/// Task 6's review, M1: the credential is read through escapes, whose final may be its
-/// first character ([`more::visible_and_kept`]).
+/// Task 6's review, M1, and fix round 2's I2: the credential is read through escapes,
+/// whose parameters, intermediates and final may be its first characters
+/// ([`runs::Readings`]).
 static BEARER_RE: LazyLock<Regex> = LazyLock::new(|| {
     re(&format!(
         r"(?i)bearer[ \t]+((?:[A-Za-z0-9._~+/=-]|{ESCAPE_FORMS}){{{BEARER_MIN},}})"
@@ -274,12 +284,29 @@ fn ambiguous(text: &str) -> String {
         .into_owned()
 }
 
+/// Whether `run` holds an uppercase and a lowercase letter.
+fn mixed_case(run: &str) -> bool {
+    run.bytes().any(|b| b.is_ascii_uppercase()) && run.bytes().any(|b| b.is_ascii_lowercase())
+}
+
+/// A `Bearer` credential: its visible characters, or those with each escape's eaten
+/// final kept, are at least [`BEARER_MIN`] holding a digit. Fix round 2 for task 9's
+/// review, I2: or with every byte of the credential's alphabet each escape ate kept
+/// (`ESC[42abc…` took `42`), when the visible characters are random-looking (an
+/// uppercase and a lowercase letter), so that a colour code's own digits before a
+/// lowercase word (`ESC[1mauthentication-required`) do not make it a credential. The
+/// capture is read once.
 fn bearer(text: &str) -> String {
     BEARER_RE
         .replace_all(text, |c: &Captures| {
-            let (visible, kept) = more::visible_and_kept(&c[1], bearer_char);
-            let credential = |run: &String| run.len() >= BEARER_MIN && has_digit(run);
-            if credential(&visible) || (kept != visible && credential(&kept)) {
+            runs::read(c[1].len());
+            let r = runs::run_at(&c[1], 0, bearer_char, true).readings(0);
+            let credential =
+                |run: &str| run.len() >= BEARER_MIN && run.bytes().any(|b| b.is_ascii_digit());
+            if credential(&r.visible)
+                || credential(&r.kept)
+                || (credential(&r.all) && mixed_case(&r.visible))
+            {
                 BEARER.to_string()
             } else {
                 c[0].to_string()
@@ -315,7 +342,7 @@ pub fn redact(text: &str) -> String {
     let text = more::encoded_userinfo(&text);
     let text = url_cut(&text);
     let text = bearer(&text);
-    let text = more::basic(&text);
+    let text = basic::basic(&text);
     let text = jwt(&text);
     let text = more::aws_named(&text);
     // Ruling C5: before `unambiguous`, which replaces the key id.
@@ -460,3 +487,7 @@ mod scrub_tests_aws_property;
 #[cfg(test)]
 #[path = "scrub_tests_aws_held.rs"]
 mod scrub_tests_aws_held;
+
+#[cfg(test)]
+#[path = "scrub_tests_credential_escapes.rs"]
+mod scrub_tests_credential_escapes;

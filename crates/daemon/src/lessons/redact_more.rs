@@ -1,29 +1,20 @@
 //! Milestone 9.18 decision 6, task M9.18.4: the redaction residuals the 9.15 review
 //! found, beside [`super`]'s rules (it is 9.15 decision 11's redaction, best-effort
-//! still). An AWS secret access key after its key name or on its key id's line, a
-//! `Basic` credential, and a URL's user information spelled JSON-escaped (`:\/\/`) or
-//! percent-encoded (`%3A%2F%2F`, `%40`). Pure; each rule is one pass over the text,
-//! and the bytes its checks read count in [`super::BODY_READ`] (ruling C6).
+//! still). An AWS secret access key after its key name or on its key id's line, and a
+//! URL's user information spelled JSON-escaped (`:\/\/`) or percent-encoded
+//! (`%3A%2F%2F`, `%40`); the `Basic` credential is in `redact_basic.rs`. Pure; each
+//! rule is one pass over the text, and the bytes its checks read count in
+//! [`super::BODY_READ`] (ruling C6).
 
 use std::sync::LazyLock;
 
-use proto::safe_text::is_hidden_format;
-use regex::{Captures, Regex};
+use regex::Regex;
 
-use super::{BASIC, TOKEN, USERINFO, re};
+use super::runs::{invisible_at, kept_final, read, run_at};
+use super::{TOKEN, USERINFO, re};
 
 /// An AWS secret access key's length, exactly.
 pub const AWS_SECRET_LEN: usize = 40;
-/// A `Basic` credential's base64 characters, at least.
-pub const BASIC_MIN: usize = 8;
-
-/// Counts `n` bytes a check read (the linearity tests' measure).
-fn read(n: usize) {
-    #[cfg(test)]
-    super::BODY_READ.with(|c| c.set(c.get() + n as u64));
-    #[cfg(not(test))]
-    let _ = n;
-}
 
 /// An AWS secret access key's alphabet.
 fn aws_char(b: u8) -> bool {
@@ -140,74 +131,6 @@ pub(super) fn aws_beside_id(text: &str) -> String {
     out
 }
 
-/// The length of the escape sequence or hidden format character at `at`, if one is
-/// there: what `scrub`'s strip and the line breakers remove.
-fn invisible_at(line: &str, at: usize) -> Option<usize> {
-    let c = line[at..].chars().next()?;
-    if c == '\u{1b}' || c == '\u{9b}' {
-        Some(
-            super::ESCAPE_HERE
-                .find(&line[at..])
-                .map_or(c.len_utf8(), |m| m.end().max(1)),
-        )
-    } else if is_hidden_format(c) {
-        Some(c.len_utf8())
-    } else {
-        None
-    }
-}
-
-/// The bytes after its lead of the escape `line[at..at + len]` that can eat a secret's
-/// characters: task 6's review, I1, and task 9's review, A-I1. ECMA-48's general form
-/// and a CSI take the next printable characters as their parameters, intermediates and
-/// final, so the strip eats a secret's characters with the escape. An OSC, DCS, SOS, PM
-/// or APC string has no such bytes, and a hidden format character is no escape.
-fn eaten(line: &str, at: usize, len: usize) -> Option<&[u8]> {
-    let escape = &line.as_bytes()[at..at + len];
-    let lead = if escape.first() == Some(&0x1b) {
-        1
-    } else if line[at..].starts_with('\u{9b}') {
-        2
-    } else {
-        return None;
-    };
-    if lead == 1 && matches!(escape.get(1), Some(b']' | b'P' | b'X' | b'^' | b'_')) {
-        return None;
-    }
-    (escape.len() > lead).then(|| &escape[lead..])
-}
-
-/// The final byte of the escape `line[at..at + len]` ([`eaten`]) when `alphabet` holds
-/// it: task 6's review, I1.
-fn kept_final(line: &str, at: usize, len: usize, alphabet: fn(u8) -> bool) -> Option<u8> {
-    let last = *eaten(line, at, len)?.last()?;
-    alphabet(last).then_some(last)
-}
-
-/// `run`'s characters of `alphabet` with its escapes and hidden characters left out
-/// (what the strip leaves), and with each escape's final byte that `alphabet` holds
-/// kept (what the strip ate): task 6's review, I1 and M1, for `Basic` and `Bearer`.
-pub(super) fn visible_and_kept(run: &str, alphabet: fn(u8) -> bool) -> (String, String) {
-    let (mut visible, mut kept) = (String::new(), String::new());
-    let mut at = 0;
-    while at < run.len() {
-        let b = run.as_bytes()[at];
-        if alphabet(b) {
-            visible.push(char::from(b));
-            kept.push(char::from(b));
-            at += 1;
-        } else if let Some(len) = invisible_at(run, at) {
-            if let Some(f) = kept_final(run, at, len, alphabet) {
-                kept.push(char::from(f));
-            }
-            at += len;
-        } else {
-            at += run[at..].chars().next().map_or(1, char::len_utf8);
-        }
-    }
-    (visible, kept)
-}
-
 /// `text` from `start` onto `out`, each secret access key replaced; returns where it
 /// stopped. Task 4's review, I1: a run of [`aws_char`]s is read through escape
 /// sequences and hidden format characters, which `scrub` strips only after this first
@@ -252,7 +175,7 @@ fn secrets_in(text: &str, start: usize, out: &mut String, value: bool) -> usize 
 /// onto `out`, as [`secrets_in`] says; returns where the part that made it a secret
 /// ends, else where its last visible piece ends, else (no visible piece) where its
 /// walk ended, so the scan stays linear. The run is a secret when one of three readings
-/// is: its visible characters; its characters with each escape's eaten final kept
+/// ([`super::runs::Readings`]) is: its visible characters; its characters with each escape's eaten final kept
 /// (task 6's review, I1); or its characters with every [`aws_char`] byte of each
 /// escape kept (task 9's review, A-I1: a CSI takes a secret's leading digits as
 /// parameters, and an escape its `/` or `+` as intermediates). Otherwise each visible
@@ -260,56 +183,26 @@ fn secrets_in(text: &str, start: usize, out: &mut String, value: bool) -> usize 
 /// [`Judge::Tail`] also takes a run or piece whose last 40 characters are a secret, and
 /// [`Judge::Ends`] one whose first 40 are.
 fn secret_run(line: &str, start: usize, out: &mut String, judge: Judge) -> usize {
-    let bytes = line.as_bytes();
-    let mut pieces: Vec<(usize, usize)> = Vec::new();
-    // The kept and the all readings, each with where the part it read ends.
-    let (mut visible, mut kept, mut all) = (String::new(), String::new(), String::new());
-    let (mut kept_end, mut all_end) = (start, start);
-    let mut at = start;
-    loop {
-        let piece = bytes[at..].iter().take_while(|b| aws_char(**b)).count();
-        if piece > 0 {
-            pieces.push((at, at + piece));
-            for reading in [&mut visible, &mut kept, &mut all] {
-                reading.push_str(&line[at..at + piece]);
-            }
-            at += piece;
-            (kept_end, all_end) = (at, at);
-            continue;
-        }
-        let Some(step) = invisible_at(line, at) else {
-            break;
-        };
-        if let Some(f) = kept_final(line, at, step, aws_char) {
-            kept.push(char::from(f));
-            kept_end = at + step;
-        }
-        let eaten = eaten(line, at, step).unwrap_or_default();
-        if eaten.iter().any(|b| aws_char(*b)) {
-            all.extend(
-                eaten
-                    .iter()
-                    .filter(|b| aws_char(**b))
-                    .map(|b| char::from(*b)),
-            );
-            all_end = at + step;
-        }
-        at += step;
-    }
+    let run = run_at(line, start, aws_char, false);
+    let at = run.end;
+    let pieces: Vec<(usize, usize)> = run.pieces().collect();
+    let r = run.readings(start);
+    let (visible, kept, all) = (&r.visible, &r.kept, &r.all);
+    let (kept_end, all_end) = (r.kept_end, r.all_end);
     let tail = judge != Judge::Exact;
     let head = judge == Judge::Ends;
-    let visible_end = pieces.last().map(|p| p.1);
-    if let Some(end) = visible_end.filter(|_| is_aws_secret(&visible)) {
+    let visible_end = r.visible_end;
+    if let Some(end) = visible_end.filter(|_| is_aws_secret(visible)) {
         out.push_str(TOKEN);
         return end;
     }
-    for (reading, end) in [(&kept, kept_end), (&all, all_end)] {
+    for (reading, end) in [(kept, kept_end), (all, all_end)] {
         if is_aws_secret(reading) {
             out.push_str(TOKEN);
             return end;
         }
     }
-    if restores_a_secret(&visible, &all) {
+    if restores_a_secret(visible, all) {
         out.push_str(TOKEN);
         return all_end;
     }
@@ -331,7 +224,7 @@ fn secret_run(line: &str, start: usize, out: &mut String, judge: Judge) -> usize
         last = b;
     }
     if !any && tail {
-        for (reading, end) in [(&visible, visible_end), (&kept, kept_end), (&all, all_end)] {
+        for (reading, end) in [(visible, visible_end), (kept, kept_end), (all, all_end)] {
             if ends_in_secret(reading) || (head && starts_in_secret(reading)) {
                 out.push_str(TOKEN);
                 return end;
@@ -340,82 +233,6 @@ fn secret_run(line: &str, start: usize, out: &mut String, judge: Judge) -> usize
     }
     out.push_str(&each);
     visible_end
-}
-
-/// A `Basic` credential's characters: base64's, and its padding.
-fn basic_char(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'=')
-}
-
-/// `Basic` (any case, with no left boundary, as `Bearer`) and whitespace, then a
-/// base64 run of at least [`BASIC_MIN`] characters. Task 6's review, M1: the run is
-/// read through escapes ([`super::ESCAPE_FORMS`]), whose final may be its first
-/// character.
-static BASIC_RE: LazyLock<Regex> = LazyLock::new(|| {
-    re(&format!(
-        r"(?i)basic[ \t]+((?:[A-Za-z0-9+/]|{}){{{BASIC_MIN},}}={{0,2}})",
-        super::ESCAPE_FORMS
-    ))
-});
-
-/// A `Basic` credential whose decoding holds a `:` becomes [`BASIC`]; `Basic usage`
-/// and a base64 word with no colon are left. Task 4's review, I2: a clipped credential
-/// counts by its longest valid prefix ([`base64`], [`holds_colon`]). Task 6's review,
-/// M1: the credential with its escapes left out, or with their eaten finals kept.
-pub(super) fn basic(text: &str) -> String {
-    BASIC_RE
-        .replace_all(text, |c: &Captures| {
-            read(c[1].len());
-            let (visible, kept) = visible_and_kept(&c[1], basic_char);
-            let credential = |run: &String| {
-                run.trim_end_matches('=').len() >= BASIC_MIN
-                    && base64(run).is_some_and(|bytes| holds_colon(&bytes))
-            };
-            if credential(&visible) || (kept != visible && credential(&kept)) {
-                BASIC.to_string()
-            } else {
-                c[0].to_string()
-            }
-        })
-        .into_owned()
-}
-
-/// Whether the decoded `bytes` hold a `:`. Task 6's review, M2: whether or not they
-/// are UTF-8, so a Latin-1 password (RFC 7617's legacy charset) still counts.
-fn holds_colon(bytes: &[u8]) -> bool {
-    bytes.contains(&b':')
-}
-
-/// Ruling C7: standard base64, by hand (no dependency), bounded by `run`'s length.
-/// Padding is optional. Task 4's review, I2: a clip may leave one character over (its
-/// 6 bits make no byte), so that character is dropped, not the whole run.
-fn base64(run: &str) -> Option<Vec<u8>> {
-    let body = run.trim_end_matches('=');
-    let body = if body.len() % 4 == 1 {
-        &body[..body.len() - 1]
-    } else {
-        body
-    };
-    let mut out = Vec::with_capacity(body.len() * 3 / 4);
-    let (mut acc, mut bits) = (0u32, 0u32);
-    for b in body.bytes() {
-        let v = match b {
-            b'A'..=b'Z' => b - b'A',
-            b'a'..=b'z' => b - b'a' + 26,
-            b'0'..=b'9' => b - b'0' + 52,
-            b'+' => 62,
-            b'/' => 63,
-            _ => return None,
-        };
-        acc = (acc << 6) | u32::from(v);
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push((acc >> bits) as u8);
-            acc &= (1 << bits) - 1;
-        }
-    }
-    Some(out)
 }
 
 /// A scheme then `://` spelled JSON-escaped (`:\/\/`) or percent-encoded (any case).
