@@ -220,3 +220,32 @@ fn the_transcript_result_replaces_the_hooks() {
     );
     assert_eq!(result.summary, "exit status 101");
 }
+
+/// Task 11's review, M1: a failure with no `error` (absent or empty) that is not an
+/// interrupt says `failed`, not the compact JSON `{"error":""}`.
+#[test]
+fn a_failure_with_no_error_says_failed() {
+    let t0 = Instant::now();
+    for (error, is_interrupt) in [
+        (Some(""), Some(false)),
+        (None, Some(false)),
+        (Some(""), None),
+        (None, None),
+        (Some(" \n"), Some(false)),
+    ] {
+        let mut draft = open_call("toolu_6", t0);
+        assert!(run(
+            &mut draft,
+            &failure("toolu_6", error, is_interrupt),
+            3,
+            t0
+        ));
+        let Block::ToolCall { state, result, .. } = only_call(&draft) else {
+            panic!("a ToolCall expected");
+        };
+        assert_eq!(*state, ToolState::Failed, "{error:?} {is_interrupt:?}");
+        let result = result.as_ref().expect("a result");
+        assert!(!result.ok, "{error:?} {is_interrupt:?}");
+        assert_eq!(result.summary, "failed", "{error:?} {is_interrupt:?}");
+    }
+}
