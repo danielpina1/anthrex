@@ -207,6 +207,29 @@ fn scrub_stays_idempotent_and_linear_on_the_new_rules() {
             format!("{} \u{1b}{} ", "Bearer", "abcd1234".repeat(2)),
             true,
         ),
+        // Fix round 2's I2: credentials read with an escape's eaten parameters, the
+        // `Basic` decoder over every reading, and a hidden character inside.
+        (
+            format!("{} \u{1b}[1;3{} ", "Basic", basic_credential()),
+            true,
+        ),
+        (
+            format!(
+                "{} \u{1b}[{}m{} ",
+                "Basic",
+                "1;".repeat(8),
+                basic_credential()
+            ),
+            true,
+        ),
+        (
+            format!("{} {}\u{200b}{} ", "Basic", "dXNl", "cjpwYXNz"),
+            true,
+        ),
+        (
+            format!("{} \u{1b}[42{} ", "Bearer", "abcdEFGH".repeat(2)),
+            true,
+        ),
     ] {
         for size in [16 * 1024, 64 * 1024] {
             let text = unit.repeat(size / unit.len());
