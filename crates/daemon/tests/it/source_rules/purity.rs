@@ -2,6 +2,8 @@
 //! purity check for the pool's pure files"). `run/target_pool/{book,book_file,clean}.rs`
 //! decide from what they are given and do no I/O and read no clock; the pool's I/O lives
 //! in its other files. Milestone 9.14's Verification checked this with a grep by hand.
+//! Milestone 9.19 (decision 1, ruling R19) applies the same scan to `common`'s number
+//! modules, which format what they are given and read no clock, file or environment.
 
 use super::engine::production_lines;
 use super::{code_only, is_ident};
@@ -218,6 +220,54 @@ fn file_hits(file: &Path, name: &str) -> Vec<String> {
         .map(|(line, what)| {
             format!(
                 "run/target_pool/{name}:{line}: {what} in a pure pool file (decision 15): {}",
+                lines[line - 1].trim()
+            )
+        })
+        .collect()
+}
+
+/// `common`'s pure number modules, relative to `crates/common/src`. `glossary.rs` joins in
+/// milestone 9.19.3.
+const NUMBER_FILES: [&str; 2] = ["numbers.rs", "progress.rs"];
+
+#[test]
+fn the_common_number_modules_are_pure() {
+    let package = testexec::checkout_dir(env!("CARGO_MANIFEST_DIR"));
+    let common = package.join("../common/src");
+    let mut hits = Vec::new();
+    for name in NUMBER_FILES {
+        let file = common.join(name);
+        assert!(file.is_file(), "{} is missing", file.display());
+        hits.extend(number_hits(&file, name));
+    }
+    assert!(hits.is_empty(), "{}", hits.join("\n"));
+
+    // The same check on a constructed number file with a clock read in it.
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("numbers.rs");
+    std::fs::write(
+        &file,
+        "pub fn now_text() -> String {\n    format!(\"{:?}\", std::time::SystemTime::now())\n}\n",
+    )
+    .unwrap();
+    let hits = number_hits(&file, "numbers.rs");
+    assert_eq!(hits.len(), 1, "{hits:#?}");
+    assert!(
+        hits[0].starts_with("common/src/numbers.rs:2: SystemTime in a pure number module"),
+        "{}",
+        hits[0]
+    );
+}
+
+/// One line per forbidden name in `file`, named as `common/src/<name>`.
+fn number_hits(file: &Path, name: &str) -> Vec<String> {
+    let text = std::fs::read_to_string(file).unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    pure_scan(&text)
+        .into_iter()
+        .map(|(line, what)| {
+            format!(
+                "common/src/{name}:{line}: {what} in a pure number module (milestone 9.19, decision 1): {}",
                 lines[line - 1].trim()
             )
         })

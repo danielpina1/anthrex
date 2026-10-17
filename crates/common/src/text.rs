@@ -1,16 +1,11 @@
 //! Text helpers the daemon's reports and the client both print (decision 10). Pure.
+//! `budget_text` keeps its current output until milestone 9.19.6 switches it to
+//! `numbers::budget_text`.
 
 use proto::Budget;
 
-/// Tokens as `<n>`, `<n>.<d>k` under 10k, `<n>k`, or `<n>.<d>M`, rounded down.
-pub fn tokens(n: u64) -> String {
-    match n {
-        0..1_000 => n.to_string(),
-        1_000..10_000 => format!("{}.{}k", n / 1_000, n % 1_000 / 100),
-        10_000..1_000_000 => format!("{}k", n / 1_000),
-        _ => format!("{}.{}M", n / 1_000_000, n % 1_000_000 / 100_000),
-    }
-}
+/// Moved to [`crate::numbers`] (milestone 9.19); the one `tokens`.
+pub use crate::numbers::tokens;
 
 /// `<calls> calls <minutes>m`, then ` <tokens> tok` (M8b's `k`/`M` notation) when set.
 pub fn budget_text(b: &Budget) -> String {
