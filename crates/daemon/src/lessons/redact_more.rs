@@ -44,14 +44,23 @@ fn starts_in_secret(run: &str) -> bool {
     run.len() > AWS_SECRET_LEN && is_aws_secret(&run[..AWS_SECRET_LEN])
 }
 
+/// The fewest visible characters a run needs for [`restores_a_secret`], and for its
+/// restored readings' first or last 40 characters to be judged: fix round 2
+/// for task 9's review, m3. A run with fewer leaves no piece of a secret this long
+/// (milestone 9.18's leak bound, the property tests' 30), so restoring it can only
+/// redact text: a colour code's own parameters count toward 40, and one visible
+/// character after enough of them was a "secret" (`ls --color` paths on an id's line).
+pub const RESTORE_VISIBLE_MIN: usize = 30;
+
 /// Whether restoring some of what a run's escapes ate makes its visible characters a
-/// secret: task 9's review, A-I1. Fewer than [`AWS_SECRET_LEN`] are visible, and the
-/// [`aws_char`]s its escapes ate (`all` holds them with the visible ones) reach it. An
-/// escape's own parameters can sit before the secret's characters it took (`ESC[5;7`
-/// then `M…`), and its final can be the text after the secret (`ESC,` then `+/"}`), so
-/// which of its bytes were the secret's is not known, only how many could be.
+/// secret: task 9's review, A-I1. Fewer than [`AWS_SECRET_LEN`] are visible, but at
+/// least [`RESTORE_VISIBLE_MIN`], and the [`aws_char`]s its escapes ate (`all` holds
+/// them with the visible ones) reach it. An escape's own parameters can sit before the
+/// secret's characters it took (`ESC[5;7` then `M…`), and its final can be the text
+/// after the secret (`ESC,` then `+/"}`), so which of its bytes were the secret's is
+/// not known, only how many could be.
 fn restores_a_secret(visible: &str, all: &str) -> bool {
-    visible.len() < AWS_SECRET_LEN
+    (RESTORE_VISIBLE_MIN..AWS_SECRET_LEN).contains(&visible.len())
         && all.len() >= AWS_SECRET_LEN
         && all.bytes().any(|b| b.is_ascii_digit())
         && all.bytes().any(|b| b.is_ascii_uppercase())
@@ -224,8 +233,14 @@ fn secret_run(line: &str, start: usize, out: &mut String, judge: Judge) -> usize
         last = b;
     }
     if !any && tail {
-        for (reading, end) in [(visible, visible_end), (kept, kept_end), (all, all_end)] {
-            if ends_in_secret(reading) || (head && starts_in_secret(reading)) {
+        // Fix round 2's m3: the restored readings only with [`RESTORE_VISIBLE_MIN`]
+        // visible characters, as [`restores_a_secret`].
+        let restored = visible.len() >= RESTORE_VISIBLE_MIN;
+        let readings = [(visible, visible_end), (kept, kept_end), (all, all_end)];
+        for (i, (reading, end)) in readings.into_iter().enumerate() {
+            if (i == 0 || restored)
+                && (ends_in_secret(reading) || (head && starts_in_secret(reading)))
+            {
                 out.push_str(TOKEN);
                 return end;
             }

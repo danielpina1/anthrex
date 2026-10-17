@@ -359,3 +359,39 @@ fn common_words_after_basic_stay() {
         assert_left(&format!("Authorization: Basic {word} is required"));
     }
 }
+
+#[test]
+fn coloured_text_on_an_ids_line_with_few_visible_characters_stays() {
+    // Fix round 2 for task 9's review, m3: `restores_a_secret` counted a colour code's
+    // own parameters toward 40, so one visible character after enough of them was a
+    // "secret". Fewer than 30 visible characters leave no 30-character piece of a
+    // secret, so they are no longer restored.
+    let id = aws_id();
+    let sgr = |code: &str| format!("\u{1b}[{code}m");
+    let ls = ["src", "Components", "User", "Profile"]
+        .map(|dir| format!("{}{dir}{}", sgr("01;34"), sgr("0")))
+        .join("/");
+    assert_eq!(
+        scrub(&format!("{id} {ls}")),
+        format!("{TOKEN} src/Components/User/Profile")
+    );
+    let reds = format!("{}A", sgr("38;5;196")).repeat(6);
+    assert_eq!(scrub(&format!("{id} {reds}X")), format!("{TOKEN} AAAAAAX"));
+    // The cost that stays (a pin): 30 to 39 visible characters with a colour code's
+    // digits are still restored, as a secret that lost up to 10 characters would be.
+    let path = "src/components/user/ProfileSettings";
+    assert_eq!(path.len(), 35);
+    assert_eq!(
+        scrub(&format!("{id} {}{path}{}", sgr("01;34"), sgr("0"))),
+        format!("{TOKEN} {TOKEN}")
+    );
+    // After the key name too.
+    assert_eq!(
+        scrub(&format!(
+            "secret_access_key={}Short{}",
+            sgr("1;31"),
+            sgr("0")
+        )),
+        "secret_access_key=Short"
+    );
+}
