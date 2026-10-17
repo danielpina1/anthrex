@@ -247,9 +247,8 @@ fn file_hits(file: &Path, name: &str) -> Vec<String> {
         .collect()
 }
 
-/// `common`'s pure number modules, relative to `crates/common/src`. `glossary.rs` joins in
-/// milestone 9.19.3.
-const NUMBER_FILES: [&str; 2] = ["numbers.rs", "progress.rs"];
+/// `common`'s pure number modules, relative to `crates/common/src`.
+const NUMBER_FILES: [&str; 3] = ["numbers.rs", "progress.rs", "glossary.rs"];
 
 #[test]
 fn the_common_number_modules_are_pure() {

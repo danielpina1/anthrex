@@ -44,7 +44,7 @@ anthrex fixes both:
 | **Tiered testing** | Each merge runs the tests it affects, cached by content, with flaky-test handling and a bisect when the full suite goes red. |
 | **Stacked-PR delivery** | `pr` mode opens one pull request per stage; CI failures and review comments become fix tasks. You merge. |
 | **Keep going** | New rounds on a finished run, and next goals on the same orchestrator. |
-| **Tuning** | The run history refits size thresholds, routing and concurrency for the next run, and estimates a run before it starts. |
+| **Tuning** | The run history refits size thresholds, routing and concurrency for the next run, and estimates the time left while a run works. |
 | **Brakes** | A daemon-wide hold on new sessions (`C-b H`), a quota brake fed by the CLIs' own rate-limit readings, failover to a role's fallback on the other runtime, and a fresh orchestrator session when its context is full. |
 
 ### Every agent, with its status
@@ -153,6 +153,10 @@ The mouse works too: click a sidebar row to focus it; the wheel scrolls, or is f
 
 **Pasting.** A paste never reaches the focused program with a paste marker (`ESC [200~` or `ESC [201~`) inside its text: anthrex removes them before it adds its own. Where a paste ends is your terminal's call. anthrex receives the paste already cut at the first end marker the terminal sends and cannot join it back, so anything the terminal sends after that marker arrives as typed input. anthrex relies on the terminal to strip or escape an end marker inside the pasted text, as xterm, iTerm2, kitty, WezTerm, Alacritty, Ghostty and VTE-based terminals do.
 
+## Reading the numbers
+
+Every number anthrex shows means one thing and reads one way: tokens are billed tokens, durations have two units (`41m 12s`), ages say `ago`, and a clock time always names its zone (your local offset in the TUI and CLI, `UTC` in text the daemon writes). A missing value reads `unknown` or `-`, never `0`. The full list, with each term's format and rounding, is in [docs/numbers.md](docs/numbers.md), and `C-b ?` shows it in the `numbers` group.
+
 ## The orchestrator
 
 A goal becomes a **run**. One orchestrator agent, the only agent you type to, plans the run through anthrex's MCP tools. Every other agent in a run is headless and watch-only. The engine itself is deterministic: no model merges, approves or writes to your branch.
@@ -189,7 +193,7 @@ You watch it all in the **run view** (`C-b T`, then a run): the plan as a graph 
 
 The run view, the runs tree and `anthrex run status` list every live run and the 50 newest finished runs, newest by start time. Older finished runs stay on disk, untouched, and leave the list; a run id that matches none of the listed runs says `no run matches '<run>' (only the 50 most recent finished runs are listed)` once the list is full.
 
-<img src="docs/images/task-inspector.svg" alt="The run view with a running task selected: its inspector shows the pipeline from done to merge, its acceptance test, brief, owned files, worker, dependencies, budget, retries and route">
+<img src="docs/images/task-inspector.svg" alt="The run view with a running task selected: its inspector shows the pipeline from done to merge, its acceptance test, brief, owned files, worker, dependencies, budget, tries and route">
 
 <table>
 <tr>
@@ -268,7 +272,7 @@ anthrex keeps runs from spending a subscription it cannot see and lets you stop 
 [orchestrator]
 handoff_at_percent = 80       # 0 turns this criterion off
 handoff_at_tokens = 300000    # 0 turns this criterion off
-context_window_tokens = 0     # 0: the session's own window, else 200,000
+context_window_tokens = 0     # 0: detect (Codex rollout window, Claude [1m] → 1M, learned, else 200,000); >0: use this
 
 [orchestrator.brakes]         # also on the Settings screen (C-b S), applied live
 quota_brake = true

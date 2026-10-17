@@ -29,6 +29,18 @@ fn row_text(key: &str, words: &str) -> String {
     format!("  {key:<11}  {words}")
 }
 
+/// A row as drawn in its own group. The key groups share a key column (`row_text`); the
+/// `numbers` group sizes its own (milestone 9.19.3, ruling R3), and its words are cut to
+/// the 60-column interior, so the row is checked as cut.
+fn group_row_text(g: &HelpGroup, key: &str, words: &str) -> String {
+    if g.name != "numbers" {
+        return row_text(key, words);
+    }
+    let key_w = g.rows.iter().map(|(k, _)| k.chars().count()).max().unwrap();
+    let room = 60 - (INDENT + key_w + GAP);
+    format!("  {key:<key_w$}  {}", kit::cut(words, room, "…"))
+}
+
 #[test]
 fn groups_are_the_specs_in_order() {
     let names: Vec<&str> = help_groups("C-b").iter().map(|g| g.name).collect();
@@ -45,6 +57,7 @@ fn groups_are_the_specs_in_order() {
             "action menu",
             "profile",
             "settings",
+            "numbers",
         ]
     );
 }
@@ -161,7 +174,7 @@ fn the_help_renders_at_80x24_and_120x40() {
     for (k, w) in &group(&help_groups("C-b"), "global")[..19] {
         body.push(row_text(k, w));
     }
-    body.push("↓ 98 more".into());
+    body.push("↓ 124 more".into());
     body.push("j/k scroll · tab group · esc close".into());
     for line in &body {
         want.push(format!("│ {line:<60} │"));
@@ -201,7 +214,7 @@ fn the_help_renders_at_80x24_and_120x40() {
             .iter()
             .map(|(k, w)| row_text(k, w)),
     );
-    body.push("↓ 82 more".into());
+    body.push("↓ 108 more".into());
     body.push("j/k scroll · tab group · esc close".into());
     for line in &body {
         want.push(format!("│ {line:<60} │"));
@@ -249,12 +262,13 @@ fn every_help_row_is_reachable_at_80x24() {
             g.name
         );
         for (k, w) in &g.rows {
-            let row = row_text(k, w);
+            let row = group_row_text(g, k, w);
             assert!(seen.iter().any(|r| r.contains(&row)), "{row:?}");
         }
     }
-    let (k, w) = groups.last().unwrap().rows.last().unwrap();
-    let last = row_text(k, w);
+    let g = groups.last().unwrap();
+    let (k, w) = g.rows.last().unwrap();
+    let last = group_row_text(g, k, w);
     assert!(
         last_rows.iter().any(|r| r.contains(&last)),
         "{last_rows:#?}"
@@ -285,7 +299,14 @@ fn help_in_ascii() {
     }
     let rows = drawn(&app, 80, 24).join("\n");
     assert!(rows.contains("+ keys ---"), "{rows}");
-    assert!(rows.contains("^ 98 more"), "{rows}");
+    assert!(rows.contains("^ 124 more"), "{rows}");
+    // The settings group (the last before the glossary) opened at its own header.
+    let settings = group_tops(&groups)[9];
+    app.modal = Some(Modal::Help(HelpView {
+        scroll: settings as u16,
+        ..HelpView::default()
+    }));
+    let rows = drawn(&app, 80, 24).join("\n");
     assert!(
         rows.contains("  <- / ->      scope: everywhere / this repo"),
         "{rows}"

@@ -6,6 +6,7 @@
 pub mod bounds;
 pub mod brakes_text;
 pub mod branch;
+pub mod glossary;
 pub mod labels;
 pub mod lifecycle;
 pub mod lockfile;

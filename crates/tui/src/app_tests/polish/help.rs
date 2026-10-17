@@ -199,15 +199,16 @@ fn j_k_and_pages_scroll_and_esc_closes() {
         assert!(tap(&mut app, code).is_empty(), "{code:?}");
         assert_eq!(scroll(&app), 0, "{code:?} does nothing");
     }
-    // The end: 118 lines from line 98 fill (task M9.6.18 added three, ruling T18-4; M9.8.11 four;
+    // The end: 144 lines from line 124 fill (task M9.6.18 added three, ruling T18-4; M9.8.11 four;
     // milestone 9.16's `C-b H` one; milestone 9.17's plan review `f` one; the
-    // final fix wave's FW-76 thirteen) the 21 rows under the `↑` mark.
+    // final fix wave's FW-76 thirteen; milestone 9.19.3's `numbers` group twenty-six)
+    // the 21 rows under the `↑` mark.
     for _ in 0..10 {
         tap(&mut app, KeyCode::PageDown);
     }
-    assert_eq!(scroll(&app), 98);
+    assert_eq!(scroll(&app), 124);
     tap(&mut app, KeyCode::Char('j'));
-    assert_eq!(scroll(&app), 98, "j stops where the view stops");
+    assert_eq!(scroll(&app), 124, "j stops where the view stops");
     tap(&mut app, KeyCode::Char('q'));
     assert!(app.modal.is_none(), "q closes");
     chord(&mut app, '?');
@@ -247,7 +248,11 @@ fn tab_jumps_between_groups() {
     for _ in 0..12 {
         tap(&mut app, KeyCode::Tab);
     }
-    assert_eq!(scroll(&app), 98);
+    assert_eq!(
+        usize::from(scroll(&app)),
+        tops[10],
+        "the last group's header"
+    );
 }
 
 /// Task 6's ruling: `C-b ?` works over the Alerts view, and closing the help gives the
@@ -273,11 +278,12 @@ fn the_help_over_the_alerts_view_gives_it_back() {
 
 /// Fix round 1: opened on a group whose name lies past the last page (`settings` at
 /// 120×40), the view holds it at the top: `j` and PgDn stop there, `k` leaves it, and
-/// the rows under the last group are blank.
+/// the rows under the last group are blank. Milestone 9.19.3 put `numbers` after
+/// `settings`, so the box is taller (120×60) for `settings` to lie past the end.
 #[test]
 fn an_opened_group_past_the_end_holds_its_place() {
     let mut app = gate_app();
-    app.set_body_area(Rect::new(0, 0, 120, 39));
+    app.set_body_area(Rect::new(0, 0, 120, 59));
     chord(&mut app, 'S');
     chord(&mut app, '?');
     let settings = group_tops(&help_groups("C-b"))[9];
@@ -288,26 +294,28 @@ fn an_opened_group_past_the_end_holds_its_place() {
     tap(&mut app, KeyCode::Char('k'));
     assert_eq!(usize::from(scroll(&app)), settings - 1);
     tap(&mut app, KeyCode::Char('j'));
-    assert_eq!(drawn_headers(&app, 120, 40), ["settings"]);
-    let rows = crate::ui::audit::rows(&crate::ui::audit::draw(&app, 120, 40));
+    assert_eq!(drawn_headers(&app, 120, 60), ["settings", "numbers"]);
+    let rows = crate::ui::audit::rows(&crate::ui::audit::draw(&app, 120, 60));
     assert!(rows[2].contains("│ settings "), "{rows:#?}");
     assert!(rows[14].contains("esc          back (asks before discarding changes)"));
-    assert_eq!(
-        rows[15]
-            .chars()
-            .skip(29)
-            .take(62)
-            .collect::<String>()
-            .trim(),
-        ""
-    );
+    assert!(rows[15].contains("│ numbers "), "{rows:#?}");
+    let blank = rows[rows.len() - 3]
+        .chars()
+        .skip(29)
+        .take(62)
+        .collect::<String>();
+    assert_eq!(blank.trim(), "", "the rows under the last group are blank");
     // Opened on `global`, the end is the last page's, as before.
     let mut app = gate_app();
     chord(&mut app, '?');
     for _ in 0..12 {
         tap(&mut app, KeyCode::Tab);
     }
-    assert_eq!(scroll(&app), 98);
+    assert_eq!(
+        usize::from(scroll(&app)),
+        group_tops(&help_groups("C-b"))[10],
+        "the last group's header"
+    );
 }
 
 /// Minor 1: Shift+Tab goes back a group, whether it arrives as BackTab or as Tab with
