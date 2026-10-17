@@ -91,7 +91,6 @@ fn run_fields_match_the_mockup() {
                 "spend",
                 "tokens 1.8M (all roles) · cache hits 71% of input · worker tool calls 612"
             ),
-            ("est. left", "~40m"),
             (
                 "gate",
                 "plan approved 11:02 · 2 plan edits since · last: split t2"
@@ -100,6 +99,7 @@ fn run_fields_match_the_mockup() {
                 "attention",
                 "t5 blocked: question — \"Gemini has no subagent-stop event\""
             ),
+            ("est. left", "~40m"),
         ]
     );
 }

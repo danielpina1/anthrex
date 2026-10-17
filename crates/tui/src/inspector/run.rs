@@ -47,11 +47,6 @@ pub(crate) fn run_inspection(
     }
     fields.push(field("agents", agents_text(run, app)));
     fields.push(field("spend", spend_text(run)));
-    // M9.19.4 review, I2: decision 2's spend labels fill a row, so the estimate has
-    // its own.
-    if let Some(left) = run.estimate_left_secs {
-        fields.push(field("est. left", format!("~{}", format_duration(left))));
-    }
     fields.push(field("gate", gate_text(run, app)));
     // Milestone 9.6 task 17: `anthrex run status`'s two design lines.
     if let Some(text) = design_text(run) {
@@ -84,6 +79,11 @@ pub(crate) fn run_inspection(
             let label = if index == 0 { "rounds" } else { "" };
             fields.push(field(label, round_line(round)));
         }
+    }
+    // M9.19.4 review, I2: decision 2's spend labels fill a row, so the estimate has its
+    // own; fix round 2: it has the lowest priority, so a short panel drops it first.
+    if let Some(left) = run.estimate_left_secs {
+        fields.push(field("est. left", format!("~{}", format_duration(left))));
     }
     let glyph = kind_glyph(
         RowKind::Run {
