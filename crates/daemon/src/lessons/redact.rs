@@ -509,3 +509,7 @@ mod scrub_tests_gen;
 #[cfg(test)]
 #[path = "scrub_tests_credential_property.rs"]
 mod scrub_tests_credential_property;
+
+#[cfg(test)]
+#[path = "scrub_tests_two_events.rs"]
+mod scrub_tests_two_events;
