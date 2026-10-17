@@ -42,10 +42,18 @@ use trim::trim;
 
 /// The digest of `run` at `now`, trimmed to [`DIGEST_MAX_BYTES`].
 pub fn digest(run: &Run, now: u64) -> Value {
+    digest_shown(run, now).0
+}
+
+/// [`digest`], and how many of the orchestrator's pending notes it kept: always the
+/// oldest, a prefix of them (the trim cuts `notes` from the end, and counts the cut in
+/// `omitted_notes`).
+pub fn digest_shown(run: &Run, now: u64) -> (Value, usize) {
     let mut digest = build(run, now, false);
     fold_all(&mut digest);
     trim(&mut digest, run);
-    digest
+    let shown = digest["notes"].as_array().map_or(0, Vec::len);
+    (digest, shown)
 }
 
 /// Decision 16's fingerprint: FNV-1a 64 over the untrimmed digest with every counter

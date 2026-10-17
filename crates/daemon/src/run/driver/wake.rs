@@ -212,6 +212,32 @@ impl Wakes {
     }
 }
 
+/// Tests only: what the driver remembers of a run's pasted and read notes.
+#[cfg(test)]
+impl Wakes {
+    /// The newest note seq pasted or read for `run_id`.
+    pub(super) fn remembered(&self, run_id: &str) -> Option<u64> {
+        self.notes_pasted.remembered(run_id)
+    }
+
+    /// The seqs a notes-only wake-up for `run_id` holding `notes` would paste now;
+    /// `None` when it would not be pasted.
+    pub(super) fn unpasted_seqs(&self, run_id: &str, notes: &[(u64, String)]) -> Option<Vec<u64>> {
+        let p = Pending {
+            window_id: 0,
+            text: String::new(),
+            digest_revision: 0,
+            notes_seq: notes.iter().map(|(s, _)| *s).max().unwrap_or(0),
+            quiet: Duration::ZERO,
+            generation: 0,
+            request: None,
+            notes: notes.to_vec(),
+        };
+        let p = self.notes_pasted.unpasted(run_id, p)?;
+        Some(p.notes.iter().map(|(s, _)| *s).collect())
+    }
+}
+
 /// An orchestrator window as the manager lists it now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Listed {
