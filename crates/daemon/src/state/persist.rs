@@ -64,6 +64,14 @@ pub const SAVE_DEBOUNCE: Duration = Duration::from_millis(100);
 /// keeps running.
 pub const SAVE_MAX_DELAY: Duration = Duration::from_millis(SAVE_DEBOUNCE.as_millis() as u64 * 10);
 
+/// How long a create waits for its id to reach `state.json` before it fails
+/// (`ManagerConfig::state_flush_timeout`). A write is one serialize, a write of a few
+/// kilobytes and two `sync_all` calls (F_FULLFSYNC on macOS): about 8 ms measured, and
+/// it can queue behind one debounced write already in flight. Five seconds is far over
+/// both on a loaded disk; only a stuck writer reaches it, and then the create fails with
+/// a message instead of hanging.
+pub const FLUSH_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// One "write now and tell me" request: answered `Ok` once a write that covers every
 /// change made before the request was sent is on disk (or was already), `Err` with the
 /// write's error otherwise.

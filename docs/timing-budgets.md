@@ -414,6 +414,17 @@ turn_open=true turns=1`, `fallback="None"`, no pending op.
 |---|---|---|---|---|
 | `e2e_a_fresh_session_after_a_crash_is_heard_before_its_window_result` | `crates/cli/tests/it/run_e2e_crash.rs` (`LATE_WINDOW_MS`, `2000ms`) | a **lower** bound on every `CreateWindow`'s `done` line in the restarted daemon | Not a wait: as `WINDOW_HOLD_MS` in `run_e2e_sessions.rs`, the hold only needs to outlast `fake-agent`'s start and its scripted turn (tens of ms). A loaded machine can only make the session slower to start, which at worst leaves the race unexercised; it can never fail a correct daemon. The test runs under `SCENARIO_WAIT`. | **Fixed** in the daemon: `RunService::restore` reserves every window id its loaded runs and replayed results name (`WindowManager::reserve_ids_through`) before anything can open a window, so the fresh session gets window 2. Before the fix it failed at `SCENARIO_WAIT` (400 s) at "the restored run complete" with that state; after it, 14 s. `a_restart_never_hands_out_a_window_id_a_restored_run_names` shows the same in the driver (id 1 before, 2 after). |
 
+### Recorded, from the window-id flush (2026-10-17)
+
+Every create now waits for `state.json` to record the id it spent before the window is
+published (`manager/id_flush.rs`), so the debounce above can no longer lose a published
+id. The wait is bounded by `ManagerConfig::state_flush_timeout`.
+
+| Test | Site | Bound (as found) | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| Every create's wait for its id to be saved | `crates/daemon/src/manager/id_flush.rs` (`state::FLUSH_TIMEOUT`) | `5s`, then the create fails with a message | One serialize, a write of a few kilobytes and two `sync_all` calls (F_FULLFSYNC on macOS), behind at most one debounced write already in flight. Measured: a shell create's median went from 1.8 ms to about 10 ms (21 creates, macOS, APFS), so the write is about 8 ms. | **Recorded.** A hang guard on a stuck writer, not a bound a correct write approaches. |
+| `a_create_fails_within_its_bound_when_the_persister_is_stuck` | `crates/daemon/tests/it/manager/restore/id_flush.rs` (`BOUND`) | `state_flush_timeout = 300ms`; the create must fail no sooner, and within `BOUND + 5s`; `5s` for the manager lock to answer meanwhile; `5s` for the persister to stop once released | A FIFO at `state.json.tmp` holds the persister in `open` forever, so the create's only way out is the bound. The lock check is one `list()`. The release opens a reader without blocking, which ends the writer's `open` at once. | **Recorded.** The 5 s slacks are hang guards; the lower bound `elapsed >= BOUND` cannot fail a correct build. |
+
 ### Fixed, from the chain long-poll flake (2026-10-13)
 
 No bound was too tight: a push older than the test's own state change reached a call.

@@ -74,6 +74,9 @@ pub struct ManagerConfig {
     /// as the window's process. Zero in production; a test widens it to land a kill in
     /// that gap (ruling T18-I1).
     pub headless_install_pause: Duration,
+    /// How long a create waits for `state.json` to record the id it spent
+    /// (`manager/id_flush.rs`) before it fails; [`crate::state::FLUSH_TIMEOUT`].
+    pub state_flush_timeout: Duration,
     /// The gate both launch paths — [`super::WindowManager::create`]'s phase B and
     /// [`super::WindowManager::restart`]'s phase C — wait on before they spawn anything.
     ///
@@ -162,6 +165,7 @@ impl ManagerConfig {
             resume_start_timeout: super::headless_turns::RESUME_START_TIMEOUT,
             codex_turn_jitter: None,
             headless_install_pause: Duration::ZERO,
+            state_flush_timeout: crate::state::FLUSH_TIMEOUT,
             launch_gate: launch::LaunchGate::open_already(),
             conversation: ::config::Conversation::default(),
             cli_caps: crate::headless::argv::CLI_CAPS,
@@ -207,6 +211,7 @@ impl ManagerConfig {
             resume_start_timeout: super::headless_turns::RESUME_START_TIMEOUT,
             codex_turn_jitter: None,
             headless_install_pause: Duration::ZERO,
+            state_flush_timeout: crate::state::FLUSH_TIMEOUT,
             launch_gate: launch::LaunchGate::open_already(),
             conversation: ::config::Conversation::default(),
             cli_caps: crate::headless::argv::CLI_CAPS,

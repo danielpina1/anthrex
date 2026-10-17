@@ -27,13 +27,30 @@ impl WindowManager {
     /// persister runs for (most tests) has nothing to wait for.
     ///
     /// A failed write fails the create: going on would publish an id the next daemon may
-    /// reissue, which is the hazard this exists to close.
+    /// reissue, which is the hazard this exists to close. So does a write that has not
+    /// finished within `ManagerConfig::state_flush_timeout`: a stuck writer must cost
+    /// the user a clear error, not a create that never answers.
     pub(super) async fn record_spent_id(&self, id: u32) -> anyhow::Result<()> {
         let Some(flusher) = crate::lock(&self.state_flusher).clone() else {
             return Ok(());
         };
-        flusher.flush().await.map_err(|error| {
-            anyhow::anyhow!("window {id} was not opened: its id could not be saved: {error}")
-        })
+        let bound = self.config.state_flush_timeout;
+        match tokio::time::timeout(bound, flusher.flush()).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(error)) => Err(anyhow::anyhow!(
+                "window {id} was not opened: its id could not be saved to the state file: {error}"
+            )),
+            Err(_elapsed) => {
+                tracing::warn!(
+                    id,
+                    ?bound,
+                    "the state file did not record a new window's id in time"
+                );
+                Err(anyhow::anyhow!(
+                    "window {id} was not opened: the state file did not record its id within \
+                     {bound:?}; the daemon's state writer may be stuck (see the daemon log)"
+                ))
+            }
+        }
     }
 }
