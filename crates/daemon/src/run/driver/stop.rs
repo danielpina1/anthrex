@@ -9,6 +9,14 @@ use tokio::sync::oneshot;
 use super::{Msg, RunService, effects, guard, unix_now};
 use crate::run::engine::{Event, EventKind};
 
+/// The test rigs' bound for [`RunService::stop_and_settle`] when nothing kills a window
+/// in it: `stop`'s acknowledgement wait (`STOP_WAIT`), plus 30 s for the last saves, the
+/// loop's join and the ops still in flight (a few git commands on a rig's local
+/// repository, milliseconds locally) on a loaded machine (`docs/timing-budgets.md`).
+#[cfg(test)]
+pub(in crate::run::driver) const SETTLE_BOUND: Duration =
+    Duration::from_secs(30).saturating_add(super::STOP_WAIT);
+
 impl RunService {
     /// Decision 46: after `stop` the service ignores every event, and the last
     /// `run.json` of each run is the one written here.
@@ -88,6 +96,44 @@ impl RunService {
         let orders: Vec<_> = crate::lock(&self.op_order).values().cloned().collect();
         for order in orders {
             drop(order.write_owned().await);
+        }
+    }
+
+    /// A test rig's teardown, before its directory goes (the teardown audit after main
+    /// 636f0a40's leak): cancels `shutdown`, stops the service ([`RunService::stop`]),
+    /// joins its loop, then waits for every op still in flight, since each runs on its
+    /// own task that nothing else awaits and can make files (a task checkout's temporary
+    /// directory in the shared root) after the directory went. With the manager's launch
+    /// gate closed, the launch ops (`in_flight::LAUNCH_KINDS`) are
+    /// left out: they park at the gate for good. With it open, [`wait_for_ops`] follows,
+    /// for restore's clean-ups too. Panics, naming the ops still in flight, when all
+    /// this takes longer than `bound`. The caller then removes its directory (`TestDir`
+    /// sweeps its task temporary directories).
+    ///
+    /// [`wait_for_ops`]: RunService::wait_for_ops
+    #[doc(hidden)]
+    pub async fn stop_and_settle(
+        &self,
+        run_loop: tokio::task::JoinHandle<()>,
+        shutdown: &tokio_util::sync::CancellationToken,
+        bound: Duration,
+    ) {
+        shutdown.cancel();
+        let gate_open = self.manager.config().launch_gate.is_open();
+        let parked = move |name: &str| !gate_open && super::in_flight::LAUNCH_KINDS.contains(&name);
+        let settling = async {
+            self.stop().await;
+            let _ = run_loop.await;
+            self.in_flight.settle(parked).await;
+            if gate_open {
+                self.wait_for_ops().await;
+            }
+        };
+        if tokio::time::timeout(bound, settling).await.is_err() {
+            panic!(
+                "the run service did not stop and settle within {bound:?}; in flight: {:?}",
+                self.in_flight.waited_for(parked)
+            );
         }
     }
 
