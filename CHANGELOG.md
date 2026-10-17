@@ -170,6 +170,31 @@ your runs before downgrading below 0.2.0.
   changes (1 brief)`), and an integration review whose findings are all about the
   brief approves its epic.
 
+### Fixed
+
+Backlog hardening (milestone 9.18), no new features. The protocol (26) and the run
+format (6) are unchanged.
+
+- **More secrets are redacted** from provider prompts and the Lessons page: Stripe
+  `sk_live_` and `sk_test_` keys, AWS secret access keys (after their key name, or on
+  the line of an `AKIA` or `ASIA` key id), `Basic` credentials, and URL passwords
+  spelled `%3A%2F%2F…%40` or `:\/\/…@`.
+- **`timeout 600 cargo test` waits for its build slot** like a bare `cargo test`, and so
+  do `stdbuf` and `cargo llvm-cov`, `cargo miri`, `cargo hack` and `cargo insta test`.
+- **A cached green is not reused after a `CARGO_PROFILE_*` change.** `CARGO_PROFILE_*`,
+  `CARGO_TARGET_<triple>_RUSTFLAGS`, `CARGO_BUILD_RUSTFLAGS` and `CARGO_INCREMENTAL` are
+  now part of the tier cache key. If you set any of them, your next tier run misses the
+  cache once.
+- **A wheel scroll no longer holds the orchestrator's wake-up.** Mouse reports sent
+  while a wake-up is pasted no longer count as typing, so the wake-up is submitted.
+- **Dialogs wrap in display columns**, so a path with CJK characters or emoji no longer
+  breaks the force-remove prompt's box.
+- **A failed tool call shows as failed at once** in the conversation view, from Claude's
+  `PostToolUseFailure` hook, instead of staying pending until the transcript is read.
+- **`lessons.jsonl` is compacted.** Once it reaches 1 MiB, the lines no reader needs
+  (a closed lesson's day-old attempts, and records a later line replaces) are dropped.
+  Only the newest three moved-aside `tuning.toml.bad-*` files are kept.
+
 ## [0.2.0] — 2026-10-11
 
 The protocol version is now 21 (19 for model roles, 20 for orchestrator-first alerts, 21

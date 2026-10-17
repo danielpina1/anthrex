@@ -1243,6 +1243,18 @@ close to genuine danger today.
    runs (M9.12.3: the Bash tool's background mode left it at its default, and both passed).
    Such a failure is in the harness, not in the tree, so it is never fixed by changing a bound.
 
+7. **`--stress-count` runs one copy at a time.** `cargo nextest run --stress-count N
+   --test-threads T` on one test runs its N iterations one after another, each "1 test
+   run", whatever `T` is: the threads only spread the tests of one iteration. A race that
+   needs parallel copies of the same test (two processes contending for a CPU, a lock or
+   the blocking pool) never shows under it, and a clean result proves nothing about that
+   race. Stress such a race with concurrent nextest invocations, or by looping the test
+   binary in parallel (task 5's review of milestone 9.18 used a script that keeps 16
+   copies running). Source: that review's m3. During 9.18,
+   `serve_compacts_a_large_store_under_its_lock`'s flake reproduced only with 16 parallel
+   copies (8 in 400 runs; 32 in 400 in the reviewer's run) and passed 300 of 300 one copy
+   at a time.
+
 ## What this document deliberately does not recommend
 
 `crates/daemon/tests/lockfile.rs` isolates one test into its own binary to dodge a
