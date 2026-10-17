@@ -437,12 +437,13 @@ fn the_engine_imports_no_runtime_io_or_clock() {
 }
 
 mod manifest_dir;
+mod purity;
 
 // ---------------------------------------------------------------------------------
 // The test-target rule (milestone 9.12, final review I1); the scanner is `targets`.
 
 mod targets;
-use targets::{mod_decls, target_hits};
+use targets::{autotests_off_crates, mod_decls, target_hits};
 
 #[test]
 fn the_mod_scan_reads_each_declaration_form() {
@@ -528,15 +529,16 @@ fn the_target_scan_follows_every_mount_form() {
 fn every_integration_test_file_is_compiled() {
     let package = testexec::checkout_dir(env!("CARGO_MANIFEST_DIR"));
     let crates = package.parent().unwrap();
+    // Decision 15(b): every crate that sets `autotests = false`, not a fixed list.
+    let walked = autotests_off_crates(crates);
+    assert!(
+        walked.iter().any(|k| k == "daemon"),
+        "the walk starts at {}: {walked:?}",
+        crates.display()
+    );
     let mut hits = Vec::new();
-    for krate in ["daemon", "cli"] {
-        let dir = crates.join(krate);
-        assert!(
-            dir.join("tests/it/main.rs").is_file(),
-            "the walk starts at {}",
-            dir.display()
-        );
-        hits.extend(target_hits(crates, &dir));
+    for krate in &walked {
+        hits.extend(target_hits(crates, &crates.join(krate)));
     }
     assert!(hits.is_empty(), "{}", hits.join("\n"));
 }

@@ -20,7 +20,8 @@ fn names_manifest_dir(args: &str) -> bool {
 }
 
 /// Every `env!("CARGO_MANIFEST_DIR")` and `option_env!("CARGO_MANIFEST_DIR")` in `text`'s
-/// code that is not directly the argument of `checkout_dir(`, as line numbers.
+/// code that is not directly the argument of `checkout_dir(` (the name itself, after
+/// `::` or a non-identifier byte), as line numbers.
 fn unguarded_manifest_dirs(text: &str) -> Vec<usize> {
     let code = code_only(text);
     let mut lines = Vec::new();
@@ -41,10 +42,12 @@ fn unguarded_manifest_dirs(text: &str) -> Vec<usize> {
         if !names_manifest_dir(args) {
             continue;
         }
+        // Decision 15(c): `checkout_dir` itself, alone or after `::`, not `my_checkout_dir`.
         let guarded = text[..start]
             .trim_end()
             .strip_suffix('(')
-            .is_some_and(|before| before.trim_end().ends_with("checkout_dir"));
+            .and_then(|before| before.trim_end().strip_suffix("checkout_dir"))
+            .is_some_and(|before| before.bytes().last().is_none_or(|c| !is_ident(c)));
         if !guarded {
             lines.push(code[..at].matches('\n').count() + 1);
         }
@@ -93,4 +96,17 @@ fn every_compile_time_manifest_dir_is_guarded() {
         }
     }
     assert!(hits.is_empty(), "{}", hits.join("\n"));
+}
+
+/// Decision 15(c): the guard is `checkout_dir(` itself, alone or after a path's `::`,
+/// not any function whose name ends in it.
+#[test]
+fn my_checkout_dir_is_not_the_guard() {
+    let text = "let a = my_checkout_dir(env!(\"CARGO_MANIFEST_DIR\"));\n\
+                let b = testexec::checkout_dir(env!(\"CARGO_MANIFEST_DIR\"));\n\
+                let c = checkout_dir(env!(\"CARGO_MANIFEST_DIR\"));\n\
+                let d = testexec :: checkout_dir(env!(\"CARGO_MANIFEST_DIR\"));\n\
+                let e = x.my_checkout_dir(env!(\"CARGO_MANIFEST_DIR\"));\n\
+                let f = &checkout_dir(env!(\"CARGO_MANIFEST_DIR\"));\n";
+    assert_eq!(unguarded_manifest_dirs(text), [1, 5]);
 }
