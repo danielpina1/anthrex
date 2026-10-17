@@ -58,13 +58,27 @@ fn the_force_prompt_box_stays_aligned_with_a_cjk_path() {
             render_force_remove(frame, "api", &message, frame.area(), Palette::PLAIN);
         })
         .unwrap();
-    let screen = terminal.backend().to_string();
-    assert!(
-        screen.contains("チェックアウト"),
-        "the path's tail reaches the screen: {screen}"
-    );
     let buffer = terminal.backend().buffer();
     let area = buffer.area;
+    // Task 10's review, m1: the whole path reaches the screen, in order, across the
+    // rows it is cut into (the old wrap cut it inside a word, not losing its tail).
+    let path = format!("/Users/someone/anthrex/worktrees{CJK_PATH}/ブランチ");
+    let inside: String = (0..area.height)
+        .map(|y| {
+            let mut row = String::new();
+            let mut x = 0;
+            while x < area.width {
+                let symbol = buffer[(x, y)].symbol();
+                if !matches!(symbol, "│" | "┌" | "┐" | "└" | "┘" | "─") {
+                    row.push_str(symbol);
+                }
+                // A wide symbol's next cell is hidden behind it.
+                x += u16::try_from(symbol.width().max(1)).unwrap_or(1);
+            }
+            row.trim().to_string()
+        })
+        .collect();
+    assert!(inside.contains(&path), "{path:?} not in {inside:?}");
     let mut rights = Vec::new();
     for y in 0..area.height {
         let cells: Vec<_> = (0..area.width)
