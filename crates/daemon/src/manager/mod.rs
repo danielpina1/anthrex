@@ -10,6 +10,7 @@ mod headless;
 mod headless_end;
 mod headless_terminal;
 mod headless_turns;
+mod id_flush;
 mod remove;
 mod restart;
 mod restore;
@@ -176,6 +177,9 @@ pub struct WindowManager {
     /// (`remove.rs`). Written only while `inner` is held too, so `shutdown` sees every
     /// removal admitted before it.
     removals: Mutex<BTreeMap<u32, remove::Tracked>>,
+    /// The persister's flush request, once one runs (`id_flush.rs`). Never held across
+    /// an await, and never taken while `inner` is.
+    state_flusher: Mutex<Option<crate::state::FlushHandle>>,
     /// Tests only: when set, the next `create_run_window` takes it and waits on it
     /// between phase B and phase C, so a test can hand the window's first events to
     /// `handle_event` before its entry exists (`role_window_tests`).
@@ -208,6 +212,7 @@ impl WindowManager {
             signals,
             config,
             removals: Mutex::new(BTreeMap::new()),
+            state_flusher: Mutex::new(None),
             #[cfg(test)]
             run_window_hold: Mutex::new(None),
         });

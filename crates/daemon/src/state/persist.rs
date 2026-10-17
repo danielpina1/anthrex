@@ -3,6 +3,7 @@
 //! `state` (AGENTS.md rule 8), pulling `StateFile` in via `use super::*`.
 
 use super::*;
+use tokio::sync::{mpsc, oneshot};
 
 /// Serializes `state` and atomically replaces `path` with it (decision 10). Blocking.
 ///
@@ -63,6 +64,36 @@ pub const SAVE_DEBOUNCE: Duration = Duration::from_millis(100);
 /// keeps running.
 pub const SAVE_MAX_DELAY: Duration = Duration::from_millis(SAVE_DEBOUNCE.as_millis() as u64 * 10);
 
+/// One "write now and tell me" request: answered `Ok` once a write that covers every
+/// change made before the request was sent is on disk (or was already), `Err` with the
+/// write's error otherwise.
+type FlushAck = oneshot::Sender<Result<(), String>>;
+
+/// Asks the persister for an immediate write, through the persister's own loop, so
+/// `state.json` still has exactly one writer and no write ever lands out of order.
+///
+/// `WindowManager::create` and its siblings use this to get a spent window id onto
+/// disk before the window is published: after a crash the next daemon rebuilds
+/// `next_id` from the file alone, so an id only the debounce knew about would be handed
+/// to another window, and a client still focused on it would type into that window.
+#[derive(Clone)]
+pub struct FlushHandle(mpsc::UnboundedSender<FlushAck>);
+
+impl FlushHandle {
+    /// Waits for the write. Holds no lock; unbounded on its own, so the caller bounds
+    /// it (`ManagerConfig::state_flush_timeout`).
+    pub async fn flush(&self) -> anyhow::Result<()> {
+        let (ack, answer) = oneshot::channel();
+        self.0
+            .send(ack)
+            .map_err(|_| anyhow::anyhow!("the state file's writer has stopped"))?;
+        answer
+            .await
+            .map_err(|_| anyhow::anyhow!("the state file's writer stopped before saving"))?
+            .map_err(anyhow::Error::msg)
+    }
+}
+
 /// Subscribes to `manager`'s window list and keeps `path` current (decision 9).
 ///
 /// Every publish on [`crate::manager::WindowManager::watch`] is one *debounced* write,
@@ -79,6 +110,11 @@ pub const SAVE_MAX_DELAY: Duration = Duration::from_millis(SAVE_DEBOUNCE.as_mill
 /// the last change reaches disk (decision 11) — this loop's job is only to keep the file
 /// *reasonably* current while the daemon is up.
 ///
+/// A [`FlushHandle`] request skips the debounce: it is installed on `manager` here,
+/// before this returns, so no create can run between the spawn and the handle existing.
+/// Requests that arrive together share one write. The watch is subscribed here too,
+/// rather than inside the task, so a change made right after this call is never missed.
+///
 /// The snapshot itself, [`crate::manager::WindowManager::state_snapshot`], is a clone
 /// taken under the manager lock with no I/O under it (decision 9); only the write that
 /// follows runs on [`tokio::task::spawn_blocking`]. A write is skipped when its
@@ -92,10 +128,20 @@ pub fn spawn_persister(
     path: PathBuf,
     shutdown: CancellationToken,
 ) -> tokio::task::JoinHandle<()> {
+    let (flush_tx, mut flushes) = mpsc::unbounded_channel();
+    manager.set_state_flusher(FlushHandle(flush_tx));
+    let mut changes = manager.watch();
     tokio::spawn(async move {
-        let mut changes = manager.watch();
-        let mut last_written: Option<Vec<u8>> = None;
+        let mut writer = Writer {
+            manager,
+            path,
+            last_written: None,
+        };
+        // `false` once every `FlushHandle` is gone (a later persister replaced this
+        // one's), so a closed channel is not polled in a loop.
+        let mut flush_open = true;
         loop {
+            let mut acks = Vec::new();
             tokio::select! {
                 _ = shutdown.cancelled() => return,
                 changed = changes.changed() => {
@@ -103,59 +149,114 @@ pub fn spawn_persister(
                         // The manager itself is gone; nothing left to persist for.
                         return;
                     }
-                }
-            }
-
-            // Collect further changes for SAVE_DEBOUNCE, restarting that wait on each
-            // one — a fresh `sleep` future is constructed every time this inner loop
-            // runs, which is what makes it restart rather than merely continue a clock
-            // that started on the first change — but never later than SAVE_MAX_DELAY
-            // after the *first* change of this burst (fix wave 4, item 2): `max_delay`
-            // is a single `sleep` future, pinned once before the loop starts, so unlike
-            // the per-change window it does not restart and so puts a hard ceiling on
-            // how long a sustained stream of changes can hold the write back.
-            let max_delay = tokio::time::sleep(SAVE_MAX_DELAY);
-            tokio::pin!(max_delay);
-            loop {
-                tokio::select! {
-                    _ = shutdown.cancelled() => return,
-                    () = tokio::time::sleep(SAVE_DEBOUNCE) => break,
-                    () = &mut max_delay => break,
-                    changed = changes.changed() => {
-                        if changed.is_err() {
-                            return;
-                        }
+                    let collected = collect_burst(
+                        &mut changes,
+                        &mut flushes,
+                        &mut flush_open,
+                        &shutdown,
+                        &mut acks,
+                    );
+                    if !collected.await {
+                        return;
                     }
                 }
+                ack = flushes.recv(), if flush_open => match ack {
+                    Some(ack) => acks.push(ack),
+                    None => {
+                        flush_open = false;
+                        continue;
+                    }
+                },
             }
-
-            let state = manager.state_snapshot();
-            let bytes = match serde_json::to_vec_pretty(&state) {
-                Ok(bytes) => bytes,
-                Err(error) => {
-                    tracing::warn!(%error, "failed to serialize state for persistence");
-                    continue;
-                }
-            };
-            if last_written.as_deref() == Some(bytes.as_slice()) {
-                continue;
+            // Every request already queued shares this write.
+            while let Ok(ack) = flushes.try_recv() {
+                acks.push(ack);
             }
-
-            let save_path = path.clone();
-            let save_state = state.clone();
-            match tokio::task::spawn_blocking(move || save(&save_path, &save_state)).await {
-                Ok(Ok(())) => last_written = Some(bytes),
-                Ok(Err(error)) => {
-                    tracing::warn!(
-                        %error,
-                        path = %path.display(),
-                        "failed to save state file; will retry on the next change"
-                    );
-                }
-                Err(error) => {
-                    tracing::warn!(%error, "state save task panicked; will retry on the next change");
-                }
+            let result = writer.write().await;
+            for ack in acks {
+                let _ = ack.send(result.clone());
             }
         }
     })
+}
+
+/// Collect further changes for SAVE_DEBOUNCE, restarting that wait on each one — a fresh
+/// `sleep` future is constructed every time this loop runs, which is what makes it
+/// restart rather than merely continue a clock that started on the first change — but
+/// never later than SAVE_MAX_DELAY after the *first* change of this burst (fix wave 4,
+/// item 2): `max_delay` is a single `sleep` future, pinned once before the loop starts,
+/// so unlike the per-change window it does not restart and so puts a hard ceiling on how
+/// long a sustained stream of changes can hold the write back. A flush request ends the
+/// wait at once. `false` means stop: shutdown, or the manager is gone.
+async fn collect_burst(
+    changes: &mut tokio::sync::watch::Receiver<Vec<proto::WindowInfo>>,
+    flushes: &mut mpsc::UnboundedReceiver<FlushAck>,
+    flush_open: &mut bool,
+    shutdown: &CancellationToken,
+    acks: &mut Vec<FlushAck>,
+) -> bool {
+    let max_delay = tokio::time::sleep(SAVE_MAX_DELAY);
+    tokio::pin!(max_delay);
+    loop {
+        tokio::select! {
+            _ = shutdown.cancelled() => return false,
+            () = tokio::time::sleep(SAVE_DEBOUNCE) => return true,
+            () = &mut max_delay => return true,
+            changed = changes.changed() => {
+                if changed.is_err() {
+                    return false;
+                }
+            }
+            ack = flushes.recv(), if *flush_open => match ack {
+                Some(ack) => {
+                    acks.push(ack);
+                    return true;
+                }
+                None => *flush_open = false,
+            },
+        }
+    }
+}
+
+/// The persister's one write path, for its debounced writes and its flushes alike.
+struct Writer {
+    manager: Arc<crate::manager::WindowManager>,
+    path: PathBuf,
+    last_written: Option<Vec<u8>>,
+}
+
+impl Writer {
+    async fn write(&mut self) -> Result<(), String> {
+        let state = self.manager.state_snapshot();
+        let bytes = match serde_json::to_vec_pretty(&state) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                tracing::warn!(%error, "failed to serialize state for persistence");
+                return Err(format!("could not serialize the state file: {error}"));
+            }
+        };
+        if self.last_written.as_deref() == Some(bytes.as_slice()) {
+            return Ok(());
+        }
+
+        let save_path = self.path.clone();
+        match tokio::task::spawn_blocking(move || save(&save_path, &state)).await {
+            Ok(Ok(())) => {
+                self.last_written = Some(bytes);
+                Ok(())
+            }
+            Ok(Err(error)) => {
+                tracing::warn!(
+                    %error,
+                    path = %self.path.display(),
+                    "failed to save state file; will retry on the next change"
+                );
+                Err(format!("could not save {}: {error}", self.path.display()))
+            }
+            Err(error) => {
+                tracing::warn!(%error, "state save task panicked; will retry on the next change");
+                Err(format!("the state save task failed: {error}"))
+            }
+        }
+    }
 }

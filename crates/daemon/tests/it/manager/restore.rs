@@ -403,3 +403,6 @@ async fn create_refuses_when_the_restored_id_space_is_exhausted() {
 
 #[path = "restore/persistence.rs"]
 mod persistence;
+
+#[path = "restore/id_flush.rs"]
+mod id_flush;

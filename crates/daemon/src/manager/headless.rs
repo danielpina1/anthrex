@@ -19,6 +19,7 @@
 //! the lock and acts on the clone. Starting a session's processes, and its turns,
 //! interrupts and resumes (M8a.18), are in `headless_turns.rs`.
 
+use super::create::Reservation;
 use super::entry::{Entry, Process};
 use super::{WindowManager, validate_name};
 use crate::agent_state::AgentState;
@@ -268,7 +269,10 @@ impl WindowManager {
         let name = validate_name(&name)?;
         self.config.launch_gate.wait().await;
 
-        let id = self.admit_headless(name, &spec, &first_turn, project, worktree)?;
+        let (id, reservation) = self.spend_headless_id(name)?;
+        // The id is on disk before the window is listed (`id_flush.rs`); no lock held.
+        self.record_spent_id(id).await?;
+        self.admit_headless(id, reservation, &spec, &first_turn, project, worktree)?;
 
         let args = self.session_args(&spec, &session, &first_turn, id);
         let line = (runtime == Runtime::Claude).then(|| {
@@ -290,16 +294,10 @@ impl WindowManager {
         Ok(info)
     }
 
-    /// Phase A of `create_headless`, under the lock and with no I/O: spend an id, list
-    /// the window as `Starting` with no process, and record the first turn.
-    fn admit_headless(
-        &self,
-        name: String,
-        spec: &HeadlessSpec,
-        first_turn: &str,
-        project: PathBuf,
-        worktree: PathBuf,
-    ) -> anyhow::Result<u32> {
+    /// Phase A of `create_headless`, under the lock and with no I/O: spend an id and
+    /// hold the name. Nothing is listed yet, so the id is saved (`id_flush.rs`) before
+    /// any client can see it.
+    fn spend_headless_id(&self, name: String) -> anyhow::Result<(u32, Reservation<'_>)> {
         let mut inner = crate::lock(&self.inner);
         anyhow::ensure!(!inner.shutting_down, "daemon is shutting down");
         let id = inner.next_id;
@@ -312,6 +310,27 @@ impl WindowManager {
             anyhow::bail!("a window named '{name}' already exists");
         }
         inner.next_id = next_id;
+        inner.reserved_names.insert(name.clone());
+        Ok((id, Reservation::name_only(self, id, name)))
+    }
+
+    /// The rest of phase A, once the id is saved: list the window as `Starting` with no
+    /// process, and record the first turn. Under the lock, no I/O.
+    fn admit_headless(
+        &self,
+        id: u32,
+        reservation: Reservation<'_>,
+        spec: &HeadlessSpec,
+        first_turn: &str,
+        project: PathBuf,
+        worktree: PathBuf,
+    ) -> anyhow::Result<()> {
+        let mut inner = crate::lock(&self.inner);
+        let name = reservation.name.clone();
+        // Released under this same lock on both paths: the guard's own drop would take
+        // it again.
+        reservation.release(&mut inner);
+        anyhow::ensure!(!inner.shutting_down, "daemon is shutting down");
         let now = Instant::now();
         let runtime = spec.runtime;
         let mut window = HeadlessWindow::new(spec.clone());
@@ -357,7 +376,7 @@ impl WindowManager {
         let entry = inner.entries.get_mut(&id).expect("inserted above");
         self.apply_input(id, entry, input, now);
         self.publish(&inner);
-        Ok(id)
+        Ok(())
     }
 
     /// Unlists a headless window whose session never started.
