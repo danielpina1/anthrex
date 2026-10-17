@@ -34,8 +34,8 @@ pub(super) fn merge_outcome(merged: &str) -> &str {
 
 /// The highest window id the loaded runs and the journal's replayed results name
 /// (0 for none), in their persisted form: under a `window_id` key at any depth (a
-/// round's, a claim's, an outbox message's, the orchestrator's, a planner's, a scout's,
-/// a design agent's, a pending op's, a launch's `Window` result), or a handoff's
+/// round's, a claim's, an outbox message's, the orchestrator's, a planner's, a run
+/// scout's, a design agent's, a pending op's, a launch's `Window` result), or a handoff's
 /// `from_window`. Read from the serialized form so that a window a later record names
 /// is never missed.
 fn named_windows(runs: &[Run], replay: &[(String, OpId, OpResult)]) -> u32 {

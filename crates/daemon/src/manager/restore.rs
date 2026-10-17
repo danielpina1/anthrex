@@ -287,8 +287,21 @@ impl WindowManager {
     /// (`state::SAVE_DEBOUNCE`), may not have recorded them before the old daemon died.
     /// A new window with such an id would get the events, the tool calls and the
     /// resumes meant for the run's record of the old one. Under the lock, no I/O.
+    ///
+    /// A reservation `SUSPICIOUS_ID_GAP` (100 000) or more past `next_id`, or one of `u32::MAX`,
+    /// is logged at `warn`: the reserved ids are spent for good (the next save writes
+    /// the raised `next_id`), and at `u32::MAX` every create is refused from then on, so
+    /// a corrupt id in a `run.json` must at least leave a trace naming both values.
     pub fn reserve_ids_through(&self, highest: u32) {
         let mut inner = crate::lock(&self.inner);
+        if suspicious_reservation(inner.next_id, highest) {
+            tracing::warn!(
+                next_id = inner.next_id,
+                highest,
+                "restore: a restored run names a window id far past every saved one; \
+                 the ids up to it are reserved for good (a corrupt run.json?)"
+            );
+        }
         inner.next_id = inner.next_id.max(highest.saturating_add(1));
     }
 
@@ -352,6 +365,18 @@ impl WindowManager {
             runs: inner.runs.clone(),
         }
     }
+}
+
+/// How far past `next_id` a reservation may reach before it is logged
+/// ([`WindowManager::reserve_ids_through`]). A run names only windows the old daemon
+/// opened, and `next_id` comes from a state file at most `state::SAVE_MAX_DELAY` behind
+/// it, so a real gap is a handful of ids. No daemon opens a hundred thousand windows in
+/// that time; a gap this large is a corrupt or hand-edited `run.json`.
+const SUSPICIOUS_ID_GAP: u32 = 100_000;
+
+/// Whether reserving through `highest` from `next_id` is worth a warning.
+fn suspicious_reservation(next_id: u32, highest: u32) -> bool {
+    highest == u32::MAX || highest.saturating_sub(next_id) >= SUSPICIOUS_ID_GAP
 }
 
 /// A headless record's spec, from its opaque `run` (decision 28), and whether it is a
@@ -460,6 +485,18 @@ mod tests {
     /// `Entry` is private to `manager` and this module (`manager::restore`) is one of its
     /// descendants, so — exactly like `restore`'s own `crate::lock(&self.inner)` above —
     /// this reaches the field directly rather than waiting for a public path to exist.
+    /// #77 review, minor 1: a corrupt id in `run.json` spends ids for good, so it is
+    /// logged; the ordinary few-ids gap of a crash inside the debounce is not.
+    #[test]
+    fn only_a_reservation_far_past_next_id_is_suspicious() {
+        assert!(!suspicious_reservation(5, 0));
+        assert!(!suspicious_reservation(5, 9));
+        assert!(!suspicious_reservation(5, 5 + SUSPICIOUS_ID_GAP - 1));
+        assert!(suspicious_reservation(5, 5 + SUSPICIOUS_ID_GAP));
+        assert!(suspicious_reservation(1, u32::MAX));
+        assert!(suspicious_reservation(u32::MAX - 1, u32::MAX));
+    }
+
     #[test]
     fn restore_sets_entrys_spec_name_to_the_records_own_name() {
         let m = manager();
