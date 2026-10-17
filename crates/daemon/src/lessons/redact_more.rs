@@ -200,19 +200,26 @@ pub(super) fn encoded_userinfo(text: &str) -> String {
     out
 }
 
-/// The end of the authority that starts at `start` (whitespace, `/`, `?`, `#`, `"` or
-/// the first three's `%2F`, `%3F`, `%23`), and where its last `@` or `%40` is.
+/// The end of the authority that starts at `start` (whitespace, `/`, `?`, `#`, an
+/// unescaped `"` or the first three's `%2F`, `%3F`, `%23`), and where its last `@` or
+/// `%40` is.
 fn authority(text: &str, start: usize) -> (usize, Option<usize>) {
     let bytes = text.as_bytes();
     let mut at = start;
     let mut last = None;
+    // Whether the byte at `at` follows an odd run of backslashes, so is escaped.
+    let mut escaped = false;
     while at < bytes.len() {
         let b = bytes[at];
         // PR #80's review, item 2: a `"` ends the JSON string the URL is in, so a
-        // later field's `@` is not this authority's.
-        if b.is_ascii_whitespace() || matches!(b, b'/' | b'?' | b'#' | b'"') {
+        // later field's `@` is not this authority's. PR #81's review: an escaped `\"`
+        // is inside the string (a password's quote) and does not end it; in `\\"` the
+        // backslash is the escaped one, so that quote does.
+        let quote = b == b'"' && !escaped;
+        if b.is_ascii_whitespace() || matches!(b, b'/' | b'?' | b'#') || quote {
             break;
         }
+        escaped = b == b'\\' && !escaped;
         if b == b'@' {
             last = Some(at);
         } else if b == b'%' {
