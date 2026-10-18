@@ -204,7 +204,7 @@ fn stage_line(stage: &proto::StageInfo, of: usize) -> String {
     if matches!(full.state, proto::FullState::Green | proto::FullState::Red)
         && let Some(secs) = full.secs
     {
-        parts.push(duration(secs));
+        parts.push(common::numbers::duration(secs));
     }
     parts.extend(stage.fix_tasks.iter().cloned());
     let detail = if parts.is_empty() {
@@ -218,15 +218,6 @@ fn stage_line(stage: &proto::StageInfo, of: usize) -> String {
         stage.merged,
         stage.tasks
     )
-}
-
-/// `42s`, `41m 12s` or `3h 2m`.
-fn duration(secs: u64) -> String {
-    match secs {
-        0..60 => format!("{secs}s"),
-        60..3600 => format!("{}m {}s", secs / 60, secs % 60),
-        _ => format!("{}h {}m", secs / 3600, secs % 3600 / 60),
-    }
 }
 
 #[allow(clippy::too_many_arguments)]

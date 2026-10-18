@@ -102,7 +102,7 @@ pub fn tree_text(windows: &[WindowInfo], project: Option<ProjectQuery<'_>>) -> S
                 info.runtime.label(),
                 info.model.as_deref().unwrap_or("-"),
                 info.status.label(),
-                tree::format_elapsed(info.since_secs),
+                common::numbers::duration(info.since_secs),
                 tool_suffix(info.tool.as_deref())
             ),
             RowKind::Subagent { info, .. } => writeln!(
@@ -121,7 +121,7 @@ pub fn tree_text(windows: &[WindowInfo], project: Option<ProjectQuery<'_>>) -> S
                 } else {
                     state_label(info.state)
                 },
-                tree::format_elapsed(subagent_duration(info)),
+                common::numbers::duration(subagent_duration(info)),
                 tool_suffix(info.tool.as_deref())
             ),
             // `tree::build` lists plain windows only; run rows need the run snapshot.

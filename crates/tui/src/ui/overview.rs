@@ -201,7 +201,9 @@ fn run_title(app: &App, run_id: &str, width: u16) -> (String, Option<String>) {
     let Some(run) = app.runs.runs.iter().find(|run| run.run_id == run_id) else {
         return (format!("run {}", crate::safe_text::one_line(run_id)), None);
     };
-    let since = |at: u64| tree::format_elapsed(app.run_age(at));
+    // A title competes for its row's width, and shows the graph node's own coarse time
+    // (milestone 9.19 decisions 4 and 6).
+    let since = |at: u64| common::numbers::duration_coarse(app.run_age(at));
     let rights = if run.state == proto::RunState::Planning {
         vec![format!("planning · {}", since(run.created_at))]
     } else {

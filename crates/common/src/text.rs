@@ -1,20 +1,8 @@
 //! Text helpers the daemon's reports and the client both print (decision 10). Pure.
-//! `budget_text` keeps its current output until milestone 9.19.6 switches it to
-//! `numbers::budget_text`.
 
-use proto::Budget;
-
-/// Moved to [`crate::numbers`] (milestone 9.19); the one `tokens`.
-pub use crate::numbers::tokens;
-
-/// `<calls> calls <minutes>m`, then ` <tokens> tok` (M8b's `k`/`M` notation) when set.
-pub fn budget_text(b: &Budget) -> String {
-    let mut text = format!("{} calls {}m", b.tool_calls, b.minutes);
-    if let Some(tokens) = b.tokens {
-        text.push_str(&format!(" {} tok", self::tokens(tokens)));
-    }
-    text
-}
+/// Moved to [`crate::numbers`] (milestone 9.19); the one `tokens` and the one
+/// `budget_text` (`40 calls · 20 min · 200k tok`).
+pub use crate::numbers::{budget_text, tokens};
 
 /// `YYYY-MM-DD HH:MM:SSZ` in UTC, days-from-civil arithmetic (Howard Hinnant's
 /// algorithm), no new dependency.

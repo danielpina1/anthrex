@@ -101,12 +101,12 @@ pub(super) fn render_task(run: &Run, task: &Task, now: u64, out: &mut String) {
             None => "",
         };
         out.push_str(&format!(
-            "Check {}: ok={} code={:?} timed_out={} {}s ({}){}{source}\n",
+            "Check {}: ok={} code={:?} timed_out={} {} ({}){}{source}\n",
             i + 1,
             c.ok,
             c.code,
             c.timed_out,
-            c.secs,
+            common::numbers::duration(c.secs),
             format_utc(c.at),
             if c.on_candidate { ", on candidate" } else { "" }
         ));
@@ -264,7 +264,7 @@ fn messages(task: &Task, out: &mut String) {
 fn budget_and_spend(task: &Task, now: u64, out: &mut String) {
     let budget = task.budget;
     out.push_str(&format!(
-        "Budget: {} tool calls, {}m{}\n",
+        "Budget: {} tool calls, {} min{}\n",
         budget.tool_calls,
         budget.minutes,
         budget
@@ -273,18 +273,18 @@ fn budget_and_spend(task: &Task, now: u64, out: &mut String) {
     ));
     let total = ladder::total_spend(task, now);
     out.push_str(&format!(
-        "Spent: {} tool calls, {}m, {} tokens (billable)\n",
+        "Spent: {} tool calls, {}, {} tokens (billable)\n",
         total.tool_calls,
-        total.secs / 60,
+        common::numbers::duration(total.secs),
         tokens(total.tokens)
     ));
     if task.epoch.is_some() {
         let since_retry = epoch_spend(task, now);
         if since_retry.tool_calls != total.tool_calls || since_retry.tokens != total.tokens {
             out.push_str(&format!(
-                "Spent since last retry: {} tool calls, {}m, {} tokens (billable)\n",
+                "Spent since last retry: {} tool calls, {}, {} tokens (billable)\n",
                 since_retry.tool_calls,
-                since_retry.secs / 60,
+                common::numbers::duration(since_retry.secs),
                 tokens(since_retry.tokens)
             ));
         }

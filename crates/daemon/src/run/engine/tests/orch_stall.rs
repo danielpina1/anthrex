@@ -43,8 +43,8 @@ fn a_note_unanswered_for_stall_after_secs_stalls_it_and_a_tool_call_clears_it() 
     assert!(fx.run().revision > before, "the change is published");
     assert!(fx.run().log.iter().any(|e| e.text
         == format!(
-            "the orchestrator has not acted for {} min; its alerts go to you",
-            stall / 60
+            "the orchestrator has not acted for {}; its alerts go to you",
+            common::numbers::duration(stall)
         )));
     orch_tool(&mut fx, ORCH, "edit_plan", json!({"edits": []}));
     assert_eq!(stuck(&fx), None);
@@ -53,6 +53,23 @@ fn a_note_unanswered_for_stall_after_secs_stalls_it_and_a_tool_call_clears_it() 
             .log
             .iter()
             .any(|e| e.text == "the orchestrator is acting again")
+    );
+}
+
+/// Milestone 9.19 decision 4: a stall under a minute is not `0 min`.
+#[test]
+fn a_sub_minute_stall_is_not_zero_minutes() {
+    let mut fx = approved();
+    fx.run_mut().limits.stall_after_secs = 45;
+    user_edit(&mut fx);
+    let since = fx.now;
+    fx.send(since + 45, EventKind::Tick);
+    assert_eq!(stuck(&fx), Some(OrchestratorStuck::Stalled { since }));
+    let text = "the orchestrator has not acted for 45s; its alerts go to you";
+    assert!(
+        fx.run().log.iter().any(|e| e.text == text),
+        "{:?}",
+        fx.run().log.iter().map(|e| &e.text).collect::<Vec<_>>()
     );
 }
 

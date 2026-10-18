@@ -52,8 +52,8 @@ pub(super) fn tick(run: &mut Run, now: u64) {
         run,
         now,
         format!(
-            "the orchestrator has not acted for {} min; its alerts go to you",
-            stall / 60
+            "the orchestrator has not acted for {}; its alerts go to you",
+            common::numbers::duration(stall)
         ),
     );
 }

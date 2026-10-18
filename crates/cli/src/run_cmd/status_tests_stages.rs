@@ -101,8 +101,34 @@ fn stage_lines_show_each_tier3_state() {
         [
             "stage 1/4  anthrex/add-reset-3f9a/stage-1  1/1 merged  tier 3 red (42s)",
             "stage 2/4  anthrex/add-reset-3f9a/stage-2  0/1 merged  tier 3 running",
-            "stage 3/4  anthrex/add-reset-3f9a/stage-3  0/0 merged  tier 3 green (3h 2m)",
+            "stage 3/4  anthrex/add-reset-3f9a/stage-3  0/0 merged  tier 3 green (3h 02m)",
             "stage 4/4  anthrex/add-reset-3f9a/stage-4  0/0 merged  tier 3 none",
         ]
     );
+}
+
+/// Milestone 9.19 decision 4: a tier-3 run of 2472 s reads `41m 12s` here as in the
+/// TUI's stage inspector (its test of the same name), and hours pad their minutes.
+#[test]
+fn the_same_span_reads_the_same_everywhere() {
+    let mut multi = example();
+    multi.stages = vec![
+        stage(1, Some("1"), (1, 1), full(FullState::Green, Some(2472))),
+        stage(
+            2,
+            Some("2"),
+            (0, 1),
+            full(FullState::Red, Some(3 * 3600 + 120)),
+        ),
+    ];
+    let text = run_block(&multi, 0, Zone::Local(0));
+    let lines: Vec<&str> = text.lines().filter(|l| l.starts_with("stage ")).collect();
+    assert_eq!(
+        lines,
+        [
+            "stage 1/2  anthrex/add-reset-3f9a/stage-1  1/1 merged  tier 3 green (41m 12s)",
+            "stage 2/2  anthrex/add-reset-3f9a/stage-2  0/1 merged  tier 3 red (3h 02m)",
+        ]
+    );
+    assert!(text.contains(&common::numbers::duration(2472)));
 }

@@ -115,7 +115,8 @@ pub fn narrow_line(
         } => {
             let focused = app.focused == Some(info.id);
             let tag = tree::runtime_tag(info.runtime);
-            let elapsed = tree::format_elapsed(app.elapsed_secs(info));
+            // Milestone 9.19 decision 4: a fixed-width cell, so the largest unit only.
+            let elapsed = common::numbers::duration_coarse(app.elapsed_secs(info));
             let model = info
                 .model
                 .as_deref()

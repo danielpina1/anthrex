@@ -53,7 +53,7 @@ fn a_codex_interrupt_exit_ends_the_turn_and_gets_the_nudge() {
     let effects = exited(&mut fx, window);
     assert!(resume_messages(&effects).is_empty(), "{effects:#?}");
     // Codex: the next turn is an `exec resume` the delivery starts.
-    assert_eq!(delivers(&effects), vec![stall_nudge(10)]);
+    assert_eq!(delivers(&effects), vec![stall_nudge(600)]);
     let round = &fx.task("t1").rounds[0];
     assert_eq!((round.deaths, round.stall), (0, StallState::Nudged));
     assert_alive(&fx);
@@ -71,7 +71,7 @@ fn a_claude_exit_on_the_interrupt_resumes_with_the_nudge() {
     let quiet = fx.task("t1").rounds[0].last_event;
     fx.send(quiet + 601, EventKind::Tick);
     let effects = exited(&mut fx, window);
-    assert_eq!(resume_messages(&effects), vec![stall_nudge(10)]);
+    assert_eq!(resume_messages(&effects), vec![stall_nudge(600)]);
     assert!(!resume_messages(&effects).contains(&RESUME_AFTER_EXIT.to_string()));
     assert_eq!(fx.task("t1").rounds[0].deaths, 0);
     assert_alive(&fx);
@@ -337,7 +337,9 @@ fn a_refused_fresh_launch_keeps_its_messages() {
     let wrap_up = crate::run::contract::budget_wrap_up(
         proto::Spend {
             tool_calls: 1,
-            secs: 0,
+            // The fixture's clock: two seconds into the session (milestone 9.19
+            // decision 4 prints the spent time to the second).
+            secs: 2,
             tokens: 0,
         },
         t1.budget,

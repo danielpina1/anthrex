@@ -55,10 +55,10 @@ pub fn section(run: &Run, out: &mut String) {
         .map(|kind| design.gate_versions(kind))
         .sum();
     out.push_str(&format!(
-        "\ndesign phases: {} calls, {} tokens, {} min, {versions} gate versions\n",
+        "\ndesign phases: {} calls, {} tokens, {}, {versions} gate versions\n",
         totals.calls,
         common::numbers::tokens(totals.tokens),
-        totals.secs / 60
+        common::numbers::duration(totals.secs)
     ));
 }
 

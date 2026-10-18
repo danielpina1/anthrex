@@ -424,7 +424,7 @@ fn a_profile_saved_failing_its_check_is_not_plain_ready() {
     screen_mut(&mut app).stored = shown(sp_profile(), v, vec![]);
     let buffer = audit::draw(&app, 120, 40);
     let rows = interior(&buffer, false).rows;
-    let line = "Ready · check saved failing its check · verified 2 days ago";
+    let line = "Ready · check saved failing its check · verified 2d 00h ago";
     assert!(rows[0].ends_with(line), "{}", rows.join("\n"));
     let &(x, y) = audit::find(&buffer, line).first().unwrap();
     assert_eq!(buffer[(x, y)].fg, attention);

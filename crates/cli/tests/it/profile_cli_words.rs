@@ -45,18 +45,26 @@ fn ready(status: &proto::ProfileStatus) -> bool {
     )
 }
 
-/// `  Ready · verified <n>s ago`, the age being digits and a unit.
+/// `  Ready · verified <age>`, the age `numbers::ago`'s (milestone 9.19 decision 4):
+/// `just now`, or one or two units (`42s ago`, `1m 05s ago`).
 fn is_ready_line(line: &str) -> bool {
-    let Some(age) = line
-        .strip_prefix("  Ready · verified ")
-        .and_then(|rest| rest.strip_suffix(" ago"))
-    else {
+    let Some(age) = line.strip_prefix("  Ready · verified ") else {
         return false;
     };
-    let digits = age.trim_end_matches(|c: char| c.is_ascii_alphabetic());
-    !digits.is_empty()
-        && digits.chars().all(|c| c.is_ascii_digit())
-        && matches!(&age[digits.len()..], "s" | "m" | "h")
+    if age == "just now" {
+        return true;
+    }
+    let Some(age) = age.strip_suffix(" ago") else {
+        return false;
+    };
+    let unit = |part: &str| {
+        let digits = part.trim_end_matches(|c: char| c.is_ascii_alphabetic());
+        !digits.is_empty()
+            && digits.chars().all(|c| c.is_ascii_digit())
+            && matches!(&part[digits.len()..], "s" | "m" | "h" | "d")
+    };
+    let parts: Vec<&str> = age.split(' ').collect();
+    (1..=2).contains(&parts.len()) && parts.iter().all(|part| unit(part))
 }
 
 /// Detect, `use --yes` stores; then an edit proposal is stored with the alias `confirm`.

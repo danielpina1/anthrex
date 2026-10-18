@@ -257,7 +257,7 @@ fn the_screen_at_80x24_and_120x40() {
             let i = interior(&buffer, ascii);
             let (rows, iw) = (&i.rows, usize::from(i.width));
             let all = rows.join("\n");
-            let status = f("Ready · verified 2 days ago");
+            let status = f("Ready · verified 2d 00h ago");
             assert_eq!(rows[0], format!("{status:>iw$}"), "{w}x{h}\n{all}");
             assert_eq!(rows[1], "");
             for want in [
@@ -371,7 +371,7 @@ fn every_status_line_draws() {
         ),
         (
             status_of(true, None),
-            "Ready · verified 2 days ago",
+            "Ready · verified 2d 00h ago",
             Role::Done,
         ),
         (

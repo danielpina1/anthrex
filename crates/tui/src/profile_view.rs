@@ -314,7 +314,7 @@ fn row(
     }
 }
 
-/// Interfaces "Profile check cell": `✓ 0 · 4s`, `✗ 101 · 12s`, `✗ timed out · 600s`;
+/// Interfaces "Profile check cell": `✓ 0 · 4s`, `✗ 101 · 12s`, `✗ timed out · 10m 00s`;
 /// in ASCII `+`/`x` and `-`.
 pub fn check_cell(c: &CommandCheck, ascii: bool) -> String {
     let mark = glyph(if c.ok { Glyph::Passed } else { Glyph::Failed }, ascii);
@@ -324,13 +324,13 @@ pub fn check_cell(c: &CommandCheck, ascii: bool) -> String {
         (false, Some(code)) => code.to_string(),
         (false, None) => "no exit code".to_string(),
     };
-    format!("{mark} {how} {dot} {}s", c.secs)
+    format!("{mark} {how} {dot} {}", common::numbers::duration(c.secs))
 }
 
-/// Decision 28: the card's check cell, `✓ 12s` / `✗ 3m10s` (ASCII `+` / `x`).
+/// Decision 28: the card's check cell, `✓ 12s` / `✗ 3m 10s` (ASCII `+` / `x`).
 pub fn card_cell(c: &CommandCheck, ascii: bool) -> String {
     let mark = glyph(if c.ok { Glyph::Passed } else { Glyph::Failed }, ascii);
-    format!("{mark} {}", crate::profile_words::took(c.secs))
+    format!("{mark} {}", common::numbers::duration(c.secs))
 }
 
 /// The changes card's rows: only those marked against the stored profile.

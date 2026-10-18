@@ -337,7 +337,7 @@ fn a_race_holds_the_head_of_the_line_then_gives_up() {
     let t1 = fx.task("t1");
     assert!(t1.race.is_none() && t1.race_wait_since.is_none());
     assert_eq!(t1.state, TaskState::Preparing);
-    let note = "race skipped: no second writer slot within 120 s";
+    let note = "race skipped: no second writer slot within 2m 00s";
     assert!(t1.notes.iter().any(|n| n == note));
     assert!(!started(&fx, "t3"), "the one slot left is t1's");
 }
@@ -407,7 +407,7 @@ fn a_same_runtime_race_needs_two_slots_under_its_runtimes_cap() {
     fx.send(since + 120, EventKind::Tick);
     let t1 = fx.task("t1");
     assert!(t1.race.is_none());
-    let note = "race skipped: no second writer slot within 120 s";
+    let note = "race skipped: no second writer slot within 2m 00s";
     assert!(t1.notes.iter().any(|n| n == note), "{:?}", t1.notes);
 }
 

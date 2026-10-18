@@ -266,7 +266,7 @@ fn an_interrupted_turn_with_activity_gets_the_nudge_not_the_fallback() {
     fx.signal(w, AgentSignal::Activity);
     let effects = fx.turn_completed(w);
     assert!(ops_in(&effects, "CountCommits").is_empty(), "{effects:#?}");
-    assert_eq!(delivers(&effects), vec![stall_nudge(stall / 60)]);
+    assert_eq!(delivers(&effects), vec![stall_nudge(stall)]);
     assert_alive(&fx);
 }
 
@@ -298,7 +298,7 @@ fn a_codex_interrupt_exit_after_activity_is_the_turns_end() {
         "{effects:#?}"
     );
     assert_eq!(fx.task("t1").rounds[0].deaths, 0);
-    assert_eq!(delivers(&effects), vec![stall_nudge(stall / 60)]);
+    assert_eq!(delivers(&effects), vec![stall_nudge(stall)]);
     assert_alive(&fx);
 }
 

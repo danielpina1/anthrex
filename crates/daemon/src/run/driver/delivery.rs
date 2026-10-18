@@ -98,8 +98,10 @@ pub(crate) async fn preflight(
         // A panicking host is a bug: the start is refused, never retried silently.
         Ok(Err(error)) => Err(format!("preflight did not finish: {error}")),
         Err(_) => Err(format!(
-            "preflight: gh did not answer within {} s",
-            bound.as_millis().div_ceil(1000)
+            "preflight: gh did not answer within {}",
+            common::numbers::duration(
+                u64::try_from(bound.as_millis().div_ceil(1000)).unwrap_or(u64::MAX)
+            )
         )),
     }
 }

@@ -281,7 +281,10 @@ async fn task_result_answers_a_git_error_at_its_one_deadline() {
             .expect("only the reads' deadline can end them");
     let took = started.elapsed();
     assert!(ok, "{result}");
-    let text = format!("git did not answer within {} s", DEADLINE.as_secs());
+    let text = format!(
+        "git did not answer within {}",
+        common::numbers::duration(DEADLINE.as_secs())
+    );
     assert_eq!(result["git"], text, "{result}");
     assert!(result.get("commits").is_none(), "{result}");
     assert!(took >= DEADLINE, "{took:?}");

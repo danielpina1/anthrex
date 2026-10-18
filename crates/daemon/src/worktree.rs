@@ -113,7 +113,7 @@ pub enum WorktreeError {
     FailedAfterAdd(String),
     #[error("git is not installed or not on PATH")]
     GitMissing,
-    #[error("git {args} timed out after {secs} s")]
+    #[error("git {args} timed out after {}", common::numbers::duration(*secs))]
     TimedOut { args: String, secs: u64 },
 }
 

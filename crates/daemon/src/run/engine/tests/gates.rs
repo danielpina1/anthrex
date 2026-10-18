@@ -436,7 +436,7 @@ fn a_timed_out_check_says_so() {
     };
     assert_eq!(
         check_failed_message("make test", &record),
-        "[anthrex] The check failed (timed out after 30 minutes): make test\nLast 40 lines:\nslow\nFix it, commit, then call task_done again."
+        "[anthrex] The check failed (timed out after 30m 00s): make test\nLast 40 lines:\nslow\nFix it, commit, then call task_done again."
     );
 }
 

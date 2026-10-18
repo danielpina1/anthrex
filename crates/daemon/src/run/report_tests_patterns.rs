@@ -83,8 +83,8 @@ fn report_has_race_pair_concurrency_and_tuning() {
     run.concurrency.insert("codex".into(), codex);
     // The start's tuning lines (decision 12), one of them `configured`.
     let start = [
-        "tuning: budget S 40 calls 15m configured (refit would be 55 calls 18m)",
-        "tuning: path weights S 550s, M 1650s (derived), hub 1650s (derived)",
+        "tuning: budget S 40 calls · 15 min configured (refit would be 55 calls · 18 min)",
+        "tuning: path weights S 9m 10s, M 27m 30s (derived), hub 27m 30s (derived)",
     ];
     // As the start freezes them (ruling T21-1); they also open its log.
     run.tuning_lines = start.iter().map(|text| text.to_string()).collect();

@@ -3,6 +3,7 @@
 //! labels and hints of every key, ages and durations, delivery's text and the set-up
 //! alert's text. No I/O: `now` is passed in.
 
+use common::numbers::ago;
 use proto::{
     DeliveryMode, DeliveryProfile, ProfileSource, ProfileStatus, ProposalOrigin, ProposalState,
     SetupState,
@@ -11,26 +12,6 @@ use proto::{
 /// The folded Advanced line's summary.
 pub const ADVANCED_SUMMARY: &str =
     "testing tiers, output filter, environment, timeouts, shared code area";
-
-/// `<n>s`, `<n>m`, `<n>h`, `1 day`, `<n> days`.
-pub fn age(secs: u64) -> String {
-    match secs {
-        0..=59 => format!("{secs}s"),
-        60..=3599 => format!("{}m", secs / 60),
-        3600..=86_399 => format!("{}h", secs / 3600),
-        86_400..=172_799 => "1 day".to_string(),
-        _ => format!("{} days", secs / 86_400),
-    }
-}
-
-/// How long a command took: `12s`, `3m10s`, `1h05m`.
-pub fn took(secs: u64) -> String {
-    match secs {
-        0..=59 => format!("{secs}s"),
-        60..=3599 => format!("{}m{:02}s", secs / 60, secs % 60),
-        _ => format!("{}h{:02}m", secs / 3600, secs % 3600 / 60),
-    }
-}
 
 /// The stale paths as a status line names them: the first, then ` and <n> more`.
 fn files(stale: &[String]) -> String {
@@ -104,7 +85,7 @@ pub fn status_line_tone(status: &ProfileStatus, now: u64) -> (String, StatusTone
             );
         }
         let line = match status.verified_at.or(status.confirmed_at) {
-            Some(at) => format!("Ready · verified {} ago", age(now.saturating_sub(at))),
+            Some(at) => format!("Ready · verified {}", ago(now.saturating_sub(at))),
             None => "Ready".to_string(),
         };
         return (line, Ready);

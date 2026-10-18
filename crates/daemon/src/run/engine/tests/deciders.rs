@@ -168,7 +168,7 @@ fn summary_fallback_uses_the_tail_and_is_marked() {
     let effects = check_fails(&mut fx, "t1", window);
     let at = fx.now;
     let (op, _, request) = decide_op(&effects);
-    let fallback = fallback_decision(&request, "the decider timed out after 90 s".into());
+    let fallback = fallback_decision(&request, "the decider timed out after 1m 30s".into());
     let effects = fx.decided(op, fallback);
     let expected = record(at, false, Some(DeciderSource::Fallback));
     assert_eq!(fx.task("t1").checks, vec![expected.clone()]);
@@ -182,7 +182,7 @@ fn summary_fallback_uses_the_tail_and_is_marked() {
         fx.task("t1")
             .history
             .iter()
-            .any(|e| e.text == "check summary: fallback (the decider timed out after 90 s)"),
+            .any(|e| e.text == "check summary: fallback (the decider timed out after 1m 30s)"),
         "{:#?}",
         fx.task("t1").history
     );
@@ -322,7 +322,7 @@ fn a_decider_waiting_past_slot_wait_falls_back_on_tick() {
     assert!(
         t1.history
             .iter()
-            .any(|e| e.text == "check summary: fallback (no reader slot was free within 30 s)"),
+            .any(|e| e.text == "check summary: fallback (no reader slot was free within 30s)"),
         "{:#?}",
         t1.history
     );

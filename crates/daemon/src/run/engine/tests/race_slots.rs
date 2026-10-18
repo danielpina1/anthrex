@@ -139,7 +139,7 @@ fn the_slot_wait_gives_up_once() {
     for at in [121, 180, 240, 241, 300] {
         fx.send(since + at, EventKind::Tick);
     }
-    let text = "race skipped: no second writer slot within 120 s";
+    let text = "race skipped: no second writer slot within 2m 00s";
     assert_eq!(lines(&fx, "t1", text), 1);
     assert_eq!(history_lines(&fx, "t1", text), 1);
     assert_eq!(fx.task("t1").race_wait_since, None);

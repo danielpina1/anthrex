@@ -244,7 +244,7 @@ fn paused_attention_only_after_ten_minutes() {
     assert!(lines.iter().all(|l| !l.starts_with("t1 ")), "{lines:?}");
     let lines = attention(fx.run(), since + 600);
     assert!(
-        lines.contains(&"t1 paused(message) for 10 min".to_string()),
+        lines.contains(&"t1 paused(message) for 10m 00s".to_string()),
         "{lines:?}"
     );
 }

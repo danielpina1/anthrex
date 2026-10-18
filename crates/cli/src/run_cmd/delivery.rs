@@ -196,7 +196,7 @@ pub fn status_lines(run: &RunInfo) -> String {
         return String::new();
     };
     let watching = if d.watching {
-        format!("watching every {} s", d.poll_secs)
+        format!("watching every {}", common::numbers::duration(d.poll_secs))
     } else {
         "not watching".to_string()
     };
@@ -377,8 +377,8 @@ fn bare_under(dir: &Path, bare: &Path, program: &OsStr, bound: Duration) -> anyh
     let stdout = match daemon::subprocess::run(&mut git, 64 * 1024, bound) {
         Outcome::Complete(stdout) => stdout,
         Outcome::TimedOut(_) => anyhow::bail!(
-            "fake-github: git did not answer within {}s",
-            bound.as_secs()
+            "fake-github: git did not answer within {}",
+            common::numbers::duration(bound.as_secs())
         ),
         Outcome::Failed | Outcome::Truncated(_) => return Err(refuse()),
     };

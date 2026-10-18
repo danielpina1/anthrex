@@ -64,7 +64,7 @@ fn task_fields_match_the_mockup() {
             ),
             (
                 "budget",
-                "███████░░░ 104/150 tool calls · 38/60 min · 410k tokens"
+                "███████░░░ 104/150 tool calls · 38m 00s of 60 min · 410k tokens"
             ),
             (
                 "tries",
@@ -246,7 +246,7 @@ fn task_without_diff_or_review_omits_them() {
             ("deps", "unblocks t2 · on critical path"),
             (
                 "budget",
-                "░░░░░░░░░░ 0/100 tool calls · 0/30 min · 0 tokens"
+                "░░░░░░░░░░ 0/100 tool calls · 0s of 30 min · 0 tokens"
             ),
             ("tries", "review 0/2 bounces · check 0/2"),
         ]
@@ -267,13 +267,13 @@ fn task_budget_with_tokens() {
     let app = with_task("t2", |task| task.budget.tokens = Some(3_000_000));
     assert_eq!(
         value(&inspect_node(&app, &task_key("t2")), "budget"),
-        Some("███████░░░ 104/150 tool calls · 38/60 min · 410k/3.0M tokens")
+        Some("███████░░░ 104/150 tool calls · 38m 00s of 60 min · 410k/3.0M tokens")
     );
     // The minute fraction wins when it is larger; an empty budget never divides by 0.
     let app = with_task("t2", |task| task.spent_session.secs = 3300);
     assert_eq!(
         value(&inspect_node(&app, &task_key("t2")), "budget"),
-        Some("█████████░ 104/150 tool calls · 55/60 min · 410k tokens")
+        Some("█████████░ 104/150 tool calls · 55m 00s of 60 min · 410k tokens")
     );
     let app = with_task("t2", |task| {
         task.budget.tool_calls = 0;
@@ -281,7 +281,7 @@ fn task_budget_with_tokens() {
     });
     assert_eq!(
         value(&inspect_node(&app, &task_key("t2")), "budget"),
-        Some("██████████ 104/0 tool calls · 38/0 min · 410k tokens")
+        Some("██████████ 104/0 tool calls · 38m 00s of 0 min · 410k tokens")
     );
 }
 

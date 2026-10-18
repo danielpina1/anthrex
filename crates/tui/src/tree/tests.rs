@@ -546,15 +546,6 @@ fn row_index_finds_keys_and_runtime_tags_are_fixed() {
 }
 
 #[test]
-fn elapsed_time_uses_existing_sidebar_units() {
-    assert_eq!(format_elapsed(0), "0s");
-    assert_eq!(format_elapsed(59), "59s");
-    assert_eq!(format_elapsed(60), "1m");
-    assert_eq!(format_elapsed(3599), "59m");
-    assert_eq!(format_elapsed(3600), "1h");
-}
-
-#[test]
 fn node_keys_are_hashable_path_owners() {
     let key = NodeKey::Project(PathBuf::from("/r/shop"));
     let set = std::collections::HashSet::from([key.clone()]);

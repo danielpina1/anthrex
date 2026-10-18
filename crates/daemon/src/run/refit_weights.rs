@@ -47,7 +47,11 @@ pub(super) fn weights_moved(new: &PathWeights, cur: &PathWeights, pct: u32) -> b
 pub(super) fn weights_text(w: &PathWeights) -> String {
     let part = |label: &str, secs: u64| {
         let derived = w.derived.iter().any(|d| d == label);
-        format!("{label} {secs}s{}", if derived { " (derived)" } else { "" })
+        format!(
+            "{label} {}{}",
+            common::numbers::duration(secs),
+            if derived { " (derived)" } else { "" }
+        )
     };
     format!(
         "{}, {}, {}",

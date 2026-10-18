@@ -301,7 +301,7 @@ fn green_and_red_stages_show_their_time() {
         two.full.state = FullState::Red;
         two.full.secs = Some(64);
     });
-    assert_eq!(stage_text(&app, 2), "stage 2/2  tier 3 ✗ 1m04s");
+    assert_eq!(stage_text(&app, 2), "stage 2/2  tier 3 ✗ 1m");
     let app = staged(|two| two.full.state = FullState::Running);
     assert_eq!(stage_text(&app, 2), "stage 2/2  tier 3 running");
     let app = staged(|two| two.full.state = FullState::None);

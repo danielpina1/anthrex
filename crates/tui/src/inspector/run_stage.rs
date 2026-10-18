@@ -6,6 +6,7 @@ use super::run_format::{clean, kind_glyph, rows};
 use super::{Field, Inspection, field};
 use crate::app::App;
 use crate::tree::RowKind;
+use common::numbers::duration;
 use proto::{FullState, RunInfo, StageInfo, TaskInfo, TaskOrigin, TierInfo};
 
 /// Names a tier line shows before `+<k>`.
@@ -61,17 +62,6 @@ fn short(sha: &str) -> String {
     clean(&sha.chars().take(7).collect::<String>())
 }
 
-/// `42s`, `2m10s`, `1h02m`.
-pub(crate) fn tier_duration(secs: u64) -> String {
-    if secs < 60 {
-        format!("{secs}s")
-    } else if secs < 3600 {
-        format!("{}m{:02}s", secs / 60, secs % 60)
-    } else {
-        format!("{}h{:02}m", secs / 3600, secs % 3600 / 60)
-    }
-}
-
 /// `a, b, c +2`.
 fn names(list: &[String]) -> String {
     let shown: Vec<String> = list.iter().take(NAMES_SHOWN).map(|n| clean(n)).collect();
@@ -82,7 +72,7 @@ fn names(list: &[String]) -> String {
     text
 }
 
-/// `green at abc1234 · 41m12s · 2 shards · flaky a::x`; `not run` before any job. The
+/// `green at abc1234 · 41m 12s · 2 shards · flaky a::x`; `not run` before any job. The
 /// failing names are a row of their own (milestone 9.0.7 decision 18).
 fn tier3_text(stage: &StageInfo) -> String {
     let full = &stage.full;
@@ -100,7 +90,7 @@ fn tier3_text(stage: &StageInfo) -> String {
         parts[0].push_str(&format!(" at {}", short(commit)));
     }
     if let Some(secs) = full.secs {
-        parts.push(tier_duration(secs));
+        parts.push(duration(secs));
     }
     if full.commit.is_some() {
         parts.push(match full.shards {
@@ -163,11 +153,11 @@ fn origin_text(task: &TaskInfo) -> String {
     }
 }
 
-/// `tier 1: 3 modules · 2m10s · 1 cached · flaky t_x`, red marked `· red`.
+/// `tier 1: 3 modules · 2m 10s · 1 cached · flaky t_x`, red marked `· red`.
 fn tier_text(tier: &TierInfo) -> String {
     let mut parts = vec![
         format!("tier {}: {}", tier.tier, clean(&tier.affected)),
-        tier_duration(tier.secs),
+        duration(tier.secs),
     ];
     if tier.cached > 0 {
         parts.push(format!("{} cached", tier.cached));

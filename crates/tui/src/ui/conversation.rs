@@ -340,9 +340,10 @@ fn tool_spans(ctx: &Ctx, turn_id: u64, block: usize) -> (u16, Spans, Spans) {
         ToolState::Denied => (g.denied, Muted),
     };
     let mut right = vec![Span::styled(glyph, role(r, ctx.app.palette()))];
-    // Decision 30: a duration that would read `0.0s` (under 50 ms) says nothing.
-    if let Some(ms) = duration_ms.filter(|ms| *ms >= 50) {
-        right.push(Span::raw(format!(" {:.1}s", f64::from(ms) / 1000.0)));
+    // Decision 30: a duration that would read `0.0s` (under 100 ms, floored by
+    // `numbers::duration_ms`, milestone 9.19 decision 4) says nothing.
+    if let Some(ms) = duration_ms.filter(|ms| *ms >= 100) {
+        right.push(Span::raw(format!(" {}", common::numbers::duration_ms(ms))));
     }
     (TEXT_INDENT as u16, left, right)
 }

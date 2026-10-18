@@ -22,7 +22,7 @@ use unicode_width::UnicodeWidthStr;
 
 /// Interfaces "Stats sections": the table's header, one column each.
 const HEADER: [&str; 9] = [
-    "class", "tasks", "merged", "lines", "calls", "tokens", "work", "bounces", "reverted",
+    "class", "tasks", "merged", "lines", "calls", "tokens", "med work", "bounces", "reverted",
 ];
 
 /// A `None` median.
@@ -66,11 +66,6 @@ pub(crate) fn title(s: &StatsScreen, p: Palette) -> String {
     format!("stats {} {}", dot(p), one_line(&name))
 }
 
-/// Work time in minutes, rounded to the nearest minute as `anthrex run stats` does.
-pub(crate) fn work(secs: u64) -> String {
-    format!("{}m", secs.saturating_add(30) / 60)
-}
-
 /// The table's cells, header first, every class sanitised.
 fn table(stats: &HistoryStats, p: Palette) -> Vec<Vec<String>> {
     let or = |v: Option<String>| v.unwrap_or_else(|| none(p).to_string());
@@ -83,7 +78,7 @@ fn table(stats: &HistoryStats, p: Palette) -> Vec<Vec<String>> {
             or(r.median_lines.map(|n| n.to_string())),
             or(r.median_tool_calls.map(|n| n.to_string())),
             or(r.median_tokens.map(common::numbers::tokens)),
-            or(r.median_work_secs.map(work)),
+            or(r.median_work_secs.map(common::numbers::duration)),
             r.bounces.to_string(),
             r.reverted.to_string(),
         ]);

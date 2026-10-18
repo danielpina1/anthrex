@@ -71,7 +71,7 @@ pub(super) async fn daemon_command(action: DaemonAction, socket: PathBuf) -> any
             .await?;
             if !released {
                 anyhow::bail!(
-                    "the daemon did not exit within 10 s; see {}",
+                    "the daemon did not exit within 10s; see {}",
                     proto::paths::log_path().display()
                 );
             }
@@ -85,8 +85,8 @@ pub(super) async fn daemon_command(action: DaemonAction, socket: PathBuf) -> any
             .await?;
             if !exited {
                 anyhow::bail!(
-                    "the daemon released its data directory but its process did not exit within {} s; see {}",
-                    EXIT_WAIT.as_secs(),
+                    "the daemon released its data directory but its process did not exit within {}; see {}",
+                    common::numbers::duration(EXIT_WAIT.as_secs()),
                     proto::paths::log_path().display()
                 );
             }

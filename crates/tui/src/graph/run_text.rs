@@ -159,13 +159,13 @@ pub(crate) fn task_text_in(task: &TaskInfo, ascii: bool) -> String {
 /// Milestone 9.0.7 decision 18 (after 9.1 decision 55): `stage <n>/<N>  tier 3 ` then
 /// `✓[ <secs>]` (green), `✗[ <secs>]` (red), `✗ bisecting`, `running`, or `◌` (not run,
 /// or no head yet: as `theme::stage_look` reads it), `N` the run's stage count and the
-/// time `run_stage::tier_duration`'s. The marks are their ASCII twins in ASCII.
+/// time `numbers::duration_coarse`'s (a graph box, milestone 9.19 decision 4). The marks are their ASCII twins in ASCII.
 pub(crate) fn stage_text_in(run: &RunInfo, stage: &StageInfo, ascii: bool) -> String {
     let g = |mark| glyph(mark, ascii);
     let secs = stage
         .full
         .secs
-        .map(|secs| format!(" {}", crate::inspector::tier_duration(secs)))
+        .map(|secs| format!(" {}", common::numbers::duration_coarse(secs)))
         .unwrap_or_default();
     let tier = match stage.full.state {
         _ if stage.head.is_none() => g(Glyph::NotStarted).to_owned(),

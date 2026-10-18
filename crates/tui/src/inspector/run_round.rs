@@ -2,14 +2,14 @@
 //! Interfaces "Inspector contents, exact": Agent round). Pure, as `run.rs` is.
 
 use super::run_format::{
-    clean, counts_text, finding_text, format_duration, kind_glyph, most_severe, rank, route_label,
-    rows, session_text,
+    clean, counts_text, finding_text, kind_glyph, most_severe, rank, route_label, rows,
+    session_text,
 };
 use super::run_patterns;
 use super::{Field, Inspection, field};
 use crate::app::App;
 use crate::tree::{DisplayRound, RowKind, display_rounds, round_label_with_lane};
-use common::numbers::tokens;
+use common::numbers::{duration, tokens};
 use proto::{AgentRole, RaceLane, Route, RunInfo, Severity, TaskInfo};
 
 /// An agent round (Interfaces "Agent round").
@@ -33,11 +33,11 @@ pub(crate) fn round_inspection(
             .to_owned(),
         _ => "finished".to_owned(),
     };
-    let duration = match round.ended_at {
+    let elapsed = match round.ended_at {
         None => app.run_age(round.started_at),
         Some(ended) => ended.saturating_sub(round.started_at),
     };
-    let right = format!("{status} · {} · {}", format_duration(duration), task.id);
+    let right = format!("{status} · {} · {}", duration(elapsed), task.id);
     let label = round_label_with_lane(info.role, info.lane, info.session, round.number);
     let route = &info.route;
     let name = format!("{label}  {}", route_label(route));

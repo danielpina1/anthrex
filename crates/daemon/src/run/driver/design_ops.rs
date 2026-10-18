@@ -243,7 +243,8 @@ impl RunService {
         let Ok(mut slot) = tokio::time::timeout(IO_WAIT, slot.lock_owned()).await else {
             let secs = IO_WAIT.as_secs();
             return Err(format!(
-                "waiting for the round's first start took over {secs} s"
+                "waiting for the round's first start took over {}",
+                common::numbers::duration(secs)
             ));
         };
         let io = tokio::task::spawn_blocking(move || {
@@ -274,7 +275,10 @@ impl RunService {
         match tokio::time::timeout(IO_WAIT, io).await {
             Ok(Ok(read)) => read,
             Ok(Err(error)) => Err(error.to_string()),
-            Err(_) => Err(format!("reading it took over {} s", IO_WAIT.as_secs())),
+            Err(_) => Err(format!(
+                "reading it took over {}",
+                common::numbers::duration(IO_WAIT.as_secs())
+            )),
         }
     }
 }

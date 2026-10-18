@@ -104,14 +104,14 @@ fn wrapping(label: &'static str, value: &str) -> Field {
 
 const RUN: [&str; 12] = [
     "╭────────────────────────────────────────────────────────────────────────────────────╮",
-    "│ ◉ r1  Add Gemini runtime                                           running · 1h12m │",
+    "│ ◉ r1  Add Gemini runtime                                          running · 1h 12m │",
     "│ progress  ██████████░░░░░░░░  5/9 merged · 2 working · 1 review · 1 blocked        │",
     "│ path      critical path t0 → t6 → t2 → t3 · 2 tasks left · 1.2× the bound          │",
-    "│ agents    workers 3/3 · readers 1/3 · claude ok · codex rate-limited 4m            │",
+    "│ agents    workers 3/3 · readers 1/3 · claude ok · codex rate-limited 4m 00s        │",
     "│ spend     tokens 1.8M (all roles) · cache hits 71% of input · worker tool calls 6… │",
     "│ gate      plan approved 11:02 +00:00 · 2 plan edits since · last: split t2         │",
     "│ attention t5 blocked: question — \"Gemini has no subagent-stop event\"               │",
-    "│ est. left ~40m                                                                     │",
+    "│ est. left ~40m 00s                                                                 │",
     "│                                                                                    │",
     "│                                                                                    │",
     "╰────────────────────────────────────────────────────────────────────────────────────╯",
@@ -119,7 +119,7 @@ const RUN: [&str; 12] = [
 
 const PLANNER: [&str; 12] = [
     "╭────────────────────────────────────────────────────────────────────────────────────╮",
-    "│ ✓ planner A  daemon                               finished · planned 3 tasks in 2m │",
+    "│ ✓ planner A  daemon                           finished · planned 3 tasks in 2m 00s │",
     "│ progress  ███░░░░░░░  1/3 merged · 1 working · 1 waiting                           │",
     "│ area      crates/daemon/** · crates/cli/src/hook.rs                                │",
     "│ edits     3 accepted · 1 rejected (owns outside area) · re-planned once (t2 split) │",
@@ -139,7 +139,7 @@ const TASK: [&str; 12] = [
     "│ pipeline  done ✓ › proof ✓ › check ✓ › review › merge ◌                            │",
     "│ route     codex · high  →  reviewer claude · claude-opus-5 · high                  │",
     "│ deps      after t0 ✓, t6 ✓ · unblocks t3, t7 · on critical path                    │",
-    "│ budget    ███████░░░ 104/150 tool calls · 38/60 min · 410k tokens                  │",
+    "│ budget    ███████░░░ 104/150 tool calls · 38m 00s of 60 min · 410k tokens          │",
     "│ tries     review 1/2 bounces · check 0/2 · escalation step 1                       │",
     "│ diff      +212 −31 · 4 files · test `status::gemini_stop_marks_idle` red a1b2c3d ✓ │",
     "│ review    in review · r2                                                           │",
@@ -154,7 +154,7 @@ const TASK_NARROW: [&str; 12] = [
     "│ pipeline  done ✓ › proof ✓ › check ✓ › review ›… │",
     "│ route     codex · high  →  reviewer claude · cl… │",
     "│ deps      after t0 ✓, t6 ✓ · unblocks t3, t7 · … │",
-    "│ budget    ███████░░░ 104/150 tool calls · 38/60… │",
+    "│ budget    ███████░░░ 104/150 tool calls · 38m 0… │",
     "│ tries     review 1/2 bounces · check 0/2 · esca… │",
     "│ diff      +212 −31 · 4 files · test `status::ge… │",
     "│ review    in review · r2                         │",
@@ -165,7 +165,7 @@ const TASK_NARROW: [&str; 12] = [
 
 const WORKER: [&str; 12] = [
     "╭────────────────────────────────────────────────────────────────────────────────────╮",
-    "│ ⠋ worker #1 r2  codex · high                                     working · 6m · t2 │",
+    "│ ⠋ worker #1 r2  codex · high                                 working · 6m 00s · t2 │",
     "│ doing     last tool: apply_patch                                                   │",
     "│ activity  turns 14 · tool calls 41 · tokens 180k                                   │",
     "│ fixing    status.rs:118 critical — SubagentStop not paired                         │",
@@ -180,7 +180,7 @@ const WORKER: [&str; 12] = [
 
 const REVIEWER: [&str; 12] = [
     "╭────────────────────────────────────────────────────────────────────────────────────╮",
-    "│ ✗ review #1  claude · claude-opus-5 · high                      finished · 9m · t2 │",
+    "│ ✗ review #1  claude · claude-opus-5 · high                  finished · 9m 00s · t2 │",
     "│ judging   worker #1 · codex · high                                                 │",
     "│ route     claude · claude-opus-5 · high vs author codex · high                     │",
     "│ verdict   changes (blocking)                                                       │",
@@ -195,11 +195,11 @@ const REVIEWER: [&str; 12] = [
 
 const SCOUT: [&str; 12] = [
     "╭──────────────────────────────────────────────────────────╮",
-    "│ ✓ scout S1                                 reported · 3m │",
+    "│ ✓ scout S1                             reported · 3m 00s │",
     "│ question  where are Claude hook events parsed, and which │",
     "│           of them fire in -p mode?                       │",
     "│ state     reported                                       │",
-    "│ took      3m                                             │",
+    "│ took      3m 00s                                         │",
     "│ report    1840 bytes                                     │",
     "│ files     crates/daemon/src/hooks.rs, crates/daemon/src… │",
     "│ session   #4 · window closed                             │",
@@ -268,7 +268,10 @@ fn the_estimate_keeps_its_own_row() {
     let inspection = node(gemini_fixture(), run_key("r1"));
     for (width, height) in [(86, M8C_PANEL_HEIGHT), (80, 24)] {
         let rows = panel(&inspection, width, height);
-        let want = format!("│ est. left ~40m{}│", " ".repeat(usize::from(width) - 17));
+        let want = format!(
+            "│ est. left ~40m 00s{}│",
+            " ".repeat(usize::from(width) - 21)
+        );
         assert!(rows.contains(&want), "{width}×{height}: {rows:#?}");
     }
 }

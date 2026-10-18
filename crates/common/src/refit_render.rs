@@ -4,8 +4,7 @@
 
 use proto::{ClassTuning, RefitState, TuningReport};
 
-use crate::numbers::{Zone, clock_full};
-use crate::text::budget_text;
+use crate::numbers::{Zone, budget_text, clock_full, duration};
 
 /// Decision 10's line for a `tuning.toml` that did not parse (`error`, ruling T8-2) and
 /// was moved to `moved`: the first line of the block, and a run log line at a start.
@@ -35,8 +34,17 @@ pub fn render(report: &TuningReport) -> String {
     let width = (report.classes.iter())
         .map(|c| c.class.chars().count())
         .fold(5, usize::max);
+    // Milestone 9.19 decision 4: as wide as the widest budget (`40 calls · 20 min · 200k
+    // tok`), never less than 9.5's fourteen.
+    let budget_width = (report.classes.iter())
+        .map(|c| budget_text(&c.budget).chars().count())
+        .fold(14, usize::max);
     let row = |class: &str, samples: &str, budget: &str, weight: &str, refit: &str| {
-        row(class, width, (samples, budget, weight, refit))
+        row(
+            class,
+            (width, budget_width),
+            (samples, budget, weight, refit),
+        )
     };
     out.push_str(&row("CLASS", "SAMPLES", "BUDGET", "WEIGHT", "REFIT"));
     for c in &report.classes {
@@ -81,26 +89,24 @@ pub fn render(report: &TuningReport) -> String {
     out
 }
 
-/// One row in fixed widths, unlike M8b's table; the class column is `width` wide.
+/// One row in fixed widths, unlike M8b's table; the class column is `width` wide and
+/// the budget column `budget_width`. The weight column holds `59m 59s*`.
 fn row(
     class: &str,
-    width: usize,
+    (width, budget_width): (usize, usize),
     (samples, budget, weight, refit): (&str, &str, &str, &str),
 ) -> String {
-    format!("  {class:<width$}  {samples:<7}  {budget:<14}  {weight:<6}  {refit}\n")
+    format!("  {class:<width$}  {samples:<7}  {budget:<budget_width$}  {weight:<8}  {refit}\n")
 }
 
-/// `<m>m`, or `<s>s` under a minute, `*` when derived; `-` without weights.
+/// `numbers::duration` (milestone 9.19 decision 4), `*` when derived; `-` without
+/// weights.
 fn weight(c: &ClassTuning) -> String {
     let Some(secs) = c.weight_secs else {
         return "-".to_string();
     };
     let star = if c.weight_derived { "*" } else { "" };
-    if secs < 60 {
-        format!("{secs}s{star}")
-    } else {
-        format!("{}m{star}", secs / 60)
-    }
+    format!("{}{star}", duration(secs))
 }
 
 fn refit(state: RefitState) -> String {

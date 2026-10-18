@@ -37,19 +37,20 @@ pub const RESEARCH_RESUME: &str =
     "[anthrex] The daemon restarted. Finish your research and call submit_scout_report.";
 
 /// Decision 32's stall nudge, for a research session.
-pub fn research_stall_nudge(minutes: u64) -> String {
+pub fn research_stall_nudge(secs: u64) -> String {
     format!(
-        "[anthrex] {minutes} minutes without any progress. Finish your research and call submit_scout_report."
+        "[anthrex] {} without any progress. Finish your research and call submit_scout_report.",
+        common::numbers::duration(secs)
     )
 }
 
 /// Decision 40's soft budget message, for a research session.
 pub fn research_wrap_up(spent: Spend, budget: proto::Budget) -> String {
     format!(
-        "[anthrex] This research task has used its budget ({}/{} tool calls, {}/{} minutes). Wrap up now: call submit_scout_report with what you have found.",
+        "[anthrex] This research task has used its budget ({}/{} tool calls, {} of {} min). Wrap up now: call submit_scout_report with what you have found.",
         spent.tool_calls,
         budget.tool_calls,
-        spent.secs / 60,
+        common::numbers::duration(spent.secs),
         budget.minutes
     )
 }
@@ -354,7 +355,7 @@ pub(super) fn exited(
         if round.session_id.is_none() {
             end_round(round, now);
             // As a worker's rung 2 (`signals::exited`): the nudge ends its first turn.
-            let nudge = research_stall_nudge(run.limits.stall_after_secs / 60);
+            let nudge = research_stall_nudge(run.limits.stall_after_secs);
             run.tasks[i].orch.research_append = Some(nudge);
             let reason = "its turn was interrupted before its session had an id".to_string();
             return fresh(run, i, reason, now, fx);
@@ -445,10 +446,10 @@ fn check_budget(run: &mut Run, i: usize, r: usize, now: u64, fx: &mut Vec<Effect
     let next = ceiling(run, task);
     if reached(total, next) {
         let text = format!(
-            "the task's total spend reached the next size's budget ({}/{} tool calls, {}/{} minutes)",
+            "the task's total spend reached the next size's budget ({}/{} tool calls, {} of {} min)",
             total.tool_calls,
             next.tool_calls,
-            total.secs / 60,
+            common::numbers::duration(total.secs),
             next.minutes
         );
         stop_research(run, i, fx);
@@ -546,12 +547,15 @@ pub(super) fn watch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
                     deadline: not_before(now, INTERRUPT_GRACE_SECS),
                 };
                 round.interrupted = true;
-                let nudge = research_stall_nudge(stall_after / 60);
+                let nudge = research_stall_nudge(stall_after);
                 outbox::queue_to(run, &address, r, nudge, now);
                 history(run, i, now, "no progress; interrupting its research turn");
             }
             StallState::Nudged if silent => {
-                let reason = format!("no stream event for {} minutes", stall_after / 60);
+                let reason = format!(
+                    "no stream event for {}",
+                    common::numbers::duration(stall_after)
+                );
                 stall(run, i, reason, now, fx);
             }
             _ => {}

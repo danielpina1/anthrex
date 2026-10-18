@@ -260,7 +260,7 @@ fn window_fields(info: &WindowInfo, app: &App) -> Vec<Field> {
             "status",
             with_tool(info.status.label(), info.tool.as_deref()),
         ),
-        field("for", tree::format_elapsed(app.elapsed_secs(info))),
+        field("for", common::numbers::duration(app.elapsed_secs(info))),
         field("model", info.model.as_deref().unwrap_or("-")),
     ];
     // Keyed by the worktree root, and absent state omits the field rather than
@@ -319,7 +319,7 @@ fn subagent_fields(row: &Row<'_>, info: &SubagentInfo, app: &App) -> Vec<Field> 
     }
     fields.push(field("spawned by", spawned_by(row, info, app)));
     fields.push(field("state", with_tool(state, info.tool.as_deref())));
-    fields.push(field("for", tree::format_elapsed(duration)));
+    fields.push(field("for", common::numbers::duration(duration)));
     fields.push(field("model", info.model.as_deref().unwrap_or("-")));
     fields.push(field("kind", info.kind.clone()));
     // A window's own sub-agents sit at row depth 2, and one level below the
@@ -430,14 +430,12 @@ mod run_task_sections;
 
 pub use panel::panel_rows;
 pub(crate) use run_patterns::{writes, writing_rounds};
-pub(crate) use run_stage::tier_duration;
 pub(crate) use run_task::state_word;
 pub use run_task::{task_panel_room, task_panel_rows};
 
 #[cfg(test)]
 pub use panel::render;
 pub use panel::render_in;
-pub use run_format::format_duration;
 #[cfg(test)]
 pub use run_format::progress_bar;
 pub(crate) use run_stage_pr::delivering;

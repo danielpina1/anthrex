@@ -33,16 +33,6 @@ const MARGIN: u16 = 8;
 /// The selection mark, the space, the current mark, the space.
 const LEAD_W: usize = 4;
 
-/// `5s`, `2m`, `3h`: how long ago the catalogs were received.
-pub fn age_text(age: Duration) -> String {
-    let secs = age.as_secs();
-    match secs {
-        0..60 => format!("{secs}s"),
-        60..3600 => format!("{}m", secs / 60),
-        _ => format!("{}h", secs / 3600),
-    }
-}
-
 /// `choose model · <what it chooses for>`.
 pub fn title(target: PickerFor) -> String {
     let what = match target {
@@ -60,7 +50,8 @@ pub fn title(target: PickerFor) -> String {
 /// ago` once a catalog arrived; the key goes first when both do not fit (the footer
 /// names it too), then the age.
 fn right_title(age: Option<Duration>, room: usize) -> String {
-    let updated = age.map(|age| format!("updated {} ago", age_text(age)));
+    // Milestone 9.19 decision 4: `updated just now`, `updated 2m 05s ago`.
+    let updated = age.map(|age| format!("updated {}", common::numbers::ago(age.as_secs())));
     let options = match &updated {
         Some(u) => vec![format!("r refresh · {u}"), u.clone()],
         None => vec!["r refresh".to_string()],

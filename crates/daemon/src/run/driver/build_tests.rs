@@ -209,9 +209,10 @@ mod tuning {
     }
 
     /// The start lines of a start that wrote `refit.jsonl`'s refit (decision 12).
-    const BUDGET_S: &str = "tuning: budget S 55 calls 18m from 34 samples";
-    const WEIGHTS: &str = "tuning: path weights S 550s, M 1650s (derived), hub 1650s (derived)";
-    const REFIT_S: &str = "tuning: budget S 40 calls 15m → 55 calls 18m from 34 samples";
+    const BUDGET_S: &str = "tuning: budget S 55 calls · 18 min from 34 samples";
+    const WEIGHTS: &str =
+        "tuning: path weights S 9m 10s, M 27m 30s (derived), hub 27m 30s (derived)";
+    const REFIT_S: &str = "tuning: budget S 40 calls · 15 min → 55 calls · 18 min from 34 samples";
 
     /// A repository with one commit, a service over `data` whose Claude and Codex are
     /// an executable that is never run, and the repository's data directory holding
@@ -385,7 +386,7 @@ mod tuning {
         assert_eq!((t1.budget.tool_calls, t1.budget.minutes), (33, 11));
         assert!(
             log(&run).contains(
-                &"tuning: budget S 33 calls 11m configured (refit would be 55 calls 18m)"
+                &"tuning: budget S 33 calls · 11 min configured (refit would be 55 calls · 18 min)"
             ),
             "{:?}",
             log(&run)

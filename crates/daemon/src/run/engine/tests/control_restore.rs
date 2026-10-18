@@ -206,7 +206,7 @@ fn an_interrupt_the_restart_ended_sends_its_nudge_with_the_resume() {
     fx.send(quiet, EventKind::Tick);
     restart(&mut fx, Vec::new());
     let effects = resume(&mut fx);
-    let nudge = stall_nudge(10);
+    let nudge = stall_nudge(600);
     let resumed = resumes(&effects);
     assert_eq!(resumed.len(), 1, "{effects:#?}");
     assert_eq!(resumed[0].0, window);

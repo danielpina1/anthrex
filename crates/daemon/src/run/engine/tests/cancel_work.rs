@@ -268,7 +268,7 @@ fn a_research_turn_interrupted_before_its_id_gets_the_nudge_next() {
         })
         .unwrap();
     assert!(
-        first_turn.ends_with(&format!("\n\n{}", research_stall_nudge(stall / 60))),
+        first_turn.ends_with(&format!("\n\n{}", research_stall_nudge(stall))),
         "{first_turn}"
     );
     // The session after that starts plainly.

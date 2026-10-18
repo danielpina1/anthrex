@@ -6,7 +6,7 @@
 //! PgUp/PgDn. The alerts are `app::alerts`'s; every daemon string passes `safe_text`
 //! here. Pure: rendering takes `&App`.
 
-use super::alerts::{age_text, fitted, who_text};
+use super::alerts::{age_cell, fitted, who_text};
 use super::kit;
 use crate::app::region::KeyRegion;
 use crate::app::{Alert, App, alerts, handled_line};
@@ -124,7 +124,7 @@ fn list_line(app: &App, alert: &Alert, selected: bool, width: u16) -> Line<'stat
         let t = fold(&one_line(t), p.ascii);
         format!(" {} {t}", glyph(Glyph::Separator, p.ascii))
     });
-    let age = alert.age.map(age_text);
+    let age = alert.age.map(age_cell);
     let age_room = age.as_ref().map_or(0, |age| age.width() + 1);
     let who_room = room.saturating_sub(head.width() + task.width() + age_room);
     let who = who_text(&alert.who, who_room, p);

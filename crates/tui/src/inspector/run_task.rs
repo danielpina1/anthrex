@@ -253,11 +253,11 @@ fn budget_text(task: &TaskInfo, ascii: bool) -> String {
         spent_tokens.push_str(&format!("/{}", tokens(limit)));
     }
     format!(
-        "{} {}/{} tool calls · {}/{} min · {spent_tokens} tokens",
+        "{} {}/{} tool calls · {} of {} min · {spent_tokens} tokens",
         progress_bar_in(done, total, super::PROGRESS_WIDTH, ascii),
         spent.tool_calls,
         budget.tool_calls,
-        spent.secs / 60,
+        common::numbers::duration(spent.secs),
         budget.minutes
     )
 }

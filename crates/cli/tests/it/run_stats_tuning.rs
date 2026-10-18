@@ -156,15 +156,18 @@ fn stats_prints_the_tuning_block_for_recorded_history() {
             tuning_path.display()
         )
     );
-    assert_eq!(rows[1], "  CLASS  SAMPLES  BUDGET          WEIGHT  REFIT");
+    assert_eq!(
+        rows[1],
+        "  CLASS  SAMPLES  BUDGET              WEIGHT    REFIT"
+    );
     let s = rows[2]
-        .strip_prefix("  S      34       55 calls 18m    9m      ")
+        .strip_prefix("  S      34       55 calls · 18 min   9m 10s    ")
         .unwrap_or_else(|| panic!("the S row: {text}"));
     assert!(is_minute(s), "the S row's refit date: {s:?}");
     assert_eq!(
         rows[3..].join("\n"),
-        "  M      12/30    150 calls 60m   27m*    not yet
-  hub    3/30     150 calls 60m   27m*    not yet
+        "  M      12/30    150 calls · 60 min  27m 30s*  not yet
+  hub    3/30     150 calls · 60 min  27m 30s*  not yet
   * derived from another class's median
 tuning proposals:
   thresholds.s  S line threshold 20 → 35 (p90 of 34 merged S tasks)

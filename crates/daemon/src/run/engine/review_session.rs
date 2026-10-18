@@ -225,7 +225,10 @@ pub(super) fn watch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         }
         let stall_after = run.limits.stall_after_secs;
         if now >= stall_due(round, stall_after) {
-            let why = format!("no stream event for {} minutes", stall_after / 60);
+            let why = format!(
+                "no stream event for {}",
+                common::numbers::duration(stall_after)
+            );
             verdictless(run, i, r, &why, now, fx);
         }
     }

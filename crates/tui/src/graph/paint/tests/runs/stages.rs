@@ -52,8 +52,8 @@ fn stage_node_is_drawn_between_run_and_tasks_for_a_multi_run() {
 fn each_tier3_state_has_its_mark_and_glyph() {
     use proto::FullState;
     for (state, text, glyph) in [
-        (FullState::Green, "stage 1/2  tier 3 ✓ 41m12s", "✓"),
-        (FullState::Red, "stage 1/2  tier 3 ✗ 41m12s", "✗"),
+        (FullState::Green, "stage 1/2  tier 3 ✓ 41m", "✓"),
+        (FullState::Red, "stage 1/2  tier 3 ✗ 41m", "✗"),
         (FullState::Running, "stage 1/2  tier 3 running", "⠋"),
         (FullState::Bisecting, "stage 1/2  tier 3 ✗ bisecting", "✗"),
         (FullState::None, "stage 1/2  tier 3 ◌", "◌"),
@@ -82,8 +82,8 @@ fn each_tier3_state_has_its_mark_and_glyph() {
 fn every_stage_form_draws_uncut_at_stage_10_of_10() {
     use proto::FullState;
     for (state, secs, tier) in [
-        (FullState::Green, Some(64), "✓ 1m04s"),
-        (FullState::Red, Some(3720), "✗ 1h02m"),
+        (FullState::Green, Some(64), "✓ 1m"),
+        (FullState::Red, Some(3720), "✗ 1h"),
         (FullState::Running, None, "running"),
         (FullState::Bisecting, Some(64), "✗ bisecting"),
         (FullState::None, None, "◌"),

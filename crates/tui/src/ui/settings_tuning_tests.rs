@@ -1,6 +1,6 @@
 //! Milestone 9.5 decision 48 and ruling RH-5: on opening, the Settings screen asks the
 //! daemon for the project's tuning with a read-only `Stats` (which writes nothing), and
-//! draws, muted, `refit: <calls> calls <m>m` beside a class's budget when a refit exists
+//! draws, muted, `refit: <calls> calls · <m> min` beside a class's budget when a refit exists
 //! and the class is not configured. Nothing is drawn with no project, or before the
 //! reply. (The `overridden by [orchestrator.routes.orchestrator]` note went with the
 //! orchestrator section in milestone 9.8.)
@@ -146,7 +146,7 @@ fn opening_settings_sends_a_read_only_stats() {
 fn settings_shows_a_muted_refit_beside_an_unconfigured_class() {
     let app = with_report(Some(refits()), SettingsSection::Limits);
     for (w, h) in SIZES {
-        let (row, above, muted) = drawn(&app, w, h, "refit: 55 calls 18m").expect("S's refit");
+        let (row, above, muted) = drawn(&app, w, h, "refit: 55 calls · 18 min").expect("S's refit");
         // Under S's two budget rows, in the value column: a row has no room at 80.
         assert!(
             above.contains("s minutes"),

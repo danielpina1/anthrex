@@ -54,7 +54,7 @@ fn a_live_orchestrator_takes_the_environment_block_and_a_stuck_one_gives_it_back
             line(
                 1,
                 "r",
-                "orchestrator has not acted for 10 min; its alerts are yours"
+                "orchestrator has not acted for 10m 00s; its alerts are yours"
             ),
             line(3, "r › t1", "blocked (environment): locked"),
         ]

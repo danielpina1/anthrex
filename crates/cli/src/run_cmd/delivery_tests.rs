@@ -127,7 +127,7 @@ fn status_shows_the_delivery_and_prs_lines() {
     ]);
     assert_eq!(
         status_lines(&run),
-        "  delivery: pr to origin (fake/app), watching every 60 s\n  \
+        "  delivery: pr to origin (fake/app), watching every 1m 00s\n  \
          prs: #141 merged, #142 open (ci red, 2 threads), #143 open (ci pending)\n"
     );
     run.delivery.as_mut().unwrap().watching = false;
@@ -160,7 +160,7 @@ fn status_header_says_delivering_when_decision_36_holds() {
     );
     let block = run_block(&run, 0, Zone::Local(0));
     assert!(
-        block.contains("\n  delivery: pr to origin (fake/app), watching every 60 s\n  prs: #7 open (ci green)\n"),
+        block.contains("\n  delivery: pr to origin (fake/app), watching every 1m 00s\n  prs: #7 open (ci green)\n"),
         "{block}"
     );
     run.state = RunState::Paused;

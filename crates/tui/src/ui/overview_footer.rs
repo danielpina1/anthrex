@@ -66,7 +66,7 @@ pub(in crate::ui) fn footer_parts(row: &Row<'_>, app: &App) -> (Span<'static>, S
                 info.runtime.label(),
                 info.model.as_deref().unwrap_or("-"),
                 info.status.label(),
-                tree::format_elapsed(app.elapsed_secs(info)),
+                common::numbers::duration(app.elapsed_secs(info)),
                 info.tool
                     .as_deref()
                     .map(|tool| format!("  {tool}"))
@@ -85,7 +85,7 @@ pub(in crate::ui) fn footer_parts(row: &Row<'_>, app: &App) -> (Span<'static>, S
                 format!(
                     "  {}  {state}  {}{}",
                     info.model.as_deref().unwrap_or("-"),
-                    tree::format_elapsed(duration),
+                    common::numbers::duration(duration),
                     info.tool
                         .as_deref()
                         .map(|tool| format!("  {tool}"))

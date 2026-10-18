@@ -214,7 +214,11 @@ fn limit_lines(s: &SettingsScreen, keys: bool, p: Palette) -> (Vec<Line<'static>
         };
         if let Some(note) = class {
             // Past the selection mark (2) and the label (18).
-            let text = format!("{}{note}", " ".repeat(2 + 18));
+            let text = format!(
+                "{}{}",
+                " ".repeat(2 + 18),
+                crate::theme::fold(&note, p.ascii)
+            );
             out.push(Line::styled(text, role(Role::Muted, p)));
         }
     }

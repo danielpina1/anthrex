@@ -30,7 +30,7 @@ pub(super) fn title(s: &ProfileScreen, width: usize, p: Palette) -> Line<'static
 }
 
 /// The card's cell: `checking…` while the row's edit verifies, `✗ <took>` after a ✗,
-/// else its check's `✓ 12s` / `✗ 3m10s`.
+/// else its check's `✓ 12s` / `✗ 3m 10s`.
 fn cell(s: &ProfileScreen, row: &Row, p: Palette) -> Option<(String, Role)> {
     match s.edit_of(&row.key) {
         Some(RowEditState::Verifying) => Some(("checking…".into(), Role::Working)),
@@ -38,7 +38,7 @@ fn cell(s: &ProfileScreen, row: &Row, p: Palette) -> Option<(String, Role)> {
             format!(
                 "{} {}",
                 crate::theme::glyph(crate::theme::Glyph::Failed, p.ascii),
-                profile_words::took(*secs)
+                common::numbers::duration(*secs)
             ),
             Role::Failed,
         )),

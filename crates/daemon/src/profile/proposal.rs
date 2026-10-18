@@ -316,9 +316,15 @@ pub fn protected_line(profile: &RepoProfile) -> String {
 /// How a command failed: its timeout, its exit code, or neither.
 pub(super) fn failure(check: &CommandCheck) -> String {
     match (check.timed_out, check.code) {
-        (true, _) => format!("timed out after {}s", check.secs),
-        (false, Some(code)) => format!("exit {code} after {}s", check.secs),
-        (false, None) => format!("no exit code after {}s", check.secs),
+        (true, _) => format!("timed out after {}", common::numbers::duration(check.secs)),
+        (false, Some(code)) => format!(
+            "exit {code} after {}",
+            common::numbers::duration(check.secs)
+        ),
+        (false, None) => format!(
+            "no exit code after {}",
+            common::numbers::duration(check.secs)
+        ),
     }
 }
 
@@ -396,9 +402,9 @@ pub fn apply_verification(
             Some(c) if c.command == single => {
                 let reason = if !c.timed_out && c.code == Some(0) {
                     format!(
-                        "exit 0 after {}s, but no output line matched test_passed for \
+                        "exit 0 after {}, but no output line matched test_passed for \
                          sample_test {}",
-                        c.secs,
+                        common::numbers::duration(c.secs),
                         proposed.sample_test.as_deref().unwrap_or_default()
                     )
                 } else {
@@ -483,7 +489,11 @@ pub fn show_text(
                 continue;
             };
             let status = if c.ok { "ok" } else { "fail" };
-            let mut line = format!("#   {key:<13}{status:<4}{:>4}s   {}", c.secs, c.command);
+            let mut line = format!(
+                "#   {key:<13}{status:<4}{:>7}   {}",
+                common::numbers::duration(c.secs),
+                c.command
+            );
             if key == "single_test"
                 && let Some(sample) = &profile.sample_test
             {

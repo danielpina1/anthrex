@@ -267,7 +267,7 @@ fn a_reviewer_failure_opens_the_gate_not_reviewed() {
     let mut fx = specifying();
     outcome(&submit_spec(&mut fx, false, Value::Null)).unwrap();
     started(&mut fx, "spec-r1", REVIEWER);
-    let reason = "the document reviewer ran longer than 600 s";
+    let reason = "the document reviewer ran longer than 10m 00s";
     let failed = ScoutEnd::Failed {
         reason: reason.into(),
     };

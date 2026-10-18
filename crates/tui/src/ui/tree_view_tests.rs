@@ -462,3 +462,29 @@ fn a_run_title_is_drawn_without_hostile_characters() {
         "{text:?}"
     );
 }
+
+/// Milestone 9.19 decision 4: a window idle for three days reads `3d` in the sidebar's
+/// fixed-width cell (`duration_coarse`) and `3d 00h` in the inspector (`duration`),
+/// never `72h`.
+#[test]
+fn a_long_window_age_has_days() {
+    let mut window = worktree_window(1, "old", "/p", "/p", None);
+    window.runtime = Runtime::Claude;
+    window.since_secs = 3 * 86_400;
+    let app = App::new(vec![window], "/tmp".into(), UiSettings::default());
+    let rows = app.rows();
+    let row = rows
+        .iter()
+        .find(|row| matches!(row.kind, tree::RowKind::Window { .. }))
+        .expect("the window's row");
+    let line = spans_text(&ui::tree_view::narrow_line(&app, row, 40, 1, false));
+    assert!(line.ends_with(" 3d"), "{line:?}");
+    assert!(!line.contains("72h"), "{line:?}");
+    let inspection = crate::inspector::inspect(row, &app);
+    let since = inspection
+        .fields
+        .iter()
+        .find(|field| field.label == "for")
+        .map(|field| field.value.as_str());
+    assert_eq!(since, Some("3d 00h"));
+}

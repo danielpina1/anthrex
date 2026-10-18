@@ -171,8 +171,8 @@ fn stuck_text(app: &App, run: &RunInfo) -> Option<(String, Option<u64>)> {
         OrchestratorStuck::Stalled { since } => {
             let age = app.run_age(since);
             let text = format!(
-                "orchestrator has not acted for {} min; its alerts are yours",
-                age / 60
+                "orchestrator has not acted for {}; its alerts are yours",
+                common::numbers::duration(age)
             );
             (text, Some(age))
         }

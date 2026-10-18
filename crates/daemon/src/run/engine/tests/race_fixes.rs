@@ -382,7 +382,7 @@ fn the_race_slot_wait_leaves_out_a_pause() {
     fx.send(since + 720, EventKind::Tick);
     let t1 = fx.task("t1");
     assert_eq!(t1.state, TaskState::Preparing);
-    let note = "race skipped: no second writer slot within 120 s";
+    let note = "race skipped: no second writer slot within 2m 00s";
     assert!(t1.notes.iter().any(|n| n == note), "{:?}", t1.notes);
 }
 

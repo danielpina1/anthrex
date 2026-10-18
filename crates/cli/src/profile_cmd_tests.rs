@@ -50,7 +50,7 @@ fn status_text_has_the_status_line_second() {
     let text = status_text(&s, 1000, Zone::Local(0));
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(lines[0], "profile: /work/app");
-    assert_eq!(lines[1], "  Ready · verified 1m ago");
+    assert_eq!(lines[1], "  Ready · verified 1m 00s ago");
     assert!(lines[2].starts_with("  stored: yes, confirmed "), "{text}");
     assert!(text.contains("  detection: none\n"), "{text}");
     assert!(text.contains("  verification: confined, as runs are\n"));

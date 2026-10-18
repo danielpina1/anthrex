@@ -461,7 +461,7 @@ fn a_codex_interrupt_before_its_session_id_is_rung_two() {
         unreachable!()
     };
     assert!(
-        first_turn.ends_with(&stall_nudge(stall_after / 60)),
+        first_turn.ends_with(&stall_nudge(stall_after)),
         "{first_turn}"
     );
     fx.complete_windows();

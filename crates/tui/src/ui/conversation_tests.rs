@@ -282,7 +282,7 @@ fn a_folded_tool_call_is_one_line_with_its_state_and_duration() {
     assert!(grep.contains("▸ Grep  \"parse_\" → 34 matches"), "{grep}");
     assert!(grep.contains("✓ 0.3s"), "{grep}");
     let bash = rows.iter().find(|r| r.contains("Bash")).unwrap();
-    assert!(bash.contains("✗ 2.5s"), "{bash}");
+    assert!(bash.contains("✗ 2.4s"), "{bash}");
     let out = text_of(&buf);
     assert!(!out.contains("parse_needle"), "the input leaked:\n{out}");
     assert!(!out.contains("\"pattern\""), "the input leaked:\n{out}");

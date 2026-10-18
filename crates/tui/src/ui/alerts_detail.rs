@@ -4,7 +4,6 @@
 //! Split from `ui/alerts_view.rs`, which lays the view out and scrolls these rows.
 //! Every daemon string passes `safe_text` here. Pure.
 
-use super::super::alerts::age_text;
 use super::super::kit::{self, Hint};
 use crate::app::alerts::tasks_text;
 use crate::app::alerts_view::{alert_actions, alert_node, can_message, enter_label, run_of};
@@ -14,7 +13,7 @@ use crate::inspector::run_format::reason_text;
 use crate::inspector::run_format::route_tag;
 use crate::safe_text::{multi_line, one_line};
 use crate::theme::{self, Palette, Role, fold};
-use crate::tree::{self, format_elapsed};
+use crate::tree;
 use crate::ui::tree_view::truncate_in;
 use proto::{RunInfo, SetupState, TaskInfo, TaskState};
 use ratatui::style::{Modifier, Style};
@@ -95,7 +94,7 @@ fn worker_text(app: &App, task: &TaskInfo) -> Option<String> {
     Some(format!(
         "{} · {calls} · {}",
         route_tag(&round.route),
-        format_elapsed(elapsed)
+        common::numbers::duration(elapsed)
     ))
 }
 
@@ -289,7 +288,7 @@ fn facts(app: &App, alert: &Alert) -> Vec<(String, String)> {
         (_, None) => {}
     }
     if let Some(age) = alert.age {
-        push(&mut rows, "age", age_text(age));
+        push(&mut rows, "age", common::numbers::duration(age));
     }
     rows
 }

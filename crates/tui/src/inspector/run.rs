@@ -6,15 +6,13 @@
 //! `App::rate_limited`, and a wall-clock stamp is the viewer's labelled local clock
 //! (`App::local_clock`, milestone 9.19 decision 3). No clock is read here.
 
-use super::run_format::{
-    clean, format_duration, kind_glyph, progress_text, reason_text, rows, session_text,
-};
+use super::run_format::{clean, kind_glyph, progress_text, reason_text, rows, session_text};
 use super::run_orch::{handled_rows, handoff_text, orchestrator_text, untrusted_text};
 use super::{Field, Inspection, field};
 use crate::app::{App, state_text};
 use crate::tree::RowKind;
 use common::labels::{kinds_scale, source_label};
-use common::numbers::tokens;
+use common::numbers::{duration, tokens};
 use proto::{
     AgentRoundInfo, IdleOrchestrator, PlannerInfo, PlannerState, RoundInfo, RoundOrigin,
     RoundOutcome, RunInfo, RunPath, RunState, Runtime, ScoutInfo, ScoutState, TaskInfo, TaskState,
@@ -33,7 +31,7 @@ pub(crate) fn run_inspection(
         // Milestone 9.2 decision 36: `running (delivering)`.
         _ => super::run_stage_pr::state_text(run),
     };
-    let right = format!("{state} · {}", format_duration(app.run_age(run.created_at)));
+    let right = format!("{state} · {}", duration(app.run_age(run.created_at)));
     let mut fields = vec![field(
         "progress",
         progress_text(
@@ -83,7 +81,7 @@ pub(crate) fn run_inspection(
     // M9.19.4 review, I2: decision 2's spend labels fill a row, so the estimate has its
     // own; fix round 2: it has the lowest priority, so a short panel drops it first.
     if let Some(left) = run.estimate_left_secs {
-        fields.push(field("est. left", format!("~{}", format_duration(left))));
+        fields.push(field("est. left", format!("~{}", duration(left))));
     }
     let glyph = kind_glyph(
         RowKind::Run {
@@ -268,7 +266,7 @@ fn agents_text(run: &RunInfo, app: &App) -> String {
         }
         text.push_str(&format!(" · {label} rate-limited"));
         if let Some(since) = limited.iter().filter_map(|r| r.rate_limited_since).min() {
-            text.push_str(&format!(" {}", format_duration(app.run_age(since))));
+            text.push_str(&format!(" {}", duration(app.run_age(since))));
         }
         text.push_str(&cap);
     }
@@ -422,13 +420,13 @@ pub(crate) fn planner_inspection(run: &RunInfo, planner: &PlannerInfo, app: &App
         |ended| ended.saturating_sub(planner.started_at),
     );
     let right = match planner.state {
-        PlannerState::Planning => format!("planning · {}", format_duration(took)),
+        PlannerState::Planning => format!("planning · {}", duration(took)),
         PlannerState::Finished => {
             let n = tasks().count();
             let noun = if n == 1 { "task" } else { "tasks" };
-            format!("finished · planned {n} {noun} in {}", format_duration(took))
+            format!("finished · planned {n} {noun} in {}", duration(took))
         }
-        PlannerState::Failed => format!("failed · {}", format_duration(took)),
+        PlannerState::Failed => format!("failed · {}", duration(took)),
     };
     let mut fields = vec![field(
         "progress",
@@ -509,7 +507,7 @@ pub(crate) fn scout_inspection(
             marks: Vec::new(),
         },
         field("state", state_value),
-        field("took", format_duration(took)),
+        field("took", duration(took)),
         field(
             "report",
             scout
@@ -524,7 +522,7 @@ pub(crate) fn scout_inspection(
         "session",
         session_text(scout.window_id, "main checkout, read-only", app),
     ));
-    let right = format!("{state} · {}", format_duration(took));
+    let right = format!("{state} · {}", duration(took));
     let glyph = kind_glyph(RowKind::Scout { run, scout, window }, app);
     rows(glyph, format!("scout {}", clean(&scout.id)), right, fields)
 }

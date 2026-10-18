@@ -126,9 +126,9 @@ pub(super) fn rows(app: &App, w: u16, h: u16) -> Vec<String> {
 const READY: [&str; 16] = [
     "7 task records · 3 runs",
     "",
-    "class  tasks  merged  lines  calls  tokens  work  bounces  reverted",
-    "S      5      4       42     18     52k     6m    1        0",
-    "hub    2      0       –      –      –       –     2        1",
+    "class  tasks  merged  lines  calls  tokens  med work  bounces  reverted",
+    "S      5      4       42     18     52k     6m 20s    1        0",
+    "hub    2      0       –      –      –       –         2        1",
     "",
     "deciders 6 calls · 1 fallback · size raised 1/4",
     "",
@@ -160,8 +160,7 @@ fn stats_render_rows_deciders_and_flaky_proposals() {
     }
 }
 
-/// The CLI's units (`daemon/src/run/stats.rs`): tokens `1.2k` under 10k, work in
-/// minutes rounded to the nearest.
+/// The CLI's token unit (`daemon/src/run/stats.rs`): `1.2k` under 10k.
 #[test]
 fn stats_cells_use_the_clis_units() {
     let cases = [
@@ -175,15 +174,19 @@ fn stats_cells_use_the_clis_units() {
     for (n, want) in cases {
         assert_eq!(common::numbers::tokens(n), want, "{n}");
     }
-    for (secs, want) in [
-        (0, "0m"),
-        (29, "0m"),
-        (30, "1m"),
-        (380, "6m"),
-        (3599, "60m"),
-    ] {
-        assert_eq!(super::work(secs), want, "{secs}");
-    }
+}
+
+/// Milestone 9.19 decision 4: the median work time is a `duration`, floored, under
+/// `med work`; 89 s is `1m 29s`, never a rounded-up `1m`.
+#[test]
+fn stats_work_floors() {
+    let mut stats = history();
+    stats.rows[0].median_work_secs = Some(89);
+    let app = app_with(false, StatsState::Ready(Box::new(stats)));
+    let all = rows(&app, 80, 24);
+    assert!(all[2].contains("  med work  "), "{:?}", all[2]);
+    assert!(all[3].contains("  1m 29s  "), "{:?}", all[3]);
+    assert!(!all[3].contains("2m"), "{:?}", all[3]);
 }
 
 fn screen(app: &App) -> &StatsScreen {
@@ -201,7 +204,7 @@ fn stats_render_in_ascii() {
         let all = rows(&app, w, h);
         assert_eq!(all[0], "7 task records - 3 runs", "{w}x{h}");
         assert_eq!(
-            all[4], "hub    2      0       -      -      -       -     2        1",
+            all[4], "hub    2      0       -      -      -       -         2        1",
             "{w}x{h}"
         );
         assert_eq!(
@@ -231,7 +234,7 @@ fn stats_render_an_empty_history() {
         [
             "1 task record · 1 run",
             "",
-            "class  tasks  merged  lines  calls  tokens  work  bounces  reverted",
+            "class  tasks  merged  lines  calls  tokens  med work  bounces  reverted",
             "",
             "deciders 6 calls · 1 fallback · size raised 1/4",
             "",
@@ -475,12 +478,12 @@ pub(crate) fn history_with_tuning() -> HistoryStats {
 fn the_stats_screen_shows_the_tuning_block_read_only() {
     let block = [
         "tuning: /r/demo/tuning.toml  (refit after 30 samples per class)",
-        "  CLASS  SAMPLES  BUDGET          WEIGHT  REFIT",
-        "  S      34       40 calls 15m    9m      configured",
-        "  M      12/30    150 calls 60m   27m*    not yet",
-        "  hub    3/30     150 calls 60m   27m*    not yet",
+        "  CLASS  SAMPLES  BUDGET              WEIGHT    REFIT",
+        "  S      34       40 calls · 15 min   9m 00s    configured",
+        "  M      12/30    150 calls · 60 min  27m 00s*  not yet",
+        "  hub    3/30     150 calls · 60 min  27m 00s*  not yet",
         "  * derived from another class's median",
-        "  budget S: configured 40 calls 15m (refit would be 55 calls 18m)",
+        "  budget S: configured 40 calls · 15 min (refit would be 55 calls · 18 min)",
         "tuning proposals:",
         "  thresholds.s  S line threshold 20 → 35 (p90 of 34 merged S tasks)",
         "apply: anthrex run stats --apply <id>",
@@ -498,7 +501,7 @@ fn the_stats_screen_shows_the_tuning_block_read_only() {
             .iter()
             .map(|t| {
                 if ascii {
-                    t.replace('→', "->")
+                    t.replace('→', "->").replace('·', "-")
                 } else {
                     t.to_string()
                 }
@@ -582,5 +585,7 @@ fn a_long_tuning_line_wraps_at_80_columns() {
         .collect();
     assert_eq!(words, want, "nothing is cut");
     // A line that fits keeps its columns.
-    assert!(texts.contains(&"  S      34       40 calls 15m    9m      configured".to_string()));
+    assert!(
+        texts.contains(&"  S      34       40 calls · 15 min   9m 00s    configured".to_string())
+    );
 }

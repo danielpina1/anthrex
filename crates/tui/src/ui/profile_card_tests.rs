@@ -78,7 +78,7 @@ fn the_fresh_card_at_80x24_and_120x40() {
                     " ",
                     "check",
                     "cargo test --workspace",
-                    &format!("{pass} 3m10s"),
+                    &format!("{pass} 3m 10s"),
                     "check",
                     iw,
                 ),
@@ -173,7 +173,7 @@ fn the_changes_card_shows_old_and_new() {
         ] {
             assert!(text.contains(&want), "{ascii}: {want}\n{text}");
         }
-        let pass = if ascii { "+ 1m10s" } else { "✓ 1m10s" };
+        let pass = if ascii { "+ 1m 10s" } else { "✓ 1m 10s" };
         assert!(text.contains(pass), "{text}");
         assert!(
             !text.contains("cargo fetch"),

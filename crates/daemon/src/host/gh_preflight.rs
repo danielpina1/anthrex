@@ -263,8 +263,8 @@ impl<R: Runner> GhHost<R> {
 fn check_timeout(error: HostError, check: &str, timeout: Duration) -> HostError {
     match error {
         HostError::TimedOut(_) => HostError::TimedOut(format!(
-            "{check}: gh did not answer within {} s",
-            timeout.as_secs()
+            "{check}: gh did not answer within {}",
+            common::numbers::duration(timeout.as_secs())
         )),
         other => other,
     }

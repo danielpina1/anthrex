@@ -303,7 +303,7 @@ fn run_status_shows_the_delivery_and_prs_lines() {
     let out = run(&h, &["status", &waiting]);
     let text = ok(&out);
     assert!(
-        text.contains("\n  delivery: pr to origin (fake/app), watching every 1 s\n"),
+        text.contains("\n  delivery: pr to origin (fake/app), watching every 1s\n"),
         "{text}"
     );
     assert!(!text.contains("  prs:"), "no PR yet: {text}");

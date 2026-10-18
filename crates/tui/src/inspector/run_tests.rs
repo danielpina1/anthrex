@@ -70,7 +70,7 @@ fn run_fields_match_the_mockup() {
     let inspection = inspect_node(&app, &run_key("r1"));
     assert_eq!(inspection.glyph.content, "◉");
     assert_eq!(inspection.name, "r1  Add Gemini runtime");
-    assert_eq!(inspection.right.as_deref(), Some("running · 1h12m"));
+    assert_eq!(inspection.right.as_deref(), Some("running · 1h 12m"));
     assert_eq!(inspection.layout, FieldLayout::Rows);
     assert_eq!(
         pairs(&inspection),
@@ -85,7 +85,7 @@ fn run_fields_match_the_mockup() {
             ),
             (
                 "agents",
-                "workers 3/3 · readers 1/3 · claude ok · codex rate-limited 4m"
+                "workers 3/3 · readers 1/3 · claude ok · codex rate-limited 4m 00s"
             ),
             (
                 "spend",
@@ -99,7 +99,7 @@ fn run_fields_match_the_mockup() {
                 "attention",
                 "t5 blocked: question — \"Gemini has no subagent-stop event\""
             ),
-            ("est. left", "~40m"),
+            ("est. left", "~40m 00s"),
         ]
     );
 }
@@ -111,7 +111,7 @@ fn run_fields_at_the_gate() {
     assert_eq!(inspection.name, "add-reset-3f9a  Add password reset");
     assert_eq!(
         inspection.right.as_deref(),
-        Some("awaiting approval · 2h46m")
+        Some("awaiting approval · 2h 46m")
     );
     assert_eq!(
         pairs(&inspection),
@@ -136,7 +136,7 @@ fn run_fields_when_halted() {
         run.halted_reason = Some(reason.into());
     });
     let inspection = inspect_node(&app, &run_key(RUN_ID));
-    assert_eq!(inspection.right.as_deref(), Some("halted · 2h46m"));
+    assert_eq!(inspection.right.as_deref(), Some("halted · 2h 46m"));
     let halted = format!("halted: {reason}");
     assert_eq!(
         pairs(&inspection),
@@ -165,7 +165,7 @@ fn run_fields_when_the_base_advanced() {
         run.attention = vec![line.into()];
     });
     let inspection = inspect_node(&app, &run_key(RUN_ID));
-    assert_eq!(inspection.right.as_deref(), Some("running · 2h46m"));
+    assert_eq!(inspection.right.as_deref(), Some("running · 2h 46m"));
     assert_eq!(
         pairs(&inspection),
         [
@@ -366,7 +366,7 @@ fn a_paused_run_says_where_from() {
     let inspection = inspect_node(&app, &run_key("r1"));
     assert_eq!(
         inspection.right.as_deref(),
-        Some("paused (from running) · 1h12m")
+        Some("paused (from running) · 1h 12m")
     );
 }
 
@@ -512,7 +512,7 @@ fn hostile_run_values_never_panic_and_stay_one_line() {
     );
     assert_eq!(
         value(&inspection, "est. left"),
-        Some("~5124095576030431h00m")
+        Some("~213503982334601d 07h")
     );
     assert_eq!(inspection.right.as_deref(), Some("running · 0s"));
     // An approval stamp 400 days ahead of the daemon's `now` is formatted, not aged.
@@ -536,5 +536,5 @@ fn a_run_past_the_gate_that_nobody_approved_says_so() {
     let app = gate_with(|run| run.state = RunState::Paused);
     let inspection = inspect_node(&app, &run_key(RUN_ID));
     assert_eq!(value(&inspection, "gate"), Some("plan not approved"));
-    assert_eq!(inspection.right.as_deref(), Some("paused · 2h46m"));
+    assert_eq!(inspection.right.as_deref(), Some("paused · 2h 46m"));
 }

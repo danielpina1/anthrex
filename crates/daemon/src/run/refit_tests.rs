@@ -300,8 +300,8 @@ fn refit_fixture_budgets_weights_and_proposals() {
     assert_eq!(
         log,
         [
-            "tuning: budget S 40 calls 15m → 55 calls 18m from 34 samples",
-            "tuning: path weights S 550s, M 1650s (derived), hub 1650s (derived)",
+            "tuning: budget S 40 calls · 15 min → 55 calls · 18 min from 34 samples",
+            "tuning: path weights S 9m 10s, M 27m 30s (derived), hub 27m 30s (derived)",
         ]
     );
     let proposals = super::proposals(&lines, &file, &cfg);
@@ -387,7 +387,7 @@ fn refit_tokens_only_when_asked() {
     assert_eq!(t.budget_s.and_then(|b| b.tokens), Some(2538));
     assert_eq!(
         t.log[0],
-        "tuning: budget S 50 calls 25m 2.5k tok from 30 samples"
+        "tuning: budget S 50 calls · 25 min · 2.5k tok from 30 samples"
     );
 }
 

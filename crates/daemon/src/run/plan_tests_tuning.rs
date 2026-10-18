@@ -61,7 +61,7 @@ fn tuned_budgets_win_over_defaults_and_lose_to_the_plan_and_config() {
     assert_eq!(run.limits.budget_s, budget(55, 18));
     assert_eq!(run.limits.budget_m, config.budget_m);
     let log: Vec<&str> = run.log.iter().map(|e| e.text.as_str()).collect();
-    assert_eq!(log, ["tuning: budget S 55 calls 18m from 34 samples"]);
+    assert_eq!(log, ["tuning: budget S 55 calls · 18 min from 34 samples"]);
     assert!(run.log.iter().all(|e| e.at == 1_000));
 
     // Ruling RH-5: an explicit `[orchestrator.budget.s]` beats the refit.
@@ -75,7 +75,10 @@ fn tuned_budgets_win_over_defaults_and_lose_to_the_plan_and_config() {
     assert_eq!(run.limits.budget_s, budget(30, 10));
     // Ruling T8-7: the file's S refit is ignored while S is configured; with no history
     // given, the line says only what is used (`refit_tests_edges` covers the refit).
-    assert_eq!(run.log[0].text, "tuning: budget S 30 calls 10m configured");
+    assert_eq!(
+        run.log[0].text,
+        "tuning: budget S 30 calls · 10 min configured"
+    );
 }
 
 #[test]
@@ -197,7 +200,7 @@ fn the_tuning_section_survives_a_full_log() {
     let text = plan(&[task_toml("t1", "S", "[\"crates/a/src/x.rs\"]", "")]);
     let file = refit_file(&[("s", 55, 18)]);
     let mut run = built(&text, &config, tuned(&file, &config));
-    let line = "tuning: budget S 55 calls 18m from 34 samples";
+    let line = "tuning: budget S 55 calls · 18 min from 34 samples";
     assert_eq!(run.log[0].text, line);
     // 600 more entries, then the log's cap, as the engine's `log` applies it.
     for n in 0..600 {

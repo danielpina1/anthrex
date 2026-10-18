@@ -101,8 +101,8 @@ fn saved_failing_line(status: &ProfileStatus, key: &str, now: u64) -> String {
     );
     match status.verified_at.or(status.confirmed_at) {
         Some(at) => format!(
-            "{line} · verified {} ago",
-            profile_words::age(now.saturating_sub(at))
+            "{line} · verified {}",
+            common::numbers::ago(now.saturating_sub(at))
         ),
         None => line,
     }

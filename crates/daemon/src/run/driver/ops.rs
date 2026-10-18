@@ -74,8 +74,9 @@ pub(super) async fn blocking<T: Send + 'static>(
 fn setup_output(outcome: &ShellOutcome) -> String {
     if outcome.timed_out {
         format!(
-            "{}\n[anthrex: timed out after {} s]",
-            outcome.tail, outcome.secs
+            "{}\n[anthrex: timed out after {}]",
+            outcome.tail,
+            common::numbers::duration(outcome.secs)
         )
     } else {
         outcome.tail.clone()

@@ -555,8 +555,8 @@ impl RunService {
             Ok(Ok(result)) => result,
             Ok(Err(error)) => Err(format!("a blocking step did not finish: {error}")),
             Err(_) => Err(format!(
-                "git did not answer within {} s",
-                budget.deadline.as_secs()
+                "git did not answer within {}",
+                common::numbers::duration(budget.deadline.as_secs())
             )),
         }
     }

@@ -97,7 +97,7 @@ fn e2e_history_refits_budgets_and_a_confirmed_proposal_applies() {
     );
     let lines = tuning_lines(&h, &id);
     assert!(
-        lines.contains(&"tuning: budget S 55 calls 18m from 34 samples".to_string()),
+        lines.contains(&"tuning: budget S 55 calls · 18 min from 34 samples".to_string()),
         "{lines:#?}"
     );
     assert!(
@@ -124,7 +124,8 @@ fn e2e_a_configured_budget_beats_the_refit() {
         }
     );
     let lines = tuning_lines(&h, &id);
-    let configured = "tuning: budget S 70 calls 25m configured (refit would be 55 calls 18m)";
+    let configured =
+        "tuning: budget S 70 calls · 25 min configured (refit would be 55 calls · 18 min)";
     assert!(lines.contains(&configured.to_string()), "{lines:#?}");
     assert!(
         !lines.iter().any(|l| l.starts_with("tuning: budget S 55")),

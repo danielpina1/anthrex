@@ -168,7 +168,10 @@ fn verification_runs_the_new_commands_in_order_and_drops_failures() {
     assert_eq!(kept.build_check, None);
     assert_eq!(dropped.len(), 1, "{dropped:?}");
     assert_eq!(dropped[0].key, "build_check");
-    assert_eq!(dropped[0].reason, format!("exit 1 after {}s", build.secs));
+    assert_eq!(
+        dropped[0].reason,
+        format!("exit 1 after {}", common::numbers::duration(build.secs))
+    );
     assert!(dropped[0].tail.contains("error: build broke"));
     assert_eq!(kept.module_graph.as_deref(), Some("sh graph.sh"));
     assert_eq!(kept.module_test, proposed.module_test);
@@ -318,11 +321,11 @@ toolchain_id = "sh toolchain.sh"
 
 # protected: built-in .claude/**, .mcp.json, .codex/**, **/CLAUDE.md, **/AGENTS.md, **/AGENTS.override.md, **/CLAUDE.local.md, .agents/**, .github/workflows/**, .github/actions/**, .gitlab-ci.yml, .circleci/**, .buildkite/**, Jenkinsfile, azure-pipelines.yml, .githooks/**, .husky/**, .pre-commit-config.yaml, **/.cargo/**, **/rust-toolchain, **/rust-toolchain.toml + no extras
 # verification 1970-01-01 00:00 UTC (unconfined)
-#   build_check  fail   2s   sh build.sh
-#   module_graph ok     2s   sh graph.sh
-#   module_test  ok     2s   sh test.sh {module} {filter:--filter %}
-#   module_tests ok     2s   sh test.sh all {modules:-m %} {filter:--filter %}
-#   toolchain_id ok     2s   sh toolchain.sh
+#   build_check  fail     2s   sh build.sh
+#   module_graph ok       2s   sh graph.sh
+#   module_test  ok       2s   sh test.sh {module} {filter:--filter %}
+#   module_tests ok       2s   sh test.sh all {modules:-m %} {filter:--filter %}
+#   toolchain_id ok       2s   sh toolchain.sh
 "##;
     assert_eq!(text, expected);
 }

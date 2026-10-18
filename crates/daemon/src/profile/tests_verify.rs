@@ -379,9 +379,9 @@ RUST_LOG = "debug"
 
 # protected: built-in .claude/**, .mcp.json, .codex/**, **/CLAUDE.md, **/AGENTS.md, **/AGENTS.override.md, **/CLAUDE.local.md, .agents/**, .github/workflows/**, .github/actions/**, .gitlab-ci.yml, .circleci/**, .buildkite/**, Jenkinsfile, azure-pipelines.yml, .githooks/**, .husky/**, .pre-commit-config.yaml, **/.cargo/**, **/rust-toolchain, **/rust-toolchain.toml + .cursor/**
 # verification 2026-09-21 14:13 UTC (confined)
-#   setup        ok     3s   cargo fetch
-#   check        ok   214s   cargo build --workspace
-#   single_test  ok    12s   cargo test --workspace -- --exact {{test}}  (sample: store::tests::round_trip)
+#   setup        ok       3s   cargo fetch
+#   check        ok   3m 34s   cargo build --workspace
+#   single_test  ok      12s   cargo test --workspace -- --exact {{test}}  (sample: store::tests::round_trip)
 # dropped
 #   check: exit 101 after 30s: cargo test --all
 #     {hint}
@@ -410,7 +410,7 @@ RUST_LOG = "debug"
         "check = \"cargo build --workspace\"\noutput_filter = \"failures-only\"\n\n\
          # protected: built-in .claude/**, .mcp.json, .codex/**, **/CLAUDE.md, **/AGENTS.md, **/AGENTS.override.md, **/CLAUDE.local.md, .agents/**, .github/workflows/**, .github/actions/**, .gitlab-ci.yml, .circleci/**, .buildkite/**, Jenkinsfile, azure-pipelines.yml, .githooks/**, .husky/**, .pre-commit-config.yaml, **/.cargo/**, **/rust-toolchain, **/rust-toolchain.toml + no extras\n\
          # verification 1970-01-01 00:00 UTC (unconfined)\n\
-         #   check        fail   1s   cargo build --workspace\n"
+         #   check        fail     1s   cargo build --workspace\n"
     );
     assert_eq!(
         show_text(&profile, None, &[]),

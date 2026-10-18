@@ -23,7 +23,7 @@ pub const MODELS_READ_BOUND: Duration = Duration::from_secs(5);
 
 /// The run log's line for a start whose repository file read did not finish in time.
 const READ_SLOW: &str =
-    "models: the repository's models.toml was not read within 5 s; using the global table";
+    "models: the repository's models.toml was not read within 5s; using the global table";
 
 /// The run log's line for a start whose repository file read failed outright.
 pub const READ_FAILED: &str =

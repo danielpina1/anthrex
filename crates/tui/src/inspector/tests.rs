@@ -183,7 +183,7 @@ fn a_window_lists_its_runtime_model_and_timings() {
         pairs(&inspection),
         vec![
             ("status", "working · Edit"),
-            ("for", "2m"),
+            ("for", "2m 00s"),
             ("model", "claude-opus-5"),
             ("runtime", "claude"),
             ("dir", "/r/shop"),
@@ -206,7 +206,7 @@ fn a_window_without_a_model_shows_a_dash() {
         pairs(&inspection),
         vec![
             ("status", "idle"),
-            ("for", "1h"),
+            ("for", "1h 00m"),
             ("model", "-"),
             ("runtime", "shell"),
             ("dir", "/r/shop"),
@@ -316,7 +316,7 @@ fn a_subagent_lists_its_kind_task_and_state() {
             ("task", "map the routes"),
             ("spawned by", "1 api-worker"),
             ("state", "running · Read"),
-            ("for", "1m"),
+            ("for", "1m 30s"),
             ("model", "opus"),
             ("kind", "Explore"),
             ("depth", "1"),

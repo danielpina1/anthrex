@@ -87,10 +87,10 @@ fn text_lists_projects_windows_and_nested_subagents() {
         lines.first().copied(),
         Some("shop  /r/shop  attention  cl 2 · cx 1")
     );
-    assert!(lines.contains(&"   1  api-worker  claude  claude-opus-5  working  2m  Bash"));
+    assert!(lines.contains(&"   1  api-worker  claude  claude-opus-5  working  2m 00s  Bash"));
     assert!(lines.contains(&"   2  billing  codex  -  attention  41s"));
-    assert!(lines.contains(&"   3  frontend  claude  claude-sonnet-4-5  working  1m"));
-    assert!(lines.contains(&"      ├─ Explore: map routes  running  1m  Read"));
+    assert!(lines.contains(&"   3  frontend  claude  claude-sonnet-4-5  working  1m 00s"));
+    assert!(lines.contains(&"      ├─ Explore: map routes  running  1m 30s  Read"));
     assert!(lines.contains(&"      │ └─ general-purpose: grep handlers  running  20s"));
     assert!(lines.contains(&"      └─ tests: run unit suite  done  45s"));
     assert!(lines.contains(&"blog  /r/blog  idle  cl 1"));
@@ -214,7 +214,7 @@ fn permission_is_printed_and_serialized() {
     assert!(
         tree_text(&windows, None)
             .lines()
-            .any(|line| { line == "      ├─ Explore: map routes  permission  1m  Read" })
+            .any(|line| { line == "      ├─ Explore: map routes  permission  1m 30s  Read" })
     );
     let value = as_json(&windows, None);
     let agent = &value["projects"][0]["windows"][0]["subagents"][0];
@@ -225,7 +225,7 @@ fn permission_is_printed_and_serialized() {
 #[test]
 fn subagent_states_and_durations_use_the_cli_contract() {
     for (state, ended, label, elapsed) in [
-        (SubagentState::Running, None, "running", "1m"),
+        (SubagentState::Running, None, "running", "1m 00s"),
         (SubagentState::Done, Some(15), "done", "45s"),
         (SubagentState::Failed, Some(10), "failed", "50s"),
         (SubagentState::Done, None, "done", "0s"),

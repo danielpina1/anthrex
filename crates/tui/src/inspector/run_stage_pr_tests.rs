@@ -136,7 +136,7 @@ fn the_delivery_row_cleans_the_remote_and_the_repo() {
     let run = inspect_node(&app, &run_key());
     assert_eq!(
         value(&run, "delivery"),
-        Some("pr to origin (fake/app) · watching every 60 s")
+        Some("pr to origin (fake/app) · watching every 1m 00s")
     );
 }
 
@@ -151,7 +151,10 @@ fn single_stage_run_shows_its_pr_in_the_run_inspector() {
     assert_eq!(
         shown,
         [
-            ("delivery", "pr to origin (fake/app) · watching every 60 s"),
+            (
+                "delivery",
+                "pr to origin (fake/app) · watching every 1m 00s"
+            ),
             ("pr", "#7 open, based on main, opened 02:30 +00:00"),
             ("url", "https://github.com/fake/app/pull/7"),
             ("ci", "✓ build"),
@@ -215,7 +218,7 @@ fn local_run_renders_as_before() {
             ("branch", "anthrex/add-reset-3f9a/stage-1 at 1111111"),
             (
                 "tier 3",
-                "bisecting at 2222222 · 41m12s · 2 shards · flaky a::flaky"
+                "bisecting at 2222222 · 41m 12s · 2 shards · flaky a::flaky"
             ),
             ("failing", "a::works"),
             ("bisect", "running · 1 fix task"),

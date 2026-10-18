@@ -10,7 +10,7 @@ mod task_rounds;
 mod types;
 
 pub use forest::{SubagentNode, subagent_forest};
-pub use labels::{format_elapsed, short_model, subagent_label};
+pub use labels::{short_model, subagent_label};
 pub use names::display_names;
 pub use nodes::{NodeKey, ProjectChild, Row, RowKind};
 use proto::{IdleOrchestrator, RunInfo, RunsSnapshot, Status, SubagentInfo, WindowInfo};

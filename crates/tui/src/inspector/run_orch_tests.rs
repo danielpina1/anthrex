@@ -50,7 +50,7 @@ fn planning_run_header() {
     snapshot.runs[0].critical_path.clear();
     let app = app_of((snapshot, windows));
     let inspection = inspect_node(&app, &run_key());
-    assert_eq!(inspection.right.as_deref(), Some("planning · 10m"));
+    assert_eq!(inspection.right.as_deref(), Some("planning · 10m 00s"));
     assert_eq!(
         value(&inspection, "gate"),
         Some("planning · s submits the plan yourself")

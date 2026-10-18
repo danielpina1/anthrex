@@ -25,15 +25,15 @@ pub fn summary(tail: &str) -> String {
 /// Ruling F-4a: the reviewer prompt's line for a check whose kept output is empty (a
 /// passing tier job keeps none): how it ended, and that its output is omitted.
 pub fn check_without_output(check: &CheckRecord) -> String {
-    let secs = check.secs;
+    let secs = common::numbers::duration(check.secs);
     let ended = match (check.timed_out, check.ok, check.code) {
-        (true, _, _) => format!("timed out ({secs}s)"),
+        (true, _, _) => format!("timed out ({secs})"),
         (false, ok, Some(code)) => {
             let word = if ok { "passed" } else { "failed" };
-            format!("{word} (exit {code}, {secs}s)")
+            format!("{word} (exit {code}, {secs})")
         }
-        (false, true, None) => format!("passed ({secs}s)"),
-        (false, false, None) => format!("failed (no exit code, {secs}s)"),
+        (false, true, None) => format!("passed ({secs})"),
+        (false, false, None) => format!("failed (no exit code, {secs})"),
     };
     format!("Last check: {ended}; output omitted.")
 }

@@ -304,10 +304,9 @@ fn evidence(run: &Run, stage: u16, tasks: &[&Task]) -> String {
         Some(l) => {
             let shards = run.profile.tiers.full_shards;
             format!(
-                "{} in {} min {} s{}",
+                "{} in {}{}",
                 if l.ok { "green" } else { "red" },
-                l.secs / 60,
-                l.secs % 60,
+                common::numbers::duration(l.secs),
                 if shards > 1 {
                     format!(", {shards} shards")
                 } else {

@@ -115,7 +115,7 @@ fn past_the_bound_nothing_is_pasted_and_the_start_prompt_shows() {
     assert_eq!(wakes(&effects), vec![], "nothing is pasted");
     assert!(fx.run().orch.first_turn_late);
     assert_eq!(start_prompts(&fx), 1, "{:?}", attention(fx.run(), fx.now));
-    let line = "first turn still waiting 60 s after launch: no MCP ready notice yet";
+    let line = "first turn still waiting 1m 00s after launch: no MCP ready notice yet";
     let logged = |fx: &Fixture| fx.run().log.iter().filter(|e| e.text == line).count();
     assert_eq!(logged(&fx), 1, "{:#?}", fx.run().log);
     // Later ticks say nothing more.
@@ -141,11 +141,8 @@ fn past_the_bound_with_the_notice_the_window_is_not_ready() {
         crate::run::engine::EventKind::Tick,
     );
     assert!(
-        fx.run()
-            .log
-            .iter()
-            .any(|e| e.text
-                == "first turn still waiting 60 s after launch: the window is not ready yet"),
+        fx.run().log.iter().any(|e| e.text
+            == "first turn still waiting 1m 00s after launch: the window is not ready yet"),
         "{:#?}",
         fx.run().log
     );
@@ -220,7 +217,7 @@ fn a_signalled_window_gets_its_first_turn_after_the_mcp_ready_grace() {
     // A later report keeps the first.
     first_signal(&mut fx, t + 5, ORCH, launch);
     assert_eq!(fx.run().orch.first_signal_at, Some(t));
-    let line = "first turn sent without the MCP ready notice after 30 s";
+    let line = "first turn sent without the MCP ready notice after 30s";
     let logged = |fx: &Fixture| fx.run().log.iter().filter(|e| e.text == line).count();
     let effects = fx.send(t + MCP_READY_GRACE_SECS - 1, EventKind::Tick);
     assert_eq!(wakes(&effects), vec![], "29 s: nothing yet");

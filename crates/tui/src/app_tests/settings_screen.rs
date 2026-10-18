@@ -271,8 +271,8 @@ fn an_out_of_range_limit_is_refused_inline() {
 fn budgets_show_their_hard_stop() {
     assert_eq!(hard_stop_calls(40), "hard stop at 60 calls");
     assert_eq!(hard_stop_calls(5), "hard stop at 8 calls");
-    assert_eq!(hard_stop_minutes(15), "hard stop at 22m30s");
-    assert_eq!(hard_stop_minutes(60), "hard stop at 90m");
+    assert_eq!(hard_stop_minutes(15), "hard stop at 22m 30s");
+    assert_eq!(hard_stop_minutes(60), "hard stop at 1h 30m");
     let mut app = opened();
     set_limit(&mut app, key::BUDGET_S_CALLS, "40");
     set_limit(&mut app, key::BUDGET_M_CALLS, "5");
@@ -282,8 +282,8 @@ fn budgets_show_their_hard_stop() {
     for want in [
         "s tool calls      40    at least 1   hard stop at 60 calls",
         "m tool calls      5     at least 1   hard stop at 8 calls",
-        "s minutes         15    at least 1   hard stop at 22m30s",
-        "l minutes         60    at least 1   hard stop at 90m",
+        "s minutes         15    at least 1   hard stop at 22m 30s",
+        "l minutes         60    at least 1   hard stop at 1h 30m",
     ] {
         assert!(text.contains(want), "{want}\n{text}");
     }

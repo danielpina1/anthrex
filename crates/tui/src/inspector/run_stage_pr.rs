@@ -28,13 +28,13 @@ pub(super) fn stage_fields(run: &RunInfo, stage: &StageInfo, app: &App) -> Vec<F
 }
 
 /// The run inspector's `delivery` row in `pr` mode (`pr to origin (fake/app) ·
-/// watching every 60 s`), then, for a run with no stage node, its one PR's lines.
+/// watching every 1m 00s`), then, for a run with no stage node, its one PR's lines.
 pub(super) fn run_fields(run: &RunInfo, app: &App) -> Vec<Field> {
     let Some(d) = delivery(run) else {
         return Vec::new();
     };
     let watching = if d.watching {
-        format!("watching every {} s", d.poll_secs)
+        format!("watching every {}", common::numbers::duration(d.poll_secs))
     } else {
         "not watching".to_owned()
     };

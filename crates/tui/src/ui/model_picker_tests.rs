@@ -1,7 +1,6 @@
 //! Milestone 9.8 task 11 (MR §5.2): the model picker drawn as a kit dialog over the
 //! Settings screen, with the brief's widths (label 17, description 38).
 
-use super::age_text;
 use crate::app::App;
 use crate::app::model_picker::tests::fixture_catalogs;
 use crate::app::models_table::tests::{opened_models, row, select_role, spec_roles, tap};
@@ -59,7 +58,7 @@ fn the_picker_draws_as_the_spec() {
         top.starts_with("┌ choose model · implementer · medium ─"),
         "{top}"
     );
-    assert!(top.ends_with("─ r refresh · updated 2m ago ┐"), "{top}");
+    assert!(top.ends_with("─ r refresh · updated 2m 05s ago ┐"), "{top}");
     assert_eq!(top.chars().count(), 74, "the picker's widest");
     assert_eq!(
         inner,
@@ -89,7 +88,7 @@ fn the_picker_draws_as_the_spec() {
         top.starts_with("┌ choose model · implementer · medium ─"),
         "{top}"
     );
-    assert!(top.ends_with("─ updated 2m ago ┐"), "{top}");
+    assert!(top.ends_with("─ updated 2m 05s ago ┐"), "{top}");
     assert_eq!(
         inner,
         [
@@ -119,9 +118,6 @@ fn the_picker_draws_as_the_spec() {
 
 #[test]
 fn the_age_and_the_catalogs_source() {
-    assert_eq!(age_text(Duration::from_secs(5)), "5s");
-    assert_eq!(age_text(Duration::from_secs(125)), "2m");
-    assert_eq!(age_text(Duration::from_secs(7300)), "2h");
     let mut app = picker_app();
     app.catalogs.list[0].source = CatalogSource::Cached;
     app.catalogs.list[1].source = CatalogSource::Builtin;

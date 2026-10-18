@@ -98,7 +98,7 @@ const SECTION: &str = "
 | R3 | t3 | merged |
 | R4 | - | not covered |
 
-design phases: 64 calls, 750k tokens, 25 min, 4 gate versions
+design phases: 64 calls, 750k tokens, 25m 59s, 4 gate versions
 ";
 
 /// Decision 27: a row per approved requirement, its covering tasks and their outcome
@@ -130,7 +130,7 @@ fn a_design_run_without_an_approved_spec_shows_only_the_spend() {
     section(&run, &mut out);
     assert_eq!(
         out,
-        "\n## Requirements\n\nNo spec was approved.\n\ndesign phases: 0 calls, 0 tokens, 0 min, 0 gate versions\n"
+        "\n## Requirements\n\nNo spec was approved.\n\ndesign phases: 0 calls, 0 tokens, 0s, 0 gate versions\n"
     );
 }
 
@@ -148,7 +148,7 @@ fn an_approved_spec_not_read_back_is_said_so() {
     section(&run, &mut out);
     assert_eq!(
         out,
-        "\n## Requirements\n\nThe approved spec's requirements could not be read back.\n\ndesign phases: 0 calls, 0 tokens, 0 min, 0 gate versions\n"
+        "\n## Requirements\n\nThe approved spec's requirements could not be read back.\n\ndesign phases: 0 calls, 0 tokens, 0s, 0 gate versions\n"
     );
 }
 

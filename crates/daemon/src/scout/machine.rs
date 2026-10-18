@@ -276,7 +276,11 @@ pub fn step(
             if machine.state == ScoutState::Working && now >= machine.started_at + limit {
                 fail(
                     &mut machine,
-                    format!("{} ran longer than {limit} s", t.noun),
+                    format!(
+                        "{} ran longer than {}",
+                        t.noun,
+                        common::numbers::duration(limit)
+                    ),
                     true,
                 )
             } else {

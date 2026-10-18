@@ -75,7 +75,8 @@ fn budget_soft_then_hard() {
         tokens: 0,
     };
     assert_eq!(queued.len(), 1);
-    assert!(queued[0].starts_with(&budget_wrap_up(spent, budget)[..60]));
+    // Up to the spent time, which `numbers::duration` gives to the second.
+    assert!(queued[0].starts_with(&budget_wrap_up(spent, budget)[..57]));
     assert!(queued[0].contains("(5/5 tool calls"), "{}", queued[0]);
     tool_use(&mut fx, window);
     assert_eq!(fx.run().outbox.len(), 1, "once per session");

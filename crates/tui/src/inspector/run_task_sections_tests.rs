@@ -248,7 +248,7 @@ fn worker_line() {
     // Live: elapsed from the snapshot clock (`now − 1560`).
     assert_eq!(
         project::worker_line(task, &app).as_deref(),
-        Some("worker #1 · codex · 26m · 41 tool calls")
+        Some("worker #1 · codex · 26m 00s · 41 tool calls")
     );
     let mut task = (*task).clone();
     // The latest worker round wins; a model is shown after the runtime; an ended
@@ -263,7 +263,7 @@ fn worker_line() {
     task.rounds = vec![older, second.clone()];
     assert_eq!(
         project::worker_line(&task, &app).as_deref(),
-        Some("worker #2 r3 · claude claude-opus-5 · 2m · 7 tool calls")
+        Some("worker #2 r3 · claude claude-opus-5 · 2m 05s · 7 tool calls")
     );
     // No worker round: no line.
     task.rounds = vec![reviewer(1, None, Runtime::Claude, GEMINI_NOW)];

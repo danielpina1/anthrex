@@ -218,13 +218,9 @@ pub fn hard_stop_calls(n: u64) -> String {
 }
 
 /// Interfaces "Settings hard stop", minutes: the breach is at `2 × secs ≥ 180 × budget`,
-/// so at `90 × n` seconds, shown as minutes and, when `n` is odd, `30s`.
+/// so at `90 × n` seconds, through `numbers::duration` (milestone 9.19 decision 4).
 pub fn hard_stop_minutes(n: u64) -> String {
-    let secs = 90 * n;
-    match secs % 60 {
-        0 => format!("hard stop at {}m", secs / 60),
-        s => format!("hard stop at {}m{s}s", secs / 60),
-    }
+    format!("hard stop at {}", common::numbers::duration(90 * n))
 }
 
 impl SettingsScreen {
@@ -374,7 +370,7 @@ impl SettingsScreen {
     pub fn refit_note(&self, class: &str) -> Option<String> {
         let c = (self.tuning.as_ref()?.classes.iter()).find(|c| c.class == class)?;
         let budget = c.refit_budget.as_ref().filter(|_| !c.configured)?;
-        Some(format!("refit: {}", common::text::budget_text(budget)))
+        Some(format!("refit: {}", common::numbers::budget_text(budget)))
     }
 
     /// An edit makes the last outcome stale.

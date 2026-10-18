@@ -26,16 +26,16 @@ use super::RunService;
 use crate::live_config::LiveSettings;
 
 /// Decision 28: a save that did not start renaming within the timeout.
-pub const WRITE_TIMEOUT_TEXT: &str = "config.toml was not written within 5 s; nothing changed";
+pub const WRITE_TIMEOUT_TEXT: &str = "config.toml was not written within 5s; nothing changed";
 
 /// A save that had begun renaming when the timeout fired (Task 9 notes).
-pub const WRITE_UNKNOWN_TEXT: &str = "config.toml was still being written after 5 s; if the write completes, new runs use the new settings";
+pub const WRITE_UNKNOWN_TEXT: &str = "config.toml was still being written after 5s; if the write completes, new runs use the new settings";
 
 /// Decision 36: a repository table not written within the timeout. Its outcome is not
 /// known: the write goes on in the background (an atomic rename, so the file is either
 /// the old table or the new one).
 pub const REPO_WRITE_TIMEOUT_TEXT: &str =
-    "the repository's models.toml was not written within 5 s; it may still be written";
+    "the repository's models.toml was not written within 5s; it may still be written";
 
 /// Fix round 1 (M6): another settings save held the write lock for the whole timeout.
 pub const REPO_BUSY_TEXT: &str = "the repository's models.toml was not written: another settings save is still running; nothing changed";
@@ -105,9 +105,9 @@ impl RunService {
             Ok(Ok((_, problems))) => refused(problems),
             Ok(Err(error)) => refused(vec![format!("the read did not finish: {error}")]),
             Err(_) => refused(vec![format!(
-                "{} was not read within {} s",
+                "{} was not read within {}",
                 path.display(),
-                self.ctx.settings_io.timeout.as_secs()
+                common::numbers::duration(self.ctx.settings_io.timeout.as_secs())
             )]),
         }
     }
