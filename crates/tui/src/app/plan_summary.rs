@@ -31,13 +31,6 @@ fn count(n: usize, word: &str) -> String {
     }
 }
 
-/// The plan's stage count, as the detail's `stage` row reads it (ruling C-28 (5)): the
-/// highest planned stage, or the run's stages when it has more.
-pub(crate) fn plan_stages(run: &RunInfo) -> u16 {
-    let planned = run.tasks.iter().map(|t| t.stage).max().unwrap_or(1);
-    planned.max(u16::try_from(run.stages.len()).unwrap_or(u16::MAX))
-}
-
 /// `S+M+S` in plan order for at most eight tasks, else `<k>S <m>M <l>L` with the zero
 /// counts left out.
 fn sizes(tasks: &[&TaskInfo]) -> String {
@@ -322,7 +315,7 @@ pub(crate) struct Cells {
 
 /// Every reviewed task's cells, in plan order.
 pub(crate) fn columns(run: &RunInfo, tasks: &[&TaskInfo], ascii: bool) -> Vec<Cells> {
-    let multi = plan_stages(run) > 1;
+    let multi = common::progress::stage_count(run) > 1;
     let text = |s: &str| theme::fold(&one_line(s), ascii);
     tasks
         .iter()

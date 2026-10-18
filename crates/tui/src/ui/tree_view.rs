@@ -169,7 +169,8 @@ pub fn narrow_line(
             position,
         } => {
             let focused = orchestrator.is_some_and(|window| app.focused == Some(window.id));
-            let (merged, total) = tree::run_progress(run);
+            let common::progress::Progress { merged, total, .. } =
+                common::progress::run_progress(run);
             let position = position.map_or_else(String::new, |position| position.to_string());
             // Milestone 9.0.7 review ruling: a tick only for progress the data proves.
             let tick = if merged > 0 { Role::Done } else { Role::Muted };

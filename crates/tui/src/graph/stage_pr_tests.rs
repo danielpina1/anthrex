@@ -121,14 +121,14 @@ fn the_stage_row_reads_tier_3_then_its_pr() {
     assert_eq!(
         rows,
         [
-            "stage 1/3  tier 3 ✓ 38s  #141  merged",
-            "stage 2/3  tier 3 ✓ 38s  #142  ci ✗  3 threads",
-            "stage 3/3  tier 3 ✓ 38s  #143  ci …",
+            "stage 1 of 3  tier 3 ✓ 38s  #141  merged",
+            "stage 2 of 3  tier 3 ✓ 38s  #142  ci ✗  3 threads",
+            "stage 3 of 3  tier 3 ✓ 38s  #143  ci …",
         ]
     );
     assert_eq!(
         stage_text_in(run, &run.stages[1], true),
-        "stage 2/3  tier 3 + 38s  #142  ci x  3 threads"
+        "stage 2 of 3  tier 3 + 38s  #142  ci x  3 threads"
     );
 }
 
@@ -153,11 +153,11 @@ fn widest(number: u64, stages: u16, threads_open: u32) -> (RunInfo, StageInfo) {
 #[test]
 fn the_longest_stage_row_fits_its_box() {
     let (run, s) = widest(99_999, 99, 99);
-    let unicode = "stage 99/99  tier 3 ✗ bisecting  #99999  ci ✗  99 threads  paused";
+    let unicode = "stage 99 of 99  tier 3 ✗ bisecting  #99999  ci ✗  99 threads  paused";
     assert_eq!(stage_text_in(&run, &s, false), unicode);
     assert_eq!(
         stage_text_in(&run, &s, true),
-        "stage 99/99  tier 3 x bisecting  #99999  ci x  99 threads  paused"
+        "stage 99 of 99  tier 3 x bisecting  #99999  ci x  99 threads  paused"
     );
     let room = usize::from(crate::graph::MAX_STAGE_NODE_WIDTH) - 4 - 2;
     assert_eq!(unicode::width(unicode), room, "the cap is exactly this row");
@@ -170,17 +170,17 @@ fn a_longer_pr_number_is_cut_before_the_state_word() {
     let (run, s) = widest(1_234_567, 99, 99);
     assert_eq!(
         stage_text_in(&run, &s, false),
-        "stage 99/99  tier 3 ✗ bisecting  #1234…  ci ✗  99 threads  paused"
+        "stage 99 of 99  tier 3 ✗ bisecting  #1234…  ci ✗  99 threads  paused"
     );
     assert_eq!(
         stage_text_in(&run, &s, true),
-        "stage 99/99  tier 3 x bisecting  #12...  ci x  99 threads  paused"
+        "stage 99 of 99  tier 3 x bisecting  #12...  ci x  99 threads  paused"
     );
     // A narrower row keeps its whole number.
     let (run, s) = widest(1_234_567, 9, 9);
     assert_eq!(
         stage_text_in(&run, &s, false),
-        "stage 9/9  tier 3 ✗ bisecting  #1234567  ci ✗  9 threads  paused"
+        "stage 9 of 9  tier 3 ✗ bisecting  #1234567  ci ✗  9 threads  paused"
     );
 }
 

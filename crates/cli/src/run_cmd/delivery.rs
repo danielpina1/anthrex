@@ -108,7 +108,7 @@ pub(super) async fn watch(runs: &mut Runs, args: WatchArgs) -> anyhow::Result<()
 /// `run prs`'s table: one line per stage (Interfaces "CLI").
 pub fn prs_table(run: &RunInfo) -> String {
     let mut out = row(["STAGE", "PR", "STATE", "CI", "THREADS", "FIX TASKS"]);
-    let of = run.stages.len();
+    let of = common::progress::stage_count(run);
     for stage in &run.stages {
         let n = format!("{}/{of}", stage.n);
         let state = stage_state(run, stage);

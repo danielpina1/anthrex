@@ -152,3 +152,29 @@ fn local_mode_keeps_the_on_head_rule() {
     let open = Some(PrState::Open);
     assert_eq!(moved_head(DeliveryMode::Local, open, true), none);
 }
+
+/// Milestone 9.19 decision 8: a stage counts its tasks as the run's progress does
+/// (decision 5), so a cancelled, a reported and a replaced task leave both numbers and
+/// the stage reaches `n/n`.
+#[test]
+fn a_stage_with_a_cancelled_task_reaches_n_of_n() {
+    use crate::run::orch::test_support::task_mut;
+    use proto::TaskState;
+    let mut run = run_with(&[
+        task_toml("t1", "S", "[\"crates/a/**\"]", ""),
+        task_toml("t2", "S", "[\"crates/b/**\"]", ""),
+        task_toml("t3", "S", "[\"crates/c/**\"]", ""),
+        task_toml("t4", "S", "[\"crates/d/**\"]", ""),
+        task_toml("t5", "S", "[\"crates/e/**\"]", ""),
+    ]);
+    run.state = RunState::Running;
+    task_mut(&mut run, "t1").state = TaskState::Merged;
+    task_mut(&mut run, "t2").state = TaskState::Cancelled;
+    task_mut(&mut run, "t3").state = TaskState::Reported;
+    task_mut(&mut run, "t4").state = TaskState::Cancelled;
+    let t5 = task_mut(&mut run, "t5");
+    t5.state = TaskState::Merged;
+    t5.replaces = vec!["t4".into()];
+    let stage = &stage_infos(&run)[0];
+    assert_eq!((stage.merged, stage.tasks), (2, 2));
+}

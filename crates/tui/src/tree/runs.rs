@@ -105,20 +105,6 @@ pub fn run_status(run: &RunInfo) -> Status {
     }
 }
 
-/// `(merged, total)` over a run's tasks, cancelled tasks left out of both.
-pub fn run_progress(run: &RunInfo) -> (usize, usize) {
-    let counted = run
-        .tasks
-        .iter()
-        .filter(|task| task.state != TaskState::Cancelled);
-    counted.fold((0, 0), |(merged, total), task| {
-        (
-            merged + usize::from(task.state == TaskState::Merged),
-            total + 1,
-        )
-    })
-}
-
 /// The run title change: the text a run is named by, its short title when it has one
 /// (protocol 18's `RunInfo.title`), else its goal.
 pub fn run_label(run: &RunInfo) -> &str {

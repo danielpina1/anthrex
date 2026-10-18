@@ -63,12 +63,12 @@ fn earlier_rounds_stages_sit_muted_under_their_separator() {
     assert_eq!(
         trimmed(&buffer, rect),
         vec![
-            "▌◉ run 0723  1/3",
+            "▌◉ run 0723  1/3 ✓",
             "  ✓ round 1 · Add mul()",
-            "    ✓ stage 1/2  tier 3 ✓ 38s",
+            "    ✓ stage 1 of 2  tier 3 ✓ 38s",
             "      ✓ t1 add mul…  merged",
             "  ◉ round 2 · also report the product",
-            "    ⠋ stage 2/2  tier 3 running",
+            "    ⠋ stage 2 of 2  tier 3 running",
             "      ◐ t2 report_…  in review · …  after t1",
             "      ◌ t3 docs fo…  waiting        after t2",
         ]
@@ -91,7 +91,7 @@ fn earlier_rounds_stages_sit_muted_under_their_separator() {
         trimmed(&buffer, rect)[1..5],
         [
             "  + round 1 - Add mul()",
-            "    + stage 1/2  tier 3 + 38s",
+            "    + stage 1 of 2  tier 3 + 38s",
             "      + t1 add m...  merged",
             "  @ round 2 - also report the product",
         ]
@@ -105,15 +105,15 @@ fn earlier_rounds_stages_sit_muted_under_their_separator() {
     assert_eq!(
         boxes[..9],
         [
-            "                      ╭────────────────────────────╮   ╭────────────────────────────",
-            "                    ┌─┤ ✓ round 1 · Add mul()      ├───┤ ✓ stage 1/2  tier 3 ✓ 38s",
-            "                    │ ╰────────────────────────────╯   ╰────────────────────────────",
-            "╭─────────────────╮ │",
-            "▌ ◉ run 0723  1/3 ├─┤",
-            "╰─────────────────╯ │",
-            "                    │ ╭────────────────────────────╮   ╭────────────────────────────",
-            "                    └─┤ ◉ round 2 · also report t… ├───┤ ⠋ stage 2/2  tier 3 running",
-            "                      ╰────────────────────────────╯   ╰────────────────────────────",
+            "                        ╭────────────────────────────╮   ╭──────────────────────────",
+            "                      ┌─┤ ✓ round 1 · Add mul()      ├───┤ ✓ stage 1 of 2  tier 3 ✓",
+            "                      │ ╰────────────────────────────╯   ╰──────────────────────────",
+            "╭───────────────────╮ │",
+            "▌ ◉ run 0723  1/3 ✓ ├─┤",
+            "╰───────────────────╯ │",
+            "                      │ ╭────────────────────────────╮   ╭──────────────────────────",
+            "                      └─┤ ◉ round 2 · also report t… ├───┤ ⠋ stage 2 of 2  tier 3 ru",
+            "                        ╰────────────────────────────╯   ╰──────────────────────────",
         ]
     );
     assert!(
@@ -153,7 +153,7 @@ fn enter_folds_a_round() {
     assert_eq!(
         trimmed(&buffer, rect)[..3],
         [
-            "◉ run 0723  1/3",
+            "◉ run 0723  1/3 ✓",
             "▌ ✓ round 1 · Add mul()",
             "  ◉ round 2 · also report the product",
         ]

@@ -523,7 +523,8 @@ fn toggle_folds_every_new_key() {
     }
 }
 
-/// Review M2: cancelled tasks count in neither the merged nor the total figure.
+/// Review M2: cancelled tasks count in neither the merged nor the total figure
+/// (milestone 9.19 decision 5: through `common::progress`).
 #[test]
 fn cancelled_tasks_are_left_out_of_a_runs_progress() {
     let mut three = run(RUN_ID, PROJECT, RunState::Running);
@@ -533,7 +534,8 @@ fn cancelled_tasks_are_left_out_of_a_runs_progress() {
         task("t2", "c", Size::S, TaskState::Working),
         task("t3", "d", Size::S, TaskState::Cancelled),
     ];
-    assert_eq!(run_progress(&three), (1, 2));
+    let progress = common::progress::run_progress(&three);
+    assert_eq!((progress.merged, progress.total), (1, 2));
 }
 
 /// Review M2: a whitespace-only goal is blank, so the run is known by its id.

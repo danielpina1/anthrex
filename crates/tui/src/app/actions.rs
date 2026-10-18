@@ -18,7 +18,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use forms::ActionForm;
 use proto::{
     ActionInfo, ActionKind, ActionNeeds, AgentRole, BaseMovedInfo, FinishAction, FullState,
-    HoldState, RunInfo, RunRequest, RunState, TaskInfo, TaskState,
+    HoldState, RunInfo, RunRequest, RunState, TaskInfo,
 };
 
 /// The open menu: its node, its entries and where it is.
@@ -189,12 +189,10 @@ pub fn confirm_details(run: &RunInfo, kind: &ActionKind, ascii: bool) -> Vec<(St
                 })
                 .collect();
             if rows.is_empty() {
-                let merged = run
-                    .tasks
-                    .iter()
-                    .filter(|t| t.state == TaskState::Merged)
-                    .count();
-                rows.push(row("tasks", format!("{merged}/{} merged", run.tasks.len())));
+                // Milestone 9.19 decision 5: the run's one progress count.
+                let common::progress::Progress { merged, total, .. } =
+                    common::progress::run_progress(run);
+                rows.push(row("tasks", format!("{merged}/{total} merged")));
             }
             rows.push(row(
                 "base",

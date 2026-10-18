@@ -52,7 +52,12 @@ pub(crate) fn stage_inspection(run: &RunInfo, stage: &StageInfo, app: &App) -> I
     let glyph = kind_glyph(RowKind::Stage { run, stage }, app);
     rows(
         glyph,
-        format!("stage {}/{}", stage.n, run.stages.len()),
+        // Milestone 9.19 decision 7: `stage k of m`, `/` being for progress only.
+        format!(
+            "stage {} of {}",
+            stage.n,
+            common::progress::stage_count(run)
+        ),
         right,
         fields,
     )
@@ -175,13 +180,11 @@ fn tier_text(tier: &TierInfo) -> String {
 /// made, and `tier` once a tier ran. A one-stage plan task gets none of them.
 pub(super) fn task_fields(run: &RunInfo, task: &TaskInfo) -> Vec<Field> {
     let mut fields = Vec::new();
-    if run.stages.len() > 1 {
+    let stages = common::progress::stage_count(run);
+    if stages > 1 {
         // Milestone 9.0.7 decision 15: the lifecycle is DETAIL's `phase`, so the stage
         // number is `stage`.
-        fields.push(field(
-            "stage",
-            format!("{} of {}", task.stage, run.stages.len()),
-        ));
+        fields.push(field("stage", format!("{} of {stages}", task.stage)));
     }
     if task.origin != TaskOrigin::Plan {
         let origin = origin_word(task.origin);

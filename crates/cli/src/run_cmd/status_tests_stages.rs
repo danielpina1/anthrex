@@ -65,9 +65,9 @@ fn status_prints_stage_lines_for_a_multi_run_only() {
 add-reset-3f9a  running  2/4 merged  base main@1a2b3c4  writers 2/3  readers 1/3  rev 57
   goal: Add password reset
   report: /Users/me/Library/Application Support/anthrex/runs/add-reset-3f9a/REPORT.md
-stage 1/3  anthrex/add-reset-3f9a/stage-1  5/5 merged  tier 3 green (41m 12s)
-stage 2/3  anthrex/add-reset-3f9a/stage-2  2/4 merged  tier 3 bisecting (fix1)
-stage 3/3  not created
+stage 1 of 3  anthrex/add-reset-3f9a/stage-1  5/5 merged  tier 3 green (41m 12s)
+stage 2 of 3  anthrex/add-reset-3f9a/stage-2  2/4 merged  tier 3 bisecting (fix1)
+stage 3 of 3  not created
   ID   SIZE MODE   STATE          RUNG BOUNCES        ROUTE                          WINDOWS
   t1   M◆   tdd    merged         0    -              claude claude-opus-5 high      4 5 [stage 1]
   t2   M    tdd    review         1    review 1       codex (default) medium         6 9 [stage 1]
@@ -99,10 +99,10 @@ fn stage_lines_show_each_tier3_state() {
     assert_eq!(
         lines,
         [
-            "stage 1/4  anthrex/add-reset-3f9a/stage-1  1/1 merged  tier 3 red (42s)",
-            "stage 2/4  anthrex/add-reset-3f9a/stage-2  0/1 merged  tier 3 running",
-            "stage 3/4  anthrex/add-reset-3f9a/stage-3  0/0 merged  tier 3 green (3h 02m)",
-            "stage 4/4  anthrex/add-reset-3f9a/stage-4  0/0 merged  tier 3 none",
+            "stage 1 of 4  anthrex/add-reset-3f9a/stage-1  1/1 merged  tier 3 red (42s)",
+            "stage 2 of 4  anthrex/add-reset-3f9a/stage-2  0/1 merged  tier 3 running",
+            "stage 3 of 4  anthrex/add-reset-3f9a/stage-3  0/0 merged  tier 3 green (3h 02m)",
+            "stage 4 of 4  anthrex/add-reset-3f9a/stage-4  0/0 merged  tier 3 none",
         ]
     );
 }
@@ -126,9 +126,45 @@ fn the_same_span_reads_the_same_everywhere() {
     assert_eq!(
         lines,
         [
-            "stage 1/2  anthrex/add-reset-3f9a/stage-1  1/1 merged  tier 3 green (41m 12s)",
-            "stage 2/2  anthrex/add-reset-3f9a/stage-2  0/1 merged  tier 3 red (3h 02m)",
+            "stage 1 of 2  anthrex/add-reset-3f9a/stage-1  1/1 merged  tier 3 green (41m 12s)",
+            "stage 2 of 2  anthrex/add-reset-3f9a/stage-2  0/1 merged  tier 3 red (3h 02m)",
         ]
     );
     assert!(text.contains(&common::numbers::duration(2472)));
+}
+
+/// Milestone 9.19 decision 5: a merged, a cancelled, a replaced (cancelled, replaced by
+/// the merged one) and a reported task read `1/1 merged`, as the TUI's overview title,
+/// inspector and graph run box do (its test of the same name).
+#[test]
+fn progress_agrees_on_every_surface() {
+    let mut run = example();
+    run.tasks[1].state = TaskState::Cancelled;
+    run.tasks[2].state = TaskState::Cancelled;
+    run.tasks[2].replaced_by = vec!["t1".into()];
+    run.tasks[3].state = TaskState::Reported;
+    let text = run_block(&run, 0, Zone::Local(0));
+    let head = text.lines().next().unwrap_or_default();
+    assert!(head.contains("  running  1/1 merged  "), "{head}");
+}
+
+/// Milestone 9.19 decision 7: a position reads `stage k of m`, `m` being the larger of
+/// the planned stages and the records (`progress::stage_count`).
+#[test]
+fn a_stage_line_reads_k_of_m() {
+    let mut multi = example();
+    multi.tasks[3].stage = 3;
+    multi.stages = vec![
+        stage(1, Some("1"), (1, 1), full(FullState::Red, Some(42))),
+        stage(2, None, (0, 0), FullInfo::default()),
+    ];
+    let text = run_block(&multi, 0, Zone::Local(0));
+    let lines: Vec<&str> = text.lines().filter(|l| l.starts_with("stage ")).collect();
+    assert_eq!(
+        lines,
+        [
+            "stage 1 of 3  anthrex/add-reset-3f9a/stage-1  1/1 merged  tier 3 red (42s)",
+            "stage 2 of 3  not created",
+        ]
+    );
 }

@@ -160,8 +160,8 @@ fn planner_nodes_from_planner_info() {
         run: RUN_ID.into(),
         epic: epic.into(),
     };
-    assert_eq!(node_text(&app, &key("A")), "planner A daemon side  1/2");
-    assert_eq!(node_text(&app, &key("B")), "planner B  0/0");
+    assert_eq!(node_text(&app, &key("A")), "planner A daemon side  1/2 ✓");
+    assert_eq!(node_text(&app, &key("B")), "planner B  0/0 ✓");
     let a = inspect_node(&app, &key("A"));
     assert_eq!(
         a.glyph.content,

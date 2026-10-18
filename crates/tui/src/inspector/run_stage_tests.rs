@@ -26,7 +26,7 @@ fn task_key(id: &str) -> NodeKey {
 fn stage_inspector_shows_branch_head_tier3_and_bisect() {
     let app = app_of(staged_fixture());
     let inspection = inspect_node(&app, &stage_key(1));
-    assert_eq!(inspection.name, "stage 1/2");
+    assert_eq!(inspection.name, "stage 1 of 2");
     assert_eq!(inspection.right.as_deref(), Some("1/3 merged"));
     assert_eq!(inspection.layout, FieldLayout::Rows);
     assert_eq!(

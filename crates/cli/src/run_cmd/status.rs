@@ -55,11 +55,8 @@ pub fn render(runs: &[RunInfo], now: u64, zone: Zone) -> String {
 /// orchestrator's lines (milestone 9), the task table, when promotion was requested
 /// (local time) and the attention lines.
 pub fn run_block(run: &RunInfo, now: u64, zone: Zone) -> String {
-    let merged = run
-        .tasks
-        .iter()
-        .filter(|t| t.state == proto::TaskState::Merged)
-        .count();
+    // Milestone 9.19 decision 5: the one progress count.
+    let common::progress::Progress { merged, total, .. } = common::progress::run_progress(run);
     let state = match (run.state, run.paused_from) {
         (RunState::Paused, Some(from)) => format!("paused (from {})", from.label()),
         // Milestone 9.2 decision 36.
@@ -81,7 +78,7 @@ pub fn run_block(run: &RunInfo, now: u64, zone: Zone) -> String {
         run.run_id,
         state,
         merged,
-        run.tasks.len(),
+        total,
         run.base_branch,
         short(&run.base_sha),
         run.writers_busy,
@@ -123,10 +120,12 @@ pub fn run_block(run: &RunInfo, now: u64, zone: Zone) -> String {
     out.push_str(&super::design::status_lines(run));
     out.push_str(&super::delivery::status_lines(run));
     // Milestone 9.1 (Interfaces "CLI"): a `Multi` run's stages, before its tasks.
+    // Milestone 9.19 decision 7: `stage k of m`, with the one stage count.
+    let of = common::progress::stage_count(run);
     let multi = run.stages.len() > 1;
     if multi {
         for stage in &run.stages {
-            out.push_str(&stage_line(stage, run.stages.len()));
+            out.push_str(&stage_line(stage, of));
         }
     }
     out.push_str(&row(
@@ -184,13 +183,13 @@ fn pattern_lines(run: &RunInfo, task: &TaskInfo) -> String {
     out
 }
 
-/// `stage <n>/<of>  <branch>  <merged>/<tasks> merged  tier 3 <state>`, with the last
+/// `stage <n> of <of>  <branch>  <merged>/<tasks> merged  tier 3 <state>`, with the last
 /// job's duration and the stage's fix tasks in parentheses; `not created` for a stage
 /// with no branch yet.
 fn stage_line(stage: &proto::StageInfo, of: usize) -> String {
     let n = stage.n;
     if stage.head.is_none() {
-        return format!("stage {n}/{of}  not created\n");
+        return format!("stage {n} of {of}  not created\n");
     }
     let full = &stage.full;
     let state = match full.state {
@@ -213,7 +212,7 @@ fn stage_line(stage: &proto::StageInfo, of: usize) -> String {
         format!(" ({})", parts.join(", "))
     };
     format!(
-        "stage {n}/{of}  {}  {}/{} merged  tier 3 {state}{detail}\n",
+        "stage {n} of {of}  {}  {}/{} merged  tier 3 {state}{detail}\n",
         one_line(&stage.branch),
         stage.merged,
         stage.tasks

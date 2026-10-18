@@ -35,6 +35,7 @@ pub(crate) fn run_inspection(
     let mut fields = vec![field(
         "progress",
         progress_text(
+            common::progress::run_progress(run),
             run.tasks.iter(),
             super::RUN_PROGRESS_WIDTH,
             app.palette().ascii,
@@ -430,7 +431,12 @@ pub(crate) fn planner_inspection(run: &RunInfo, planner: &PlannerInfo, app: &App
     };
     let mut fields = vec![field(
         "progress",
-        progress_text(tasks(), super::PROGRESS_WIDTH, app.palette().ascii),
+        progress_text(
+            common::progress::tally(tasks()),
+            tasks(),
+            super::PROGRESS_WIDTH,
+            app.palette().ascii,
+        ),
     )];
     if !planner.area.is_empty() {
         fields.push(field("area", clean(&planner.area.join(" · "))));

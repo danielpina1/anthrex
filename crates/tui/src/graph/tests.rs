@@ -432,11 +432,11 @@ fn a_run_nodes_text_is_the_interfaces_text() {
         content_text(row)
     };
     let (snap, windows) = three_task_fixture();
-    assert_eq!(text(&snap, &windows), "orchestrator  1/3");
+    assert_eq!(text(&snap, &windows), "orchestrator  1/3 ✓");
     let (snap, windows) = gate_fixture();
-    assert_eq!(text(&snap, &windows), "run 3f9a  0/2");
+    assert_eq!(text(&snap, &windows), "run 3f9a  0/2 ✓");
     // The last four characters, not the first four, of a multi-byte id.
     let (mut snap, windows) = gate_fixture();
     snap.runs[0].run_id = "réinit-ünïç".into();
-    assert_eq!(text(&snap, &windows), "run ünïç  0/2");
+    assert_eq!(text(&snap, &windows), "run ünïç  0/2 ✓");
 }

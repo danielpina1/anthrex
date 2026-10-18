@@ -227,8 +227,9 @@ fn status_shows_orchestrator_planners_holds_summary_and_paused_lines() {
     run.tasks[0].state = TaskState::Reported;
     let text = run_block(&run, 0, Zone::Local(0));
     let lines: Vec<&str> = text.lines().collect();
+    // Milestone 9.19 decision 5: the reported task is in neither number.
     assert!(
-        lines[0].starts_with("add-reset-3f9a  planning  0/4 merged  "),
+        lines[0].starts_with("add-reset-3f9a  planning  0/3 merged  "),
         "{text}"
     );
     assert_eq!(

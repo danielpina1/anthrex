@@ -139,7 +139,8 @@ fn accept_page_of_a_run_without_stages_counts_tasks() {
     let ActionStep::Confirm(page) = &flow(&app).step else {
         panic!("not a page");
     };
-    assert_eq!(page.details[0], ("tasks".into(), "1/2 merged".into()));
+    // Milestone 9.19 decision 5: the cancelled task is in neither number.
+    assert_eq!(page.details[0], ("tasks".into(), "1/1 merged".into()));
     assert_eq!(page.details[1], ("base".into(), "main@ccccccc".into()));
 }
 

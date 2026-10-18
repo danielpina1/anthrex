@@ -9,6 +9,7 @@ use super::{Field, FieldLayout, Inspection};
 use crate::app::App;
 use crate::graph::paint::style::node_glyph;
 use crate::tree::{NodeKey, Row, RowKind};
+use common::progress::Progress;
 use proto::{
     BlockReason, Effort, Finding, Severity, Size, TaskInfo, TaskState, TestMode, WindowKind,
 };
@@ -92,38 +93,41 @@ fn category(state: TaskState) -> Option<usize> {
     }
 }
 
+/// Whether `task` is in the progress count (`common::progress::counts`).
+fn counts_in(task: &TaskInfo) -> bool {
+    common::progress::counts(task.state, !task.replaced_by.is_empty())
+}
+
 const CATEGORIES: [&str; 6] = [
     "working", "checking", "review", "merging", "blocked", "waiting",
 ];
 
-/// Decision 30's progress line over `tasks`: the bar, `{merged}/{total} merged`, each
-/// non-zero category, then the cancelled; `no tasks yet` when nothing counts. A
-/// `Reported` task is not counted at all.
+/// Decision 30's progress line: the bar, `{merged}/{total} merged` from `progress`
+/// (milestone 9.19 decision 5: `common::progress::tally` over the same `tasks`), each
+/// non-zero category of the tasks that count, then the cancelled; `no tasks yet` when
+/// nothing counts. A `Reported` task is not counted at all.
 pub(super) fn progress_text<'a>(
+    progress: Progress,
     tasks: impl Iterator<Item = &'a TaskInfo>,
     width: usize,
     ascii: bool,
 ) -> String {
-    let (mut merged, mut total, mut cancelled) = (0u64, 0u64, 0u64);
-    let mut counts = [0u64; 6];
-    for task in tasks {
-        match task.state {
-            TaskState::Cancelled => cancelled += 1,
-            TaskState::Merged => merged += 1,
-            // A research or review task's report (M9.9) ends it without a merge: it
-            // is outside the progress categories and the total (M9.2 review ruling 3).
-            TaskState::Reported => continue,
-            state => counts[category(state).unwrap_or(5)] += 1,
-        }
-        total += u64::from(task.state != TaskState::Cancelled);
-    }
+    let Progress {
+        merged,
+        total,
+        cancelled,
+    } = progress;
     if total == 0 {
         return "no tasks yet".to_owned();
     }
-    let mut text = format!(
-        "{}  {merged}/{total} merged",
-        progress_bar_in(merged, total, width, ascii)
-    );
+    let mut counts = [0usize; 6];
+    let counted = tasks.filter(|t| counts_in(t) && t.state != TaskState::Merged);
+    for task in counted {
+        counts[category(task.state).unwrap_or(5)] += 1;
+    }
+    let as_u64 = |n: usize| u64::try_from(n).unwrap_or(u64::MAX);
+    let bar = progress_bar_in(as_u64(merged), as_u64(total), width, ascii);
+    let mut text = format!("{bar}  {merged}/{total} merged");
     for (count, name) in counts.iter().zip(CATEGORIES) {
         if *count > 0 {
             text.push_str(&format!(" · {count} {name}"));

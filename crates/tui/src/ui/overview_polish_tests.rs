@@ -274,12 +274,12 @@ fn stage_text(app: &App, n: u16) -> String {
 #[test]
 fn a_bisecting_stage_reads_failed() {
     let mut app = staged(|two| two.full.state = FullState::Bisecting);
-    assert_eq!(stage_text(&app, 2), "stage 2/2  tier 3 ✗ bisecting");
+    assert_eq!(stage_text(&app, 2), "stage 2 of 2  tier 3 ✗ bisecting");
     let failed = role(Role::Failed, app.palette()).fg;
     for tick in 0..10 {
         app.spinner_frame = tick;
         let (buffer, _) = frame(&mut app, 120, 40);
-        let at = audit::find(&buffer, "stage 2/2  tier 3 ✗");
+        let at = audit::find(&buffer, "stage 2 of 2  tier 3 ✗");
         let &(x, y) = at.first().expect("stage 2's box");
         let glyph = &buffer[(x - 2, y)];
         assert_eq!(glyph.symbol(), "✗", "tick {tick}");
@@ -293,30 +293,34 @@ fn green_and_red_stages_show_their_time() {
         two.full.state = FullState::Green;
         two.full.secs = Some(38);
     });
-    assert_eq!(stage_text(&app, 2), "stage 2/2  tier 3 ✓ 38s");
+    assert_eq!(stage_text(&app, 2), "stage 2 of 2  tier 3 ✓ 38s");
     let (buffer, _) = frame(&mut app, 120, 40);
-    assert!(!audit::find(&buffer, "stage 2/2  tier 3 ✓ 38s").is_empty());
+    assert!(!audit::find(&buffer, "stage 2 of 2  tier 3 ✓ 38s").is_empty());
 
     let app = staged(|two| {
         two.full.state = FullState::Red;
         two.full.secs = Some(64);
     });
-    assert_eq!(stage_text(&app, 2), "stage 2/2  tier 3 ✗ 1m");
+    assert_eq!(stage_text(&app, 2), "stage 2 of 2  tier 3 ✗ 1m");
     let app = staged(|two| two.full.state = FullState::Running);
-    assert_eq!(stage_text(&app, 2), "stage 2/2  tier 3 running");
+    assert_eq!(stage_text(&app, 2), "stage 2 of 2  tier 3 running");
     let app = staged(|two| two.full.state = FullState::None);
-    assert_eq!(stage_text(&app, 2), "stage 2/2  tier 3 ◌");
+    assert_eq!(stage_text(&app, 2), "stage 2 of 2  tier 3 ◌");
     let app = staged(|two| {
         two.head = None;
         two.full.state = FullState::Green;
     });
     assert_eq!(
         stage_text(&app, 2),
-        "stage 2/2  tier 3 ◌",
+        "stage 2 of 2  tier 3 ◌",
         "no head: not run"
     );
     let app = staged(|two| two.full.state = FullState::Green);
-    assert_eq!(stage_text(&app, 2), "stage 2/2  tier 3 ✓", "no time sent");
+    assert_eq!(
+        stage_text(&app, 2),
+        "stage 2 of 2  tier 3 ✓",
+        "no time sent"
+    );
 }
 
 /// Stage 1's inspection with `failing` as its names, drawn into a `width`-column panel

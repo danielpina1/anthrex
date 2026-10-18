@@ -43,6 +43,15 @@ fn created(run: &Run, n: u16, planned: u16) -> Option<&StageRecord> {
 
 fn stage_info(run: &Run, n: u16, planned: u16) -> StageInfo {
     let of_stage = || run.tasks.iter().filter(move |t| t.stage() == n);
+    // Milestone 9.19 decision 8: the stage's count leaves out what the run's progress
+    // leaves out, through the one predicate (ruling R14). "Replaced" is the snapshot's
+    // own `replaced_by`, which the other tasks' `replaces` name.
+    let counted = || {
+        of_stage().filter(|t| {
+            let replaced = !super::snapshot_plan::replaced_by(run, t.id()).is_empty();
+            common::progress::counts(t.state, replaced)
+        })
+    };
     let record = created(run, n, planned);
     let head = record.and_then(|_| run.stage_head(n)).map(str::to_string);
     let branch = match record {
@@ -56,8 +65,8 @@ fn stage_info(run: &Run, n: u16, planned: u16) -> StageInfo {
         actions: Vec::new(),
         n,
         branch,
-        tasks: count(of_stage().count()),
-        merged: count(of_stage().filter(|t| t.state == TaskState::Merged).count()),
+        tasks: count(counted().count()),
+        merged: count(counted().filter(|t| t.state == TaskState::Merged).count()),
         full: record.map_or_else(FullInfo::default, |s| {
             full(run, s, head.as_deref().unwrap_or_default())
         }),

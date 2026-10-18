@@ -96,8 +96,9 @@ pub(crate) fn task_inspection(run: &RunInfo, task: &TaskInfo, app: &App) -> Insp
 /// stage only in a multi-stage run, the model `default` when the route names none.
 fn footer_text(run: &RunInfo, task: &TaskInfo) -> String {
     let mut parts = Vec::new();
-    if run.stages.len() > 1 {
-        parts.push(format!("stage {} of {}", task.stage, run.stages.len()));
+    let stages = common::progress::stage_count(run);
+    if stages > 1 {
+        parts.push(format!("stage {} of {stages}", task.stage));
     }
     // One source with the plan review's route column (milestone 9.0.7 task 11).
     parts.push(super::run_format::route_tag(&task.route));

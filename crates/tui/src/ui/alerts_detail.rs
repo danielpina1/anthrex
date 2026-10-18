@@ -28,13 +28,6 @@ fn plan_text(n: usize, stages: usize) -> String {
     }
 }
 
-/// The plan's stages, as the plan review counts them: the highest planned stage or
-/// the run's stage records, whichever is more.
-fn run_stages(run: &RunInfo) -> usize {
-    let planned = run.tasks.iter().map(|t| t.stage).max().unwrap_or(1);
-    usize::from(planned).max(run.stages.len())
-}
-
 /// The distinct stages of `tasks`: a hold's own (Review focus 4: never the run's,
 /// which the hold need not span), or a later round's at its gate.
 fn distinct_stages<'a>(tasks: impl Iterator<Item = &'a TaskInfo>) -> usize {
@@ -57,7 +50,7 @@ fn gate_plan(run: &RunInfo) -> String {
     let stages = if run.round > 1 {
         distinct_stages(tasks.iter().copied())
     } else {
-        run_stages(run)
+        common::progress::stage_count(run)
     };
     plan_text(tasks.len(), stages)
 }
@@ -236,17 +229,15 @@ fn facts(app: &App, alert: &Alert) -> Vec<(String, String)> {
             push(&mut rows, "phase", delivery_phase(*kind).to_owned());
             text_rows(&mut rows, "reason", &alert.detail);
             if let Some(n) = stage {
-                push(&mut rows, "stage", format!("{n} of {}", run.stages.len()));
+                let of = common::progress::stage_count(run);
+                push(&mut rows, "stage", format!("{n} of {of}"));
             }
             push(&mut rows, "run", run_name(run, p));
         }
         (AlertKey::Stage { stage, kind, .. }, Some(run)) => {
             push(&mut rows, "phase", stage_phase(*kind).to_owned());
-            push(
-                &mut rows,
-                "stage",
-                format!("{stage} of {}", run.stages.len()),
-            );
+            let of = common::progress::stage_count(run);
+            push(&mut rows, "stage", format!("{stage} of {of}"));
             push(&mut rows, "run", run_name(run, p));
         }
         (AlertKey::Proposal(project), _) => {

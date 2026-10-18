@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::tree::run_fixtures::{PROJECT, RUN_ID, run, task};
-use proto::{DesignMode, DocGateInfo, DocGateKind, RevisingCause, RoundDesign, Size};
+use proto::{DesignMode, DocGateInfo, DocGateKind, RevisingCause, RoundDesign, Size, TaskState};
 
 fn gate(kind: DocGateKind, version: u32, revising: Option<&str>) -> DocGateInfo {
     DocGateInfo {
@@ -74,7 +74,7 @@ fn the_run_view_shows_the_phase_and_the_open_gate() {
     assert_eq!(run_text(&halted, false), "run 3f9a  halted in specifying");
     // Halted after the plan was approved: its progress, as before.
     halted.halted_phase = None;
-    assert_eq!(run_text(&halted, true), "orchestrator  0/1");
+    assert_eq!(run_text(&halted, true), "orchestrator  0/1 ✓");
 }
 
 #[test]
@@ -85,10 +85,10 @@ fn an_off_round_and_a_run_without_the_flow_read_as_before() {
     info.round_design = Some(RoundDesign::Off);
     assert_eq!(run_text(&info, true), "orchestrator  planning");
     info.state = RunState::AwaitingApproval;
-    assert_eq!(run_text_in(&info, true, false), "orchestrator  0/1");
+    assert_eq!(run_text_in(&info, true, false), "orchestrator  0/1 ✓");
     info.state = RunState::Halted;
     info.halted_phase = Some(RunState::Planning);
-    assert_eq!(run_text(&info, true), "orchestrator  0/1");
+    assert_eq!(run_text(&info, true), "orchestrator  0/1 ✓");
     // A run without the flow, at its gate and halted.
     for state in [
         RunState::AwaitingApproval,
@@ -97,7 +97,7 @@ fn an_off_round_and_a_run_without_the_flow_read_as_before() {
     ] {
         let mut plain = run(RUN_ID, PROJECT, state);
         plain.tasks = vec![task("t1", "a", Size::S, TaskState::Pending)];
-        assert_eq!(run_text_in(&plain, true, false), "orchestrator  0/1");
-        assert_eq!(run_text_in(&plain, false, true), "run 3f9a  0/1");
+        assert_eq!(run_text_in(&plain, true, false), "orchestrator  0/1 ✓");
+        assert_eq!(run_text_in(&plain, false, true), "run 3f9a  0/1 +");
     }
 }

@@ -4,11 +4,11 @@
 
 use super::MAX_NODE_WIDTH;
 use crate::theme::{Glyph, glyph};
-use crate::tree::{DisplayRound, round_label_with_lane, run_progress};
+use crate::tree::{DisplayRound, round_label_with_lane};
 use crate::ui::tree_view::truncate_in;
 use proto::{
     AgentRole, DesignAgentInfo, DesignMode, DocGateKind, FullState, PlannerInfo, RoundDesign,
-    RunInfo, RunState, StageInfo, TaskInfo, TaskOrigin, TaskState,
+    RunInfo, RunState, StageInfo, TaskInfo, TaskOrigin,
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -16,8 +16,10 @@ use unicode_width::UnicodeWidthStr;
 /// glyph and its space (2) — decision 18.
 pub(crate) const TASK_TEXT_MAX: usize = MAX_NODE_WIDTH as usize - 4 - 2;
 
-/// `orchestrator  {merged}/{total}` when the run's orchestrator window is listed,
-/// else `run {last four of the id}  {merged}/{total}`; cancelled tasks are not counted.
+/// `orchestrator  {merged}/{total} ✓` when the run's orchestrator window is listed,
+/// else `run {last four of the id}  {merged}/{total} ✓`, counted as
+/// `common::progress::run_progress` counts (milestone 9.19 decision 5: a box's narrow
+/// form, `✓` being merged, `+` in ASCII).
 /// A run being planned (milestone 9) says `planning` instead of its progress.
 #[cfg(test)]
 pub(crate) fn run_text(run: &RunInfo, orchestrator: bool) -> String {
@@ -30,11 +32,10 @@ pub(crate) fn run_text(run: &RunInfo, orchestrator: bool) -> String {
 /// revises), and `halted in <phase>` while halted from a design phase. An `off` round
 /// reads as 9.3's.
 pub(crate) fn run_text_in(run: &RunInfo, orchestrator: bool, ascii: bool) -> String {
-    let (merged, total) = run_progress(run);
     let progress = match design_text(run, ascii) {
         Some(text) => text,
         None if run.state == RunState::Planning => "planning".to_owned(),
-        None => format!("{merged}/{total}"),
+        None => merged_cell(common::progress::run_progress(run), ascii),
     };
     if orchestrator {
         format!("orchestrator  {progress}")
@@ -43,8 +44,15 @@ pub(crate) fn run_text_in(run: &RunInfo, orchestrator: bool, ascii: bool) -> Str
     }
 }
 
-/// The design flow's words for the orchestrator node, `None` outside it.
-fn design_text(run: &RunInfo, ascii: bool) -> Option<String> {
+/// Decision 5's narrow form of a progress count: `3/5 ✓` (`3/5 +` in ASCII).
+pub(crate) fn merged_cell(progress: common::progress::Progress, ascii: bool) -> String {
+    let common::progress::Progress { merged, total, .. } = progress;
+    format!("{merged}/{total} {}", glyph(Glyph::Passed, ascii))
+}
+
+/// The design flow's words for the orchestrator node, `None` outside it; the overview's
+/// run title shows the same words (milestone 9.19 decision 6).
+pub(crate) fn design_text(run: &RunInfo, ascii: bool) -> Option<String> {
     if run.design == DesignMode::Off || run.round_design == Some(RoundDesign::Off) {
         return None;
     }
@@ -96,25 +104,18 @@ pub(crate) fn design_agent_text(agent: &DesignAgentInfo) -> String {
     text
 }
 
-/// `planner {epic} {title}  {merged}/{total}` over the tasks of its epic, or
-/// `planner {epic}  {merged}/{total}` when the title is blank.
-pub(crate) fn planner_text(run: &RunInfo, planner: &PlannerInfo) -> String {
-    let (merged, total) = run
-        .tasks
-        .iter()
-        .filter(|task| task.epic.as_deref() == Some(planner.epic.as_str()))
-        .filter(|task| task.state != TaskState::Cancelled)
-        .fold((0, 0), |(merged, total), task| {
-            (
-                merged + usize::from(task.state == TaskState::Merged),
-                total + 1,
-            )
-        });
+/// `planner {epic} {title}  {merged}/{total} ✓` over the tasks of its epic, counted
+/// by `common::progress::tally` (milestone 9.19 decision 5, ruling R14), or
+/// `planner {epic}  {merged}/{total} ✓` when the title is blank.
+pub(crate) fn planner_text(run: &RunInfo, planner: &PlannerInfo, ascii: bool) -> String {
+    let epic =
+        (run.tasks.iter()).filter(|task| task.epic.as_deref() == Some(planner.epic.as_str()));
+    let progress = merged_cell(common::progress::tally(epic), ascii);
     let title = planner.title.trim();
     if title.is_empty() {
-        format!("planner {}  {merged}/{total}", planner.epic)
+        format!("planner {}  {progress}", planner.epic)
     } else {
-        format!("planner {} {title}  {merged}/{total}", planner.epic)
+        format!("planner {} {title}  {progress}", planner.epic)
     }
 }
 
@@ -177,7 +178,9 @@ pub(crate) fn stage_text_in(run: &RunInfo, stage: &StageInfo, ascii: bool) -> St
     };
     // Milestone 9.2 decision 42: the stage's pull request follows, in `pr` mode, in
     // what the box leaves it (the final fix wave, review C M4).
-    let head = format!("stage {}/{}  tier 3 {tier}", stage.n, run.stages.len());
+    // Milestone 9.19 decision 7: a position reads `stage k of m`.
+    let of = common::progress::stage_count(run);
+    let head = format!("stage {} of {of}  tier 3 {tier}", stage.n);
     let room = super::STAGE_TEXT_ROOM.saturating_sub(UnicodeWidthStr::width(head.as_str()));
     let pr = super::stage_pr::row_suffix_within(run, stage, ascii, room);
     format!("{head}{pr}")

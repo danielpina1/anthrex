@@ -59,9 +59,9 @@ fn a_pr_run_view_draws_its_prs_at_both_sizes() {
     let app = pr_view(pr_fixture(), false, stage_key(2));
     let big = screen(&app, 120, 40);
     for text in [
-        "stage 1/3  tier 3 ✓ 38s  #141  merged",
-        "▌ ✓ stage 2/3  tier 3 ✓ 38s  #142  ci ✗  3 threads",
-        "stage 3/3  tier 3 ✓ 38s  #143  ci …",
+        "stage 1 of 3  tier 3 ✓ 38s  #141  merged",
+        "▌ ✓ stage 2 of 3  tier 3 ✓ 38s  #142  ci ✗  3 threads",
+        "stage 3 of 3  tier 3 ✓ 38s  #143  ci …",
         "pr        #142 open, based on anthrex/add-reset-3f9a/stage-1, opened 02:30 +00:…",
         "ci        ✓ build · ✗ test (fix3)",
         "fix tasks ci: fix3 working; review: fix4 merged",
@@ -70,9 +70,9 @@ fn a_pr_run_view_draws_its_prs_at_both_sizes() {
     }
     let small = screen(&app, 80, 24);
     for text in [
-        "  ✓ stage 1/3  tier 3 ✓ 38s  #141  merged",
-        "▌ ✓ stage 2/3  tier 3 ✓ 38s  #142  ci ✗  3 …",
-        "  ✓ stage 3/3  tier 3 ✓ 38s  #143  ci …",
+        "  ✓ stage 1 of 3  tier 3 ✓ 38s  #141  merged",
+        "▌ ✓ stage 2 of 3  tier 3 ✓ 38s  #142  ci ✗ …",
+        "  ✓ stage 3 of 3  tier 3 ✓ 38s  #143  ci …",
         "pr        #142 open, based on anthrex/a…",
     ] {
         assert!(small.contains(text), "{text:?} in\n{small}");
@@ -82,7 +82,14 @@ fn a_pr_run_view_draws_its_prs_at_both_sizes() {
         let buffer = audit::draw(&app, w, h);
         assert_eq!(audit::first_non_ascii(&buffer), None, "{w}x{h}");
         let text = audit::rows(&buffer).join("\n");
-        assert!(text.contains("#142  ci x"), "{text}");
+        // Milestone 9.19 decision 7: `stage 2 of 3` is three columns wider, so the
+        // 80-column list's ASCII `...` (three columns) now cuts before stage 2's mark.
+        let red = if w == 80 {
+            "#142  ci ..."
+        } else {
+            "#142  ci x"
+        };
+        assert!(text.contains(red), "{text}");
         assert!(text.contains("#143  ci ..."), "{text}");
     }
 }
@@ -109,19 +116,31 @@ fn after(buffer: &ratatui::buffer::Buffer, needle: &str) -> (ratatui::style::Col
 #[test]
 fn a_stage_rows_ci_mark_wears_its_role() {
     use crate::theme::{Role, role};
+    use ratatui::style::Color;
     for ascii in [false, true] {
         let app = pr_view(pr_fixture(), ascii, stage_key(1));
         let fg = |r| role(r, app.palette()).fg.expect("a role has a foreground");
         let (red, pending) = if ascii { ("x", ".") } else { ("✗", "…") };
         for (w, h) in [(120, 40), (80, 24)] {
             let buffer = audit::draw(&app, w, h);
-            assert_eq!(after(&buffer, "#142  ci "), (fg(Role::Failed), red.into()));
+            // Milestone 9.19 decision 7: the 80-column list cuts stage 2's ASCII row
+            // before its mark (`#142  ci ...`), so no mark is drawn there to colour.
+            let cut = ascii && w == 80;
+            if cut {
+                assert_eq!(after(&buffer, "#142  ci "), (Color::Reset, ".".into()));
+            } else {
+                assert_eq!(after(&buffer, "#142  ci "), (fg(Role::Failed), red.into()));
+            }
             assert_eq!(
                 after(&buffer, "#143  ci "),
                 (fg(Role::Working), pending.into())
             );
-            let (plain, _) = after(&buffer, "#142  ci ?  ".replace('?', red).as_str());
-            assert_eq!(plain, ratatui::style::Color::Reset, "{w}x{h} ascii {ascii}");
+            // The cell after the mark: `stage k of m` (milestone 9.19 decision 7) leaves
+            // the 80-column list no room for the thread count.
+            if !cut {
+                let (plain, _) = after(&buffer, "#142  ci ?".replace('?', red).as_str());
+                assert_eq!(plain, Color::Reset, "{w}x{h} ascii {ascii}");
+            }
             let (merged, _) = after(&buffer, "#141  ");
             assert_eq!(
                 merged,

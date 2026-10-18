@@ -1,7 +1,8 @@
 //! Milestone 9.6 task 18 (addendum "Non-design runs"): a run without the design flow
 //! is drawn exactly as before, its run view at 80×24 (the compact list) and 120×40 (the
 //! graph), running and at its plan gate. The rows were captured on `264f3539`, before
-//! the task touched the run view.
+//! the task touched the run view; milestone 9.19 decision 5 then gave the run box its
+//! narrow `1/3 ✓`, two columns wider, and moved the boxes after it.
 
 use super::tests::{app_of, run_view};
 use crate::app::App;
@@ -26,7 +27,7 @@ fn a_run_without_the_flow_is_drawn_as_before() {
 #[rustfmt::skip]
 const RUNNING_80X24: [&str; 24] = [
     "╭ agents · tree ─────────────────╮╭ run · Add passw… · 3f9a ─ 1/3 merged · 10m ╮",
-    "│▾ demo                   ⠋  sh 1││▌◉ orchestrator  1/3                        │",
+    "│▾ demo                   ⠋  sh 1││▌◉ orchestrator  1/3 ✓                      │",
     "▌├─  ◉ 1 Add passwo… · 3f9a 1/3 ✓││  ✓ t0 proto   M tdd  merged                │",
     "│└─▎ ○ 2 shell             sh  0s││    ✓ worker #1 claude                      │",
     "│                                ││    ✓ review #1 codex                       │",
@@ -55,7 +56,7 @@ const RUNNING_80X24: [&str; 24] = [
 #[rustfmt::skip]
 const GATE_80X24: [&str; 24] = [
     "╭ agents · tree ─────────────────╮╭ run · Add passwo… · 3f9a ─ 0/2 merged · 2h ╮",
-    "│▾ demo                   ⚑  sh 1││▌⚑ run 3f9a  0/2                            │",
+    "│▾ demo                   ⚑  sh 1││▌⚑ run 3f9a  0/2 ✓                          │",
     "▌├─  ⚑   Add passwo… · 3f9a 0/2 ✓││  ○ t1 reset token model  M tdd  planned    │",
     "│└─▎ ○ 1 shell             sh  0s││  ○ t2 reset endpoint     S tdd  planned    │",
     "│                                ││                                            │",
@@ -84,21 +85,21 @@ const GATE_80X24: [&str; 24] = [
 #[rustfmt::skip]
 const RUNNING_120X40: [&str; 40] = [
     "╭ agents · tree ─────────────────╮╭ run · Add password reset · 3f9a ───────────────────────────────── 1/3 merged · 10m ╮",
-    "│▾ demo                   ⠋  sh 1││                                                        ╭────────────────────╮      │",
-    "▌├─  ◉ 1 Add passwo… · 3f9a 1/3 ✓││                                                      ┌─┤ ✓ worker #1 claude │      │",
-    "│└─▎ ○ 2 shell             sh  0s││                          ╭─────────────────────────╮ │ ╰────────────────────╯      │",
-    "│                                ││                        ┌─┤ ✓ t0 proto M ◆          ├─┤                             │",
-    "│                                ││                        │ ╰─────────────────────────╯ │ ╭────────────────────╮      │",
-    "│                                ││                        │                             └─┤ ✓ review #1 codex  │      │",
-    "│                                ││                        │                               ╰────────────────────╯      │",
-    "│                                ││╭─────────────────────╮ │                                                           │",
-    "│                                ││▌ ◉ orchestrator  1/3 ├─┤ ╭─────────────────────────╮   ╭────────────────────╮      │",
-    "│                                ││╰─────────────────────╯ ├─┤ ● t1 spawn M  after t0  ├───┤ ● worker #1 claude │      │",
-    "│                                ││                        │ ╰─────────────────────────╯   ╰────────────────────╯      │",
-    "│                                ││                        │                                                           │",
-    "│                                ││                        │ ╭─────────────────────────╮                               │",
-    "│                                ││                        └─┤ ▫ t2 status S  after t0 │                               │",
-    "│                                ││                          ╰─────────────────────────╯                               │",
+    "│▾ demo                   ⠋  sh 1││                                                          ╭────────────────────╮    │",
+    "▌├─  ◉ 1 Add passwo… · 3f9a 1/3 ✓││                                                        ┌─┤ ✓ worker #1 claude │    │",
+    "│└─▎ ○ 2 shell             sh  0s││                            ╭─────────────────────────╮ │ ╰────────────────────╯    │",
+    "│                                ││                          ┌─┤ ✓ t0 proto M ◆          ├─┤                           │",
+    "│                                ││                          │ ╰─────────────────────────╯ │ ╭────────────────────╮    │",
+    "│                                ││                          │                             └─┤ ✓ review #1 codex  │    │",
+    "│                                ││                          │                               ╰────────────────────╯    │",
+    "│                                ││╭───────────────────────╮ │                                                         │",
+    "│                                ││▌ ◉ orchestrator  1/3 ✓ ├─┤ ╭─────────────────────────╮   ╭────────────────────╮    │",
+    "│                                ││╰───────────────────────╯ ├─┤ ● t1 spawn M  after t0  ├───┤ ● worker #1 claude │    │",
+    "│                                ││                          │ ╰─────────────────────────╯   ╰────────────────────╯    │",
+    "│                                ││                          │                                                         │",
+    "│                                ││                          │ ╭─────────────────────────╮                             │",
+    "│                                ││                          └─┤ ▫ t2 status S  after t0 │                             │",
+    "│                                ││                            ╰─────────────────────────╯                             │",
     "│                                ││                                                                                    │",
     "│                                ││                                                                                    │",
     "│                                ││                                                                                    │",
@@ -129,13 +130,13 @@ const RUNNING_120X40: [&str; 40] = [
 #[rustfmt::skip]
 const GATE_120X40: [&str; 40] = [
     "╭ agents · tree ─────────────────╮╭ run · Add password reset · 3f9a ────────────────────────────────── 0/2 merged · 2h ╮",
-    "│▾ demo                   ⚑  sh 1││                      ╭──────────────────────────╮                                  │",
-    "▌├─  ⚑   Add passwo… · 3f9a 0/2 ✓││                    ┌─┤ ○ t1 reset token model M │                                  │",
-    "│└─▎ ○ 1 shell             sh  0s││╭─────────────────╮ │ ╰──────────────────────────╯                                  │",
-    "│                                ││▌ ⚑ run 3f9a  0/2 ├─┤                                                               │",
-    "│                                ││╰─────────────────╯ │ ╭──────────────────────────╮                                  │",
-    "│                                ││                    └─┤ ○ t2 reset endpoint S    │                                  │",
-    "│                                ││                      ╰──────────────────────────╯                                  │",
+    "│▾ demo                   ⚑  sh 1││                        ╭──────────────────────────╮                                │",
+    "▌├─  ⚑   Add passwo… · 3f9a 0/2 ✓││                      ┌─┤ ○ t1 reset token model M │                                │",
+    "│└─▎ ○ 1 shell             sh  0s││╭───────────────────╮ │ ╰──────────────────────────╯                                │",
+    "│                                ││▌ ⚑ run 3f9a  0/2 ✓ ├─┤                                                             │",
+    "│                                ││╰───────────────────╯ │ ╭──────────────────────────╮                                │",
+    "│                                ││                      └─┤ ○ t2 reset endpoint S    │                                │",
+    "│                                ││                        ╰──────────────────────────╯                                │",
     "│                                ││                                                                                    │",
     "│                                ││                                                                                    │",
     "│                                ││                                                                                    │",

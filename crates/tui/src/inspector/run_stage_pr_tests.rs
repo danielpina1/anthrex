@@ -31,7 +31,7 @@ fn ascii(mut app: App) -> App {
 fn stage_inspector_lines_are_exact() {
     let app = app_of(pr_fixture());
     let two = inspect_node(&app, &stage_key(2));
-    assert_eq!(two.name, "stage 2/3");
+    assert_eq!(two.name, "stage 2 of 3");
     assert_eq!(
         pairs(&two),
         [

@@ -1,5 +1,5 @@
 //! Milestone 9.2 decision 42: the pull-request part of a stage node's content row,
-//! after its tier 3 (`stage 2/3  tier 3 ✓  #142  ci ✓  2 threads`). Pure, and nothing
+//! after its tier 3 (`stage 2 of 3  tier 3 ✓  #142  ci ✓  2 threads`). Pure, and nothing
 //! in it is agent or host text: a number, the CI mark (`theme::ci_look`, with its ASCII
 //! twin) and counts.
 

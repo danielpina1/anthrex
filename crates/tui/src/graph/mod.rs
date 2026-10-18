@@ -27,14 +27,14 @@ pub const MIN_NODE_WIDTH: u16 = 12;
 /// the painter rather than allowed to stretch its whole tier.
 pub const MAX_NODE_WIDTH: u16 = 30;
 /// A stage node's cap (milestone 9.0.7 decision 18): its whole text, the longest being
-/// `stage 99/99  tier 3 ✗ bisecting` (31 columns), then, in a `pr`-mode run, its pull
+/// `stage 99 of 99  tier 3 ✗ bisecting` (34 columns; milestone 9.19 decision 7), then, in a `pr`-mode run, its pull
 /// request (milestone 9.2 decision 42) up to `  #99999  ci ✗  99 threads  paused` (34;
 /// the final fix wave, review C M4: a five-digit number and the state word), plus the
 /// glyph, its space, the borders and the padding. A longer row loses its PR number's
 /// digits first (`stage_pr::row_suffix_within`), never its state word. A local run's
 /// stage boxes are as wide as before: a box takes only what its text needs. Task, run
 /// and every other box keep [`MAX_NODE_WIDTH`].
-pub const MAX_STAGE_NODE_WIDTH: u16 = 71;
+pub const MAX_STAGE_NODE_WIDTH: u16 = 74;
 /// The display columns a stage box leaves its text: [`MAX_STAGE_NODE_WIDTH`] less the
 /// borders, the padding, the glyph and its space.
 pub(crate) const STAGE_TEXT_ROOM: usize =
@@ -253,7 +253,7 @@ fn raw_content_text(row: &Row<'_>, ascii: bool) -> String {
         RowKind::Run {
             run, orchestrator, ..
         } => run_text::run_text_in(run, orchestrator.is_some(), ascii),
-        RowKind::Planner { run, planner } => run_text::planner_text(run, planner),
+        RowKind::Planner { run, planner } => run_text::planner_text(run, planner, ascii),
         RowKind::Scout { scout, .. } => scout.question.clone(),
         RowKind::DesignAgent { agent, .. } => run_text::design_agent_text(agent),
         RowKind::Task { task, .. } => run_text::task_text_in(task, ascii),

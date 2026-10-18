@@ -204,10 +204,17 @@ fn run_title(app: &App, run_id: &str, width: u16) -> (String, Option<String>) {
     // A title competes for its row's width, and shows the graph node's own coarse time
     // (milestone 9.19 decisions 4 and 6).
     let since = |at: u64| common::numbers::duration_coarse(app.run_age(at));
-    let rights = if run.state == proto::RunState::Planning {
+    let progress = common::progress::run_progress(run);
+    // Decision 6: a design run's phase or open gate, the graph node's own word, while
+    // nothing counts yet; never `0/0`.
+    let design = crate::graph::run_text::design_text(run, app.palette().ascii)
+        .filter(|_| progress.total == 0);
+    let rights = if let Some(word) = design {
+        vec![format!("{word} · {}", since(run.created_at))]
+    } else if run.state == proto::RunState::Planning {
         vec![format!("planning · {}", since(run.created_at))]
     } else {
-        let (merged, total) = tree::run_progress(run);
+        let common::progress::Progress { merged, total, .. } = progress;
         let at = run.approved_at.unwrap_or(run.created_at);
         match crate::inspector::delivering(run) {
             true => vec![
@@ -266,3 +273,7 @@ mod polish_tests;
 #[cfg(test)]
 #[path = "overview_title_tests.rs"]
 mod title_tests;
+
+#[cfg(test)]
+#[path = "overview_progress_tests.rs"]
+mod progress_tests;
