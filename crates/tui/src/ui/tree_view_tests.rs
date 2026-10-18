@@ -488,3 +488,17 @@ fn a_long_window_age_has_days() {
         .map(|field| field.value.as_str());
     assert_eq!(since, Some("3d 00h"));
 }
+
+/// Milestone 9.19 review M3: a run with nothing to count draws no `0/0 ✓`.
+#[test]
+fn a_run_with_nothing_to_count_draws_no_count() {
+    let (mut snapshot, windows) = tree::run_fixtures::gate_fixture();
+    for task in &mut snapshot.runs[0].tasks {
+        task.state = proto::TaskState::Cancelled;
+    }
+    let app = app_with_runs(windows, snapshot);
+    let text = run_line(&app, 40);
+    assert!(text.contains("Add password reset · 3f9a"), "{text:?}");
+    assert!(!text.contains("0/0"), "{text:?}");
+    assert!(!text.contains('✓'), "{text:?}");
+}

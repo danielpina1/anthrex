@@ -154,10 +154,20 @@ fn an_asks_context_and_options_are_drawn_in_the_detail() {
 }
 
 /// Milestone 9.19 decision 7, ruling R13: a delivery alert on stage 3 of a plan of
-/// three reads `3 of 3`. The snapshot is shaped as the daemon's `stage_infos` builds
-/// it, one record per stage from 1 to the plan's highest, the last not created yet.
+/// three reads `3 of 3`, both with the snapshot shaped as the daemon's `stage_infos`
+/// builds it (one record per stage from 1 to the plan's highest, the last not created
+/// yet) and with the brief's two records (review M1).
 #[test]
 fn the_stage_row_never_passes_its_denominator() {
+    for records in [3, 2] {
+        let text = stage_three_alert(records);
+        assert!(text.contains("stage   3 of 3"), "{records} records: {text}");
+    }
+}
+
+/// The detail of a delivery alert on stage 3 of a plan of three with `records` stage
+/// records.
+fn stage_three_alert(records: u16) -> String {
     use crate::tree::run_fixtures::{PROJECT, RUN_ID, run, snapshot, task};
     use proto::{DeliveryAlert, DeliveryAlertKind, DeliveryInfo, DeliveryMode, FullInfo};
     let mut info = run(RUN_ID, PROJECT, proto::RunState::Running);
@@ -173,7 +183,7 @@ fn the_stage_row_never_passes_its_denominator() {
             t
         })
         .collect();
-    info.stages = (1..=3u16)
+    info.stages = (1..=records)
         .map(|n| proto::StageInfo {
             actions: Vec::new(),
             n,
@@ -204,6 +214,22 @@ fn the_stage_row_never_passes_its_denominator() {
         }],
     });
     let app = app_of((snapshot(10_000, vec![info]), vec![]));
+    detail_text(&app)
+}
+
+/// Milestone 9.19 decision 5 (review I2): the Accept detail's `merged` row is the run's
+/// one progress count, a reported task in neither number.
+#[test]
+fn the_accept_detail_counts_as_the_run_does() {
+    use crate::tree::run_fixtures::{PROJECT, RUN_ID, run, snapshot, task};
+    use proto::{Size, TaskState};
+    let mut info = run(RUN_ID, PROJECT, proto::RunState::Complete);
+    info.tasks = vec![
+        task("t1", "a", Size::S, TaskState::Merged),
+        task("t2", "b", Size::S, TaskState::Reported),
+        task("t3", "c", Size::S, TaskState::Cancelled),
+    ];
+    let app = app_of((snapshot(10_000, vec![info]), vec![]));
     let text = detail_text(&app);
-    assert!(text.contains("stage   3 of 3"), "{text}");
+    assert!(text.contains("merged  1/1"), "{text}");
 }

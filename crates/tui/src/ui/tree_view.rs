@@ -190,11 +190,15 @@ pub fn narrow_line(
                     style: if focused { bold } else { Style::default() },
                 },
                 None,
+                // Milestone 9.19 review M3: no `0/0 ✓` while nothing counts.
                 vec![
-                    vec![
-                        Span::styled(format!("{merged}/{total} "), muted),
-                        Span::styled(glyph(Glyph::Passed, ascii), theme::role(tick, p)),
-                    ],
+                    match total {
+                        0 => vec![],
+                        _ => vec![
+                            Span::styled(format!("{merged}/{total} "), muted),
+                            Span::styled(glyph(Glyph::Passed, ascii), theme::role(tick, p)),
+                        ],
+                    },
                     vec![],
                 ],
             )

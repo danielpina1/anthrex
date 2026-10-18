@@ -15,7 +15,7 @@ use crate::safe_text::{multi_line, one_line};
 use crate::theme::{self, Palette, Role, fold};
 use crate::tree;
 use crate::ui::tree_view::truncate_in;
-use proto::{RunInfo, SetupState, TaskInfo, TaskState};
+use proto::{RunInfo, SetupState, TaskInfo};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
@@ -135,12 +135,6 @@ fn facts(app: &App, alert: &Alert) -> Vec<(String, String)> {
         | AlertKey::Delivery { run: id, .. }
         | AlertKey::Stage { run: id, .. } => run_of(app, id),
     };
-    let counted = |run: &RunInfo| {
-        run.tasks
-            .iter()
-            .filter(|task| task.state != TaskState::Cancelled)
-            .count()
-    };
     match (&alert.key, run) {
         (AlertKey::Blocked { task, .. }, Some(run)) => {
             let task = run.tasks.iter().find(|t| t.id == *task);
@@ -195,12 +189,10 @@ fn facts(app: &App, alert: &Alert) -> Vec<(String, String)> {
         }
         (AlertKey::Accept(_), Some(run)) => {
             push(&mut rows, "phase", "complete · ready to accept".to_owned());
-            let merged = run
-                .tasks
-                .iter()
-                .filter(|task| task.state == TaskState::Merged)
-                .count();
-            push(&mut rows, "merged", format!("{merged}/{}", counted(run)));
+            // Milestone 9.19 decision 5 (review I2): the run's one progress count.
+            let common::progress::Progress { merged, total, .. } =
+                common::progress::run_progress(run);
+            push(&mut rows, "merged", format!("{merged}/{total}"));
             if let Some(base) = base_text(run) {
                 push(&mut rows, "base", base);
             }

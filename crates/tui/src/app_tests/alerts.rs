@@ -187,7 +187,11 @@ fn each_priority_rule() {
 
     // P4, and runs that ask nothing: planning, paused, running quietly, accepted.
     let mut complete = at("r", RunState::Complete, 1);
-    complete.tasks = vec![task("t1", "a", Size::S, TaskState::Merged)];
+    // Milestone 9.19 decision 5 (review I2): a reported task is in neither number.
+    complete.tasks = vec![
+        task("t1", "a", Size::S, TaskState::Merged),
+        task("t2", "b", Size::S, TaskState::Reported),
+    ];
     let app = app_with_runs(vec![], snapshot(1, vec![complete]));
     assert_eq!(
         listed(&app),

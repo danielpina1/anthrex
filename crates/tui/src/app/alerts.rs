@@ -389,15 +389,10 @@ pub fn alerts(app: &App) -> Vec<Alert> {
             .as_ref()
             .is_some_and(|d| d.mode == proto::DeliveryMode::Pr);
         if run.state == RunState::Complete && !pr {
-            let counted = run
-                .tasks
-                .iter()
-                .filter(|task| task.state != TaskState::Cancelled);
-            let n = counted.clone().count();
-            let m = counted
-                .filter(|task| task.state == TaskState::Merged)
-                .count();
-            let text = format!("ready to accept · {m}/{n} merged");
+            // Milestone 9.19 decision 5 (review I2): the run's one progress count.
+            let common::progress::Progress { merged, total, .. } =
+                common::progress::run_progress(run);
+            let text = format!("ready to accept · {merged}/{total} merged");
             push(4, AlertKey::Accept(id.clone()), text, None, None, None);
         }
     }

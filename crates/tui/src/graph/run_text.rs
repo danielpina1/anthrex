@@ -19,8 +19,9 @@ pub(crate) const TASK_TEXT_MAX: usize = MAX_NODE_WIDTH as usize - 4 - 2;
 /// `orchestrator  {merged}/{total} ✓` when the run's orchestrator window is listed,
 /// else `run {last four of the id}  {merged}/{total} ✓`, counted as
 /// `common::progress::run_progress` counts (milestone 9.19 decision 5: a box's narrow
-/// form, `✓` being merged, `+` in ASCII).
-/// A run being planned (milestone 9) says `planning` instead of its progress.
+/// form, `✓` being merged, `+` in ASCII); `orchestrator` or `run <id>` alone while
+/// nothing counts (review M3). A run being planned (milestone 9) says `planning`
+/// instead of its progress.
 #[cfg(test)]
 pub(crate) fn run_text(run: &RunInfo, orchestrator: bool) -> String {
     run_text_in(run, orchestrator, false)
@@ -33,21 +34,26 @@ pub(crate) fn run_text(run: &RunInfo, orchestrator: bool) -> String {
 /// reads as 9.3's.
 pub(crate) fn run_text_in(run: &RunInfo, orchestrator: bool, ascii: bool) -> String {
     let progress = match design_text(run, ascii) {
-        Some(text) => text,
-        None if run.state == RunState::Planning => "planning".to_owned(),
+        Some(text) => Some(text),
+        None if run.state == RunState::Planning => Some("planning".to_owned()),
         None => merged_cell(common::progress::run_progress(run), ascii),
     };
-    if orchestrator {
-        format!("orchestrator  {progress}")
+    let name = if orchestrator {
+        "orchestrator".to_owned()
     } else {
-        format!("run {}  {progress}", run_short(&run.run_id))
+        format!("run {}", run_short(&run.run_id))
+    };
+    match progress {
+        Some(progress) => format!("{name}  {progress}"),
+        None => name,
     }
 }
 
-/// Decision 5's narrow form of a progress count: `3/5 ✓` (`3/5 +` in ASCII).
-pub(crate) fn merged_cell(progress: common::progress::Progress, ascii: bool) -> String {
+/// Decision 5's narrow form of a progress count: `3/5 ✓` (`3/5 +` in ASCII), `None`
+/// while nothing counts, so a cell never reads `0/0 ✓` (milestone 9.19 review M3).
+pub(crate) fn merged_cell(progress: common::progress::Progress, ascii: bool) -> Option<String> {
     let common::progress::Progress { merged, total, .. } = progress;
-    format!("{merged}/{total} {}", glyph(Glyph::Passed, ascii))
+    (total > 0).then(|| format!("{merged}/{total} {}", glyph(Glyph::Passed, ascii)))
 }
 
 /// The design flow's words for the orchestrator node, `None` outside it; the overview's
@@ -106,16 +112,18 @@ pub(crate) fn design_agent_text(agent: &DesignAgentInfo) -> String {
 
 /// `planner {epic} {title}  {merged}/{total} ✓` over the tasks of its epic, counted
 /// by `common::progress::tally` (milestone 9.19 decision 5, ruling R14), or
-/// `planner {epic}  {merged}/{total} ✓` when the title is blank.
+/// `planner {epic}  {merged}/{total} ✓` when the title is blank; no count while the
+/// epic has nothing to count.
 pub(crate) fn planner_text(run: &RunInfo, planner: &PlannerInfo, ascii: bool) -> String {
     let epic =
         (run.tasks.iter()).filter(|task| task.epic.as_deref() == Some(planner.epic.as_str()));
-    let progress = merged_cell(common::progress::tally(epic), ascii);
+    let progress = merged_cell(common::progress::tally(epic), ascii)
+        .map_or_else(String::new, |cell| format!("  {cell}"));
     let title = planner.title.trim();
     if title.is_empty() {
-        format!("planner {}  {progress}", planner.epic)
+        format!("planner {}{progress}", planner.epic)
     } else {
-        format!("planner {} {title}  {progress}", planner.epic)
+        format!("planner {} {title}{progress}", planner.epic)
     }
 }
 
@@ -162,6 +170,17 @@ pub(crate) fn task_text_in(task: &TaskInfo, ascii: bool) -> String {
 /// or no head yet: as `theme::stage_look` reads it), `N` the run's stage count and the
 /// time `numbers::duration_coarse`'s (a graph box, milestone 9.19 decision 4). The marks are their ASCII twins in ASCII.
 pub(crate) fn stage_text_in(run: &RunInfo, stage: &StageInfo, ascii: bool) -> String {
+    stage_text_within(run, stage, ascii, super::STAGE_TEXT_ROOM)
+}
+
+/// [`stage_text_in`] with its pull request fitted to `room` columns of text: the graph
+/// box's `STAGE_TEXT_ROOM`, or the compact list's own width (milestone 9.19 review I1).
+pub(crate) fn stage_text_within(
+    run: &RunInfo,
+    stage: &StageInfo,
+    ascii: bool,
+    room: usize,
+) -> String {
     let g = |mark| glyph(mark, ascii);
     let secs = stage
         .full
@@ -181,7 +200,7 @@ pub(crate) fn stage_text_in(run: &RunInfo, stage: &StageInfo, ascii: bool) -> St
     // Milestone 9.19 decision 7: a position reads `stage k of m`.
     let of = common::progress::stage_count(run);
     let head = format!("stage {} of {of}  tier 3 {tier}", stage.n);
-    let room = super::STAGE_TEXT_ROOM.saturating_sub(UnicodeWidthStr::width(head.as_str()));
+    let room = room.saturating_sub(UnicodeWidthStr::width(head.as_str()));
     let pr = super::stage_pr::row_suffix_within(run, stage, ascii, room);
     format!("{head}{pr}")
 }

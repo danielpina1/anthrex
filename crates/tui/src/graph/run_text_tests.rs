@@ -179,6 +179,10 @@ fn run_text_with_and_without_an_orchestrator() {
     ];
     assert_eq!(run_text(&info, true), "orchestrator  1/3 ✓");
     assert_eq!(run_text(&info, false), "run 3f9a  1/3 ✓");
+    // Milestone 9.19 review M3: no `0/0 ✓` when nothing counts.
+    info.tasks.retain(|t| t.state == TaskState::Cancelled);
+    assert_eq!(run_text(&info, true), "orchestrator");
+    assert_eq!(run_text(&info, false), "run 3f9a");
 }
 
 #[test]
@@ -206,8 +210,10 @@ fn planner_text_counts_its_own_tasks() {
         planner_text(&info, &planner("A", ""), true),
         "planner A  1/3 +"
     );
+    // Milestone 9.19 review M3: a narrow count with nothing to count is left out.
     assert_eq!(
         planner_text(&info, &planner("B", "none"), false),
-        "planner B none  0/0 ✓"
+        "planner B none"
     );
+    assert_eq!(planner_text(&info, &planner("B", ""), true), "planner B");
 }

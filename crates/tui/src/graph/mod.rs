@@ -27,10 +27,11 @@ pub const MIN_NODE_WIDTH: u16 = 12;
 /// the painter rather than allowed to stretch its whole tier.
 pub const MAX_NODE_WIDTH: u16 = 30;
 /// A stage node's cap (milestone 9.0.7 decision 18): its whole text, the longest being
-/// `stage 99 of 99  tier 3 ✗ bisecting` (34 columns; milestone 9.19 decision 7), then, in a `pr`-mode run, its pull
-/// request (milestone 9.2 decision 42) up to `  #99999  ci ✗  99 threads  paused` (34;
-/// the final fix wave, review C M4: a five-digit number and the state word), plus the
-/// glyph, its space, the borders and the padding. A longer row loses its PR number's
+/// `stage 99 of 99  tier 3 ✗ bisecting` (34 columns; milestone 9.19 decision 7), then,
+/// in a `pr`-mode run, its pull request (milestone 9.2 decision 42) up to
+/// `  #99999  ci ✗  99 threads  paused` (34; the final fix wave, review C M4: a
+/// five-digit number and the state word), plus the glyph, its space, the borders and
+/// the padding. A longer row loses its PR number's
 /// digits first (`stage_pr::row_suffix_within`), never its state word. A local run's
 /// stage boxes are as wide as before: a box takes only what its text needs. Task, run
 /// and every other box keep [`MAX_NODE_WIDTH`].
