@@ -54,7 +54,7 @@ fn run_status_prints_brake_lines_when_held_or_braked() {
         by: "user".into(),
     });
     let text = listing(&snapshot(held), Zone::Local(0));
-    let head = "hold: on since 14:30 +00:00 (user)\nclaude quota: unmeasured · not braked\ncodex quota: unmeasured · not braked\n\n";
+    let head = "hold: on since 14:30 +00:00 (just now) (user)\nclaude quota: unmeasured · not braked\ncodex quota: unmeasured · not braked\n\n";
     assert_eq!(text, format!("{head}{plain}"));
 
     // Braked, with no hold.
@@ -77,7 +77,7 @@ fn run_status_prints_brake_lines_when_held_or_braked() {
     assert!(text.ends_with(&plain), "{text}");
     assert!(
         text.contains(
-            "codex quota: 7d 96% (read 2 min ago) · braked until 00:00 +00:00 (7d at 96% ≥ 95%)\n"
+            "codex quota: 7d 96% (read 2m 00s ago) · codex dispatch held: 7d at 96% (≥95%) until 00:00 +00:00\n"
         ),
         "{text}"
     );

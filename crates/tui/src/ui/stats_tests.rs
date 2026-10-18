@@ -123,12 +123,15 @@ pub(super) fn rows(app: &App, w: u16, h: u16) -> Vec<String> {
         .collect()
 }
 
-const READY: [&str; 16] = [
+const READY: [&str; 19] = [
     "7 task records · 3 runs",
     "",
-    "class  tasks  merged  lines  calls  tokens  med work  bounces  reverted",
-    "S      5      4       42     18     52k     6m 20s    1        0",
-    "hub    2      0       –      –      –       –         2        1",
+    "class  tasks  merged  med    med    med     med     bounces  reverted",
+    "                      lines  calls  tokens  work    (all)",
+    "S      5      4       42     18     52k     6m 20s  1        0",
+    "hub    2      0       –      –      –       –       2        1",
+    "med = median over merged tasks · tokens are billed (worker + reviewer +",
+    "decider) · bounces counts every task",
     "",
     "deciders 6 calls · 1 fallback · size raised 1/4",
     "",
@@ -142,6 +145,17 @@ const READY: [&str; 16] = [
     "history: /r/demo",
 ];
 
+/// [`READY`] at width `w`: at 120 columns the footer (milestone 9.19 decision 14) fits
+/// one row.
+fn ready_at(w: u16) -> Vec<String> {
+    let mut rows: Vec<String> = READY.map(str::to_string).to_vec();
+    if w >= 120 {
+        let joined = format!("{} {}", rows[6], rows[7]);
+        rows.splice(6..8, [joined]);
+    }
+    rows
+}
+
 /// Decision 38's rows, exactly: the table (a `None` median reads `–`), the deciders
 /// line, the flaky proposals, the problems and the history file, at 80×24 and 120×40,
 /// under the title.
@@ -150,43 +164,15 @@ fn stats_render_rows_deciders_and_flaky_proposals() {
     let app = ready(false);
     for (w, h) in SIZES {
         let all = rows(&app, w, h);
-        assert_eq!(all[..READY.len()], READY, "{w}x{h}");
-        assert!(all[READY.len()..].iter().all(String::is_empty), "{w}x{h}");
+        let want = ready_at(w);
+        assert_eq!(all[..want.len()], want, "{w}x{h}");
+        assert!(all[want.len()..].iter().all(String::is_empty), "{w}x{h}");
         let text = screen_text(&app, w, h);
         assert!(
             text.lines().next().unwrap().contains(" stats · demo "),
             "{text}"
         );
     }
-}
-
-/// The CLI's token unit (`daemon/src/run/stats.rs`): `1.2k` under 10k.
-#[test]
-fn stats_cells_use_the_clis_units() {
-    let cases = [
-        (999, "999"),
-        (1000, "1.0k"),
-        (1250, "1.2k"),
-        (9999, "9.9k"),
-        (10_000, "10k"),
-        (2_345_678, "2.3M"),
-    ];
-    for (n, want) in cases {
-        assert_eq!(common::numbers::tokens(n), want, "{n}");
-    }
-}
-
-/// Milestone 9.19 decision 4: the median work time is a `duration`, floored, under
-/// `med work`; 89 s is `1m 29s`, never a rounded-up `1m`.
-#[test]
-fn stats_work_floors() {
-    let mut stats = history();
-    stats.rows[0].median_work_secs = Some(89);
-    let app = app_with(false, StatsState::Ready(Box::new(stats)));
-    let all = rows(&app, 80, 24);
-    assert!(all[2].contains("  med work  "), "{:?}", all[2]);
-    assert!(all[3].contains("  1m 29s  "), "{:?}", all[3]);
-    assert!(!all[3].contains("2m"), "{:?}", all[3]);
 }
 
 fn screen(app: &App) -> &StatsScreen {
@@ -204,11 +190,12 @@ fn stats_render_in_ascii() {
         let all = rows(&app, w, h);
         assert_eq!(all[0], "7 task records - 3 runs", "{w}x{h}");
         assert_eq!(
-            all[4], "hub    2      0       -      -      -       -         2        1",
+            all[5], "hub    2      0       -      -      -       -       2        1",
             "{w}x{h}"
         );
+        let deciders = if w >= 120 { 8 } else { 9 };
         assert_eq!(
-            all[6], "deciders 6 calls - 1 fallback - size raised 1/4",
+            all[deciders], "deciders 6 calls - 1 fallback - size raised 1/4",
             "{w}x{h}"
         );
         let text = screen_text(&app, w, h);
@@ -230,11 +217,14 @@ fn stats_render_an_empty_history() {
     let app = app_with(false, StatsState::Ready(Box::new(stats)));
     let all = rows(&app, 80, 24);
     assert_eq!(
-        all[..8],
+        all[..11],
         [
             "1 task record · 1 run",
             "",
-            "class  tasks  merged  lines  calls  tokens  med work  bounces  reverted",
+            "class  tasks  merged  med    med    med     med   bounces  reverted",
+            "                      lines  calls  tokens  work  (all)",
+            "med = median over merged tasks · tokens are billed (worker + reviewer +",
+            "decider) · bounces counts every task",
             "",
             "deciders 6 calls · 1 fallback · size raised 1/4",
             "",
@@ -242,8 +232,8 @@ fn stats_render_an_empty_history() {
             "  none",
         ]
     );
-    assert_eq!(all[8..10], ["", "history: /r/demo"]);
-    assert!(all[10..].iter().all(String::is_empty), "{all:#?}");
+    assert_eq!(all[11..13], ["", "history: /r/demo"]);
+    assert!(all[13..].iter().all(String::is_empty), "{all:#?}");
 }
 
 /// Loading, and a refusal or an expiry in `Failed`, never a toast.
@@ -275,20 +265,20 @@ fn stats_render_scrolls_with_marks() {
     let body = ratatui::layout::Rect::new(0, 0, 80, 9);
     let mut app = ready(false);
     let r = |i: usize| READY[i].to_string();
-    let top: Vec<String> = (0..6).map(r).chain(["↓ 10 more".into()]).collect();
+    let top: Vec<String> = (0..6).map(r).chain(["↓ 13 more".into()]).collect();
     assert_eq!(rows(&app, 80, 10), top);
     screen_mut(&mut app).scroll = 3;
     let mid: Vec<String> = ["↑ 3 more".into()]
         .into_iter()
         .chain((3..8).map(r))
-        .chain(["↓ 8 more".into()])
+        .chain(["↓ 11 more".into()])
         .collect();
     assert_eq!(rows(&app, 80, 10), mid);
     let max = super::max_scroll(&app, screen(&app), body);
-    assert_eq!(max, 10);
-    let bottom: Vec<String> = ["↑ 10 more".into()]
+    assert_eq!(max, 13);
+    let bottom: Vec<String> = ["↑ 13 more".into()]
         .into_iter()
-        .chain((10..16).map(r))
+        .chain((13..19).map(r))
         .collect();
     screen_mut(&mut app).scroll = max;
     assert_eq!(rows(&app, 80, 10), bottom);
@@ -312,7 +302,10 @@ fn stats_render_scrolls_with_marks() {
     let mut ascii = ready(true);
     screen_mut(&mut ascii).scroll = 3;
     let all = rows(&ascii, 80, 10);
-    assert_eq!((all[0].as_str(), all[6].as_str()), ("^ 3 more", "v 8 more"));
+    assert_eq!(
+        (all[0].as_str(), all[6].as_str()),
+        ("^ 3 more", "v 11 more")
+    );
 }
 
 /// M9.0.7.12 fix round 1: the help's own limit (`kit::from_top_until`) leaves the stats

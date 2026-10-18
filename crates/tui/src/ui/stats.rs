@@ -20,10 +20,18 @@ use ratatui::text::Line;
 use ratatui::widgets::{Clear, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
-/// Interfaces "Stats sections": the table's header, one column each.
-const HEADER: [&str; 9] = [
-    "class", "tasks", "merged", "lines", "calls", "tokens", "med work", "bounces", "reverted",
-];
+/// Milestone 9.19 decision 14: the table's header, the CLI's words in lower case,
+/// stacked over two rows (`med` over `lines`) so the table fits 80 columns.
+fn header() -> [Vec<String>; 2] {
+    let mut rows = [Vec::new(), Vec::new()];
+    for word in common::labels::STATS_HEADER {
+        let word = word.to_lowercase();
+        let (top, under) = word.split_once(' ').unwrap_or((&word, ""));
+        rows[0].push(top.to_owned());
+        rows[1].push(under.to_owned());
+    }
+    rows
+}
 
 /// A `None` median.
 fn none(p: Palette) -> &'static str {
@@ -69,7 +77,7 @@ pub(crate) fn title(s: &StatsScreen, p: Palette) -> String {
 /// The table's cells, header first, every class sanitised.
 fn table(stats: &HistoryStats, p: Palette) -> Vec<Vec<String>> {
     let or = |v: Option<String>| v.unwrap_or_else(|| none(p).to_string());
-    let mut out = vec![HEADER.map(str::to_string).to_vec()];
+    let mut out = header().to_vec();
     for r in &stats.rows {
         out.push(vec![
             one_line(&r.class),
@@ -90,7 +98,7 @@ fn table(stats: &HistoryStats, p: Palette) -> Vec<Vec<String>> {
 /// (as `anthrex run stats` lays them out).
 fn table_lines(stats: &HistoryStats, p: Palette) -> Vec<String> {
     let cells = table(stats, p);
-    let widths: Vec<usize> = (0..HEADER.len())
+    let widths: Vec<usize> = (0..common::labels::STATS_HEADER.len())
         .map(|i| cells.iter().map(|row| row[i].width()).max().unwrap_or(0))
         .collect();
     cells
@@ -122,8 +130,15 @@ fn ready_lines(stats: &HistoryStats, width: usize, p: Palette) -> Vec<Line<'stat
     );
     let mut out = vec![line(records, muted), Line::default()];
     for (i, text) in table_lines(stats, p).into_iter().enumerate() {
-        out.push(line(text, if i == 0 { bold } else { plain }));
+        out.push(line(text, if i < 2 { bold } else { plain }));
     }
+    // Decision 14's footer, wrapped whole: it says what every median is over.
+    let footer = fold(&common::labels::STATS_FOOTER.to_lowercase(), p.ascii);
+    out.extend(
+        wrap_words(&footer, width)
+            .into_iter()
+            .map(|l| line(l, muted)),
+    );
     out.push(Line::default());
     out.push(line(
         format!(
@@ -142,6 +157,11 @@ fn ready_lines(stats: &HistoryStats, width: usize, p: Palette) -> Vec<Line<'stat
             format!("replaced {n} (judged by their replacements)"),
             plain,
         ));
+    }
+    // Milestone 9.3 (KG §2.6), as the CLI: only once a run has been iterated.
+    if stats.rounds > 0 {
+        let text = common::labels::rounds_text(stats.rounds, stats.iterated_runs);
+        out.push(line(fold(&format!("rounds {text}"), p.ascii), plain));
     }
     out.push(Line::default());
     out.push(line(
@@ -310,3 +330,7 @@ pub(crate) mod tests;
 #[cfg(test)]
 #[path = "stats_tests_replaced.rs"]
 mod replaced_tests;
+
+#[cfg(test)]
+#[path = "stats_tests_words.rs"]
+mod words_tests;

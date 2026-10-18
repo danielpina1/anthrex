@@ -244,20 +244,11 @@ fn or_dash<T>(value: Option<T>, show: impl Fn(T) -> String) -> String {
 }
 
 /// The brief's text layout (Interfaces, CLI): a header, one row per class in columns
-/// as wide as their header or widest cell, two spaces apart, the totals line, and one
-/// line for the lines skipped. Work minutes are rounded to the nearest minute.
+/// as wide as their header or widest cell, two spaces apart, the footer that says what
+/// the medians are over (milestone 9.19 decision 14), the totals line, and one line for
+/// the lines skipped. The work median is a floored `duration` (decision 4).
 pub fn render(stats: &HistoryStats) -> String {
-    const HEADER: [&str; 9] = [
-        "CLASS",
-        "TASKS",
-        "MERGED",
-        "LINES",
-        "TOOL CALLS",
-        "TOKENS",
-        "WORK MIN",
-        "BOUNCES",
-        "REVERTED",
-    ];
+    use common::labels::{STATS_FOOTER, STATS_HEADER as HEADER, rounds_text};
     let mut table: Vec<Vec<String>> = vec![HEADER.map(str::to_string).to_vec()];
     for r in &stats.rows {
         table.push(vec![
@@ -267,9 +258,7 @@ pub fn render(stats: &HistoryStats) -> String {
             or_dash(r.median_lines, |n| n.to_string()),
             or_dash(r.median_tool_calls, |n| n.to_string()),
             or_dash(r.median_tokens, tokens),
-            or_dash(r.median_work_secs, |s| {
-                (s.saturating_add(30) / 60).to_string()
-            }),
+            or_dash(r.median_work_secs, common::numbers::duration),
             r.bounces.to_string(),
             r.reverted.to_string(),
         ]);
@@ -292,6 +281,8 @@ pub fn render(stats: &HistoryStats) -> String {
         out.push_str(line.join("  ").trim_end());
         out.push('\n');
     }
+    out.push_str(STATS_FOOTER);
+    out.push('\n');
     out.push_str(&format!(
         "deciders: {}, {} · size cross-check: {} checked, {} raised\n",
         count(stats.decider_calls, "call"),
@@ -307,7 +298,7 @@ pub fn render(stats: &HistoryStats) -> String {
     // Milestone 9.3 (KG §2.6): only once a run has been iterated.
     if stats.rounds > 0 {
         let (total, runs) = (stats.rounds, stats.iterated_runs);
-        out.push_str(&format!("rounds: {total} · {runs}\n"));
+        out.push_str(&format!("rounds: {}\n", rounds_text(total, runs)));
     }
     // A file that could not be read is said as it is (M8b.17 review, m6).
     match stats.problems.first() {
@@ -374,3 +365,7 @@ mod flaky_tests;
 #[cfg(test)]
 #[path = "stats_tests_replaced.rs"]
 mod replaced_tests;
+
+#[cfg(test)]
+#[path = "stats_tests_labels.rs"]
+mod labels_tests;

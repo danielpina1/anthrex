@@ -8,7 +8,7 @@ use proto::brakes::{
     QuotaWindowInfo,
 };
 
-use super::{HOLD_REQUEST_TIMEOUT, brake_lines};
+use super::{HOLD_REQUEST_TIMEOUT, brake_lines, quota_line};
 
 /// 1970-01-02 14:30 UTC.
 const AT: u64 = 86_400 + 14 * 3600 + 30 * 60;
@@ -64,9 +64,9 @@ fn brake_lines_render_every_state() {
     assert_eq!(
         brake_lines(&info, NOW, Zone::Local(0)),
         [
-            "hold: on since 14:30 +00:00 (user)",
+            "hold: on since 14:30 +00:00 (3m 59s ago) (user)",
             "claude quota: unmeasured · not braked",
-            "codex quota: 5h 42% · 7d 63% (read 3 min ago) · not braked",
+            "codex quota: 5h 42% · 7d 63% (read 3m 59s ago) · not braked",
         ]
     );
 
@@ -85,7 +85,7 @@ fn brake_lines_render_every_state() {
         brake_lines(&info, NOW, Zone::Local(0)),
         [
             "hold: off",
-            "claude quota: 5h 92% · 7d 50% (read 3 min ago) · braked until 15:30 +00:00 (5h at 92% ≥ 90%)",
+            "claude quota: 5h 92% · 7d 50% (read 3m 59s ago) · claude dispatch held: 5h at 92% (≥90%) until 15:30 +00:00",
             "codex quota: unmeasured · not braked",
         ]
     );
@@ -115,4 +115,49 @@ fn hold_off_names_the_queued_goals_it_starts() {
     assert_eq!(queued_line(true, 0), None);
     // Not held: `hold off` released nothing, so it starts nothing new.
     assert_eq!(queued_line(false, 3), None);
+}
+
+/// Milestone 9.19 decision 12: a stale reading says so, and every reading's age goes
+/// through `numbers::ago`: 95 minutes is `1h 35m`, 59 seconds `59s`, never `0 min`.
+#[test]
+fn a_stale_quota_says_stale() {
+    let mut stale = fresh(Runtime::Claude, 421, 637);
+    stale.state = QuotaState::Stale;
+    assert_eq!(
+        quota_line(&stale, AT + 95 * 60, Zone::Local(0)),
+        "claude quota: 5h 42% · 7d 63% (stale: read 1h 35m ago) · not braked"
+    );
+    let reading = fresh(Runtime::Codex, 421, 637);
+    assert_eq!(
+        quota_line(&reading, AT + 59, Zone::Local(0)),
+        "codex quota: 5h 42% · 7d 63% (read 59s ago) · not braked"
+    );
+    // Under ten seconds, `just now`.
+    assert_eq!(
+        quota_line(&reading, AT + 3, Zone::Local(0)),
+        "codex quota: 5h 42% · 7d 63% (read just now) · not braked"
+    );
+}
+
+/// Milestone 9.19 decision 12: a braked runtime's line ends in exactly the brake text
+/// the daemon's attention line and the TUI's alert share, in the viewer's zone.
+#[test]
+fn a_braked_quota_uses_the_shared_text() {
+    let trip = BrakeTripInfo {
+        window: QuotaWindow::SevenDay,
+        used: Permille(968),
+        threshold_percent: 95,
+        until: AT + 2 * 86_400,
+    };
+    let mut braked = fresh(Runtime::Codex, 500, 968);
+    braked.state = QuotaState::Braked;
+    braked.trip = Some(trip.clone());
+    let zone = Zone::Local(7200);
+    let line = quota_line(&braked, NOW, zone);
+    let held = common::brakes_text::quota_held_text(Runtime::Codex, &trip, NOW, zone);
+    assert_eq!(
+        line,
+        format!("codex quota: 5h 50% · 7d 96% (read 3m 59s ago) · {held}")
+    );
+    assert!(line.ends_with(" until Sun 16:30 +02:00"), "{line}");
 }

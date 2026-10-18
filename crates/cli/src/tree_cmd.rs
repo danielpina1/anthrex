@@ -101,9 +101,12 @@ pub fn tree_text(windows: &[WindowInfo], project: Option<ProjectQuery<'_>>) -> S
                 status.label(),
                 format_counts(counts)
             ),
+            // Milestone 9.19 decision 13: `#<position>` is the `C-b <n>` a client
+            // uses, `id <id>` what `ls`, `kill` and `attach` take.
             RowKind::Window { info, position, .. } => writeln!(
                 text,
-                "  {position:>2}  {}  {}  {}  {}  {}{}",
+                "  #{position}  id {}  {}  {}  {}  {} {}{}",
+                info.id,
                 info.name,
                 info.runtime.label(),
                 info.model.as_deref().unwrap_or("-"),
@@ -115,20 +118,14 @@ pub fn tree_text(windows: &[WindowInfo], project: Option<ProjectQuery<'_>>) -> S
                 text,
                 // Sub-agents sit under a fixed window indent here, so the
                 // window's own guide level is dropped: two columns per level.
-                "      {} {}{}  {}  {}{}",
+                "      {} {}{}  {}{}",
                 row.guides.chars().skip(2).collect::<String>(),
                 info.kind,
                 info.label
                     .as_ref()
                     .map(|label| format!(": {label}"))
                     .unwrap_or_default(),
-                if info.needs_permission {
-                    "permission"
-                } else {
-                    state_label(info.state)
-                },
-                // Decision 9: a stopped sub-agent with no end has no duration: `-`.
-                subagent_duration(info).map_or("-".to_owned(), common::numbers::duration),
+                subagent_time(info),
                 tool_suffix(info.tool.as_deref())
             ),
             // `tree::build` lists plain windows only; run rows need the run snapshot.
@@ -245,11 +242,12 @@ fn selected_windows<'a>(
     )
 }
 
+/// `claude 2 · codex 1 · shell 1`, named as `--json` names them; a zero is left out.
 fn format_counts(counts: RuntimeCounts) -> String {
     [
-        ("cl", counts.claude),
-        ("cx", counts.codex),
-        ("sh", counts.shell),
+        ("claude", counts.claude),
+        ("codex", counts.codex),
+        ("shell", counts.shell),
     ]
     .into_iter()
     .filter(|(_, count)| *count > 0)
@@ -268,6 +266,18 @@ fn state_label(state: SubagentState) -> &'static str {
         SubagentState::Done => "done",
         SubagentState::Failed => "failed",
     }
+}
+
+/// Milestone 9.19 decision 13: `running 3m 10s`, `ran 12s` for a done one, `failed
+/// 12s`, `permission 3m 10s`; decision 9: a stopped one with no end reads `done -`.
+fn subagent_time(info: &SubagentInfo) -> String {
+    let time = subagent_duration(info).map(common::numbers::duration);
+    let word = match (info.needs_permission, info.state, &time) {
+        (true, ..) => "permission",
+        (false, SubagentState::Done, Some(_)) => "ran",
+        (false, state, _) => state_label(state),
+    };
+    format!("{word} {}", time.as_deref().unwrap_or("-"))
 }
 
 /// How long a sub-agent has run: its age while running, else its start's age less

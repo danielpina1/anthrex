@@ -259,8 +259,6 @@ fn scout_panel_wraps_the_question() {
     assert_eq!(panel(&inspection, 60, M8C_PANEL_HEIGHT), SCOUT);
 }
 
-/// Milestone 4.7's eight rows: the title and five fields, `attention` dropped from the
-/// end.
 /// M9.19.4 review, Important 2: decision 2's spend labels outgrow a panel row, so the
 /// estimate has its own row and is never cut, in the 84-column panel and at 80×24.
 #[test]
@@ -276,6 +274,8 @@ fn the_estimate_keeps_its_own_row() {
     }
 }
 
+/// Milestone 4.7's eight rows: the title and five fields, `attention` dropped from the
+/// end.
 #[test]
 fn run_panel_in_eight_rows_drops_from_the_end() {
     let inspection = node(gemini_fixture(), run_key("r1"));
