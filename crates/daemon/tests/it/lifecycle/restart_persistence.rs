@@ -52,6 +52,7 @@ async fn windows_survive_a_daemon_restart_as_exited() {
         .expect("first daemon::run did not return within 10s")
         .expect("the daemon task panicked")
         .expect("first run returned an error");
+    assert_lock_released(&data_dir);
 
     // The socket is gone only after decision 11's whole sequence, so by this point the
     // rename must already be on disk — checked directly, ahead of the second `run`, so a
@@ -71,8 +72,17 @@ async fn windows_survive_a_daemon_restart_as_exited() {
     assert_eq!(record.name, "kept");
 
     // Second daemon, same data dir: the window comes back exited, with decision 14's
-    // reason and placeholder screen.
-    let handle2 = tokio::spawn(run(opts(socket.clone(), data_dir.clone())));
+    // reason and placeholder screen. It is a successor, so it gets the CLI's own
+    // `lock_wait` (`daemon_cmd.rs`), not `ZERO`: under libtest a sibling thread's forked
+    // child may still hold a copy of the first daemon's lock description until it execs,
+    // and a successor waiting out exactly that is the product's contract.
+    // A live first daemon would still be refused at once (`acquire_or_yield` probes the
+    // socket on every failed attempt); `assert_lock_released` above pins that the first
+    // `run` itself let go.
+    let handle2 = tokio::spawn(run(daemon::DaemonOptions {
+        lock_wait: daemon::LOCK_WAIT,
+        ..opts(socket.clone(), data_dir.clone())
+    }));
     wait_accepting(&socket, Duration::from_secs(5)).await;
 
     let (mut c2, welcome) = Client::connect(&socket).await;

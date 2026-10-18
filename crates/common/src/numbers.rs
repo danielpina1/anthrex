@@ -197,7 +197,7 @@ pub fn fill(tokens: u64, window: u64) -> Fill {
     }
 }
 
-/// `context 92% full (183k / 200k)`, `context over 100% (450k / 200k window)`, or
+/// `context 91% full (183k / 200k)`, `context over 100% (450k / 200k window)`, or
 /// `context 183k (window unknown)`.
 pub fn context_text(used: u64, window: Option<u64>) -> String {
     let window = window.unwrap_or(0);

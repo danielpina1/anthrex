@@ -201,7 +201,7 @@ your runs before downgrading below 0.2.0.
 - **Unknown is not zero.** A missing value reads `unknown` (`-` in a table cell): a
   sub-agent with no end time, a check that never ran (`✗ never ran`), a doc gate still
   loading, an age before the first snapshot.
-- **Context fill never reads `450%`**: `context 92% full (183k / 200k)`, `context over
+- **Context fill never reads `450%`**: `context 91% full (183k / 200k)`, `context over
   100% (450k / 200k window)`, or `context 183k (window unknown)`.
 - **Ages freeze when the daemon link is lost.** Timers and ages stop counting, and the
   badge reads ` DISCONNECTED · as of <ago> `; the model picker's age is the catalog's own

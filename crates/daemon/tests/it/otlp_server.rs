@@ -377,9 +377,13 @@ async fn the_address_file_is_written_and_removed_at_shutdown() {
         .await
         .expect("the receiver stops");
     assert!(!Path::new(&path).exists(), "otlp.addr is removed");
+    // The receiver closed its listener: no descriptor of this process is still bound to
+    // `addr`. Not a `connect` probe, which asks whether any process holds the socket, and
+    // under libtest a sibling thread's forked child can (flake diagnosis, 2026-10-18).
+    let held = crate::support::descriptors::sockets_bound_to(addr);
     assert!(
-        TcpStream::connect(addr).await.is_err(),
-        "the port is closed"
+        held.is_empty(),
+        "descriptors {held:?} still bound to {addr}"
     );
 }
 

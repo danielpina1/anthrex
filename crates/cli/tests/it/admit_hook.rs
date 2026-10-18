@@ -12,7 +12,9 @@ use std::time::{Duration, Instant};
 use daemon::admit::{ADMIT_CLIENT_GRACE, ADMIT_SWEEP};
 use proto::{ClientKind, ClientMsg, HANDSHAKE_TIMEOUT, Runtime};
 use serde_json::{Value, json};
-use support::{RunningCommand, TestDaemon, assert_silent_success, isolated_command, tempdir};
+use support::{
+    RunningCommand, TestDaemon, assert_silent_success, isolated_command, tempdir, warm_anthrex,
+};
 
 /// As `hook_command.rs`'s `LIMIT`: no daemon constant is on this path, only an
 /// `anthrex` spawn (≤ 85 ms loaded, `docs/timing-budgets.md`) and an immediate
@@ -140,6 +142,10 @@ fn finish(child: RunningCommand, limit: Duration) -> Output {
 
 #[test]
 fn without_a_daemon_admit_exits_zero_silently_and_fast() {
+    // Before the clock, as in `hook_command.rs`'s twin: the first exec of a freshly built
+    // `anthrex` (macOS's assessment, 1.6-4.7 s measured) is not what `LIMIT` bounds, and
+    // `isolated_command` would otherwise pay it inside it (flake diagnosis, 2026-10-18).
+    warm_anthrex();
     let dir = tempdir();
     let args = ["admit", "--window", "1", "--wait-secs", "60"];
     let start = Instant::now();
