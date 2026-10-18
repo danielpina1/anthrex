@@ -247,3 +247,57 @@ fn at_120x40_every_definition_is_drawn_whole() {
         &seen[numbers..]
     );
 }
+
+/// Review minor 1 of the 9.19 follow-ups: opened on `numbers` at 120×60, where the
+/// glossary wraps, `j` and PgDn stop at the wrapped help's end, counted here from the
+/// wrapped rows, and never past it; the last wrapped line is drawn there.
+#[test]
+fn opened_on_wrapped_numbers_j_and_pgdn_stop_at_the_wrapped_end() {
+    let groups = help_groups("C-b");
+    let numbers = numbers_group();
+    let key_w = numbers
+        .rows
+        .iter()
+        .map(|(k, _)| k.chars().count())
+        .max()
+        .unwrap();
+    let room = 60 - (INDENT + key_w + GAP);
+    let wrapped: usize = numbers
+        .rows
+        .iter()
+        .map(|(_, w)| kit::wrap_words(w, room).len())
+        .sum();
+    let total = line_count(
+        &groups[..groups.len() - 1],
+        Rect::new(0, 0, 80, 24),
+        Palette::PLAIN,
+    ) + 1
+        + wrapped;
+    let area = Rect::new(0, 0, 120, 60);
+    let end = kit::last_top(total, view_rows(&groups, area, Palette::PLAIN));
+    let top = group_tops(&groups)[groups.len() - 1];
+    assert!(end > top, "the wrapped glossary runs past one page");
+    let mut app = app_at(0);
+    app.set_body_area(Rect::new(0, 0, 120, 59));
+    app.modal = Some(Modal::Help(HelpView {
+        scroll: top as u16,
+        opened: top as u16,
+    }));
+    let scroll = |app: &App| match &app.modal {
+        Some(Modal::Help(v)) => usize::from(v.scroll),
+        _ => panic!("no help"),
+    };
+    for _ in 0..total {
+        app.on_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
+        assert!(scroll(&app) <= end, "j: {} past {end}", scroll(&app));
+    }
+    assert_eq!(scroll(&app), end, "j reaches the wrapped end");
+    for _ in 0..5 {
+        app.on_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
+        assert_eq!(scroll(&app), end, "PgDn stays at the end");
+    }
+    let (_, last) = numbers.rows.last().unwrap();
+    let tail = kit::wrap_words(last, room).pop().unwrap();
+    let rows = audit::rows(&audit::draw(&app, 120, 60));
+    assert!(rows.iter().any(|r| r.contains(&tail)), "{rows:#?}");
+}

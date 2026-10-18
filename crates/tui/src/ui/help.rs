@@ -35,7 +35,11 @@ const GAP: usize = 2;
 const NUMBERS: &str = "numbers";
 /// 9.19 follow-up 5: over a terminal at least this big (columns, rows) the glossary's
 /// rows wrap whole, by words, under their term; over a smaller one (80×24) they are cut
-/// to the box, as ruling R3 has it. The box is 64 columns either way.
+/// to the box, as ruling R3 has it. The box is 64 columns either way, so the threshold
+/// cannot be the box's width: it is the terminal's. Wrapping roughly doubles the
+/// glossary's lines (about 70 more), which R3 keeps off the 22-row 80×24 help; 30 rows
+/// is where a page holds a wrapped definition with its neighbours, and 100 columns
+/// marks a terminal clearly past the 80-column minimum, so 120×40 wraps.
 pub(crate) const WRAP_AT: (u16, u16) = (100, 30);
 
 fn rows(pairs: &[(&str, &str)]) -> Vec<(String, String)> {

@@ -263,6 +263,12 @@ fn stats_medians_by_class_over_merged_tasks() {
         "deciders: 7 calls, 1 fallback · size cross-check: 3 checked, 1 raised",
     ];
     assert_eq!(render(&stats), want.map(|l| format!("{l}\n")).concat());
+    // The CLI's deciders line is the shared one the TUI's stats page prints too.
+    assert!(
+        render(&stats).contains(&format!("{}\n", common::labels::deciders_text(&stats))),
+        "{}",
+        render(&stats)
+    );
 
     // No history at all: three empty rows, every median `-`.
     let empty = aggregate(&[], Path::new(PATH));
