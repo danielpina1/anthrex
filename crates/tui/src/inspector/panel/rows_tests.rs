@@ -107,7 +107,7 @@ const RUN: [&str; 12] = [
     "│ ◉ r1  Add Gemini runtime                                          running · 1h 12m │",
     "│ progress  ██████████░░░░░░░░  5/9 merged · 2 working · 1 review · 1 blocked        │",
     "│ path      critical path t0 → t6 → t2 → t3 · 2 tasks left · 1.2× the bound          │",
-    "│ agents    workers 3/3 · readers 1/3 · claude ok · codex rate-limited 4m 00s        │",
+    "│ agents    writers 3/3 · readers 1/3 · claude ok · codex rate-limited 4m 00s        │",
     "│ spend     tokens 1.8M (all roles) · cache hits 71% of input · worker tool calls 6… │",
     "│ gate      plan approved 11:02 +00:00 · 2 plan edits since · last: split t2         │",
     "│ attention t5 blocked: question — \"Gemini has no subagent-stop event\"               │",

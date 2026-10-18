@@ -61,7 +61,7 @@ fn gate_with(change: impl FnOnce(&mut proto::RunInfo)) -> App {
 }
 
 const GATE_PROGRESS: &str = "░░░░░░░░░░░░░░░░░░  0/2 merged · 2 waiting";
-const GATE_AGENTS: &str = "workers 0/3 · readers 0/3 · claude ok";
+const GATE_AGENTS: &str = "writers 0/3 · readers 0/3 · claude ok";
 const NO_SPEND: &str = "tokens unknown (tasks only) · worker tool calls 0";
 
 #[test]
@@ -85,7 +85,7 @@ fn run_fields_match_the_mockup() {
             ),
             (
                 "agents",
-                "workers 3/3 · readers 1/3 · claude ok · codex rate-limited 4m 00s"
+                "writers 3/3 · readers 1/3 · claude ok · codex rate-limited 4m 00s"
             ),
             (
                 "spend",
@@ -377,7 +377,7 @@ fn run_with_no_tasks_says_so() {
     assert_eq!(value(&inspection, "progress"), Some("no tasks yet"));
     assert_eq!(
         value(&inspection, "agents"),
-        Some("workers 0/3 · readers 0/3")
+        Some("writers 0/3 · readers 0/3")
     );
 }
 
@@ -392,7 +392,7 @@ fn readers_past_their_limit_say_over() {
     let inspection = inspect_node(&app, &run_key(RUN_ID));
     assert_eq!(
         value(&inspection, "agents"),
-        Some("workers 3/3 · readers 4/3 (over) · claude ok")
+        Some("writers 3/3 · readers 4/3 (over) · claude ok")
     );
 }
 

@@ -110,7 +110,7 @@ fn a_runtime_routed_only_by_a_lane_or_a_test_writer_is_listed() {
     let run = inspect_node(&app, &NodeKey::Run("r1".into()));
     assert_eq!(
         value(&run, "agents"),
-        Some("workers 2/3 · readers 1/3 · claude ok · codex ok")
+        Some("writers 2/3 · readers 1/3 · claude ok · codex ok")
     );
 
     let (mut snapshot, windows) = pair_fixture();
@@ -120,7 +120,7 @@ fn a_runtime_routed_only_by_a_lane_or_a_test_writer_is_listed() {
     let run = inspect_node(&app, &NodeKey::Run("r1".into()));
     assert_eq!(
         value(&run, "agents"),
-        Some("workers 1/3 · readers 0/3 · claude ok · codex ok")
+        Some("writers 1/3 · readers 0/3 · claude ok · codex ok")
     );
 }
 

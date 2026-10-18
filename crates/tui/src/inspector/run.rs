@@ -231,10 +231,11 @@ fn path_text(run: &RunInfo) -> String {
 }
 
 fn agents_text(run: &RunInfo, app: &App) -> String {
-    // Decision 10: `4/3 (over)` after a limit was lowered mid-run.
+    // Decision 10: `4/3 (over)` after a limit was lowered mid-run; the glossary's and
+    // the CLI's `writers` (9.19 follow-up 4).
     let busy = |busy: u8, max: u8| common::numbers::busy(busy.into(), max.into());
     let mut text = format!(
-        "workers {} · readers {}",
+        "writers {} · readers {}",
         busy(run.writers_busy, run.max_writers),
         busy(run.readers_busy, run.max_readers)
     );
