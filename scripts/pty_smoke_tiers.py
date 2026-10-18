@@ -151,7 +151,7 @@ def tiers_stage(pty_proc, bin_path, run_cmd, fail):
             fail(f"run {run_id} completed with {tasks}")
         status = run_cmd(["run", "status", run_id], timeout=RUN_CMD_TIMEOUT).stdout
         for n in (1, 2):
-            line = next((l for l in status.splitlines() if l.startswith(f"stage {n}/2 ")), "")
+            line = next((l for l in status.splitlines() if l.startswith(f"stage {n} of 2 ")), "")
             if "tier 3 green" not in line:
                 fail(f"`run status` has no `tier 3 green` line for stage {n}:\n{status}")
         print(f"ok: run {run_id} completed with tier 3 green on both stages")
@@ -169,8 +169,8 @@ def tiers_stage(pty_proc, bin_path, run_cmd, fail):
         proc.wait_for(f"run {h4}  2/2", label="the run's node in the project overview")
         proc.send(b"l")
         proc.wait_for(f" run · Tier a and b · {h4} ", label="the run view's title")
-        proc.wait_for("stage 1/2  tier 3 ✓", label="stage 1's node, tier 3 green")
-        proc.wait_for("stage 2/2  tier 3 ✓", label="stage 2's node, tier 3 green")
+        proc.wait_for("stage 1 of 2  tier 3 ✓", label="stage 1's node, tier 3 green")
+        proc.wait_for("stage 2 of 2  tier 3 ✓", label="stage 2's node, tier 3 green")
         print("ok: the run view shows both stage nodes with tier 3 green")
 
         proc.send(b"\x1b")
