@@ -117,7 +117,8 @@ fn the_help_box_still_fits() {
     let want = format!("  {:<key_w$}  {cut}", last.term);
     let mut app = app_at(0);
     let mut seen_last = false;
-    for _ in 0..=line_count(&groups) {
+    let area = ratatui::layout::Rect::new(0, 0, 80, 24);
+    for _ in 0..=line_count(&groups, area, Palette::PLAIN) {
         let rows = audit::rows(&audit::draw(&app, 80, 24));
         seen_last |= rows.iter().any(|r| r.contains(&want));
         let before = app.modal.clone();
@@ -132,16 +133,22 @@ fn the_help_box_still_fits() {
 /// In ASCII mode no glossary glyph (`✓`, `⚑`, `×`, `÷`) leaks through at any scroll.
 #[test]
 fn the_numbers_group_is_ascii_in_ascii_mode() {
-    let mut app = app_at(0);
-    app.settings.badges.ascii = true;
-    let top = line_count(&help_groups("C-b"));
-    for scroll in 0..=top as u16 {
-        app.modal = Some(Modal::Help(HelpView {
-            scroll,
-            ..HelpView::default()
-        }));
-        let buffer = audit::draw(&app, 80, 24);
-        assert_eq!(audit::first_non_ascii(&buffer), None, "scroll {scroll}");
+    // Cut at 80×24, wrapped at 120×40 (9.19 follow-up 5).
+    for (w, h) in [(80, 24), (120, 40)] {
+        let mut app = app_at(0);
+        app.set_body_area(ratatui::layout::Rect::new(0, 0, w, h - 1));
+        app.settings.badges.ascii = true;
+        let area = ratatui::layout::Rect::new(0, 0, w, h);
+        let top = line_count(&help_groups("C-b"), area, Palette::PLAIN);
+        for scroll in 0..=top as u16 {
+            app.modal = Some(Modal::Help(HelpView {
+                scroll,
+                ..HelpView::default()
+            }));
+            let buffer = audit::draw(&app, w, h);
+            let at = audit::first_non_ascii(&buffer);
+            assert_eq!(at, None, "{w}x{h} scroll {scroll}");
+        }
     }
 }
 
@@ -173,13 +180,15 @@ fn every_numbers_row_is_reachable_at_80x24_cut_to_the_box() {
 }
 
 /// Opened on the last group, the view holds its header at the top where the end of the
-/// help lies above it (120x60), and `j` and PgDn stop there.
+/// help lies above it (60 rows, 99 columns: the widest that cuts the glossary, 9.19
+/// follow-up 5), and `j` and PgDn stop there.
 #[test]
 fn opened_on_numbers_the_view_holds_its_place() {
     let groups = help_groups("C-b");
     let top = group_tops(&groups)[groups.len() - 1];
     let mut app = app_at(0);
-    app.set_body_area(ratatui::layout::Rect::new(0, 0, 120, 59));
+    let w = WRAP_AT.0 - 1;
+    app.set_body_area(ratatui::layout::Rect::new(0, 0, w, 59));
     app.modal = Some(Modal::Help(HelpView {
         scroll: top as u16,
         opened: top as u16,
@@ -191,6 +200,50 @@ fn opened_on_numbers_the_view_holds_its_place() {
     app.on_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
     app.on_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
     assert_eq!(scroll(&app), top);
-    let rows = audit::rows(&audit::draw(&app, 120, 60));
+    let rows = audit::rows(&audit::draw(&app, w, 60));
     assert!(rows[2].contains("│ numbers"), "{rows:#?}");
+}
+
+/// 9.19 follow-up 5: at 120×40 every glossary row is drawn whole, its `shown —
+/// definition` wrapped by words under the term and never cut; `j` from the top reaches
+/// every wrapped line. At 80×24 the rows stay cut (ruling R3, the tests above).
+#[test]
+fn at_120x40_every_definition_is_drawn_whole() {
+    let group = numbers_group();
+    let key_w = group
+        .rows
+        .iter()
+        .map(|(k, _)| k.chars().count())
+        .max()
+        .unwrap();
+    let room = 60 - (INDENT + key_w + GAP);
+    let mut app = app_at(0);
+    app.set_body_area(ratatui::layout::Rect::new(0, 0, 120, 39));
+    let mut seen: Vec<String> = Vec::new();
+    loop {
+        seen.extend(audit::rows(&audit::draw(&app, 120, 40)));
+        let before = app.modal.clone();
+        app.on_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
+        if app.modal == before {
+            break;
+        }
+    }
+    let mut wrapped = 0;
+    for (key, words) in &group.rows {
+        let parts = kit::wrap_words(words, room);
+        assert_eq!(parts.join(" "), *words, "{key}: no word is broken");
+        wrapped += usize::from(parts.len() > 1);
+        for (i, part) in parts.iter().enumerate() {
+            let label = if i == 0 { key.as_str() } else { "" };
+            let row = format!("│   {label:<key_w$}  {part:<room$} │");
+            assert!(seen.iter().any(|r| r.contains(&row)), "{row:?}");
+        }
+    }
+    assert!(wrapped > 10, "most definitions need more than one row");
+    let numbers = seen.iter().position(|r| r.contains("│ numbers")).unwrap();
+    assert!(
+        !seen[numbers..].iter().any(|r| r.contains('…')),
+        "{:#?}",
+        &seen[numbers..]
+    );
 }

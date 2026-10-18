@@ -214,7 +214,8 @@ fn the_help_renders_at_80x24_and_120x40() {
             .iter()
             .map(|(k, w)| row_text(k, w)),
     );
-    body.push("↓ 108 more".into());
+    // 9.19 follow-up 5: the glossary's definitions wrap at 120×40, 70 lines more.
+    body.push("↓ 178 more".into());
     body.push("j/k scroll · tab group · esc close".into());
     for line in &body {
         want.push(format!("│ {line:<60} │"));
