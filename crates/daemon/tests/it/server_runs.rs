@@ -180,6 +180,17 @@ async fn every_milestone_8b_request_is_answered_by_its_task() {
     );
 }
 
+/// The runs as `RunRequest::List` answers them, with the snapshot's clock left out.
+/// `now` is the daemon's unix seconds at the call (milestone 8c decision 2), so two
+/// lists a second boundary apart differ in it alone; what a request changed is
+/// everything else.
+async fn listed(runs: &RunService) -> proto::RunsSnapshot {
+    match runs.request(RunRequest::List).await {
+        proto::RunReply::Snapshot(snapshot) => proto::RunsSnapshot { now: 0, ..snapshot },
+        other => panic!("a list is answered with a snapshot: {other:?}"),
+    }
+}
+
 /// Milestone 9.5 task 2: `McpReady` from a window that is no run's orchestrator is
 /// answered `Done` and changes nothing (task M9.5.5a's caller check). Task M9.5.11: a
 /// read-only `Stats` (decision 48) naming ids is refused before anything is read; one
@@ -200,7 +211,7 @@ async fn mcp_ready_is_answered_and_a_read_only_stats_takes_no_ids() {
         git.registry.clone(),
     );
     let runs = RunService::new(manager, ctx);
-    let before = runs.request(RunRequest::List).await;
+    let before = listed(&runs).await;
     let ready = RunRequest::McpReady {
         run_id: "r-3f9a".into(),
         window_id: 4,
@@ -209,7 +220,7 @@ async fn mcp_ready_is_answered_and_a_read_only_stats_takes_no_ids() {
         runs.request(ready).await,
         proto::RunReply::done(request::MCP_READY, "")
     );
-    assert_eq!(runs.request(RunRequest::List).await, before);
+    assert_eq!(listed(&runs).await, before);
     let here = dir.path().to_path_buf();
     assert_eq!(
         runs.request(RunRequest::Stats {
