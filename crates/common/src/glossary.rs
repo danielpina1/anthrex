@@ -43,7 +43,7 @@ pub const GLOSSARY: &[Term] = &[
     Term {
         term: "duration",
         shown: "42s, 41m 12s, 1h 05m, 3d 04h",
-        definition: "A span: run time, check time, tier time, how long an agent ran. Fixed-width cells show the largest unit only (`41m`).",
+        definition: "A span: run time, check time, tier time, how long an agent ran. The fixed-width cells (the sidebar row, the graph boxes, the alerts age column) and the overview's run title show the largest unit only (`41m`).",
     },
     Term {
         term: "age",
@@ -97,7 +97,7 @@ pub const GLOSSARY: &[Term] = &[
     },
     Term {
         term: "est. left",
-        shown: "est. left ~40m",
+        shown: "est. left ~40m 00s",
         definition: "Time left in the current round, after approval, from history's weights. The one value rounded up.",
     },
     Term {

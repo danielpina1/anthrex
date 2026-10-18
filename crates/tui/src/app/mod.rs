@@ -293,9 +293,14 @@ impl App {
         self.age_secs(w.since_secs)
     }
 
-    /// Seconds value from the last window list, plus the time since it arrived.
+    /// Seconds value from the last window list, plus the time from its arrival to the
+    /// last tick (milestone 9.19, pulled forward from task 9: an age moves with the
+    /// tick, never with the wall clock read while rendering).
     pub fn age_secs(&self, secs: u64) -> u64 {
-        secs.saturating_add(self.windows_received_at.elapsed().as_secs())
+        let since = self
+            .ticked_at
+            .saturating_duration_since(self.windows_received_at);
+        secs.saturating_add(since.as_secs())
     }
 
     /// The colour palette the kit's roles resolve against (milestone 9.0.6 decision 1).

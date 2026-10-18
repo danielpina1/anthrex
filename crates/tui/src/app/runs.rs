@@ -319,11 +319,15 @@ impl App {
         self.select_arrived_rows(any_rows);
     }
 
-    /// Decision 2: the daemon's unix seconds as this client sees them now — the
-    /// snapshot's `now` plus the whole seconds since it arrived.
+    /// Decision 2: the daemon's unix seconds as this client sees them at the last tick —
+    /// the snapshot's `now` plus the whole seconds from its arrival to that tick
+    /// (milestone 9.19, pulled forward from task 9). A snapshot newer than the tick
+    /// reads as it arrived.
     pub fn run_now(&self) -> u64 {
-        let elapsed = self.runs_received_at.elapsed().as_secs();
-        self.runs.now.saturating_add(elapsed)
+        let since = self
+            .ticked_at
+            .saturating_duration_since(self.runs_received_at);
+        self.runs.now.saturating_add(since.as_secs())
     }
 
     /// Decision 2: seconds since `unix_secs` on the daemon's clock; 0 for a time that
@@ -493,5 +497,30 @@ impl App {
     #[cfg(test)]
     pub(crate) fn set_runs_received_at(&mut self, at: Instant) {
         self.runs_received_at = at;
+    }
+
+    /// Tests age the last runs snapshot by exactly `by` at the last tick: it arrived
+    /// `by` before the tick (or, on a host up for less, the tick moves `by` on).
+    #[cfg(test)]
+    pub(crate) fn age_runs_by(&mut self, by: std::time::Duration) {
+        match self.ticked_at.checked_sub(by) {
+            Some(at) => self.runs_received_at = at,
+            None => {
+                self.runs_received_at = self.ticked_at;
+                self.ticked_at += by;
+            }
+        }
+    }
+
+    /// The same for the last window list.
+    #[cfg(test)]
+    pub(crate) fn age_windows_by(&mut self, by: std::time::Duration) {
+        match self.ticked_at.checked_sub(by) {
+            Some(at) => self.windows_received_at = at,
+            None => {
+                self.windows_received_at = self.ticked_at;
+                self.ticked_at += by;
+            }
+        }
     }
 }

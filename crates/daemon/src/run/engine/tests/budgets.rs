@@ -68,15 +68,15 @@ fn budget_soft_then_hard() {
     assert!(fx.run().outbox.is_empty());
     tool_use(&mut fx, window);
     let queued: Vec<String> = fx.run().outbox.iter().map(|m| m.text.clone()).collect();
-    let budget = fx.task("t1").budget;
-    let spent = proto::Spend {
-        tool_calls: 5,
-        secs: 0,
-        tokens: 0,
-    };
+    let task = fx.task("t1");
+    let budget = task.budget;
+    // The session's spend on the fixture's clock (milestone 9.19: the text prints its
+    // time to the second, so the whole text is compared).
+    let round = task.rounds.last().expect("the worker's round");
+    let spent = crate::run::engine::ladder_budget::round_spend(round, task.clock.stopped, fx.now);
+    assert_eq!(spent.tool_calls, 5);
     assert_eq!(queued.len(), 1);
-    // Up to the spent time, which `numbers::duration` gives to the second.
-    assert!(queued[0].starts_with(&budget_wrap_up(spent, budget)[..57]));
+    assert_eq!(queued[0], budget_wrap_up(spent, budget));
     assert!(queued[0].contains("(5/5 tool calls"), "{}", queued[0]);
     tool_use(&mut fx, window);
     assert_eq!(fx.run().outbox.len(), 1, "once per session");

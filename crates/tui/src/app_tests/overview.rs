@@ -392,7 +392,7 @@ fn the_footer_spells_a_project_out_with_its_root_and_counts() {
 #[test]
 fn elapsed_duration_saturates_when_extrapolating_old_lists() {
     let mut app = app_with(tree::example_windows());
-    app.windows_received_at = Instant::now() - Duration::from_secs(5);
+    app.age_windows_by(Duration::from_secs(5));
     let mut window = app.windows[0].clone();
     window.since_secs = u64::MAX;
     assert_eq!(app.elapsed_secs(&window), u64::MAX);
