@@ -7,8 +7,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use clap::{Args, Subcommand};
-use common::text::hh_mm;
-use proto::brakes::{BrakesInfo, QuotaInfo};
+use common::brakes_text::quota_held_text;
+use common::numbers::{Zone, ago, clock};
+use proto::brakes::{BrakesInfo, QuotaInfo, QuotaState};
 use proto::safe_text::one_line;
 use proto::{ClientMsg, DaemonMsg, RunReply, RunRequest};
 
@@ -67,7 +68,9 @@ async fn dispatch(command: HoldCommand, socket: &Path) -> anyhow::Result<()> {
             }
         }
         RunReply::Snapshot(snapshot) => {
-            for line in brake_lines(&snapshot.brakes, snapshot.now) {
+            // Milestone 9.19 decision 3: the viewer's zone, read once per command.
+            let zone = Zone::Local(common::localtime::offset_secs(snapshot.now));
+            for line in brake_lines(&snapshot.brakes, snapshot.now, zone) {
                 println!("{}", printable(&line));
             }
         }
@@ -100,13 +103,15 @@ async fn request_of(client: &mut CliClient, request: RunRequest) -> anyhow::Resu
     }
 }
 
-/// Decision 34: `hold: off` or `hold: on since <HH:MM> UTC (<by>)`; then `quota brake:
-/// off` when disabled, else one line per runtime.
-pub fn brake_lines(brakes: &BrakesInfo, now: u64) -> Vec<String> {
+/// Decision 34: `hold: off` or `hold: on since <clock> (<ago>) (<by>)`; then `quota
+/// brake: off` when disabled, else one line per runtime. Every clock time is the
+/// viewer's, in `zone`, against the daemon's `now` (milestone 9.19 decisions 3, 12).
+pub fn brake_lines(brakes: &BrakesInfo, now: u64, zone: Zone) -> Vec<String> {
     let mut lines = vec![match &brakes.hold {
         Some(hold) => format!(
-            "hold: on since {} UTC ({})",
-            hh_mm(hold.since),
+            "hold: on since {} ({}) ({})",
+            clock(hold.since, now, zone),
+            ago(now.saturating_sub(hold.since)),
             one_line(&hold.by)
         ),
         None => "hold: off".to_owned(),
@@ -115,35 +120,41 @@ pub fn brake_lines(brakes: &BrakesInfo, now: u64) -> Vec<String> {
         lines.push("quota brake: off".to_owned());
         return lines;
     }
-    lines.extend(brakes.quota.iter().map(|quota| quota_line(quota, now)));
+    lines.extend(
+        brakes
+            .quota
+            .iter()
+            .map(|quota| quota_line(quota, now, zone)),
+    );
     lines
 }
 
-/// `<runtime> quota: 5h <n>% · 7d <n>% (read <m> min ago) · not braked`, `… · braked
-/// until <HH:MM> UTC (<window> at <n>% ≥ <t>%)`, or `<runtime> quota: unmeasured · not
+/// Milestone 9.19 decision 12, by `quota.state`: `<runtime> quota: 5h <n>% · 7d <n>%
+/// (read <ago>) · not braked`, `(stale: read <ago>)` for a stale reading, `<runtime>
+/// quota: unmeasured · not braked`, and while a trip holds, the windows and then the
+/// brake text the daemon and the TUI share ([`quota_held_text`]) in place of `not
 /// braked`.
-fn quota_line(quota: &QuotaInfo, now: u64) -> String {
+fn quota_line(quota: &QuotaInfo, now: u64, zone: Zone) -> String {
     let runtime = quota.runtime;
+    let state = match &quota.trip {
+        Some(trip) => quota_held_text(runtime, trip, now, zone),
+        None if quota.state == QuotaState::Braked => "braked".to_owned(),
+        None => "not braked".to_owned(),
+    };
     let (Some(read_at), false) = (quota.read_at, quota.windows.is_empty()) else {
-        return format!("{runtime} quota: unmeasured \u{b7} not braked");
+        return format!("{runtime} quota: unmeasured \u{b7} {state}");
     };
     let windows: Vec<String> = (quota.windows.iter())
         .map(|w| format!("{} {}%", w.window.label(), w.used.percent()))
         .collect();
-    let state = match &quota.trip {
-        Some(trip) => format!(
-            "braked until {} UTC ({} at {}% \u{2265} {}%)",
-            hh_mm(trip.until),
-            trip.window.label(),
-            trip.used.percent(),
-            trip.threshold_percent
-        ),
-        None => "not braked".to_owned(),
+    let age = ago(now.saturating_sub(read_at));
+    let read = match quota.state {
+        QuotaState::Stale => format!("stale: read {age}"),
+        QuotaState::Unmeasured | QuotaState::Fresh | QuotaState::Braked => format!("read {age}"),
     };
     format!(
-        "{runtime} quota: {} (read {} min ago) \u{b7} {state}",
-        windows.join(" \u{b7} "),
-        now.saturating_sub(read_at) / 60
+        "{runtime} quota: {} ({read}) \u{b7} {state}",
+        windows.join(" \u{b7} ")
     )
 }
 

@@ -68,7 +68,7 @@ fn fill_at_threshold_starts_fresh_session() {
     assert!(
         next.log
             .iter()
-            .any(|e| e.text == "handed off from 3f9a: context 83% full"),
+            .any(|e| e.text == "handed off from 3f9a: context 83% full (166k / 200k)"),
         "{:#?}",
         next.log
     );
@@ -114,7 +114,7 @@ fn mid_run_fill_adds_an_attention_line_only() {
     let mut fx = ended(FinishAction::Accept);
     fx.run_mut().state = RunState::Running;
     let window = fx.run().orch.orchestrator.as_ref().unwrap().window_id;
-    let line = "orchestrator context 92% full".to_string();
+    let line = "orchestrator context 92% full (184k / 200k)".to_string();
     let report = |fx: &mut Fixture, f| {
         fx.next(EventKind::OrchestratorFill {
             run_id: RUN_ID.into(),
@@ -149,6 +149,50 @@ fn mid_run_fill_adds_an_attention_line_only() {
             .iter()
             .any(|l| l.starts_with("orchestrator context"))
     );
+}
+
+/// Fix round 1 (review I2): ruling C17 keys on the attention's threshold percent and
+/// whether the window is known, not on the line's text. A step that moves the shown
+/// tokens but not the percent bumps no revision (and keeps the line), a new percent
+/// does, and past the window (`over 100%`) more tokens bump nothing.
+#[test]
+fn a_fill_moves_the_run_only_when_its_percent_does() {
+    let mut fx = ended(FinishAction::Accept);
+    fx.run_mut().state = RunState::Running;
+    let report = |fx: &mut Fixture, f| {
+        fx.next(EventKind::OrchestratorFill {
+            run_id: RUN_ID.into(),
+            fill: f,
+        })
+    };
+    report(&mut fx, fill(184_000, Some(200_000)));
+    let revision = fx.state.revision;
+    // 184k to 185k: both 92%.
+    report(&mut fx, fill(185_500, Some(200_000)));
+    assert_eq!(
+        fx.state.revision, revision,
+        "a sub-percent step moved the run"
+    );
+    let line = "orchestrator context 92% full (184k / 200k)".to_string();
+    assert!(attention(&fx).contains(&line), "{:?}", attention(&fx));
+    // 93%: the line moves.
+    report(&mut fx, fill(186_000, Some(200_000)));
+    assert!(
+        fx.state.revision > revision,
+        "a new percent did not move the run"
+    );
+    let line = "orchestrator context 93% full (186k / 200k)".to_string();
+    assert!(attention(&fx).contains(&line), "{:?}", attention(&fx));
+    // Past the window: over 100% is over 100%, however many more tokens.
+    report(&mut fx, fill(900_000, Some(200_000)));
+    let revision = fx.state.revision;
+    report(&mut fx, fill(950_000, Some(200_000)));
+    assert_eq!(
+        fx.state.revision, revision,
+        "more tokens past the window moved the run"
+    );
+    let line = "orchestrator context over 100% (900k / 200k window)".to_string();
+    assert!(attention(&fx).contains(&line), "{:?}", attention(&fx));
 }
 
 const M93_RUN: &str = include_str!("../../../../tests/fixtures/run/m93-run.json");

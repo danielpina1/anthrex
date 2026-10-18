@@ -307,7 +307,7 @@ fn stall_interrupts_then_nudges_then_goes_to_rung_2() {
     assert!(!effects.contains(&Effect::Interrupt { window_id: window }));
 
     let effects = fx.turn_ended(window, TurnOutcome::Interrupted);
-    assert_eq!(delivers(&effects), vec![stall_nudge(10)]);
+    assert_eq!(delivers(&effects), vec![stall_nudge(600)]);
     assert!(ops_in(&effects, "CountCommits").is_empty());
     let quiet = fx.now;
     let effects = fx.send(quiet + 600, EventKind::Tick);

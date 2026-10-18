@@ -220,7 +220,7 @@ fn a_brainstormer_over_budget_fails() {
     let (machine, _) = step(machine, ScoutEvent::Tick { now: 900 }, &limits);
     assert_eq!(
         machine.failure.as_deref(),
-        Some("the brainstormer ran longer than 900 s")
+        Some("the brainstormer ran longer than 15m 00s")
     );
     assert_eq!((BRAINSTORMER_TEXTS.wrap_up)(40), brainstormer_wrap_up(40));
     assert_eq!(BRAINSTORMER_TEXTS.submit_tool, "mcp__anthrex__submit_doc");

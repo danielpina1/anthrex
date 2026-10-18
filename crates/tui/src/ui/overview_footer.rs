@@ -66,7 +66,7 @@ pub(in crate::ui) fn footer_parts(row: &Row<'_>, app: &App) -> (Span<'static>, S
                 info.runtime.label(),
                 info.model.as_deref().unwrap_or("-"),
                 info.status.label(),
-                tree::format_elapsed(app.elapsed_secs(info)),
+                common::numbers::duration(app.elapsed_secs(info)),
                 info.tool
                     .as_deref()
                     .map(|tool| format!("  {tool}"))
@@ -75,17 +75,20 @@ pub(in crate::ui) fn footer_parts(row: &Row<'_>, app: &App) -> (Span<'static>, S
         ),
         RowKind::Subagent { info } => {
             let (state, duration) = match info.state {
-                proto::SubagentState::Running => ("running", app.age_secs(info.started_secs)),
+                proto::SubagentState::Running => ("running", Some(app.age_secs(info.started_secs))),
                 proto::SubagentState::Done => ("done", finished_secs(info)),
                 proto::SubagentState::Failed => ("failed", finished_secs(info)),
             };
+            // Decision 9: a stopped sub-agent with no end has no duration, not `0s`.
+            let duration = duration
+                .map(|secs| format!("  {}", common::numbers::duration(secs)))
+                .unwrap_or_default();
             (
                 look(theme::subagent_look(info, frame, ascii)),
                 tree::subagent_label(info),
                 format!(
-                    "  {}  {state}  {}{}",
+                    "  {}  {state}{duration}{}",
                     info.model.as_deref().unwrap_or("-"),
-                    tree::format_elapsed(duration),
                     info.tool
                         .as_deref()
                         .map(|tool| format!("  {tool}"))
@@ -116,8 +119,8 @@ pub(in crate::ui) fn footer_parts(row: &Row<'_>, app: &App) -> (Span<'static>, S
 }
 
 /// How long a sub-agent that has stopped ran for. Both fields are ages, so the
-/// run is the difference between them, and a missing end reads as zero.
-fn finished_secs(info: &proto::SubagentInfo) -> u64 {
+/// run is the difference between them; a missing end is unknown (decision 9).
+fn finished_secs(info: &proto::SubagentInfo) -> Option<u64> {
     info.ended_secs
-        .map_or(0, |ended| info.started_secs.saturating_sub(ended))
+        .map(|ended| info.started_secs.saturating_sub(ended))
 }

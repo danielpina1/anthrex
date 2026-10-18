@@ -152,8 +152,10 @@ pub(crate) async fn execute(exec: &HostExec, at: &HostAt, repo: HostRepo, op: Ho
     };
     OpResult::Host(answer.unwrap_or_else(|| {
         HostResult::Error(HostError::TimedOut(format!(
-            "{name} did not answer within {} s",
-            limit.as_millis().div_ceil(1000)
+            "{name} did not answer within {}",
+            common::numbers::duration(
+                u64::try_from(limit.as_millis().div_ceil(1000)).unwrap_or(u64::MAX)
+            )
         )))
     }))
 }

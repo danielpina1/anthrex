@@ -322,14 +322,27 @@ fn the_footer_times_a_stopped_subagent_from_the_two_ages() {
         footer_text(&app, &layout),
         "✓ tests: run unit suite  -  done  45s"
     );
+}
 
-    // An end that never arrived reads as no elapsed time rather than as the
-    // sub-agent's own age.
+/// Milestone 9.19 decision 9: an end that never arrived is unknown, not zero, and
+/// not the sub-agent's own age: the footer says `done` with no duration.
+#[test]
+fn a_done_subagent_without_an_end_has_no_duration() {
+    let (mut app, layout) = opened_with_the_single_line(200, 50);
+    select(
+        &mut app,
+        NodeKey::Subagent {
+            window_id: 1,
+            id: "a3".into(),
+        },
+    );
     app.windows[0].subagents[2].ended_secs = None;
     assert_eq!(
         footer_text(&app, &layout),
-        "✓ tests: run unit suite  -  done  0s"
+        "✓ tests: run unit suite  -  done"
     );
+    app.windows[0].subagents[2].state = proto::SubagentState::Failed;
+    assert!(footer_text(&app, &layout).ends_with("  failed"));
 }
 
 /// The three sub-agent states name themselves in the footer, and a stopped
@@ -392,7 +405,7 @@ fn the_footer_spells_a_project_out_with_its_root_and_counts() {
 #[test]
 fn elapsed_duration_saturates_when_extrapolating_old_lists() {
     let mut app = app_with(tree::example_windows());
-    app.windows_received_at = Instant::now() - Duration::from_secs(5);
+    app.age_windows_by(Duration::from_secs(5));
     let mut window = app.windows[0].clone();
     window.since_secs = u64::MAX;
     assert_eq!(app.elapsed_secs(&window), u64::MAX);

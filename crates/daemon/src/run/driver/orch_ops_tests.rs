@@ -158,7 +158,10 @@ async fn resolve_target_op_runs_git_off_the_worker_threads() {
     assert_eq!(
         got,
         OpResult::Failed {
-            message: format!("git did not answer within {} s", DEADLINE.as_secs())
+            message: format!(
+                "git did not answer within {}",
+                common::numbers::duration(DEADLINE.as_secs())
+            )
         }
     );
     assert!(took >= DEADLINE, "{took:?}");

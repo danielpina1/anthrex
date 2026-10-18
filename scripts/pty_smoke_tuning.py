@@ -14,7 +14,7 @@ the other stage modules, it has no `__main__` of its own (`ANTHREX_SMOKE_ONLY=11
 python3 scripts/pty-smoke.py` runs it alone).
 
 The repository's history is the recorded `refit.jsonl` (task M9.5.8): `anthrex run
-stats` refits the S budget to `55 calls 18m` and lists its proposals. Then one M task
+stats` refits the S budget to `55 calls · 18 min` and lists its proposals. Then one M task
 races (`e2e_race_both_pass_crowns_one` of `crates/cli/tests/it/run_e2e_race.rs`): both
 racers commit and finish, their reviewers meet and approve together, exactly one lane is
 crowned, and `anthrex run accept` puts `a.txt` on `main`.
@@ -207,10 +207,10 @@ def tuning_stage(pty_proc, bin_path, run_cmd, fail, base_env):
 
         # 3. `run stats` refits S and lists the proposals.
         stats = cmd(["run", "stats", "--dir", repo]).stdout
-        for needle in ("55 calls 18m", "tuning proposals:"):
+        for needle in ("55 calls · 18 min", "tuning proposals:"):
             if needle not in stats:
                 fail(f"`anthrex run stats` printed no {needle!r}:\n{stats}")
-        print("ok: run stats refitted S to 55 calls 18m and listed its proposals")
+        print("ok: run stats refitted S to 55 calls · 18 min and listed its proposals")
 
         # 4. `e2e_race_both_pass_crowns_one`'s scripts and a plan with one M racing task.
         _write_script(repo, "racer-t1-a-1", _racer("a"))

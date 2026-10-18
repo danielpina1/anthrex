@@ -161,7 +161,10 @@ pub async fn decide_within(
     let timed_out = || {
         let mut decision = fallback_decision(
             request,
-            format!("the decider timed out after {} s", bound.as_secs()),
+            format!(
+                "the decider timed out after {}",
+                common::numbers::duration(bound.as_secs())
+            ),
         );
         decision.secs = started.elapsed().as_secs();
         decision
@@ -218,7 +221,13 @@ async fn call(
             Err(_) => {
                 guard.kill();
                 let secs = ctx.timeout.as_secs();
-                return (Err(format!("the decider timed out after {secs} s")), None);
+                return (
+                    Err(format!(
+                        "the decider timed out after {}",
+                        common::numbers::duration(secs)
+                    )),
+                    None,
+                );
             }
             Ok(None) => {
                 // The dispatcher delivers `ProcessExited` before it ends; defensive.

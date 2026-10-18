@@ -57,8 +57,8 @@ pub fn problem(runtime: Runtime, error: &ProbeError) -> String {
     match error {
         ProbeError::Missing => format!("{name} not found"),
         ProbeError::Timeout => format!(
-            "{name} did not answer within {} s",
-            DISCOVERY_TIMEOUT.as_secs()
+            "{name} did not answer within {}",
+            common::numbers::duration(DISCOVERY_TIMEOUT.as_secs())
         ),
         ProbeError::Cancelled => format!("{name}'s probe was cancelled"),
         ProbeError::Failed(message) => message.clone(),

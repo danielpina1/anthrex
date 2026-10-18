@@ -4,7 +4,6 @@
 //! Split from `ui/alerts_view.rs`, which lays the view out and scrolls these rows.
 //! Every daemon string passes `safe_text` here. Pure.
 
-use super::super::alerts::age_text;
 use super::super::kit::{self, Hint};
 use crate::app::alerts::tasks_text;
 use crate::app::alerts_view::{alert_actions, alert_node, can_message, enter_label, run_of};
@@ -14,9 +13,9 @@ use crate::inspector::run_format::reason_text;
 use crate::inspector::run_format::route_tag;
 use crate::safe_text::{multi_line, one_line};
 use crate::theme::{self, Palette, Role, fold};
-use crate::tree::{self, format_elapsed};
+use crate::tree;
 use crate::ui::tree_view::truncate_in;
-use proto::{RunInfo, SetupState, TaskInfo, TaskState};
+use proto::{RunInfo, SetupState, TaskInfo};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
@@ -27,13 +26,6 @@ fn plan_text(n: usize, stages: usize) -> String {
     } else {
         tasks_text(n)
     }
-}
-
-/// The plan's stages, as the plan review counts them: the highest planned stage or
-/// the run's stage records, whichever is more.
-fn run_stages(run: &RunInfo) -> usize {
-    let planned = run.tasks.iter().map(|t| t.stage).max().unwrap_or(1);
-    usize::from(planned).max(run.stages.len())
 }
 
 /// The distinct stages of `tasks`: a hold's own (Review focus 4: never the run's,
@@ -58,7 +50,7 @@ fn gate_plan(run: &RunInfo) -> String {
     let stages = if run.round > 1 {
         distinct_stages(tasks.iter().copied())
     } else {
-        run_stages(run)
+        common::progress::stage_count(run)
     };
     plan_text(tasks.len(), stages)
 }
@@ -95,7 +87,7 @@ fn worker_text(app: &App, task: &TaskInfo) -> Option<String> {
     Some(format!(
         "{} · {calls} · {}",
         route_tag(&round.route),
-        format_elapsed(elapsed)
+        common::numbers::duration(elapsed)
     ))
 }
 
@@ -142,12 +134,6 @@ fn facts(app: &App, alert: &Alert) -> Vec<(String, String)> {
         | AlertKey::Blocked { run: id, .. }
         | AlertKey::Delivery { run: id, .. }
         | AlertKey::Stage { run: id, .. } => run_of(app, id),
-    };
-    let counted = |run: &RunInfo| {
-        run.tasks
-            .iter()
-            .filter(|task| task.state != TaskState::Cancelled)
-            .count()
     };
     match (&alert.key, run) {
         (AlertKey::Blocked { task, .. }, Some(run)) => {
@@ -203,12 +189,10 @@ fn facts(app: &App, alert: &Alert) -> Vec<(String, String)> {
         }
         (AlertKey::Accept(_), Some(run)) => {
             push(&mut rows, "phase", "complete · ready to accept".to_owned());
-            let merged = run
-                .tasks
-                .iter()
-                .filter(|task| task.state == TaskState::Merged)
-                .count();
-            push(&mut rows, "merged", format!("{merged}/{}", counted(run)));
+            // Milestone 9.19 decision 5 (review I2): the run's one progress count.
+            let common::progress::Progress { merged, total, .. } =
+                common::progress::run_progress(run);
+            push(&mut rows, "merged", format!("{merged}/{total}"));
             if let Some(base) = base_text(run) {
                 push(&mut rows, "base", base);
             }
@@ -237,17 +221,15 @@ fn facts(app: &App, alert: &Alert) -> Vec<(String, String)> {
             push(&mut rows, "phase", delivery_phase(*kind).to_owned());
             text_rows(&mut rows, "reason", &alert.detail);
             if let Some(n) = stage {
-                push(&mut rows, "stage", format!("{n} of {}", run.stages.len()));
+                let of = common::progress::stage_count(run);
+                push(&mut rows, "stage", format!("{n} of {of}"));
             }
             push(&mut rows, "run", run_name(run, p));
         }
         (AlertKey::Stage { stage, kind, .. }, Some(run)) => {
             push(&mut rows, "phase", stage_phase(*kind).to_owned());
-            push(
-                &mut rows,
-                "stage",
-                format!("{stage} of {}", run.stages.len()),
-            );
+            let of = common::progress::stage_count(run);
+            push(&mut rows, "stage", format!("{stage} of {of}"));
             push(&mut rows, "run", run_name(run, p));
         }
         (AlertKey::Proposal(project), _) => {
@@ -289,7 +271,7 @@ fn facts(app: &App, alert: &Alert) -> Vec<(String, String)> {
         (_, None) => {}
     }
     if let Some(age) = alert.age {
-        push(&mut rows, "age", age_text(age));
+        push(&mut rows, "age", common::numbers::duration(age));
     }
     rows
 }

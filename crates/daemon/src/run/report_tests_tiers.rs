@@ -153,7 +153,7 @@ fn report_has_the_tiers_section() {
              ### Stage 1\n\
              \n\
              Branch: anthrex/{id}/stage-1 at 1111111\n\
-             Tier 3: green at 1111111, 2472s, 2 shards, flaky: a::flaky\n\
+             Tier 3: green at 1111111, 41m 12s, 2 shards, flaky: a::flaky\n\
              Bisect of 2222222: 6 merges, 4 probes, culprit t4, fix task fix1\n\
              Bisect of 3333333: 2 merges, 1 probe, no culprit: the failing tests already fail at 0000000\n\
              \n\
@@ -170,7 +170,7 @@ fn report_has_the_tiers_section() {
     // Each task's section: its last tier-1 line, and its signals with their answers.
     let t1 = between(&text, "## t1: ", "\n## ");
     assert!(
-        t1.contains("Tier 1: 2 modules (a, b), 2 steps, 1 cached, 130s, green, flaky: a::x\n"),
+        t1.contains("Tier 1: 2 modules (a, b), 2 steps, 1 cached, 2m 10s, green, flaky: a::x\n"),
         "{t1}"
     );
     assert!(

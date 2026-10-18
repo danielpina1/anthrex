@@ -1,6 +1,7 @@
 //! Task M9.2.14: `run prs`'s table, `run status`'s delivery lines and `--delivery`'s
 //! parse, on constructed snapshots (pure); task M9.7.12's bounded `git` check.
 
+use common::numbers::Zone;
 use std::time::{Duration, Instant};
 
 use proto::{
@@ -126,7 +127,7 @@ fn status_shows_the_delivery_and_prs_lines() {
     ]);
     assert_eq!(
         status_lines(&run),
-        "  delivery: pr to origin (fake/app), watching every 60 s\n  \
+        "  delivery: pr to origin (fake/app), watching every 1m 00s\n  \
          prs: #141 merged, #142 open (ci red, 2 threads), #143 open (ci pending)\n"
     );
     run.delivery.as_mut().unwrap().watching = false;
@@ -143,7 +144,13 @@ fn status_shows_the_delivery_and_prs_lines() {
 fn status_header_says_delivering_when_decision_36_holds() {
     let mut run = delivered(vec![stage(1, Some(pr(7, PrState::Open, CiState::Green)))]);
     run.state = RunState::Running;
-    let header = |run: &RunInfo| run_block(run, 0).lines().next().unwrap().to_string();
+    let header = |run: &RunInfo| {
+        run_block(run, 0, Zone::Local(0))
+            .lines()
+            .next()
+            .unwrap()
+            .to_string()
+    };
     assert!(!header(&run).contains("delivering"), "{}", header(&run));
     run.delivery.as_mut().unwrap().delivering = true;
     assert!(
@@ -151,9 +158,9 @@ fn status_header_says_delivering_when_decision_36_holds() {
         "{}",
         header(&run)
     );
-    let block = run_block(&run, 0);
+    let block = run_block(&run, 0, Zone::Local(0));
     assert!(
-        block.contains("\n  delivery: pr to origin (fake/app), watching every 60 s\n  prs: #7 open (ci green)\n"),
+        block.contains("\n  delivery: pr to origin (fake/app), watching every 1m 00s\n  prs: #7 open (ci green)\n"),
         "{block}"
     );
     run.state = RunState::Paused;

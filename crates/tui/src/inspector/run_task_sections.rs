@@ -5,13 +5,14 @@
 //! showed is dropped (M9.0.5 decision 22's rule). Pure: it reads `App` and returns
 //! sections; the panel sanitises, wraps and colours.
 
-use super::run_format::{format_duration, reason_text};
+use super::run_format::reason_text;
 use super::run_task_outcome::{evidence, outcome};
 use super::{Field, Marks, Section, SectionField};
 use crate::app::App;
 use crate::app::task_detail::DetailState;
 use crate::safe_text::one_line;
 use crate::tree::{NodeKey, is_paused, round_label_with_lane, task_held};
+use common::numbers::duration;
 use proto::{
     AgentRole, AgentRoundInfo, DeciderSource, RaceLane, RunInfo, RunState, TaskInfo, TaskState,
 };
@@ -124,7 +125,7 @@ fn round_line(round: &AgentRoundInfo, app: &App) -> String {
     };
     format!(
         "{label} · {who} · {} · {} tool calls",
-        format_duration(elapsed),
+        duration(elapsed),
         round.tool_calls
     )
 }

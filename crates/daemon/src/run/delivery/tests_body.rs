@@ -95,7 +95,7 @@ fn pr_body_is_exact_for_a_fixed_run() {
 
 ### Test evidence
 - Tiers run: tier 1 ×2, tier 2 ×1, tier 3 ×3
-- Tier 3 on this head: green in 3 min 4 s, 2 shards
+- Tier 3 on this head: green in 3m 04s, 2 shards
 - Flaky tests seen: `a::flaky`
 
 {FOOTER}"

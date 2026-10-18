@@ -59,7 +59,7 @@ fn a_role_decision(role: AgentRole, run_id: Option<&str>) -> RoleRoutingDecision
 
 #[test]
 fn role_routing_history_round_trip() {
-    assert_eq!(HISTORY_VERSION, 5);
+    assert_eq!(HISTORY_VERSION, 6);
     let roles = [
         (AgentRole::Orchestrator, Some("run-a1b2")),
         (AgentRole::Planner, Some("run-a1b2")),

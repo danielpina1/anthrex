@@ -6,7 +6,8 @@
 //! session's, so a sample is its per-session mean, rounded (ruling T13-3). Samples are
 //! capped per run and round and windowed as task samples are (ruling RH-3), and fitted
 //! with decision 6's rule: tool calls from their calls, minutes from their active
-//! seconds, tokens (with `refit_tokens`) from those that recorded any. Part of
+//! seconds, tokens (with `refit_tokens`) from those that recorded any, in `v` 6 lines
+//! or later (milestone 9.19 decision 2: billed tokens from then on). Part of
 //! `run::refit` (split for the 600-line rule), which uses its items. Pure.
 
 use std::collections::HashMap;
@@ -16,6 +17,10 @@ use proto::{AgentRole, ClassBudget, HistoryLine, PhaseAgent, PhaseRecord};
 
 use super::{Sample, budget_of, cap_and_window, lower_median, qualifies};
 use crate::run::design::spend::OK;
+
+/// Milestone 9.19 decision 2: the first `HISTORY_VERSION` whose phase lines carry
+/// billed tokens.
+const BILLED_FROM: u32 = 6;
 
 /// One design agent's spend in one phase record.
 #[derive(Debug, Clone, Copy)]
@@ -99,9 +104,10 @@ pub(super) fn fit(
     let calls = median(&samples, |a| per_session(a, u64::from(a.calls)))?;
     let secs = median(&samples, |a| per_session(a, a.secs))?;
     // As ruling T8-5 for a task class: only the samples that recorded tokens, when they
-    // qualify on their own and their median is above 0.
+    // qualify on their own and their median is above 0. Milestone 9.19 decision 2: and
+    // only from `v` 6 lines, whose tokens are billed (older ones counted cache reads).
     let recorded: Vec<DesignSample> = (samples.iter().copied())
-        .filter(|s| s.agent.tokens > 0)
+        .filter(|s| s.record.v >= BILLED_FROM && s.agent.tokens > 0)
         .collect();
     let tokens = (t.refit_tokens && qualifies(&recorded, t))
         .then(|| median(&recorded, |a| per_session(a, a.tokens)))

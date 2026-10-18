@@ -57,7 +57,7 @@ fn a_failure_or_a_timeout_keeps_todays_id_and_no_title() {
     assert_eq!(today, "in-anthrex-at-the-bottom-i-want-0a1b");
     for reason in [
         "the decider exited before answering (code 2)",
-        "the decider timed out after 15 s",
+        "the decider timed out after 15s",
         "the decider's answer does not match the schema: title: must have 2 to 8 words",
         "deciders are off",
     ] {

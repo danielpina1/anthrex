@@ -356,7 +356,7 @@ fn orphans_and_cycles_become_roots() {
             20,
         ),
     ];
-    let forest = subagent_forest(&subagents, 300);
+    let forest = subagent_forest(&subagents, TreeState::default().keep());
     let roots: Vec<_> = forest.iter().map(|node| node.info.id.as_str()).collect();
 
     assert_eq!(roots, vec!["orphan", "cycle-a", "cycle-b"]);
@@ -377,7 +377,7 @@ fn siblings_sort_oldest_first() {
             30,
         ),
     ];
-    let forest = subagent_forest(&subagents, 300);
+    let forest = subagent_forest(&subagents, TreeState::default().keep());
 
     assert_eq!(
         forest
@@ -543,15 +543,6 @@ fn row_index_finds_keys_and_runtime_tags_are_fixed() {
     assert_eq!(runtime_tag(Runtime::Claude), "cl");
     assert_eq!(runtime_tag(Runtime::Codex), "cx");
     assert_eq!(runtime_tag(Runtime::Shell), "sh");
-}
-
-#[test]
-fn elapsed_time_uses_existing_sidebar_units() {
-    assert_eq!(format_elapsed(0), "0s");
-    assert_eq!(format_elapsed(59), "59s");
-    assert_eq!(format_elapsed(60), "1m");
-    assert_eq!(format_elapsed(3599), "59m");
-    assert_eq!(format_elapsed(3600), "1h");
 }
 
 #[test]

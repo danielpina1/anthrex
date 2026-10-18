@@ -61,15 +61,19 @@ pub(super) fn breached(spend: Spend, budget: Budget) -> Option<String> {
     }
     if spend.secs.saturating_mul(2) >= u64::from(budget.minutes).saturating_mul(180) {
         return Some(format!(
-            "{} minutes against a budget of {}",
-            spend.secs / 60,
+            "{} against a budget of {} min",
+            common::numbers::duration(spend.secs),
             budget.minutes
         ));
     }
     match budget.tokens {
-        Some(tokens) if spend.tokens.saturating_mul(2) >= tokens.saturating_mul(3) => Some(
-            format!("{} tokens against a budget of {tokens}", spend.tokens),
-        ),
+        Some(tokens) if spend.tokens.saturating_mul(2) >= tokens.saturating_mul(3) => {
+            Some(format!(
+                "{} tokens against a budget of {}",
+                common::numbers::tokens(spend.tokens),
+                common::numbers::tokens(tokens)
+            ))
+        }
         _ => None,
     }
 }
@@ -113,10 +117,10 @@ pub(super) fn check_budget(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Effec
     let next = ceiling(run, task);
     if reached(total, next) {
         let text = format!(
-            "the task's total spend reached the next size's budget ({}/{} tool calls, {}/{} minutes)",
+            "the task's total spend reached the next size's budget ({}/{} tool calls, {} of {} min)",
             total.tool_calls,
             next.tool_calls,
-            total.secs / 60,
+            common::numbers::duration(total.secs),
             next.minutes
         );
         rung4(run, i, text, now, fx);
@@ -134,4 +138,47 @@ pub(super) fn check_budget(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Effec
         outbox::queue(run, &id, budget_wrap_up(spend, budget), now);
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use proto::{Budget, Spend};
+
+    /// Milestone 9.19 decision 4: spend in `duration`, the ceiling in `min`.
+    #[test]
+    fn a_ninety_second_breach_says_so() {
+        let spend = Spend {
+            tool_calls: 1,
+            secs: 90,
+            tokens: 0,
+        };
+        let budget = Budget {
+            tool_calls: 100,
+            minutes: 1,
+            tokens: None,
+        };
+        assert_eq!(
+            super::breached(spend, budget).as_deref(),
+            Some("1m 30s against a budget of 1 min")
+        );
+    }
+
+    /// Milestone 9.19 decision 2: a token breach prints its tokens shortened.
+    #[test]
+    fn a_token_breach_is_shortened() {
+        let spend = Spend {
+            tool_calls: 1,
+            secs: 1,
+            tokens: 1_800_000,
+        };
+        let budget = Budget {
+            tool_calls: 100,
+            minutes: 100,
+            tokens: Some(1_200_000),
+        };
+        assert_eq!(
+            super::breached(spend, budget).as_deref(),
+            Some("1.8M tokens against a budget of 1.2M")
+        );
+    }
 }

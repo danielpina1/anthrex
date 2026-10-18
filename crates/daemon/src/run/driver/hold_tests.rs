@@ -91,10 +91,20 @@ async fn hold_on_and_off_answer_and_persist() {
 
     let (again, message) = held(&hold(&s, true).await);
     assert_eq!(again, Some(first.clone()), "the first since is kept");
-    let since = common::text::hh_mm(first.since);
-    assert_eq!(
-        message,
-        format!("dispatch was already held since {since} UTC")
+    // Milestone 9.19 decision 3: daemon text, UTC and labelled, against the daemon's
+    // `now`, which may have passed midnight since `since`: either form is right.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let utc = common::numbers::Zone::Utc;
+    let forms = [first.since, now].map(|at| {
+        let since = common::numbers::clock(first.since, at, utc);
+        format!("dispatch was already held since {since}")
+    });
+    assert!(
+        forms.contains(&message),
+        "{message:?} is not one of {forms:?}"
     );
 
     let (off, message) = held(&hold(&s, false).await);

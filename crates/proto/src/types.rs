@@ -98,7 +98,11 @@ pub struct SubagentInfo {
     pub model: Option<String>,
     pub state: SubagentState,
     pub tool: Option<String>,
+    /// An age: how many seconds before the snapshot was sent the sub-agent started.
     pub started_secs: u64,
+    /// An age: how many seconds before the snapshot was sent the sub-agent ended;
+    /// `None` while running, or when its end never arrived (shown as unknown, never
+    /// as zero: milestone 9.19 decision 9).
     pub ended_secs: Option<u64>,
     pub needs_permission: bool,
 }
@@ -133,7 +137,11 @@ pub struct WindowInfo {
     pub branch: Option<String>,
     pub status: Status,
     pub tool: Option<String>,
+    /// An age: how many seconds before the snapshot was sent the window entered its
+    /// current status.
     pub since_secs: u64,
+    /// An age: how many seconds before the snapshot was sent the window last wrote
+    /// output.
     pub last_output_secs: u64,
     pub session_id: Option<String>,
     pub model: Option<String>,

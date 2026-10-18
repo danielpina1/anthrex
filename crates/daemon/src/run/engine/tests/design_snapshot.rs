@@ -29,7 +29,8 @@ fn a_non_design_run_has_no_design_state_and_an_unchanged_snapshot() {
 /// [`M95_RUN_INFO`] with milestone 9.8's intended changes (task M9.8.7a), and nothing
 /// else: the reviewer row's effort (`high`, decision 27: the review level no longer
 /// sets it), and racer b on the row's fallback at its default effort (decision 28); and
-/// with no `strength` (task M9.8.14); and the discard's `needs` (milestone 9.15).
+/// with no `strength` (task M9.8.14); and the discard's `needs` (milestone 9.15); and the
+/// design roles' zero usage in `by_role` (milestone 9.19 decision 2).
 fn m95_with_role_table() -> String {
     let route = |indent: &str, effort: &str| {
         let pad = format!("\n{indent}");
@@ -64,6 +65,19 @@ fn m95_with_role_table() -> String {
         needs..needs + confirm.len(),
         "\"needs\": {\n        \"input\": \"discard_reason\"\n      },",
     );
+    // Milestone 9.19 decision 2: every role's usage is listed, the design roles' too.
+    for (before, role) in [
+        ("decider", "brainstormer"),
+        ("orchestrator", "doc_reviewer"),
+    ] {
+        let at = format!("\"{before}\": {{\n");
+        assert_eq!(text.matches(&at).count(), 1, "{at}");
+        let zero = format!(
+            "\"{role}\": {{\n        \"input\": 0,\n        \"output\": 0,\n        \
+             \"cache_read\": 0,\n        \"cache_write\": 0\n      }},\n      {at}"
+        );
+        text = text.replace(&at, &zero);
+    }
     // Task M9.8.14: a route's `strength` is no longer written.
     let kept = text
         .lines()

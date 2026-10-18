@@ -164,8 +164,8 @@ async fn a_design_refit_at_a_start_keeps_its_lines_apart() {
     assert_eq!(
         with.design_lines,
         [
-            "tuning: budget brainstorm 40 calls 15m → 75 calls 38m from 32 samples",
-            "tuning: budget brainstorm 75 calls 38m from 32 samples",
+            "tuning: budget brainstorm 40 calls · 15 min → 75 calls · 38 min from 32 samples",
+            "tuning: budget brainstorm 75 calls · 38 min from 32 samples",
         ]
     );
     assert!(matches!(

@@ -6,7 +6,7 @@
 use proto::{BlockReason, HoldState, IntegrationState, RunPath, RunState, Severity, TaskState};
 use serde_json::{Map, Value, json};
 
-use super::json::{cut, cut_opt, fnv1a, fold_all, hh_mm, label, route_text};
+use super::json::{at_text, cut, cut_opt, fnv1a, fold_all, label, route_text};
 use super::{PlannerPhase, RefreshState};
 use crate::run::contract::sha7;
 use crate::run::delivery::digest as delivery;
@@ -186,7 +186,7 @@ fn stages(run: &Run) -> Value {
 /// counted in `recipients_omitted` (present only then; second review, Minor 3).
 fn edit_entry(e: &crate::run::edit_log::PlanEditRecord) -> Value {
     let mut entry = json!({
-        "at": hh_mm(e.at),
+        "at": at_text(e.at),
         "source": e.source,
         "text": e.text,
         "accepted": e.accepted,
@@ -211,7 +211,7 @@ fn gate(run: &Run, for_fingerprint: bool) -> Value {
         RunState::AwaitingApproval => ("awaiting_approval", None),
         _ if run.path == Some(RunPath::Fast) && run.orch.orchestrator.is_none() => ("none", None),
         _ => match run.approved_at {
-            Some(at) => ("approved", Some(hh_mm(at))),
+            Some(at) => ("approved", Some(at_text(at))),
             None => ("none", None),
         },
     };
@@ -335,7 +335,7 @@ fn task_entry(run: &Run, t: &Task) -> Value {
                 RefreshState::InFlight(_) => "in_flight",
             }),
         },
-        "last": t.history.last().map(|e| cut(&format!("{} {}", hh_mm(e.at), e.text), LINE_MAX)),
+        "last": t.history.last().map(|e| cut(&format!("{} {}", at_text(e.at), e.text), LINE_MAX)),
     })
 }
 
@@ -446,7 +446,7 @@ fn task_notes(run: &Run) -> Vec<Value> {
                 "task": t.id(),
                 "kind": label(&n.kind),
                 "text": cut(&n.text, TASK_NOTE_MAX),
-                "at": hh_mm(n.at),
+                "at": at_text(n.at),
             });
             // Milestone 9.5 ruling RR-4: a racer's note says its lane.
             if let Some(lane) = n.lane {
@@ -459,11 +459,7 @@ fn task_notes(run: &Run) -> Vec<Value> {
 
 /// Billable tokens across the run (saturating) and every round's tool calls.
 fn spend(run: &Run) -> Value {
-    let usage = crate::run::snapshot::run_usage(run).total;
-    let tokens = usage
-        .input
-        .saturating_add(usage.cache_write)
-        .saturating_add(usage.output);
+    let tokens = crate::run::snapshot::run_usage(run).total.billable();
     let tool_calls: u64 = run
         .tasks
         .iter()

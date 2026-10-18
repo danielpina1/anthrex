@@ -504,7 +504,7 @@ fn a_bisect_line() -> BisectLine {
 
 #[test]
 fn history_v3_lines_round_trip() {
-    assert_eq!(HISTORY_VERSION, 5);
+    assert_eq!(HISTORY_VERSION, 6);
     for (line, tag) in [
         (HistoryLine::Tier(a_tier_record()), "tier"),
         (HistoryLine::Flaky(a_flaky_record()), "flaky"),

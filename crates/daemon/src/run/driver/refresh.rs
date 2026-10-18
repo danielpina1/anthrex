@@ -64,8 +64,8 @@ impl RunService {
             Ok(Ok(true)) => Err(uncommitted(task_id)),
             Ok(Err(error)) => Err(format!("could not read task {task_id}'s worktree: {error}")),
             Err(_) => Err(format!(
-                "git did not answer within {} s",
-                DONE_CHECK_GIT_TIMEOUT.as_secs()
+                "git did not answer within {}",
+                common::numbers::duration(DONE_CHECK_GIT_TIMEOUT.as_secs())
             )),
         }
     }

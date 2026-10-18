@@ -183,7 +183,7 @@ fn a_window_lists_its_runtime_model_and_timings() {
         pairs(&inspection),
         vec![
             ("status", "working · Edit"),
-            ("for", "2m"),
+            ("for", "2m 00s"),
             ("model", "claude-opus-5"),
             ("runtime", "claude"),
             ("dir", "/r/shop"),
@@ -206,7 +206,7 @@ fn a_window_without_a_model_shows_a_dash() {
         pairs(&inspection),
         vec![
             ("status", "idle"),
-            ("for", "1h"),
+            ("for", "1h 00m"),
             ("model", "-"),
             ("runtime", "shell"),
             ("dir", "/r/shop"),
@@ -316,7 +316,7 @@ fn a_subagent_lists_its_kind_task_and_state() {
             ("task", "map the routes"),
             ("spawned by", "1 api-worker"),
             ("state", "running · Read"),
-            ("for", "1m"),
+            ("for", "1m 30s"),
             ("model", "opus"),
             ("kind", "Explore"),
             ("depth", "1"),
@@ -473,6 +473,32 @@ fn a_finished_subagent_shows_how_long_it_ran() {
         vec![("state", "done"), ("for", "45s")],
         "a finished sub-agent shows the run, not its age"
     );
+}
+
+/// Milestone 9.19 decision 9: a stopped sub-agent whose end never arrived ran for an
+/// unknown time, not for `0s`.
+#[test]
+fn a_done_subagent_without_an_end_has_no_duration() {
+    for state in [SubagentState::Done, SubagentState::Failed] {
+        let mut info = window(1, "/r/shop", "api-worker", Runtime::Claude);
+        let mut done = subagent("a1", "tests", Some("run the unit suite"));
+        done.state = state;
+        done.started_secs = 60;
+        done.ended_secs = None;
+        info.subagents = vec![done];
+        let app = app(vec![info]);
+        let inspection = inspect_key(
+            &app,
+            &NodeKey::Subagent {
+                window_id: 1,
+                id: "a1".into(),
+            },
+        );
+        let for_ = pairs(&inspection)
+            .into_iter()
+            .find(|(label, _)| *label == "for");
+        assert_eq!(for_, Some(("for", "unknown")), "{state:?}");
+    }
 }
 
 #[test]

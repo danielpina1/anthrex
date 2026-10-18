@@ -1,5 +1,5 @@
 //! Milestone 9.2 decision 42: the pull-request part of a stage node's content row,
-//! after its tier 3 (`stage 2/3  tier 3 ✓  #142  ci ✓  2 threads`). Pure, and nothing
+//! after its tier 3 (`stage 2 of 3  tier 3 ✓  #142  ci ✓  2 threads`). Pure, and nothing
 //! in it is agent or host text: a number, the CI mark (`theme::ci_look`, with its ASCII
 //! twin) and counts.
 
@@ -53,7 +53,9 @@ pub(crate) fn row_suffix(run: &RunInfo, stage: &StageInfo, ascii: bool) -> Strin
 
 /// [`row_suffix`] in at most `room` display columns where it can: the PR number's
 /// digits are cut first (`#1234…`), so the CI mark, the thread count and the state word
-/// after them stay whole (the final fix wave, review C M4).
+/// after them stay whole (the final fix wave, review C M4). Where even a one-column
+/// number leaves no room, the thread count goes, then `  paused`, never the CI mark
+/// (milestone 9.19 review I1).
 pub(crate) fn row_suffix_within(
     run: &RunInfo,
     stage: &StageInfo,
@@ -71,22 +73,38 @@ pub(crate) fn row_suffix_within(
         }
         .to_owned();
     };
-    let mut rest = String::new();
+    let mut parts: Vec<String> = Vec::new();
     match pr.state {
-        PrState::Merged => rest.push_str("  merged"),
-        PrState::Closed => rest.push_str("  closed"),
+        PrState::Merged => parts.push("  merged".to_owned()),
+        PrState::Closed => parts.push("  closed".to_owned()),
         PrState::Open => {
-            rest.push_str(&format!("{CI_LEAD}{}", ci_look(pr.ci, ascii).0));
+            parts.push(format!("{CI_LEAD}{}", ci_look(pr.ci, ascii).0));
             match pr.threads.new.saturating_add(pr.threads.tasked) {
                 0 => {}
-                1 => rest.push_str("  1 thread"),
-                k => rest.push_str(&format!("  {k} threads")),
+                1 => parts.push("  1 thread".to_owned()),
+                k => parts.push(format!("  {k} threads")),
             }
             if pr.paused {
-                rest.push_str("  paused");
+                parts.push("  paused".to_owned());
             }
         }
     }
+    // `  #` and a one-column number, then the parts: drop the thread count, then
+    // `  paused`, while they do not fit; the first part (the mark) always stays.
+    let width = |parts: &[String]| {
+        parts
+            .iter()
+            .map(|p| UnicodeWidthStr::width(p.as_str()))
+            .sum::<usize>()
+    };
+    for drop in ["thread", "paused"] {
+        if 3 + width(&parts) > room
+            && let Some(at) = parts.iter().skip(1).position(|p| p.contains(drop))
+        {
+            parts.remove(at + 1);
+        }
+    }
+    let rest = parts.concat();
     let number = format!("#{}", pr.number);
     let fixed = 2 + UnicodeWidthStr::width(rest.as_str());
     let number = if fixed + UnicodeWidthStr::width(number.as_str()) > room {

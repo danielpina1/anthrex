@@ -385,8 +385,8 @@ def pr_stage(pty_proc, bin_path, run_cmd, fail, base_env):
         # its current head. On an open PR the mark shows the latest tier-3 verdict,
         # from an earlier head (milestone 9.7 decision 12, BR-2): ✓, never ◌; CI
         # carries the current head's verdict.
-        _wait_row(proc, "stage 1/2  tier 3 ✓", "  #1  ci ✓", "stage 1's row: tier 3 ✓, PR #1, CI green", fail)
-        _wait_row(proc, "stage 2/2  tier 3 ", "  #2  ci ✓", "stage 2's row: PR #2, CI green", fail)
+        _wait_row(proc, "stage 1 of 2  tier 3 ✓", "  #1  ci ✓", "stage 1's row: tier 3 ✓, PR #1, CI green", fail)
+        _wait_row(proc, "stage 2 of 2  tier 3 ", "  #2  ci ✓", "stage 2's row: PR #2, CI green", fail)
         proc.send(b"\x1b")
         proc.wait_for(" tree overview ", label="the project overview after leaving the run view")
         proc.send(b"\x1b")

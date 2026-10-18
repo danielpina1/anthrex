@@ -115,7 +115,8 @@ pub fn narrow_line(
         } => {
             let focused = app.focused == Some(info.id);
             let tag = tree::runtime_tag(info.runtime);
-            let elapsed = tree::format_elapsed(app.elapsed_secs(info));
+            // Milestone 9.19 decision 4: a fixed-width cell, so the largest unit only.
+            let elapsed = common::numbers::duration_coarse(app.elapsed_secs(info));
             let model = info
                 .model
                 .as_deref()
@@ -168,7 +169,8 @@ pub fn narrow_line(
             position,
         } => {
             let focused = orchestrator.is_some_and(|window| app.focused == Some(window.id));
-            let (merged, total) = tree::run_progress(run);
+            let common::progress::Progress { merged, total, .. } =
+                common::progress::run_progress(run);
             let position = position.map_or_else(String::new, |position| position.to_string());
             // Milestone 9.0.7 review ruling: a tick only for progress the data proves.
             let tick = if merged > 0 { Role::Done } else { Role::Muted };
@@ -188,11 +190,15 @@ pub fn narrow_line(
                     style: if focused { bold } else { Style::default() },
                 },
                 None,
+                // Milestone 9.19 review M3: no `0/0 ✓` while nothing counts.
                 vec![
-                    vec![
-                        Span::styled(format!("{merged}/{total} "), muted),
-                        Span::styled(glyph(Glyph::Passed, ascii), theme::role(tick, p)),
-                    ],
+                    match total {
+                        0 => vec![],
+                        _ => vec![
+                            Span::styled(format!("{merged}/{total} "), muted),
+                            Span::styled(glyph(Glyph::Passed, ascii), theme::role(tick, p)),
+                        ],
+                    },
                     vec![],
                 ],
             )

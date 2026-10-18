@@ -25,7 +25,7 @@ fn too_few_samples_refit_nothing_and_say_so() {
     assert_eq!(s.refit_budget, None);
     let text = render(&r);
     assert!(
-        text.contains("\n  S      29/30    40 calls 15m    -       not yet\n"),
+        text.contains("\n  S      29/30    40 calls · 15 min   -         not yet\n"),
         "{text}"
     );
     assert!(text.contains("\ntuning proposals: none\n"), "{text}");
@@ -48,7 +48,7 @@ fn a_configured_budget_beats_the_refit() {
     assert_eq!(t.effective(&cfg, SizeClass::S), budget(40, 15));
     assert_eq!(
         t.log[0],
-        "tuning: budget S 40 calls 15m configured (refit would be 55 calls 18m)"
+        "tuning: budget S 40 calls · 15 min configured (refit would be 55 calls · 18 min)"
     );
     let r = report(&lines, &file, &cfg, Path::new("/tmp/ax-repo/tuning.toml"));
     let s = &r.classes[0];
@@ -58,12 +58,12 @@ fn a_configured_budget_beats_the_refit() {
     assert_eq!(s.refit_budget, Some(budget(55, 18)));
     let text = render(&r);
     assert!(
-        text.contains("\n  S      34       40 calls 15m    9m      configured\n"),
+        text.contains("\n  S      34       40 calls · 15 min   9m 10s    configured\n"),
         "{text}"
     );
     assert!(
         text.contains(
-            "  * derived from another class's median\n  budget S: configured 40 calls 15m (refit would be 55 calls 18m)\n"
+            "  * derived from another class's median\n  budget S: configured 40 calls · 15 min (refit would be 55 calls · 18 min)\n"
         ),
         "{text}"
     );
@@ -72,7 +72,10 @@ fn a_configured_budget_beats_the_refit() {
     let (file, _) = refit(&lines, &TuningFile::default(), &plain, NOW);
     let t = tuned(&file, &plain);
     assert_eq!(t.budget_s, Some(budget(55, 18)));
-    assert_eq!(t.log[0], "tuning: budget S 55 calls 18m from 34 samples");
+    assert_eq!(
+        t.log[0],
+        "tuning: budget S 55 calls · 18 min from 34 samples"
+    );
 }
 
 #[test]
@@ -83,10 +86,10 @@ fn render_matches_the_cli_text() {
     let r = report(&lines, &file, &cfg, Path::new("/tmp/ax-repo/tuning.toml"));
     let expected = "\
 tuning: /tmp/ax-repo/tuning.toml  (refit after 30 samples per class)
-  CLASS  SAMPLES  BUDGET          WEIGHT  REFIT
-  S      34       55 calls 18m    9m      2026-09-27 09:06
-  M      12/30    150 calls 60m   27m*    not yet
-  hub    3/30     150 calls 60m   27m*    not yet
+  CLASS  SAMPLES  BUDGET              WEIGHT    REFIT
+  S      34       55 calls · 18 min   9m 10s    2026-09-27 09:06 UTC
+  M      12/30    150 calls · 60 min  27m 30s*  not yet
+  hub    3/30     150 calls · 60 min  27m 30s*  not yet
   * derived from another class's median
 tuning proposals:
   thresholds.s  S line threshold 20 → 35 (p90 of 34 merged S tasks)
@@ -111,7 +114,7 @@ fn render_says_when_the_budget_refit_is_off() {
         "tuning: /tmp/t/tuning.toml  (budget refit off: [orchestrator.tuning] refit_budgets = false)\n"
     ));
     assert!(
-        text.contains("\n  S      34       40 calls 15m    9m      off\n"),
+        text.contains("\n  S      34       40 calls · 15 min   9m 10s    off\n"),
         "{text}"
     );
     // A refit already in the file is ignored with the refit off.

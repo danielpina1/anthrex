@@ -57,7 +57,7 @@ fn a_refused_put_lists_every_problem() {
     let (id, _) = puts(&w(&mut app))[0].clone();
     let problems = vec![
         "orchestrator.agent is written in a form the settings screen does not edit".to_string(),
-        "config.toml was not written within 5 s; nothing changed".to_string(),
+        "config.toml was not written within 5s; nothing changed".to_string(),
     ];
     let effects = app.on_daemon(reply(
         SettingsReply::Refused {
@@ -291,7 +291,7 @@ fn the_screens_own_save_is_not_toasted() {
     set_limit(&mut app, key::MAX_READERS, "4");
     let (id, _) = puts(&w(&mut app))[0].clone();
     let refused = || SettingsReply::Refused {
-        problems: vec!["config.toml was not written within 5 s; nothing changed".into()],
+        problems: vec!["config.toml was not written within 5s; nothing changed".into()],
     };
     app.on_daemon(reply(refused(), id));
     assert_eq!(app.toast_text(), None);
@@ -312,7 +312,7 @@ fn the_screens_own_save_is_not_toasted() {
     tap(&mut app, KeyCode::Char('y'));
     assert_eq!(app.screen, None);
     app.on_daemon(reply(refused(), id));
-    assert!(app.toast_text().unwrap().contains("not written within 5 s"));
+    assert!(app.toast_text().unwrap().contains("not written within 5s"));
 }
 
 /// Fix round 1, ruling 5.

@@ -361,7 +361,7 @@ fn missing_ids_keep_their_size_as_fallback() {
     // A whole fallback records its reason on every task.
     let mut fx = evidenced(&tasks, true, Default::default());
     let (op, _, input) = size_check_op(&fx);
-    let reason = "the decider timed out after 90 s".to_string();
+    let reason = "the decider timed out after 1m 30s".to_string();
     fx.decided(
         op,
         fallback_decision(&DeciderRequest::SizeCheck(input), reason.clone()),

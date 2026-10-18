@@ -12,6 +12,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use common::numbers::Zone;
 use proto::brakes::{BrakesInfo, DispatchHold};
 use proto::{Runtime, TaskState};
 
@@ -158,7 +159,12 @@ pub fn attention(brakes: &Brakes, run: &Run, now: u64) -> Vec<String> {
         };
         braked.insert(quota.runtime);
         if waits_on(run, quota.runtime) {
-            lines.push(common::brakes_text::quota_held_text(quota.runtime, trip));
+            lines.push(common::brakes_text::quota_held_text(
+                quota.runtime,
+                trip,
+                now,
+                Zone::Utc,
+            ));
         }
     }
     // Decision 42: the failovers away from a runtime braked now.
@@ -192,13 +198,14 @@ fn waits_on(run: &Run, runtime: Runtime) -> bool {
 pub(super) fn hold(
     brakes: &mut Brakes,
     reply: ReplyId,
-    hold: Option<DispatchHold>,
+    (hold, now): (Option<DispatchHold>, u64),
     fx: &mut Vec<Effect>,
 ) {
     let message = match (&brakes.hold, hold) {
+        // Milestone 9.19 decision 3: daemon text, UTC, labelled.
         (Some(on), Some(_)) => format!(
-            "dispatch was already held since {} UTC",
-            common::text::hh_mm(on.since)
+            "dispatch was already held since {}",
+            common::numbers::clock(on.since, now, Zone::Utc)
         ),
         (None, Some(new)) => {
             brakes.hold = Some(new);

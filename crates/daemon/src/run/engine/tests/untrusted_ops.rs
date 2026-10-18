@@ -63,7 +63,7 @@ fn override_t1(fx: &mut Fixture) -> Vec<Effect> {
 }
 
 fn context() -> String {
-    format!("the orchestrator read {SOURCE} at 14:07, so you decide")
+    format!("the orchestrator read {SOURCE} at 2026-10-12 14:07 UTC, so you decide")
 }
 
 #[test]

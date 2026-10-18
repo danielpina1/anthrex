@@ -114,6 +114,11 @@ fn probe(script: &str) -> (String, Duration, tempfile::TempDir) {
     let dir = tempdir();
     let bin = dir.path().join("codex");
     testexec::write_warm_executable_mode(&bin, format!("#!/bin/sh\n{script}\n"), 0o700);
+    // Before the clock: `elapsed` is held to `LS_BOUND`, the probe's budget, and the first
+    // exec of a freshly built `anthrex` (unbounded, "Measured primitive costs") is not
+    // part of it. `isolated_command` would otherwise pay it after `started` (flake
+    // diagnosis, 2026-10-18).
+    warm_anthrex();
     let started = Instant::now();
     let mut command = isolated_command(dir.path(), &["daemon", "start", "--foreground"]);
     command

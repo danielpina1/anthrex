@@ -11,7 +11,7 @@ use proto::{AgentRole, CheckInfo, TaskState};
 
 const T2_SESSION: &str = "#7 · headless · worktree anthrex/r1/t2 · Enter: conversation";
 
-fn round_key(task: &str, role: AgentRole, session: u32, round: u32) -> NodeKey {
+pub(super) fn round_key(task: &str, role: AgentRole, session: u32, round: u32) -> NodeKey {
     NodeKey::AgentRound {
         run: "r1".into(),
         task: task.into(),
@@ -28,7 +28,7 @@ fn worker_round_fields_match_the_mockup() {
     let inspection = inspect_node(&app, &round_key("t2", AgentRole::Worker, 1, 2));
     assert_eq!(inspection.glyph.content, "⠋");
     assert_eq!(inspection.name, "worker #1 r2  codex · high");
-    assert_eq!(inspection.right.as_deref(), Some("working · 6m · t2"));
+    assert_eq!(inspection.right.as_deref(), Some("working · 6m 00s · t2"));
     assert_eq!(inspection.layout, FieldLayout::Rows);
     assert_eq!(
         pairs(&inspection),
@@ -47,7 +47,7 @@ fn the_first_display_round_has_no_fixing_and_no_activity() {
     let inspection = inspect_node(&app, &round_key("t2", AgentRole::Worker, 1, 1));
     assert_eq!(inspection.glyph.content, "✓");
     assert_eq!(inspection.name, "worker #1  codex · high");
-    assert_eq!(inspection.right.as_deref(), Some("finished · 20m · t2"));
+    assert_eq!(inspection.right.as_deref(), Some("finished · 20m 00s · t2"));
     assert_eq!(
         pairs(&inspection),
         [("doing", "finished"), ("session", T2_SESSION)]
@@ -168,8 +168,8 @@ fn a_second_session_is_fixing_from_its_first_piece() {
         Some("status.rs:118 critical — SubagentStop not paired")
     );
     assert_eq!(value(&inspection, "session"), Some("no window yet"));
-    // 90 s back reads `1m` through 29 s of suite load, as the other aged rows do.
-    assert_eq!(inspection.right.as_deref(), Some("starting · 1m · t2"));
+    // 90 s back (milestone 9.19 decision 4: `duration` shows the seconds).
+    assert_eq!(inspection.right.as_deref(), Some("starting · 1m 30s · t2"));
 }
 
 #[test]
@@ -188,7 +188,7 @@ fn hostile_check_summaries_stay_one_bounded_line() {
 }
 
 /// `t7`'s Codex worker, rate-limited in the fixture, on a listed `Idle` window 11.
-fn t7_on_window(change: impl FnOnce(&mut proto::AgentRoundInfo)) -> App {
+pub(super) fn t7_on_window(change: impl FnOnce(&mut proto::AgentRoundInfo)) -> App {
     let (mut snapshot, mut windows) = gemini_fixture();
     let task = &mut snapshot.runs[0].tasks[7];
     task.branch = "anthrex/r1/t7".into();
@@ -213,7 +213,10 @@ fn a_rate_limited_round() {
         inspection.glyph.style.fg,
         Some(crate::theme::fg(crate::theme::Role::Paused))
     );
-    assert_eq!(inspection.right.as_deref(), Some("rate-limited · 15m · t7"));
+    assert_eq!(
+        inspection.right.as_deref(),
+        Some("rate-limited · 15m 00s · t7")
+    );
     assert_eq!(
         pairs(&inspection),
         [
@@ -237,7 +240,7 @@ fn an_expired_rate_limit_is_not_shown() {
         round.denials = 3;
     });
     let inspection = inspect_node(&app, &round_key("t7", AgentRole::Worker, 1, 1));
-    assert_eq!(inspection.right.as_deref(), Some("idle · 15m · t7"));
+    assert_eq!(inspection.right.as_deref(), Some("idle · 15m 00s · t7"));
     assert_eq!(
         value(&inspection, "doing"),
         Some("thinking · 2 sub-agents open")
@@ -290,7 +293,7 @@ fn a_failed_round_is_drawn_like_a_rate_limited_one() {
     );
     assert_eq!(
         inspection.right.as_deref(),
-        Some("failed: overloaded · retries 12:50 · 15m · t7")
+        Some("failed: overloaded · retries 12:50 +00:00 · 15m 00s · t7")
     );
     // A long error on several lines: one line, its first 80 characters and `…`.
     let long = format!("{}\n{}", "e".repeat(70), "f".repeat(30));
@@ -299,7 +302,7 @@ fn a_failed_round_is_drawn_like_a_rate_limited_one() {
     let shown = format!("{} {}…", "e".repeat(70), "f".repeat(9));
     assert_eq!(
         inspection.right.as_deref(),
-        Some(format!("failed: {shown} · retries 12:50 · 15m · t7").as_str())
+        Some(format!("failed: {shown} · retries 12:50 +00:00 · 15m 00s · t7").as_str())
     );
     // Without a failed turn the round is an ordinary live one.
     let app = t7_on_window(|round| {
@@ -307,7 +310,7 @@ fn a_failed_round_is_drawn_like_a_rate_limited_one() {
         round.failed_error = Some("overloaded".into());
     });
     let inspection = inspect_node(&app, &round_key("t7", AgentRole::Worker, 1, 1));
-    assert_eq!(inspection.right.as_deref(), Some("idle · 15m · t7"));
+    assert_eq!(inspection.right.as_deref(), Some("idle · 15m 00s · t7"));
 }
 
 /// Decision 43, review minors 1 and 4: a retry time already past (a paused run's
@@ -331,11 +334,11 @@ fn a_failed_round_hides_a_past_retry_and_a_missing_error() {
         inspection.right.unwrap_or_default()
     };
     let app = failed(Some("overloaded"), GEMINI_NOW - 60);
-    assert_eq!(right(&app), "failed: overloaded · 15m · t7");
+    assert_eq!(right(&app), "failed: overloaded · 15m 00s · t7");
     let app = failed(None, GEMINI_NOW + 600);
-    assert_eq!(right(&app), "failed · retries 12:50 · 15m · t7");
+    assert_eq!(right(&app), "failed · retries 12:50 +00:00 · 15m 00s · t7");
     let app = failed(None, GEMINI_NOW - 60);
-    assert_eq!(right(&app), "failed · 15m · t7");
+    assert_eq!(right(&app), "failed · 15m 00s · t7");
 }
 
 #[test]
@@ -344,7 +347,7 @@ fn reviewer_round_fields_match_the_mockup() {
     let inspection = inspect_node(&app, &round_key("t2", AgentRole::Reviewer, 1, 1));
     assert_eq!(inspection.glyph.content, "✗");
     assert_eq!(inspection.name, "review #1  claude · claude-opus-5 · high");
-    assert_eq!(inspection.right.as_deref(), Some("finished · 9m · t2"));
+    assert_eq!(inspection.right.as_deref(), Some("finished · 9m 00s · t2"));
     assert_eq!(
         pairs(&inspection),
         [
@@ -367,7 +370,7 @@ fn reviewer_round_fields_match_the_mockup() {
 fn a_live_reviewer_is_reviewing() {
     let app = app_of(gemini_fixture());
     let inspection = inspect_node(&app, &round_key("t2", AgentRole::Reviewer, 2, 2));
-    assert_eq!(inspection.right.as_deref(), Some("starting · 1m · t2"));
+    assert_eq!(inspection.right.as_deref(), Some("starting · 1m 00s · t2"));
     assert_eq!(
         pairs(&inspection),
         [
@@ -392,7 +395,7 @@ fn a_live_reviewer_is_reviewing() {
     let app = app_of((snapshot, windows));
     let inspection = inspect_node(&app, &round_key("t2", AgentRole::Reviewer, 2, 2));
     assert_eq!(inspection.glyph.content, "–");
-    assert_eq!(inspection.right.as_deref(), Some("finished · 1m · t2"));
+    assert_eq!(inspection.right.as_deref(), Some("finished · 1m 00s · t2"));
     assert_eq!(
         value(&inspection, "verdict"),
         Some("none — the round ended without one")
@@ -479,10 +482,10 @@ fn an_ended_piece_of_a_rate_limited_session_is_finished() {
         task.rounds[0].rate_limited_until = Some(GEMINI_NOW + 60);
     });
     let first = inspect_node(&app, &round_key("t2", AgentRole::Worker, 1, 1));
-    assert_eq!(first.right.as_deref(), Some("finished · 20m · t2"));
+    assert_eq!(first.right.as_deref(), Some("finished · 20m 00s · t2"));
     assert_eq!(value(&first, "doing"), Some("finished"));
     let second = inspect_node(&app, &round_key("t2", AgentRole::Worker, 1, 2));
-    assert_eq!(second.right.as_deref(), Some("rate-limited · 6m · t2"));
+    assert_eq!(second.right.as_deref(), Some("rate-limited · 6m 00s · t2"));
 }
 
 #[test]
@@ -501,7 +504,7 @@ fn the_agents_row_ages_the_earliest_live_limit() {
     let run = inspect_node(&app, &NodeKey::Run("r1".into()));
     assert_eq!(
         value(&run, "agents"),
-        Some("workers 3/3 · readers 1/3 · claude ok · codex rate-limited 4m")
+        Some("workers 3/3 · readers 1/3 · claude ok · codex rate-limited 4m 00s")
     );
 }
 

@@ -44,7 +44,7 @@ fn the_token_refit_reads_only_samples_with_recorded_usage() {
     assert_eq!(tuned(&file, &cfg).budget_s.and_then(|b| b.tokens), None);
     assert_eq!(
         log[0],
-        "tuning: budget S 40 calls 15m → 50 calls 25m from 30 samples"
+        "tuning: budget S 40 calls · 15 min → 50 calls · 25 min from 30 samples"
     );
     // No rewrite loop: refitting again changes nothing.
     let (again, log) = refit(&usage_lines(15), &file, &cfg, NOW + 60);
@@ -129,8 +129,9 @@ fn a_configured_class_shows_a_refit_below_the_change_gate() {
     assert_eq!(r.classes[0].budget, budget(40, 15));
     assert_eq!(r.classes[0].refit_budget, Some(budget(44, 16)));
     assert!(
-        render(&r)
-            .contains("\n  budget S: configured 40 calls 15m (refit would be 44 calls 16m)\n"),
+        render(&r).contains(
+            "\n  budget S: configured 40 calls · 15 min (refit would be 44 calls · 16 min)\n"
+        ),
         "{}",
         render(&r)
     );
@@ -142,7 +143,7 @@ fn a_configured_class_shows_a_refit_below_the_change_gate() {
     assert_eq!(t.budget_s, None);
     assert_eq!(
         t.log[0],
-        "tuning: budget S 40 calls 15m configured (refit would be 44 calls 16m)"
+        "tuning: budget S 40 calls · 15 min configured (refit would be 44 calls · 16 min)"
     );
     // Settled: no rewrite.
     let (again, log) = refit(&lines, &file, &cfg, NOW + 60);
@@ -281,17 +282,17 @@ fn a_configured_class_is_never_written_to_the_file() {
     // Shown from history: report, render and the start line.
     let r = report(&lines, &fresh, &cfg, Path::new("/tmp/t/tuning.toml"));
     assert_eq!(r.classes[0].refit_budget, Some(budget(55, 18)));
-    assert!(render(&r).contains("(refit would be 55 calls 18m)"));
+    assert!(render(&r).contains("(refit would be 55 calls · 18 min)"));
     let t = tuned_with(&lines, &kept, &cfg);
     assert_eq!(t.budget_s, None);
     assert_eq!(
         t.log[0],
-        "tuning: budget S 40 calls 15m configured (refit would be 55 calls 18m)"
+        "tuning: budget S 40 calls · 15 min configured (refit would be 55 calls · 18 min)"
     );
     // With no history to compute from, the start line says only what is used.
     assert_eq!(
         tuned(&kept, &cfg).log[0],
-        "tuning: budget S 40 calls 15m configured"
+        "tuning: budget S 40 calls · 15 min configured"
     );
     // The configuration removed: the normal path, from history.
     let plain = config::Orchestrator::default();
@@ -302,7 +303,7 @@ fn a_configured_class_is_never_written_to_the_file() {
     );
     assert_eq!(
         log[0],
-        "tuning: budget S 40 calls 15m → 55 calls 18m from 34 samples"
+        "tuning: budget S 40 calls · 15 min → 55 calls · 18 min from 34 samples"
     );
     // And under the normal gate: 55/18 is within 20 % of the old 60/20, so it is kept.
     let (after, _) = refit(&lines, &stale, &plain, NOW);
@@ -323,8 +324,8 @@ fn nothing_learned_still_says_none_after_the_configured_lines() {
         assert_eq!(
             t.log,
             [
-                "tuning: budget S 40 calls 15m configured",
-                "tuning: budget M 150 calls 60m configured",
+                "tuning: budget S 40 calls · 15 min configured",
+                "tuning: budget M 150 calls · 60 min configured",
                 none,
             ]
         );

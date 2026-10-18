@@ -3,7 +3,7 @@
 //! exact `(label, value)` list, the name and the right-hand text.
 
 use crate::app::App;
-use crate::inspector::{FieldLayout, Inspection, inspect, local_hhmm};
+use crate::inspector::{FieldLayout, Inspection, inspect};
 use crate::settings::UiSettings;
 use crate::tree::run_fixtures::{GEMINI_DAY, GEMINI_NOW, RUN_ID, gate_fixture, gemini_fixture};
 use crate::tree::{NodeKey, RunFilter, run_rows};
@@ -48,7 +48,7 @@ fn run_key(id: &str) -> NodeKey {
     NodeKey::Run(id.into())
 }
 
-fn gemini_with(change: impl FnOnce(&mut proto::RunInfo)) -> App {
+pub(super) fn gemini_with(change: impl FnOnce(&mut proto::RunInfo)) -> App {
     let (mut snapshot, windows) = gemini_fixture();
     change(&mut snapshot.runs[0]);
     app_of((snapshot, windows))
@@ -62,7 +62,7 @@ fn gate_with(change: impl FnOnce(&mut proto::RunInfo)) -> App {
 
 const GATE_PROGRESS: &str = "░░░░░░░░░░░░░░░░░░  0/2 merged · 2 waiting";
 const GATE_AGENTS: &str = "workers 0/3 · readers 0/3 · claude ok";
-const NO_SPEND: &str = "tokens 0 · tool calls 0";
+const NO_SPEND: &str = "tokens unknown (tasks only) · worker tool calls 0";
 
 #[test]
 fn run_fields_match_the_mockup() {
@@ -70,7 +70,7 @@ fn run_fields_match_the_mockup() {
     let inspection = inspect_node(&app, &run_key("r1"));
     assert_eq!(inspection.glyph.content, "◉");
     assert_eq!(inspection.name, "r1  Add Gemini runtime");
-    assert_eq!(inspection.right.as_deref(), Some("running · 1h12m"));
+    assert_eq!(inspection.right.as_deref(), Some("running · 1h 12m"));
     assert_eq!(inspection.layout, FieldLayout::Rows);
     assert_eq!(
         pairs(&inspection),
@@ -85,20 +85,21 @@ fn run_fields_match_the_mockup() {
             ),
             (
                 "agents",
-                "workers 3/3 · readers 1/3 · claude ok · codex rate-limited 4m"
+                "workers 3/3 · readers 1/3 · claude ok · codex rate-limited 4m 00s"
             ),
             (
                 "spend",
-                "tokens 1.8M (cache 71%) · tool calls 612 · est. left ~40m"
+                "tokens 1.8M (all roles) · cache hits 71% of input · worker tool calls 612"
             ),
             (
                 "gate",
-                "plan approved 11:02 · 2 plan edits since · last: split t2"
+                "plan approved 11:02 +00:00 · 2 plan edits since · last: split t2"
             ),
             (
                 "attention",
                 "t5 blocked: question — \"Gemini has no subagent-stop event\""
             ),
+            ("est. left", "~40m 00s"),
         ]
     );
 }
@@ -110,7 +111,7 @@ fn run_fields_at_the_gate() {
     assert_eq!(inspection.name, "add-reset-3f9a  Add password reset");
     assert_eq!(
         inspection.right.as_deref(),
-        Some("awaiting approval · 2h46m")
+        Some("awaiting approval · 2h 46m")
     );
     assert_eq!(
         pairs(&inspection),
@@ -135,7 +136,7 @@ fn run_fields_when_halted() {
         run.halted_reason = Some(reason.into());
     });
     let inspection = inspect_node(&app, &run_key(RUN_ID));
-    assert_eq!(inspection.right.as_deref(), Some("halted · 2h46m"));
+    assert_eq!(inspection.right.as_deref(), Some("halted · 2h 46m"));
     let halted = format!("halted: {reason}");
     assert_eq!(
         pairs(&inspection),
@@ -164,7 +165,7 @@ fn run_fields_when_the_base_advanced() {
         run.attention = vec![line.into()];
     });
     let inspection = inspect_node(&app, &run_key(RUN_ID));
-    assert_eq!(inspection.right.as_deref(), Some("running · 2h46m"));
+    assert_eq!(inspection.right.as_deref(), Some("running · 2h 46m"));
     assert_eq!(
         pairs(&inspection),
         [
@@ -197,7 +198,9 @@ fn run_fields_with_one_edit_and_yes() {
     let inspection = inspect_node(&app, &run_key(RUN_ID));
     assert_eq!(
         value(&inspection, "gate"),
-        Some("plan approved by --yes 09:15 · 1 plan edit since · last: cancel t3")
+        Some(
+            "plan approved by --yes 2024-10-04 09:15 +02:00 · 1 plan edit since · last: cancel t3"
+        )
     );
 }
 
@@ -206,6 +209,7 @@ fn run_spend_without_cache_or_estimate() {
     let app = app_of(gate_fixture());
     let inspection = inspect_node(&app, &run_key(RUN_ID));
     assert_eq!(value(&inspection, "spend"), Some(NO_SPEND));
+    assert_eq!(value(&inspection, "est. left"), None);
 
     // With no `usage`, the rounds' own usage is summed, cache share included.
     let app = gate_with(|run| {
@@ -222,7 +226,44 @@ fn run_spend_without_cache_or_estimate() {
     let inspection = inspect_node(&app, &run_key(RUN_ID));
     assert_eq!(
         value(&inspection, "spend"),
-        Some("tokens 1k (cache 25%) · tool calls 7")
+        Some("tokens ≥1.5k (tasks only) · cache hits 25% of input · worker tool calls 7")
+    );
+}
+
+/// Milestone 9.19 decision 2: the spend row says what its tokens cover. The daemon's
+/// `usage` covers every role; without it, only the task rounds' usage is known, a lower
+/// bound. The cache share is a share of input, and the calls are the workers'.
+#[test]
+fn the_spend_row_labels_its_scope() {
+    let app = gemini_with(|run| {
+        run.estimate_left_secs = None;
+        for task in &mut run.tasks {
+            task.spent_total.tool_calls = 0;
+        }
+        run.tasks[0].spent_total.tool_calls = 412;
+    });
+    let inspection = inspect_node(&app, &run_key("r1"));
+    assert_eq!(
+        value(&inspection, "spend"),
+        Some("tokens 1.8M (all roles) · cache hits 71% of input · worker tool calls 412")
+    );
+
+    let app = gate_with(|run| {
+        run.usage = None;
+        let mut round = crate::tree::run_fixtures::worker(1, None, proto::Runtime::Claude, 1);
+        round.usage = TokenUsage {
+            input: 1_000_000,
+            output: 200_000,
+            cache_read: 3_000_000,
+            cache_write: 50_000,
+        };
+        run.tasks[0].rounds = vec![round];
+        run.tasks[0].spent_total.tool_calls = 7;
+    });
+    let inspection = inspect_node(&app, &run_key(RUN_ID));
+    assert_eq!(
+        value(&inspection, "spend"),
+        Some("tokens ≥1.2M (tasks only) · cache hits 74% of input · worker tool calls 7")
     );
 }
 
@@ -325,23 +366,7 @@ fn a_paused_run_says_where_from() {
     let inspection = inspect_node(&app, &run_key("r1"));
     assert_eq!(
         inspection.right.as_deref(),
-        Some("paused (from running) · 1h12m")
-    );
-}
-
-#[test]
-fn local_hhmm_cases() {
-    assert_eq!(local_hhmm(39_720, 0), "11:02");
-    assert_eq!(local_hhmm(39_720, 3600), "12:02");
-    assert_eq!(local_hhmm(39_720, -43_200), "23:02");
-    assert_eq!(local_hhmm(39_720, 50_400), "01:02");
-    // A negative offset that crosses midnight backwards, and hostile extremes.
-    assert_eq!(local_hhmm(GEMINI_DAY + 600, -3600), "23:10");
-    assert_eq!(local_hhmm(0, -1), "23:59");
-    assert_eq!(local_hhmm(u64::MAX, 0), "07:00");
-    assert_eq!(
-        local_hhmm(u64::MAX, i64::MIN),
-        local_hhmm(u64::MAX, i64::MIN)
+        Some("paused (from running) · 1h 12m")
     );
 }
 
@@ -353,6 +378,21 @@ fn run_with_no_tasks_says_so() {
     assert_eq!(
         value(&inspection, "agents"),
         Some("workers 0/3 · readers 0/3")
+    );
+}
+
+/// Milestone 9.19 decision 10: a limit lowered mid-run leaves more busy than allowed,
+/// and the row says so rather than printing a bare `4/3`.
+#[test]
+fn readers_past_their_limit_say_over() {
+    let app = gate_with(|run| {
+        run.readers_busy = 4;
+        run.writers_busy = 3;
+    });
+    let inspection = inspect_node(&app, &run_key(RUN_ID));
+    assert_eq!(
+        value(&inspection, "agents"),
+        Some("workers 3/3 · readers 4/3 (over) · claude ok")
     );
 }
 
@@ -481,15 +521,19 @@ fn hostile_run_values_never_panic_and_stay_one_line() {
     assert_eq!(
         value(&inspection, "spend"),
         Some(
-            "tokens 18446744073709.5M (cache 33%) · tool calls 38654705655 · est. left \
-             ~5124095576030431h00m"
+            "tokens 18446744073709.5M (all roles) · cache hits 33% of input · worker tool calls \
+             38654705655"
         )
+    );
+    assert_eq!(
+        value(&inspection, "est. left"),
+        Some("~213503982334601d 07h")
     );
     assert_eq!(inspection.right.as_deref(), Some("running · 0s"));
     // An approval stamp 400 days ahead of the daemon's `now` is formatted, not aged.
     assert_eq!(
         value(&inspection, "gate"),
-        Some("plan approved 12:40 · 2 plan edits since · last: split t2")
+        Some("plan approved 2025-11-08 12:40 +00:00 · 2 plan edits since · last: split t2")
     );
     for field in &inspection.fields {
         assert!(
@@ -507,5 +551,5 @@ fn a_run_past_the_gate_that_nobody_approved_says_so() {
     let app = gate_with(|run| run.state = RunState::Paused);
     let inspection = inspect_node(&app, &run_key(RUN_ID));
     assert_eq!(value(&inspection, "gate"), Some("plan not approved"));
-    assert_eq!(inspection.right.as_deref(), Some("paused · 2h46m"));
+    assert_eq!(inspection.right.as_deref(), Some("paused · 2h 46m"));
 }

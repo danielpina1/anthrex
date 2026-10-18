@@ -67,9 +67,17 @@ pub(crate) fn shrink_strings(value: &mut Value, max: usize) {
     }
 }
 
-/// `hh:mm` of a Unix time, in UTC, as the prompts write times.
-pub(crate) fn hh_mm(at: u64) -> String {
-    common::text::hh_mm(at)
+/// A stored time in the orchestrator's JSON (milestone 9.19 decision 3, ruling R7):
+/// `2026-10-12 14:30 UTC`, the long form, labelled, the same whatever `now` is, so a
+/// digest's fingerprint never moves with the clock.
+pub(crate) fn at_text(at: u64) -> String {
+    common::numbers::clock_full(at, common::numbers::Zone::Utc)
+}
+
+/// `line` without the [`at_text`] it starts with (its three words); empty when it has
+/// none.
+pub(crate) fn after_at(line: &str) -> &str {
+    line.splitn(4, ' ').nth(3).unwrap_or("")
 }
 
 /// FNV-1a, 64 bits (decision 16's fingerprint).
@@ -98,5 +106,19 @@ pub(crate) fn label<T: serde::Serialize>(value: &T) -> String {
     match serde_json::to_value(value) {
         Ok(Value::String(s)) => s,
         _ => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// Milestone 9.19 decision 3: a stored time is the long UTC form, whatever `now`,
+    /// and a line that starts with one gives back its text.
+    #[test]
+    fn a_stored_time_is_long_and_labelled() {
+        // 2026-10-12 14:07:59 UTC.
+        assert_eq!(super::at_text(1_791_814_079), "2026-10-12 14:07 UTC");
+        let line = format!("{} blocked (question): which one?", super::at_text(0));
+        assert_eq!(super::after_at(&line), "blocked (question): which one?");
+        assert_eq!(super::after_at("14:07 too short"), "");
     }
 }

@@ -165,7 +165,7 @@ fn limits(run: &Run, out: &mut String) {
         l.max_writers, l.max_readers, l.max_bounces, l.max_tasks, l.max_windows
     ));
     out.push_str(&format!(
-        "Budgets: S {}/{}m, M {}/{}m, L {}/{}m\n",
+        "Budgets: S {}/{} min, M {}/{} min, L {}/{} min\n",
         l.budget_s.tool_calls,
         l.budget_s.minutes,
         l.budget_m.tool_calls,
@@ -174,8 +174,8 @@ fn limits(run: &Run, out: &mut String) {
         l.budget_l.minutes
     ));
     out.push_str(&format!(
-        "Stall after {}s, {} denials before block, worker permission mode {}, Codex worker sandbox {}\n",
-        l.stall_after_secs, l.denials_before_block, l.worker_permission_mode, l.worker_codex_sandbox
+        "Stall after {}, {} denials before block, worker permission mode {}, Codex worker sandbox {}\n",
+        common::numbers::duration(l.stall_after_secs), l.denials_before_block, l.worker_permission_mode, l.worker_codex_sandbox
     ));
 }
 

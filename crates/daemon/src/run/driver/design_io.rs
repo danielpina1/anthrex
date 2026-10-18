@@ -214,8 +214,8 @@ impl RunService {
             Ok(Ok(Err(ReadError::Io(error)))) => Err(format!("could not read the {what}: {error}")),
             Ok(Err(error)) => Err(format!("could not read the {what}: {error}")),
             Err(_) => Err(format!(
-                "reading the {what} took over {} s",
-                IO_WAIT.as_secs()
+                "reading the {what} took over {}",
+                common::numbers::duration(IO_WAIT.as_secs())
             )),
         }
     }

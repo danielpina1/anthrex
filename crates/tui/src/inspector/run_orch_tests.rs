@@ -50,7 +50,7 @@ fn planning_run_header() {
     snapshot.runs[0].critical_path.clear();
     let app = app_of((snapshot, windows));
     let inspection = inspect_node(&app, &run_key());
-    assert_eq!(inspection.right.as_deref(), Some("planning · 10m"));
+    assert_eq!(inspection.right.as_deref(), Some("planning · 10m 00s"));
     assert_eq!(
         value(&inspection, "gate"),
         Some("planning · s submits the plan yourself")
@@ -160,8 +160,8 @@ fn planner_nodes_from_planner_info() {
         run: RUN_ID.into(),
         epic: epic.into(),
     };
-    assert_eq!(node_text(&app, &key("A")), "planner A daemon side  1/2");
-    assert_eq!(node_text(&app, &key("B")), "planner B  0/0");
+    assert_eq!(node_text(&app, &key("A")), "planner A daemon side  1/2 ✓");
+    assert_eq!(node_text(&app, &key("B")), "planner B");
     let a = inspect_node(&app, &key("A"));
     assert_eq!(
         a.glyph.content,
@@ -265,7 +265,9 @@ fn message_pause_and_notes_render_with_attribution() {
     );
     assert_eq!(
         value(&inspection, "notes"),
-        Some("02:45 risk from t1: migration may lock · 02:44 discovery from t1: the API is shared")
+        Some(
+            "02:45 +00:00 risk from t1: migration may lock · 02:44 +00:00 discovery from t1: the API is shared"
+        )
     );
 }
 
@@ -283,7 +285,7 @@ fn notes_row_labels_brief() {
     let app = app_of((snapshot, windows));
     assert_eq!(
         value(&inspect_node(&app, &task_key("t1")), "notes"),
-        Some("02:45 brief from t1: review round 1 (critical): wrong table")
+        Some("02:45 +00:00 brief from t1: review round 1 (critical): wrong table")
     );
 }
 
@@ -433,7 +435,7 @@ fn handled_rows_list_newest_first() {
 }
 
 /// Milestone 9.13 decision 22: the `untrusted` row after the orchestrator's, its source
-/// drawn without a control character, its time UTC (`common::text::hh_mm`, C17); no row
+/// drawn without a control character, its time the viewer's labelled clock (9.19); no row
 /// while the session read nothing from outside the run.
 #[test]
 fn run_orch_shows_the_untrusted_row() {
@@ -463,9 +465,37 @@ fn run_orch_shows_the_untrusted_row() {
         "{text}"
     );
     assert!(
-        text.ends_with(" at 14:07; override, accept_red and approve_hold go to you"),
+        text.ends_with(
+            " at 2026-10-12 14:07 +00:00; override, accept_red and approve_hold go to you"
+        ),
         "{text}"
     );
+}
+
+/// Milestone 9.19 decision 10: a session past its window is `over 100%`, never
+/// `450%`; a zero window is an unknown one.
+#[test]
+fn a_million_token_session_is_over_not_450_percent() {
+    let (mut snapshot, windows) = orch_fixture(RunState::Running);
+    for (window, want) in [
+        (
+            Some(200_000),
+            "from a1b2 · context over 100% (900k / 200k window)",
+        ),
+        (Some(0), "from a1b2 · context 900k (window unknown)"),
+    ] {
+        snapshot.runs[0].handoff = Some(proto::HandoffInfo {
+            from_run: "a1b2".into(),
+            fill_tokens: 900_000,
+            window_tokens: window,
+            at: ORCH_NOW,
+        });
+        let app = app_of((snapshot.clone(), windows.clone()));
+        assert_eq!(
+            value(&inspect_node(&app, &run_key()), "handoff"),
+            Some(want)
+        );
+    }
 }
 
 /// Milestone 9.16 decision 30: a run whose orchestrator was handed off names where from,
@@ -483,13 +513,13 @@ fn inspector_shows_the_handoff_row() {
     let inspection = inspect_node(&app, &run_key());
     assert_eq!(
         value(&inspection, "handoff"),
-        Some("from a1b2 · context 85% full (170000/200000)")
+        Some("from a1b2 · context 85% full (170k / 200k)")
     );
     snapshot.runs[0].handoff.as_mut().unwrap().window_tokens = None;
     let app = app_of((snapshot.clone(), windows.clone()));
     assert_eq!(
         value(&inspect_node(&app, &run_key()), "handoff"),
-        Some("from a1b2 · context 170000 tokens")
+        Some("from a1b2 · context 170k (window unknown)")
     );
     snapshot.runs[0].handoff = None;
     let app = app_of((snapshot, windows));

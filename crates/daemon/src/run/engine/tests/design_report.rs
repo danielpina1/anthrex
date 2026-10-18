@@ -193,7 +193,7 @@ fn an_untagged_approach_or_an_unlisted_recommendation_is_refused() {
 fn a_single_brainstorm_report_must_name_the_failure() {
     let mut fx = brainstorming();
     assert!(answered(&submit_draft(&mut fx, CLAUDE, DRAFT)).0);
-    let reason = "the brainstormer ran longer than 900 s";
+    let reason = "the brainstormer ran longer than 15m 00s";
     let failed = ScoutEnd::Failed {
         reason: reason.into(),
     };

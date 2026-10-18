@@ -231,7 +231,7 @@ pub(crate) fn shown(program: Program, argv: &[String]) -> String {
 
 fn timed_out(shown: &str, timeout: Duration) -> HostError {
     HostError::TimedOut(format!(
-        "{shown} did not answer within {} s",
-        timeout.as_secs()
+        "{shown} did not answer within {}",
+        common::numbers::duration(timeout.as_secs())
     ))
 }

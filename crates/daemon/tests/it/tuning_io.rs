@@ -151,7 +151,7 @@ async fn an_unparseable_file_is_moved_aside_and_tuning_restarts() {
     // Tuning started again from history: the S refit is written and used.
     assert_eq!(
         tuned.log[1],
-        "tuning: budget S 40 calls 15m → 55 calls 18m from 34 samples"
+        "tuning: budget S 40 calls · 15 min → 55 calls · 18 min from 34 samples"
     );
     let Loaded::File(file) = load(&dir, NOW).unwrap() else {
         panic!("a fresh tuning.toml");
@@ -349,10 +349,8 @@ async fn a_configured_class_start_line_shows_the_history_refit() {
     let tuned = tune_for_start(&cfg, &TuningLocks::default(), &dir, NOW).await;
     assert_eq!(tuned.budget_s, None, "the configured budget is used");
     assert!(
-        tuned
-            .log
-            .iter()
-            .any(|l| l == "tuning: budget S 40 calls 15m configured (refit would be 55 calls 18m)"),
+        tuned.log.iter().any(|l| l
+            == "tuning: budget S 40 calls · 15 min configured (refit would be 55 calls · 18 min)"),
         "{:?}",
         tuned.log
     );

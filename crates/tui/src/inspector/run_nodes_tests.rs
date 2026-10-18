@@ -2,9 +2,10 @@
 //! sub-agent in the run view (decisions 29–31, Interfaces "Inspector contents, exact").
 
 use super::run_tests::{app_of, inspect_node, pairs, value};
-use crate::inspector::{FieldLayout, format_duration, format_tokens, progress_bar};
+use crate::inspector::{FieldLayout, progress_bar};
 use crate::tree::NodeKey;
 use crate::tree::run_fixtures::{GEMINI_NOW, gemini_fixture, planner_fixture, three_task_fixture};
+use common::numbers::tokens;
 use proto::{PlannerState, SubagentInfo, SubagentState};
 
 #[test]
@@ -19,7 +20,7 @@ fn planner_fields_match_the_mockup() {
     assert_eq!(inspection.name, "planner A  daemon");
     assert_eq!(
         inspection.right.as_deref(),
-        Some("finished · planned 3 tasks in 2m")
+        Some("finished · planned 3 tasks in 2m 00s")
     );
     assert_eq!(inspection.layout, FieldLayout::Rows);
     assert_eq!(
@@ -52,7 +53,7 @@ fn planner_while_planning() {
         epic: "A".into(),
     };
     let inspection = inspect_node(&app, &key);
-    assert_eq!(inspection.right.as_deref(), Some("planning · 1m"));
+    assert_eq!(inspection.right.as_deref(), Some("planning · 1m 00s"));
     assert_eq!(
         value(&inspection, "edits"),
         Some("3 accepted · 1 rejected · re-planned twice (t1 split, t3 merged)")
@@ -66,7 +67,7 @@ fn planner_while_planning() {
     let app = app_of((snapshot, windows));
     let inspection = inspect_node(&app, &key);
     assert_eq!(inspection.glyph.content, "✗");
-    assert_eq!(inspection.right.as_deref(), Some("failed · 2m"));
+    assert_eq!(inspection.right.as_deref(), Some("failed · 2m 00s"));
     assert_eq!(
         value(&inspection, "edits"),
         Some("3 accepted · 1 rejected (owns outside area) · re-planned 3 times (a, b, c)")
@@ -85,7 +86,7 @@ fn a_finished_planner_of_one_task_says_task() {
     let inspection = inspect_node(&app, &key);
     assert_eq!(
         inspection.right.as_deref(),
-        Some("finished · planned 1 task in 2m")
+        Some("finished · planned 1 task in 2m 00s")
     );
     assert_eq!(
         value(&inspection, "progress"),
@@ -103,7 +104,7 @@ fn scout_fields_match_the_mockup() {
     let inspection = inspect_node(&app, &key);
     assert_eq!(inspection.glyph.content, "✓");
     assert_eq!(inspection.name, "scout S1");
-    assert_eq!(inspection.right.as_deref(), Some("reported · 3m"));
+    assert_eq!(inspection.right.as_deref(), Some("reported · 3m 00s"));
     assert_eq!(inspection.layout, FieldLayout::Rows);
     assert_eq!(
         pairs(&inspection),
@@ -113,7 +114,7 @@ fn scout_fields_match_the_mockup() {
                 "where are Claude hook events parsed, and which of them fire in -p mode?"
             ),
             ("state", "reported"),
-            ("took", "3m"),
+            ("took", "3m 00s"),
             ("report", "1840 bytes"),
             (
                 "files",
@@ -150,7 +151,7 @@ fn a_live_scout_on_a_listed_window() {
     let inspection = inspect_node(&app, &key);
     // Its glyph is the canvas's: a static `●` while its listed window is `Idle`.
     assert_eq!(inspection.glyph.content, "●");
-    assert_eq!(inspection.right.as_deref(), Some("working · 1h05m"));
+    assert_eq!(inspection.right.as_deref(), Some("working · 1h 05m"));
     assert_eq!(value(&inspection, "state"), Some("working · Grep"));
     assert_eq!(value(&inspection, "report"), Some("not yet"));
     assert_eq!(value(&inspection, "files"), None);
@@ -177,34 +178,20 @@ fn a_live_scout_on_a_listed_window() {
     scout.window_id = None;
     let app = app_of((snapshot, windows));
     let inspection = inspect_node(&app, &key);
-    assert_eq!(inspection.right.as_deref(), Some("failed · 3m"));
+    assert_eq!(inspection.right.as_deref(), Some("failed · 3m 00s"));
     assert_eq!(value(&inspection, "state"), Some("failed: no report"));
     assert_eq!(value(&inspection, "session"), Some("no window yet"));
 }
 
+/// Milestone 9.19 decision 2: the inspector's tokens are `numbers::tokens`, whose
+/// `<n>.<d>k` band under 10k replaces decision 31's `<n>k` there.
 #[test]
-fn format_duration_cases() {
-    let cases = [
-        (0, "0s"),
-        (59, "59s"),
-        (60, "1m"),
-        (3599, "59m"),
-        (3600, "1h00m"),
-        (4320, "1h12m"),
-        (26 * 3600 + 300, "26h05m"),
-    ];
-    for (secs, text) in cases {
-        assert_eq!(format_duration(secs), text, "{secs}");
-    }
-    assert!(format_duration(u64::MAX).ends_with('m'));
-}
-
-#[test]
-fn format_tokens_cases() {
+fn tokens_cases() {
     let cases = [
         (0, "0"),
         (999, "999"),
-        (1000, "1k"),
+        (1000, "1.0k"),
+        (1_500, "1.5k"),
         (410_000, "410k"),
         (999_999, "999k"),
         (1_000_000, "1.0M"),
@@ -213,7 +200,7 @@ fn format_tokens_cases() {
         (u64::MAX, "18446744073709.5M"),
     ];
     for (n, text) in cases {
-        assert_eq!(format_tokens(n), text, "{n}");
+        assert_eq!(tokens(n), text, "{n}");
     }
 }
 

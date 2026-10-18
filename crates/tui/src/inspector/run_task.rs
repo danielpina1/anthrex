@@ -2,8 +2,7 @@
 //! "Inspector contents, exact": Task). Pure, as `run.rs` is.
 
 use super::run_format::{
-    clean, format_tokens, kind_glyph, local_hhmm, progress_bar_in, reason_text, route_label, rows,
-    size_letter, test_mode_text,
+    clean, kind_glyph, progress_bar_in, reason_text, route_label, rows, size_letter, test_mode_text,
 };
 use super::run_orch::{messages_text, notes_text, replaced_by_text, replaces_text};
 use super::run_patterns;
@@ -13,6 +12,7 @@ use crate::actions_request::ActionTarget;
 use crate::app::App;
 use crate::theme;
 use crate::tree::{NodeKey, RowKind};
+use common::numbers::tokens;
 use proto::{DeciderSource, RunInfo, RunState, TaskInfo, TaskState};
 
 /// The history entries shown: the snapshot sends at most this many, newest first, and
@@ -61,7 +61,7 @@ pub(crate) fn task_inspection(run: &RunInfo, task: &TaskInfo, app: &App) -> Insp
             .iter()
             .take(HISTORY_SHOWN)
             .map(|event| {
-                let at = local_hhmm(event.at, app.utc_offset_secs);
+                let at = app.local_clock(event.at);
                 format!("{at} {}", clean(&event.text))
             })
             .collect();
@@ -96,8 +96,9 @@ pub(crate) fn task_inspection(run: &RunInfo, task: &TaskInfo, app: &App) -> Insp
 /// stage only in a multi-stage run, the model `default` when the route names none.
 fn footer_text(run: &RunInfo, task: &TaskInfo) -> String {
     let mut parts = Vec::new();
-    if run.stages.len() > 1 {
-        parts.push(format!("stage {} of {}", task.stage, run.stages.len()));
+    let stages = common::progress::stage_count(run);
+    if stages > 1 {
+        parts.push(format!("stage {} of {stages}", task.stage));
     }
     // One source with the plan review's route column (milestone 9.0.7 task 11).
     parts.push(super::run_format::route_tag(&task.route));
@@ -248,16 +249,16 @@ fn budget_text(task: &TaskInfo, ascii: bool) -> String {
     } else {
         b
     };
-    let mut tokens = format_tokens(spent.tokens);
+    let mut spent_tokens = tokens(spent.tokens);
     if let Some(limit) = budget.tokens {
-        tokens.push_str(&format!("/{}", format_tokens(limit)));
+        spent_tokens.push_str(&format!("/{}", tokens(limit)));
     }
     format!(
-        "{} {}/{} tool calls · {}/{} min · {tokens} tokens",
+        "{} {}/{} tool calls · {} of {} min · {spent_tokens} tokens",
         progress_bar_in(done, total, super::PROGRESS_WIDTH, ascii),
         spent.tool_calls,
         budget.tool_calls,
-        spent.secs / 60,
+        common::numbers::duration(spent.secs),
         budget.minutes
     )
 }

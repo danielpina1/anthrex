@@ -417,7 +417,7 @@ fn failed_planner_keeps_accepted_tasks_and_wakes_the_orchestrator() {
     planner_ended(&mut fx, ("mail", 1), ScoutEnd::Reported);
     spawn(&mut fx, "mail");
     planner_started(&mut fx, PLANNER + 5);
-    let reason = "the sub-planner ran longer than 2400 s";
+    let reason = "the sub-planner ran longer than 40m 00s";
     let failed = ScoutEnd::Failed {
         reason: reason.into(),
     };

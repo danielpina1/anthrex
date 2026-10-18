@@ -124,8 +124,8 @@ pub(super) async fn resolve_target(
         Ok(Ok(Err(error))) => failed(error),
         Ok(Err(error)) => failed(format!("a blocking step did not finish: {error}")),
         Err(_) => failed(format!(
-            "git did not answer within {} s",
-            budget.deadline.as_secs()
+            "git did not answer within {}",
+            common::numbers::duration(budget.deadline.as_secs())
         )),
     }
 }

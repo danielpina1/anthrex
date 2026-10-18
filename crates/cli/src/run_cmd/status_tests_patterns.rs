@@ -1,6 +1,7 @@
 //! Milestone 9.5 task M9.5.21 (decision 30): `run status`'s race and pair lines under
 //! their task, and the header's writer caps.
 
+use common::numbers::Zone;
 use proto::{
     Effort, LaneInfo, LaneState, PairInfo, PairPhase, RaceInfo, RaceLane, Route, Runtime, TaskState,
 };
@@ -69,7 +70,7 @@ add-reset-3f9a  running  1/4 merged  base main@1a2b3c4  writers 2/3 (codex cap 1
     pair: test writer done, red a1b2c3d; implementer blocked
   attention: t4 blocked (mis_sized): check failed 3 times
 ";
-    assert_eq!(run_block(&run, 0), expected);
+    assert_eq!(run_block(&run, 0, Zone::Local(0)), expected);
 }
 
 /// Each capped runtime adds its own parenthesis; a won and a lost lane show their
@@ -87,7 +88,7 @@ fn every_capped_runtime_and_a_finished_race() {
     });
     run.writer_caps.insert("codex".into(), 1);
     run.writer_caps.insert("claude".into(), 2);
-    let text = run_block(&run, 0);
+    let text = run_block(&run, 0, Zone::Local(0));
     assert!(
         text.starts_with(
             "add-reset-3f9a  running  1/4 merged  base main@1a2b3c4  writers 2/3 (claude cap 2) (codex cap 1)  readers 1/3  rev 57\n"

@@ -306,7 +306,7 @@ fn a_drop_recorded_after_the_first_status_still_raises_the_alert() {
     let effects = deliver(&mut app, snapshot(QUEUED_AT + 20, vec![]));
     let mut asked = status_requests(&effects);
     if asked.is_empty() {
-        asked = status_requests(&app.on_tick_at(Instant::now() + Duration::from_secs(2)));
+        asked = status_requests(&app.on_tick_at(Instant::now() + Duration::from_secs(2), 0));
     }
     let [(second, ref dir)] = asked[..] else {
         panic!("one second status request: {asked:?}");
@@ -342,7 +342,7 @@ fn a_goal_whose_run_appears_later_ends_the_wait() {
     );
     assert!(status_requests(&effects).is_empty(), "{effects:?}");
     let later = Instant::now() + Duration::from_secs(5);
-    assert!(status_requests(&app.on_tick_at(later)).is_empty());
+    assert!(status_requests(&app.on_tick_at(later, 0)).is_empty());
     assert!(alerts(&app).is_empty());
 }
 
@@ -374,7 +374,7 @@ fn the_wait_ends_silently_at_its_bound() {
     );
     let effects = deliver(&mut app, snapshot(bound, vec![]));
     assert!(status_requests(&effects).is_empty(), "{effects:?}");
-    assert!(status_requests(&app.on_tick_at(later)).is_empty());
+    assert!(status_requests(&app.on_tick_at(later, 0)).is_empty());
     // The first ask's reply, late, names the drop: the wait is over, so no alert.
     reply(
         &mut app,
@@ -404,7 +404,7 @@ fn a_goal_behind_another_waits_two_budgets() {
     let effects = deliver(&mut app, snapshot(past_one, vec![]));
     let mut asked = status_requests(&effects);
     if asked.is_empty() {
-        asked = status_requests(&app.on_tick_at(Instant::now() + Duration::from_secs(2)));
+        asked = status_requests(&app.on_tick_at(Instant::now() + Duration::from_secs(2), 0));
     }
     let [(second, _)] = asked[..] else {
         panic!("the second goal still waits: {asked:?}");
@@ -441,7 +441,7 @@ fn a_reask_waits_for_the_reply_and_the_gap() {
     let [(first, _)] = status_requests(&effects)[..] else {
         panic!("one status request: {effects:?}");
     };
-    let ask = |app: &mut App, at: Instant| status_requests(&app.on_tick_at(at));
+    let ask = |app: &mut App, at: Instant| status_requests(&app.on_tick_at(at, 0));
     // In flight: a later snapshot asks nothing.
     assert!(status_requests(&deliver(&mut app, snapshot(QUEUED_AT + 20, vec![]))).is_empty());
     assert!(ask(&mut app, base).is_empty());

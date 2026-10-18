@@ -195,11 +195,14 @@ pub(super) fn toolchain_with(
 }
 
 /// Why a graph command gave no graph, from its outcome: `<label> timed out after
-/// <n>s`, `<label> exited <code>` or `<label> did not run`, with its output's last
+/// <duration>`, `<label> exited <code>` or `<label> did not run`, with its output's last
 /// line when it printed one.
 fn failure(label: &str, outcome: &ShellOutcome) -> String {
     let what = if outcome.timed_out {
-        format!("{label} timed out after {}s", outcome.secs)
+        format!(
+            "{label} timed out after {}",
+            common::numbers::duration(outcome.secs)
+        )
     } else if let Some(code) = outcome.code {
         format!("{label} exited {code}")
     } else {

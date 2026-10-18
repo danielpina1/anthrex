@@ -224,14 +224,14 @@ async fn preflight_messages_are_exact() {
     );
     assert_eq!(
         refusal(Arc::new(slow), rig.req(), b).await,
-        "gh --version: gh did not answer within 30 s"
+        "gh --version: gh did not answer within 30s"
     );
     // And a host that ignores its commands' timeouts is cut at the bound.
     let finished = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let sleepy = GhHost::new(Sleepy(finished), TEST_GH_BIN, "git");
     assert_eq!(
         refusal(Arc::new(sleepy), rig.req(), Duration::from_millis(200)).await,
-        "preflight: gh did not answer within 1 s"
+        "preflight: gh did not answer within 1s"
     );
 }
 

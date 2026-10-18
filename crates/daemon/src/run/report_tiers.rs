@@ -115,8 +115,9 @@ fn tier3_line(full: &proto::FullInfo) -> String {
     let mut line = format!("Tier 3: {state}");
     if let (Some(commit), Some(secs)) = (&full.commit, full.secs) {
         line.push_str(&format!(
-            " at {}, {secs}s, {}",
+            " at {}, {}, {}",
             sha7(commit),
+            common::numbers::duration(secs),
             plural(u32::from(full.shards), "shard")
         ));
         if !full.flaky.is_empty() {
@@ -146,11 +147,11 @@ pub(super) fn task_lines(task: &Task, out: &mut String) {
     if let Some(t) = last {
         let verdict = if t.ok { "green" } else { "red" };
         let mut line = format!(
-            "Tier 1: {}, {} steps, {} cached, {}s, {verdict}",
+            "Tier 1: {}, {} steps, {} cached, {}, {verdict}",
             plain_text_line(&t.affected),
             t.steps,
             t.cached,
-            t.secs
+            common::numbers::duration(t.secs)
         );
         if !t.flaky.is_empty() {
             line.push_str(&format!(", flaky: {}", names(&t.flaky, t.flaky.len())));

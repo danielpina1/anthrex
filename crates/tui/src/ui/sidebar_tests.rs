@@ -386,3 +386,34 @@ fn the_title_cuts_agents_beside_a_six_digit_mark() {
         "agents"
     );
 }
+
+/// Milestone 9.19 decision 11 (review round 1, M1 and M2): while the link is down only
+/// the row's age cell draws muted; the status and attention colours are kept.
+#[test]
+fn a_frozen_sidebar_mutes_only_the_ages() {
+    let windows = vec![pty(1, "shell-1", PROJECT, Status::Working)];
+    let mut app = App::new(windows, "/tmp".into(), UiSettings::default());
+    let _ = app.set_terminal_size(80, 24);
+    let muted = theme::role(Role::Muted, app.palette()).fg.unwrap();
+    let row_colours = |app: &mut App| {
+        let (buffer, l) = frame(app, 80, 24);
+        let list = l.sidebar_list;
+        let y = (list.y..list.bottom())
+            .find(|&y| text_in(&buffer, list, y).contains("shell-1"))
+            .expect("the window's row is drawn");
+        (list.x..list.right())
+            .filter(|&x| buffer[(x, y)].symbol() != " ")
+            .map(|x| buffer[(x, y)].fg)
+            .collect::<Vec<_>>()
+    };
+    let live = row_colours(&mut app);
+    assert!(live.iter().any(|fg| *fg != muted), "live");
+    app.on_link_lost("x");
+    let colours = row_colours(&mut app);
+    assert_eq!(colours, live, "frozen: the status keeps its colour");
+    assert_eq!(
+        colours.last(),
+        Some(&muted),
+        "frozen: the age cell is muted"
+    );
+}

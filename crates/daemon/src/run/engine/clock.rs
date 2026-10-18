@@ -147,7 +147,7 @@ pub(super) fn watch_open_turns(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
                 deadline: not_before(now, INTERRUPT_GRACE_SECS),
             };
             let id = run.tasks[i].id().to_string();
-            outbox::queue(run, &id, stall_nudge(stall_after / 60), now);
+            outbox::queue(run, &id, stall_nudge(stall_after), now);
         }
         history(run, i, now, format!("{why} while {state}; interrupting it"));
     }

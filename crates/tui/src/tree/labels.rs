@@ -47,13 +47,3 @@ pub fn subagent_label(info: &SubagentInfo) -> String {
         None => info.kind.clone(),
     }
 }
-
-pub fn format_elapsed(secs: u64) -> String {
-    if secs < 60 {
-        format!("{secs}s")
-    } else if secs < 3600 {
-        format!("{}m", secs / 60)
-    } else {
-        format!("{}h", secs / 3600)
-    }
-}

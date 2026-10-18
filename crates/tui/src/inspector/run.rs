@@ -3,18 +3,16 @@
 //! with tasks and rounds is in `run_format.rs`.
 //!
 //! Pure: every time is the snapshot's, aged through `App::run_age` and compared through
-//! `App::rate_limited`, and a wall-clock stamp is formatted with the offset the `App`
-//! was given at startup (`local_hhmm`). No clock is read here.
+//! `App::rate_limited`, and a wall-clock stamp is the viewer's labelled local clock
+//! (`App::local_clock`, milestone 9.19 decision 3). No clock is read here.
 
-use super::run_format::{
-    billable, clean, format_duration, format_tokens, kind_glyph, local_hhmm, progress_text,
-    reason_text, rows, session_text,
-};
+use super::run_format::{clean, kind_glyph, progress_text, reason_text, rows, session_text};
 use super::run_orch::{handled_rows, handoff_text, orchestrator_text, untrusted_text};
 use super::{Field, Inspection, field};
 use crate::app::{App, state_text};
 use crate::tree::RowKind;
 use common::labels::{kinds_scale, source_label};
+use common::numbers::{duration, tokens};
 use proto::{
     AgentRoundInfo, IdleOrchestrator, PlannerInfo, PlannerState, RoundInfo, RoundOrigin,
     RoundOutcome, RunInfo, RunPath, RunState, Runtime, ScoutInfo, ScoutState, TaskInfo, TaskState,
@@ -33,10 +31,11 @@ pub(crate) fn run_inspection(
         // Milestone 9.2 decision 36: `running (delivering)`.
         _ => super::run_stage_pr::state_text(run),
     };
-    let right = format!("{state} · {}", format_duration(app.run_age(run.created_at)));
+    let right = format!("{state} · {}", duration(app.run_age(run.created_at)));
     let mut fields = vec![field(
         "progress",
         progress_text(
+            common::progress::run_progress(run),
             run.tasks.iter(),
             super::RUN_PROGRESS_WIDTH,
             app.palette().ascii,
@@ -56,7 +55,7 @@ pub(crate) fn run_inspection(
     fields.extend(super::run_stage_pr::run_fields(run, app));
     if let Some(orchestrator) = &run.orchestrator {
         fields.push(field("orchestrator", orchestrator_text(orchestrator)));
-        if let Some(text) = untrusted_text(orchestrator) {
+        if let Some(text) = untrusted_text(orchestrator, app) {
             fields.push(field("untrusted", text));
         }
         if let Some(summary) = &orchestrator.summary {
@@ -79,6 +78,11 @@ pub(crate) fn run_inspection(
             let label = if index == 0 { "rounds" } else { "" };
             fields.push(field(label, round_line(round)));
         }
+    }
+    // M9.19.4 review, I2: decision 2's spend labels fill a row, so the estimate has its
+    // own; fix round 2: it has the lowest priority, so a short panel drops it first.
+    if let Some(left) = run.estimate_left_secs {
+        fields.push(field("est. left", format!("~{}", duration(left))));
     }
     let glyph = kind_glyph(
         RowKind::Run {
@@ -183,7 +187,8 @@ pub(crate) fn idle_inspection(
     }
     let fields = vec![
         field("after", format!("run {after} · {outcome}")),
-        field("runs", idle.runs.max(1).to_string()),
+        // Decision 9: the real count; a 0 is a real zero, not a missing value.
+        field("runs", idle.runs.to_string()),
         field("agent", agent),
         field(
             "window",
@@ -226,9 +231,12 @@ fn path_text(run: &RunInfo) -> String {
 }
 
 fn agents_text(run: &RunInfo, app: &App) -> String {
+    // Decision 10: `4/3 (over)` after a limit was lowered mid-run.
+    let busy = |busy: u8, max: u8| common::numbers::busy(busy.into(), max.into());
     let mut text = format!(
-        "workers {}/{} · readers {}/{}",
-        run.writers_busy, run.max_writers, run.readers_busy, run.max_readers
+        "workers {} · readers {}",
+        busy(run.writers_busy, run.max_writers),
+        busy(run.readers_busy, run.max_readers)
     );
     // Milestone 9.5: a race's lanes and a test writer route their own runtimes.
     let routes = || {
@@ -263,41 +271,49 @@ fn agents_text(run: &RunInfo, app: &App) -> String {
         }
         text.push_str(&format!(" · {label} rate-limited"));
         if let Some(since) = limited.iter().filter_map(|r| r.rate_limited_since).min() {
-            text.push_str(&format!(" {}", format_duration(app.run_age(since))));
+            text.push_str(&format!(" {}", duration(app.run_age(since))));
         }
         text.push_str(&cap);
     }
     text
 }
 
+/// Milestone 9.19 decision 2: `tokens <billed> (all roles)` from the daemon's usage,
+/// or, without it, `tokens ≥<billed> (tasks only)` from the task rounds' (a lower
+/// bound: the orchestrator's, the deciders' and the design agents' are not there;
+/// `unknown` when they bill nothing); the cache share of input; the workers' tool calls.
+/// The estimate is its own field, `est. left`.
 fn spend_text(run: &RunInfo) -> String {
-    let usage = run
-        .usage
-        .as_ref()
-        .map(|usage| usage.total)
-        .unwrap_or_else(|| {
+    let (usage, scope) = match run.usage.as_ref() {
+        Some(usage) => (usage.total, ("", "all roles")),
+        None => {
             let mut sum = TokenUsage::default();
             for round in run.tasks.iter().flat_map(|task| &task.rounds) {
                 sum += round.usage;
             }
-            sum
-        });
-    let mut text = format!("tokens {}", format_tokens(billable(&usage)));
+            (sum, ("≥", "tasks only"))
+        }
+    };
+    let (at_least, covers) = scope;
+    let billed = usage.billable();
+    // M9.19.4 review, M1: no usage and none in the rounds is unknown, never `≥0`.
+    let shown = match (at_least, billed) {
+        ("≥", 0) => common::numbers::UNKNOWN.to_owned(),
+        _ => format!("{at_least}{}", tokens(billed)),
+    };
+    let mut text = format!("tokens {shown} ({covers})");
     let denominator =
         u128::from(usage.input) + u128::from(usage.cache_read) + u128::from(usage.cache_write);
     // Omitted when the denominator is 0 (decision 31).
     if let Some(share) = (u128::from(usage.cache_read) * 100).checked_div(denominator) {
-        text.push_str(&format!(" (cache {share}%)"));
+        text.push_str(&format!(" · cache hits {share}% of input"));
     }
     let calls: u64 = run
         .tasks
         .iter()
         .map(|task| u64::from(task.spent_total.tool_calls))
         .sum();
-    text.push_str(&format!(" · tool calls {calls}"));
-    if let Some(left) = run.estimate_left_secs {
-        text.push_str(&format!(" · est. left ~{}", format_duration(left)));
-    }
+    text.push_str(&format!(" · worker tool calls {calls}"));
     text
 }
 
@@ -332,7 +348,7 @@ fn gate_text(run: &RunInfo, app: &App) -> String {
         "plan approved".to_owned()
     };
     if let Some(at) = run.approved_at {
-        text.push_str(&format!(" {}", local_hhmm(at, app.utc_offset_secs)));
+        text.push_str(&format!(" {}", app.local_clock(at)));
     }
     match run.plan_edits_since_approval {
         0 => {}
@@ -409,17 +425,22 @@ pub(crate) fn planner_inspection(run: &RunInfo, planner: &PlannerInfo, app: &App
         |ended| ended.saturating_sub(planner.started_at),
     );
     let right = match planner.state {
-        PlannerState::Planning => format!("planning · {}", format_duration(took)),
+        PlannerState::Planning => format!("planning · {}", duration(took)),
         PlannerState::Finished => {
             let n = tasks().count();
             let noun = if n == 1 { "task" } else { "tasks" };
-            format!("finished · planned {n} {noun} in {}", format_duration(took))
+            format!("finished · planned {n} {noun} in {}", duration(took))
         }
-        PlannerState::Failed => format!("failed · {}", format_duration(took)),
+        PlannerState::Failed => format!("failed · {}", duration(took)),
     };
     let mut fields = vec![field(
         "progress",
-        progress_text(tasks(), super::PROGRESS_WIDTH, app.palette().ascii),
+        progress_text(
+            common::progress::tally(tasks()),
+            tasks(),
+            super::PROGRESS_WIDTH,
+            app.palette().ascii,
+        ),
     )];
     if !planner.area.is_empty() {
         fields.push(field("area", clean(&planner.area.join(" · "))));
@@ -496,7 +517,7 @@ pub(crate) fn scout_inspection(
             marks: Vec::new(),
         },
         field("state", state_value),
-        field("took", format_duration(took)),
+        field("took", duration(took)),
         field(
             "report",
             scout
@@ -511,7 +532,7 @@ pub(crate) fn scout_inspection(
         "session",
         session_text(scout.window_id, "main checkout, read-only", app),
     ));
-    let right = format!("{state} · {}", format_duration(took));
+    let right = format!("{state} · {}", duration(took));
     let glyph = kind_glyph(RowKind::Scout { run, scout, window }, app);
     rows(glyph, format!("scout {}", clean(&scout.id)), right, fields)
 }

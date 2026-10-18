@@ -221,7 +221,7 @@ fn a_hanging_decider_falls_back_at_its_timeout_and_leaves_no_process() {
     assert!(elapsed >= timeout, "{elapsed:?}");
     assert!(elapsed <= timeout + KILL_GRACE + SPAWN_SLACK, "{elapsed:?}");
     for decision in [&claude, &codex] {
-        assert_fallback(decision, "the decider timed out after 5 s");
+        assert_fallback(decision, "the decider timed out after 5s");
     }
     assert_eq!(fx.calls().len(), 2, "both deciders ran");
     // Only look: the test signals nothing.

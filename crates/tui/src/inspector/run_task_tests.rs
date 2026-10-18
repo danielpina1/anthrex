@@ -36,7 +36,8 @@ fn with_run(change: impl FnOnce(&mut RunInfo)) -> App {
     app_of((snapshot, windows))
 }
 
-const T2_HISTORY: &str = "12:31 review r1 changes · 12:20 check passed · 12:02 started";
+const T2_HISTORY: &str =
+    "12:31 +00:00 review r1 changes · 12:20 +00:00 check passed · 12:02 +00:00 started";
 
 #[test]
 fn task_fields_match_the_mockup() {
@@ -63,7 +64,7 @@ fn task_fields_match_the_mockup() {
             ),
             (
                 "budget",
-                "███████░░░ 104/150 tool calls · 38/60 min · 410k tokens"
+                "███████░░░ 104/150 tool calls · 38m 00s of 60 min · 410k tokens"
             ),
             (
                 "tries",
@@ -245,7 +246,7 @@ fn task_without_diff_or_review_omits_them() {
             ("deps", "unblocks t2 · on critical path"),
             (
                 "budget",
-                "░░░░░░░░░░ 0/100 tool calls · 0/30 min · 0 tokens"
+                "░░░░░░░░░░ 0/100 tool calls · 0s of 30 min · 0 tokens"
             ),
             ("tries", "review 0/2 bounces · check 0/2"),
         ]
@@ -266,13 +267,13 @@ fn task_budget_with_tokens() {
     let app = with_task("t2", |task| task.budget.tokens = Some(3_000_000));
     assert_eq!(
         value(&inspect_node(&app, &task_key("t2")), "budget"),
-        Some("███████░░░ 104/150 tool calls · 38/60 min · 410k/3.0M tokens")
+        Some("███████░░░ 104/150 tool calls · 38m 00s of 60 min · 410k/3.0M tokens")
     );
     // The minute fraction wins when it is larger; an empty budget never divides by 0.
     let app = with_task("t2", |task| task.spent_session.secs = 3300);
     assert_eq!(
         value(&inspect_node(&app, &task_key("t2")), "budget"),
-        Some("█████████░ 104/150 tool calls · 55/60 min · 410k tokens")
+        Some("█████████░ 104/150 tool calls · 55m 00s of 60 min · 410k tokens")
     );
     let app = with_task("t2", |task| {
         task.budget.tool_calls = 0;
@@ -280,7 +281,7 @@ fn task_budget_with_tokens() {
     });
     assert_eq!(
         value(&inspect_node(&app, &task_key("t2")), "budget"),
-        Some("██████████ 104/0 tool calls · 38/0 min · 410k tokens")
+        Some("██████████ 104/0 tool calls · 38m 00s of 0 min · 410k tokens")
     );
 }
 
@@ -380,7 +381,7 @@ fn task_history_is_local_time() {
     app.utc_offset_secs = 3600;
     assert_eq!(
         value(&inspect_node(&app, &task_key("t2")), "history"),
-        Some("13:31 review r1 changes · 13:20 check passed · 13:02 started")
+        Some("13:31 +01:00 review r1 changes · 13:20 +01:00 check passed · 13:02 +01:00 started")
     );
 }
 
@@ -398,8 +399,11 @@ fn a_long_history_shows_the_newest_ten() {
         .expect("history")
         .to_owned();
     assert_eq!(history.split(" · ").count(), 10);
-    assert!(history.starts_with("12:40 e0 · 12:39 e1"), "{history}");
-    assert!(history.ends_with("12:31 e9"), "{history}");
+    assert!(
+        history.starts_with("12:40 +00:00 e0 · 12:39 +00:00 e1"),
+        "{history}"
+    );
+    assert!(history.ends_with("12:31 +00:00 e9"), "{history}");
 }
 
 #[test]

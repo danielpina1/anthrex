@@ -408,7 +408,7 @@ async fn a_host_op_that_times_out_answers_timed_out() {
         assert_eq!(
             host_result(answer),
             HostResult::Error(HostError::TimedOut(format!(
-                "{name} did not answer within 1 s"
+                "{name} did not answer within 1s"
             )))
         );
     }

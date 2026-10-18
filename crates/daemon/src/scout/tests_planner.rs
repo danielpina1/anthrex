@@ -120,7 +120,7 @@ fn timeout_fails() {
     let (machine, effects) = step(machine, ScoutEvent::Tick { now: 3400 }, &l);
     assert_eq!(
         effects,
-        failed("the sub-planner ran longer than 2400 s", true)
+        failed("the sub-planner ran longer than 40m 00s", true)
     );
     assert_eq!(machine.state, ScoutState::Failed);
     // An exit names the sub-planner too; the engine's stop gives its own reason.

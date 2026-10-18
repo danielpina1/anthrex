@@ -31,7 +31,7 @@ fn ascii(mut app: App) -> App {
 fn stage_inspector_lines_are_exact() {
     let app = app_of(pr_fixture());
     let two = inspect_node(&app, &stage_key(2));
-    assert_eq!(two.name, "stage 2/3");
+    assert_eq!(two.name, "stage 2 of 3");
     assert_eq!(
         pairs(&two),
         [
@@ -39,7 +39,7 @@ fn stage_inspector_lines_are_exact() {
             ("tier 3", "green · 38s"),
             (
                 "pr",
-                "#142 open, based on anthrex/add-reset-3f9a/stage-1, opened 02:30"
+                "#142 open, based on anthrex/add-reset-3f9a/stage-1, opened 02:30 +00:00"
             ),
             ("url", "https://github.com/fake/app/pull/142"),
             ("ci", "✓ build · ✗ test (fix3)"),
@@ -51,7 +51,7 @@ fn stage_inspector_lines_are_exact() {
     let one = inspect_node(&app, &stage_key(1));
     assert_eq!(
         value(&one, "pr"),
-        Some("#141 merged, based on main, opened 02:30, merged 03:00")
+        Some("#141 merged, based on main, opened 02:30 +00:00, merged 03:00 +00:00")
     );
     assert_eq!(value(&one, "ci"), Some("green"));
     assert_eq!(value(&one, "threads"), Some("none"));
@@ -83,7 +83,7 @@ fn stage_inspector_shows_each_ci_state_and_a_paused_or_closed_pr() {
     assert_eq!(value(&two, "ci"), Some("… lint · – docs"));
     assert_eq!(
         value(&two, "pr"),
-        Some("#142 open, based on anthrex/add-reset-3f9a/stage-1, opened 02:30 · paused")
+        Some("#142 open, based on anthrex/add-reset-3f9a/stage-1, opened 02:30 +00:00 · paused")
     );
     assert_eq!(
         value(&two, "fix tasks"),
@@ -92,7 +92,7 @@ fn stage_inspector_shows_each_ci_state_and_a_paused_or_closed_pr() {
     let three = inspect_node(&app, &stage_key(3));
     assert_eq!(
         value(&three, "pr"),
-        Some("#143 closed, based on anthrex/add-reset-3f9a/stage-2, opened 02:30")
+        Some("#143 closed, based on anthrex/add-reset-3f9a/stage-2, opened 02:30 +00:00")
     );
     assert_eq!(value(&three, "ci"), Some("no checks"));
 }
@@ -117,7 +117,7 @@ fn stage_inspector_cleans_host_text() {
     assert_eq!(value(&two, "ci"), Some("✗ testx (fix3)"));
     assert_eq!(
         value(&two, "pr"),
-        Some("#142 open, based on main [2J, opened 02:30")
+        Some("#142 open, based on main [2J, opened 02:30 +00:00")
     );
     assert_eq!(value(&two, "url"), Some("https://ex.com/1"));
     assert_eq!(value(&two, "fix tasks"), Some("ci: fix3 working"));
@@ -136,7 +136,7 @@ fn the_delivery_row_cleans_the_remote_and_the_repo() {
     let run = inspect_node(&app, &run_key());
     assert_eq!(
         value(&run, "delivery"),
-        Some("pr to origin (fake/app) · watching every 60 s")
+        Some("pr to origin (fake/app) · watching every 1m 00s")
     );
 }
 
@@ -151,8 +151,11 @@ fn single_stage_run_shows_its_pr_in_the_run_inspector() {
     assert_eq!(
         shown,
         [
-            ("delivery", "pr to origin (fake/app) · watching every 60 s"),
-            ("pr", "#7 open, based on main, opened 02:30"),
+            (
+                "delivery",
+                "pr to origin (fake/app) · watching every 1m 00s"
+            ),
+            ("pr", "#7 open, based on main, opened 02:30 +00:00"),
             ("url", "https://github.com/fake/app/pull/7"),
             ("ci", "✓ build"),
             ("threads", "none"),
@@ -215,7 +218,7 @@ fn local_run_renders_as_before() {
             ("branch", "anthrex/add-reset-3f9a/stage-1 at 1111111"),
             (
                 "tier 3",
-                "bisecting at 2222222 · 41m12s · 2 shards · flaky a::flaky"
+                "bisecting at 2222222 · 41m 12s · 2 shards · flaky a::flaky"
             ),
             ("failing", "a::works"),
             ("bisect", "running · 1 fix task"),

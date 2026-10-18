@@ -85,18 +85,18 @@ fn text_lists_projects_windows_and_nested_subagents() {
     let lines: Vec<_> = text.lines().collect();
     assert_eq!(
         lines.first().copied(),
-        Some("shop  /r/shop  attention  cl 2 · cx 1")
+        Some("shop  /r/shop  attention  claude 2 · codex 1")
     );
-    assert!(lines.contains(&"   1  api-worker  claude  claude-opus-5  working  2m  Bash"));
-    assert!(lines.contains(&"   2  billing  codex  -  attention  41s"));
-    assert!(lines.contains(&"   3  frontend  claude  claude-sonnet-4-5  working  1m"));
-    assert!(lines.contains(&"      ├─ Explore: map routes  running  1m  Read"));
-    assert!(lines.contains(&"      │ └─ general-purpose: grep handlers  running  20s"));
-    assert!(lines.contains(&"      └─ tests: run unit suite  done  45s"));
-    assert!(lines.contains(&"blog  /r/blog  idle  cl 1"));
+    assert!(lines.contains(&"  #1  id 1  api-worker  claude  claude-opus-5  working 2m 00s  Bash"));
+    assert!(lines.contains(&"  #2  id 2  billing  codex  -  attention 41s"));
+    assert!(lines.contains(&"  #3  id 4  frontend  claude  claude-sonnet-4-5  working 1m 00s"));
+    assert!(lines.contains(&"      ├─ Explore: map routes  running 1m 30s  Read"));
+    assert!(lines.contains(&"      │ └─ general-purpose: grep handlers  running 20s"));
+    assert!(lines.contains(&"      └─ tests: run unit suite  ran 45s"));
+    assert!(lines.contains(&"blog  /r/blog  idle  claude 1"));
     assert_eq!(
         lines.last().copied(),
-        Some("   4  notes  claude  -  idle  30s")
+        Some("  #4  id 8  notes  claude  -  idle 30s")
     );
     assert!(text.ends_with('\n'));
     assert!(!text.ends_with("\n\n"));
@@ -168,7 +168,7 @@ fn project_filter_picks_the_longest_containing_root() {
         assert_eq!(text.lines().count(), 2);
         assert_eq!(
             text.lines().next(),
-            Some(format!("{name}  {root}  working  cl 1").as_str())
+            Some(format!("{name}  {root}  working  claude 1").as_str())
         );
     }
     assert_eq!(
@@ -214,7 +214,7 @@ fn permission_is_printed_and_serialized() {
     assert!(
         tree_text(&windows, None)
             .lines()
-            .any(|line| { line == "      ├─ Explore: map routes  permission  1m  Read" })
+            .any(|line| { line == "      ├─ Explore: map routes  permission 1m 30s  Read" })
     );
     let value = as_json(&windows, None);
     let agent = &value["projects"][0]["windows"][0]["subagents"][0];
@@ -225,11 +225,12 @@ fn permission_is_printed_and_serialized() {
 #[test]
 fn subagent_states_and_durations_use_the_cli_contract() {
     for (state, ended, label, elapsed) in [
-        (SubagentState::Running, None, "running", "1m"),
-        (SubagentState::Done, Some(15), "done", "45s"),
-        (SubagentState::Failed, Some(10), "failed", "50s"),
-        (SubagentState::Done, None, "done", "0s"),
-        (SubagentState::Failed, Some(90), "failed", "0s"),
+        (SubagentState::Running, None, "running", "running 1m 00s"),
+        (SubagentState::Done, Some(15), "done", "ran 45s"),
+        (SubagentState::Failed, Some(10), "failed", "failed 50s"),
+        (SubagentState::Done, None, "done", "done -"),
+        (SubagentState::Failed, None, "failed", "failed -"),
+        (SubagentState::Failed, Some(90), "failed", "failed 0s"),
     ] {
         let mut window = window(1, "worker", "/r/shop");
         let mut agent = subagent("a1", "tests", "", 60);
@@ -241,7 +242,7 @@ fn subagent_states_and_durations_use_the_cli_contract() {
         let text = tree_text(&windows, None);
         assert_eq!(
             text.lines().last(),
-            Some(format!("      └─ tests  {label}  {elapsed}").as_str())
+            Some(format!("      └─ tests  {elapsed}").as_str())
         );
         let value = as_json(&windows, None);
         let agent = &value["projects"][0]["windows"][0]["subagents"][0];
@@ -261,7 +262,63 @@ fn counts_omit_zero_runtimes_and_keep_runtime_order() {
     windows.push(shell);
     assert_eq!(
         tree_text(&windows, None).lines().next(),
-        Some("shop  /r/shop  attention  cl 2 · cx 1 · sh 1")
+        Some("shop  /r/shop  attention  claude 2 · codex 1 · shell 1")
     );
     assert_eq!(as_json(&windows, None)["projects"][0]["counts"]["shell"], 1);
+}
+
+/// Milestone 9.19 decision 9: a stopped sub-agent with no end has no duration: `-`,
+/// never `0s`. The JSON keeps the raw `null`.
+#[test]
+fn a_done_subagent_without_an_end_has_no_duration() {
+    let mut window = window(1, "worker", "/r/shop");
+    let mut agent = subagent("a1", "tests", "run unit suite", 60);
+    agent.state = SubagentState::Done;
+    agent.ended_secs = None;
+    window.subagents = vec![agent];
+    let windows = [window];
+    let text = tree_text(&windows, None);
+    assert_eq!(
+        text.lines().last(),
+        Some("      └─ tests: run unit suite  done -")
+    );
+    let value = as_json(&windows, None);
+    assert_eq!(
+        value["projects"][0]["windows"][0]["subagents"][0]["ended_secs"],
+        Value::Null
+    );
+}
+
+/// Milestone 9.19 decision 13: a window row names both numbers, `#<position>` (the
+/// `C-b <n>` a client uses) and `id <id>` (what `ls`, `kill` and `attach` take), and the
+/// counts name their runtimes as `--json` does.
+#[test]
+fn tree_names_position_and_id() {
+    let mut first = window(7, "api", "/r/shop");
+    first.since_secs = 190;
+    let mut second = window(9, "review", "/r/shop");
+    second.runtime = Runtime::Codex;
+    let mut third = window(11, "helper", "/r/shop");
+    let mut shell = window(12, "terminal", "/r/shop");
+    shell.runtime = Runtime::Shell;
+    third.since_secs = 5;
+    let text = tree_text(&[first, second, third, shell], None);
+    let lines: Vec<_> = text.lines().collect();
+    assert_eq!(
+        lines[0],
+        "shop  /r/shop  working  claude 2 · codex 1 · shell 1"
+    );
+    assert_eq!(lines[1], "  #1  id 7  api  claude  -  working 3m 10s");
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("  #2  id 9  review  codex  ")),
+        "{text}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("  #4  id 12  terminal  shell  ")),
+        "{text}"
+    );
 }

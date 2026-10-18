@@ -153,7 +153,7 @@ fn delivery_keys_are_pinned_by_literal_json() {
         serde_json::to_value(HistoryLine::Stage(a_stage_line())).unwrap(),
         json!({
             "type": "stage",
-            "v": 5,
+            "v": 6,
             "record_id": "run-a1b2/stage/1",
             "run_id": "run-a1b2",
             "stage": 1,
@@ -491,7 +491,7 @@ fn hold_kind_fix_round_trips() {
 
 #[test]
 fn stage_history_line_round_trips() {
-    assert_eq!(HISTORY_VERSION, 5);
+    assert_eq!(HISTORY_VERSION, 6);
     let line = HistoryLine::Stage(a_stage_line());
     let json = serde_json::to_string(&line).unwrap();
     assert!(json.starts_with(r#"{"type":"stage","#), "{json}");

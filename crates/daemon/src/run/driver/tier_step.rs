@@ -215,8 +215,8 @@ pub(super) async fn bounded<T: Send + 'static>(
         Ok(Ok(result)) => result,
         Ok(Err(error)) => Err(format!("a blocking step did not finish: {error}")),
         Err(_) => Err(format!(
-            "a blocking step did not finish within {} s",
-            bound.as_secs()
+            "a blocking step did not finish within {}",
+            common::numbers::duration(bound.as_secs())
         )),
     }
 }
@@ -233,8 +233,9 @@ fn want(priority: Priority) -> Want {
 fn setup_output(outcome: &ShellOutcome) -> String {
     if outcome.timed_out {
         format!(
-            "{}\n[anthrex: timed out after {} s]",
-            outcome.tail, outcome.secs
+            "{}\n[anthrex: timed out after {}]",
+            outcome.tail,
+            common::numbers::duration(outcome.secs)
         )
     } else {
         outcome.tail.clone()

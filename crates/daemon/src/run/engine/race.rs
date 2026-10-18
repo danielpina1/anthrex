@@ -91,7 +91,10 @@ pub(super) fn start(run: &mut Run, i: usize, now: u64, gate: &super::brakes::Gat
         return Start::Wait;
     }
     run.tasks[i].race_wait_since = None;
-    let text = format!("race skipped: no second writer slot within {wait} s");
+    let text = format!(
+        "race skipped: no second writer slot within {}",
+        common::numbers::duration(wait)
+    );
     single(run, i, &text, now)
 }
 

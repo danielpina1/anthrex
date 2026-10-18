@@ -78,7 +78,9 @@ fn zero_durations_are_hidden() {
     assert!(fast.trim_end_matches(['│', ' ']).ends_with('✓'), "{fast}");
     assert!(!read_row(0).contains("0.0s"));
     assert!(!read_row(49).contains("0.0s"));
-    assert!(read_row(50).contains("✓ 0.1s"));
+    // Milestone 9.19 decision 4: tenths are floored, so 50-99 ms would read `0.0s`.
+    assert!(!read_row(99).contains("0.0s"));
+    assert!(read_row(100).contains("✓ 0.1s"));
     let slow = read_row(1200);
     assert!(slow.contains("✓ 1.2s"), "{slow}");
 }

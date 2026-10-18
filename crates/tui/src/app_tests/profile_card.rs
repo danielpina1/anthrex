@@ -74,7 +74,7 @@ fn enter_on_the_card_uses_this() {
     reply(&mut app, ids[0], status(Some(ProposalState::Ready)));
     reply(&mut app, ids[1], shown(&stored_profile(), vec![]));
     let toml = "check = \"cargo test --workspace\"  \n\n# protected: built-in .git/** + no \
-                extras\n# verification 2026-10-01 10:00 (confined)\n";
+                extras\n# verification 2026-10-01 10:00 UTC (confined)\n";
     let proposal = ProfileReply::Shown {
         source: ProfileSource::None,
         toml: toml.into(),

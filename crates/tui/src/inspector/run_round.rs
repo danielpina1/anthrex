@@ -2,13 +2,14 @@
 //! Interfaces "Inspector contents, exact": Agent round). Pure, as `run.rs` is.
 
 use super::run_format::{
-    billable, clean, counts_text, finding_text, format_duration, format_tokens, kind_glyph,
-    local_hhmm, most_severe, rank, route_label, rows, session_text,
+    clean, counts_text, finding_text, kind_glyph, most_severe, rank, route_label, rows,
+    session_text,
 };
 use super::run_patterns;
 use super::{Field, Inspection, field};
 use crate::app::App;
 use crate::tree::{DisplayRound, RowKind, display_rounds, round_label_with_lane};
+use common::numbers::{duration, tokens};
 use proto::{AgentRole, RaceLane, Route, RunInfo, Severity, TaskInfo};
 
 /// An agent round (Interfaces "Agent round").
@@ -32,11 +33,11 @@ pub(crate) fn round_inspection(
             .to_owned(),
         _ => "finished".to_owned(),
     };
-    let duration = match round.ended_at {
+    let elapsed = match round.ended_at {
         None => app.run_age(round.started_at),
         Some(ended) => ended.saturating_sub(round.started_at),
     };
-    let right = format!("{status} · {} · {}", format_duration(duration), task.id);
+    let right = format!("{status} · {} · {}", duration(elapsed), task.id);
     let label = round_label_with_lane(info.role, info.lane, info.session, round.number);
     let route = &info.route;
     let name = format!("{label}  {}", route_label(route));
@@ -75,7 +76,7 @@ pub(crate) fn round_inspection(
 /// Decision 43: the most of a failed turn's error the round's status shows.
 const FAILED_ERROR_CHARS: usize = 80;
 
-/// Decision 43: `failed: <error> · retries <hh:mm>`, the error one line and cut to
+/// Decision 43: `failed: <error> · retries <clock>`, the error one line and cut to
 /// [`FAILED_ERROR_CHARS`] characters; `failed` alone without an error, and no retry
 /// time once it has passed (a paused run's round keeps its failed turn).
 fn failed_text(error: Option<&str>, until: u64, app: &App) -> String {
@@ -88,10 +89,7 @@ fn failed_text(error: Option<&str>, until: u64, app: &App) -> String {
         }
     }
     if until > app.run_now() {
-        text.push_str(&format!(
-            " · retries {}",
-            local_hhmm(until, app.utc_offset_secs)
-        ));
+        text.push_str(&format!(" · retries {}", app.local_clock(until)));
     }
     text
 }
@@ -130,7 +128,7 @@ fn worker_fields(
             "turns {} · tool calls {} · tokens {}",
             info.turns,
             info.tool_calls,
-            format_tokens(billable(&info.usage))
+            tokens(info.usage.billable())
         );
         if info.denials > 0 {
             activity.push_str(&format!(" · {} denied", info.denials));

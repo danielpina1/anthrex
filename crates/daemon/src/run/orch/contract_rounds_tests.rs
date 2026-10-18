@@ -28,7 +28,9 @@ fn handoff_prompt_names_the_fill() {
     );
     assert_eq!(
         known,
-        format!("{plain}The previous session was 85% full (170000/200000); this one starts fresh.")
+        format!(
+            "{plain}The previous session ended with context 85% full (170k / 200k); this one starts fresh."
+        )
     );
     let unknown = handoff_prompt(
         "first",
@@ -39,7 +41,9 @@ fn handoff_prompt_names_the_fill() {
     );
     assert_eq!(
         unknown,
-        format!("{plain}The previous session had 170000 tokens of context; this one starts fresh.")
+        format!(
+            "{plain}The previous session ended with context 170k (window unknown); this one starts fresh."
+        )
     );
     assert!(!plain.contains("starts fresh"), "{plain}");
 }
@@ -49,15 +53,57 @@ fn the_handoffs_texts() {
     assert_eq!(handed_off_name("3f9a"), "3f9a/orchestrator (handed off)");
     assert_eq!(
         handed_off_text(&record(Some(200_000))),
-        "handed off from 3f9a: context 85% full"
+        "handed off from 3f9a: context 85% full (170k / 200k)"
     );
     assert_eq!(
         handed_off_text(&record(None)),
-        "handed off from 3f9a: context 170000 tokens"
+        "handed off from 3f9a: context 170k (window unknown)"
     );
-    assert_eq!(fill_attention_text(92), "orchestrator context 92% full");
+    assert_eq!(
+        fill_attention_text(184_000, 200_000),
+        "orchestrator context 92% full (184k / 200k)"
+    );
     assert_eq!(
         FILL_UNKNOWN_TEXT,
         "context fill unknown; continuing in the same session"
+    );
+}
+
+/// Milestone 9.19 decision 10: a session past its window reads `over 100%`, never
+/// `450%`, in the handoff prompt, the log line and the attention line; a zero window
+/// is an unknown one.
+#[test]
+fn a_million_token_session_is_over_not_450_percent() {
+    let over = |window| HandoffRecord {
+        fill_tokens: 900_000,
+        window_tokens: window,
+        ..record(None)
+    };
+    let ended = ("o-3f9a", "3f9a", "accepted");
+    let prompt = handoff_prompt("first", ended, None, None, Some(&over(Some(200_000))));
+    assert!(
+        prompt.ends_with(
+            "The previous session ended with context over 100% (900k / 200k window); this one starts fresh."
+        ),
+        "{prompt}"
+    );
+    assert_eq!(
+        handed_off_text(&over(Some(200_000))),
+        "handed off from 3f9a: context over 100% (900k / 200k window)"
+    );
+    assert_eq!(
+        fill_attention_text(900_000, 200_000),
+        "orchestrator context over 100% (900k / 200k window)"
+    );
+    assert_eq!(
+        handed_off_text(&over(Some(0))),
+        "handed off from 3f9a: context 900k (window unknown)"
+    );
+    let prompt = handoff_prompt("first", ended, None, None, Some(&over(Some(0))));
+    assert!(
+        prompt.ends_with(
+            "The previous session ended with context 900k (window unknown); this one starts fresh."
+        ),
+        "{prompt}"
     );
 }

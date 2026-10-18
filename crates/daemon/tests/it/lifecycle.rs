@@ -6,9 +6,10 @@
 //! harness starts `server::serve` directly and never exercises `run`'s own setup and
 //! teardown, which is what these tests are about.
 
-use daemon::lockfile::DaemonLock;
+use crate::support::descriptors::descriptors_on;
 use daemon::run;
 use proto::{ClientMsg, DaemonMsg, Status};
+use std::path::Path;
 use std::time::Duration;
 use tokio::net::UnixStream;
 
@@ -16,11 +17,30 @@ use tokio::net::UnixStream;
 mod common;
 use common::*;
 
+/// Asserts that `run` has let go of the lifetime lock: no descriptor of this process
+/// refers to `<data_dir>/daemon.lock`. A lock that was never dropped, was moved into a
+/// task that outlives `run`, or was `mem::forget`-leaked fails this; a copy a sibling
+/// test's forked child holds cannot, since it is not in this process's table. (Here, not
+/// in `common.rs`: `lifecycle_resume.rs` shares that file and has no `support` module.)
+#[track_caller]
+fn assert_lock_released(data_dir: &Path) {
+    let lock = data_dir.join("daemon.lock");
+    let held = descriptors_on(&lock);
+    assert!(
+        held.is_empty(),
+        "run returned with descriptors {held:?} still on {}",
+        lock.display()
+    );
+}
+
 /// The one-line-mutation check this test aims at: an implementation that skipped the
 /// lock, or that unlinked the socket unconditionally instead of by inode, would still
 /// pass a version of this test that only checked `Ok(())`. So it also checks every piece
 /// of cleanup decision 24 and decision 26 promise: the socket and pid file are gone, and
-/// the lock is free enough for a fresh `DaemonLock::acquire` to succeed at once.
+/// no descriptor of this process still refers to `daemon.lock`. That is what `run`
+/// controls; a fresh `DaemonLock::acquire` is not, because under libtest a sibling
+/// thread's forked child can hold a copy of the lock's file description (and the flock
+/// with it) after `run` has closed its own (flake diagnosis, 2026-10-18).
 #[tokio::test]
 async fn run_starts_serves_and_stops_cleanly() {
     let dir = tempfile::tempdir().unwrap();
@@ -58,8 +78,7 @@ async fn run_starts_serves_and_stops_cleanly() {
         !data_dir.join("daemon.pid").exists(),
         "daemon.pid was not removed"
     );
-    let _lock = DaemonLock::acquire(&data_dir, Duration::ZERO)
-        .expect("the lock must be free once run has returned");
+    assert_lock_released(&data_dir);
 }
 
 /// The adversarial case decision 24 exists for: a second daemon must never be able to

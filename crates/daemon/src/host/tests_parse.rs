@@ -384,7 +384,7 @@ fn errors_classify_rate_limit_auth_not_found_and_rejected() {
     assert_eq!(
         h.preflight(&preflight_req(tmp.path())),
         Err(HostError::TimedOut(
-            "gh --version: gh did not answer within 30 s".to_string()
+            "gh --version: gh did not answer within 30s".to_string()
         ))
     );
     // `gh` older than the version M9.2.1 checked is refused.

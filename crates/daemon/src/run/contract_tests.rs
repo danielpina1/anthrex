@@ -239,7 +239,7 @@ fn worker_prompt_puts_saved_messages_before_the_brief() {
     let prompt = worker_prompt(&run, &run.tasks[0], "", &notes());
     assert!(
         prompt.ends_with(
-            "- Accept t1\n\nNotes from the orchestrator:\n- 13:07 (change, from orchestrator) use the v2 token API\n\nBrief t1"
+            "- Accept t1\n\nNotes from the orchestrator:\n- 1970-01-01 13:07 UTC (change, from orchestrator) use the v2 token API\n\nBrief t1"
         ),
         "{prompt}"
     );

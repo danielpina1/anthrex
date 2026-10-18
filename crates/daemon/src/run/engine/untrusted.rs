@@ -57,7 +57,7 @@ pub(super) fn propose(
     let context = format!(
         "the orchestrator read {} at {}, so you decide",
         record.source,
-        common::text::hh_mm(record.at)
+        common::numbers::clock_full(record.at, common::numbers::Zone::Utc)
     );
     Some((question, options, context))
 }

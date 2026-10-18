@@ -590,3 +590,35 @@ fn columns_stop_at_the_number_that_shows_every_field() {
         "nothing is elided when every field has its natural width: {rendered:#?}"
     );
 }
+
+/// Milestone 9.19 decision 3 (review round 1): a wrap never parts a clock time from its
+/// zone label, so no row shows a bare `12:02`.
+#[test]
+fn a_wrap_keeps_a_clock_with_its_zone() {
+    let text = "12:31 +00:00 review · 12:02 -05:00 started · 09:00 UTC done";
+    // From the widest joined word (`12:31 +00:00`) up.
+    for width in 12..=text.len() {
+        for line in wrap_value(text, width, usize::MAX, false) {
+            for bare in ["12:31", "12:02", "09:00"] {
+                assert!(
+                    !line.ends_with(bare) && !line.starts_with("+00:00"),
+                    "{width}: {line:?}"
+                );
+            }
+        }
+    }
+    assert_eq!(
+        wrap_value(text, 20, usize::MAX, false),
+        [
+            "12:31 +00:00 review",
+            "· 12:02 -05:00",
+            "started · 09:00 UTC",
+            "done"
+        ]
+    );
+    // Not a clock: a label after a plain word wraps as any word does.
+    assert_eq!(
+        wrap_value("ratio 12:5 +00:00", 10, usize::MAX, false),
+        ["ratio 12:5", "+00:00"]
+    );
+}

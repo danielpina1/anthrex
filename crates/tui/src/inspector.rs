@@ -260,7 +260,7 @@ fn window_fields(info: &WindowInfo, app: &App) -> Vec<Field> {
             "status",
             with_tool(info.status.label(), info.tool.as_deref()),
         ),
-        field("for", tree::format_elapsed(app.elapsed_secs(info))),
+        field("for", common::numbers::duration(app.elapsed_secs(info))),
         field("model", info.model.as_deref().unwrap_or("-")),
     ];
     // Keyed by the worktree root, and absent state omits the field rather than
@@ -301,7 +301,7 @@ fn window_fields(info: &WindowInfo, app: &App) -> Vec<Field> {
 /// this milestone exists for would be the wrong way round.
 fn subagent_fields(row: &Row<'_>, info: &SubagentInfo, app: &App) -> Vec<Field> {
     let (state, duration) = match info.state {
-        SubagentState::Running => ("running", app.age_secs(info.started_secs)),
+        SubagentState::Running => ("running", Some(app.age_secs(info.started_secs))),
         SubagentState::Done => ("done", finished_secs(info)),
         SubagentState::Failed => ("failed", finished_secs(info)),
     };
@@ -319,7 +319,12 @@ fn subagent_fields(row: &Row<'_>, info: &SubagentInfo, app: &App) -> Vec<Field> 
     }
     fields.push(field("spawned by", spawned_by(row, info, app)));
     fields.push(field("state", with_tool(state, info.tool.as_deref())));
-    fields.push(field("for", tree::format_elapsed(duration)));
+    // Decision 9: a stopped sub-agent with no end ran for an unknown time.
+    let duration = duration.map_or(
+        common::numbers::UNKNOWN.to_owned(),
+        common::numbers::duration,
+    );
+    fields.push(field("for", duration));
     fields.push(field("model", info.model.as_deref().unwrap_or("-")));
     fields.push(field("kind", info.kind.clone()));
     // A window's own sub-agents sit at row depth 2, and one level below the
@@ -372,10 +377,10 @@ fn subagent_name(info: &SubagentInfo) -> String {
 }
 
 /// How long a sub-agent that has stopped ran for. Both fields are ages, so the
-/// run is the difference between them, and a missing end reads as zero.
-fn finished_secs(info: &SubagentInfo) -> u64 {
+/// run is the difference between them; a missing end is unknown (decision 9).
+fn finished_secs(info: &SubagentInfo) -> Option<u64> {
     info.ended_secs
-        .map_or(0, |ended| info.started_secs.saturating_sub(ended))
+        .map(|ended| info.started_secs.saturating_sub(ended))
 }
 
 fn with_tool(label: &str, tool: Option<&str>) -> String {
@@ -430,7 +435,6 @@ mod run_task_sections;
 
 pub use panel::panel_rows;
 pub(crate) use run_patterns::{writes, writing_rounds};
-pub(crate) use run_stage::tier_duration;
 pub(crate) use run_task::state_word;
 pub use run_task::{task_panel_room, task_panel_rows};
 
@@ -439,7 +443,6 @@ pub use panel::render;
 pub use panel::render_in;
 #[cfg(test)]
 pub use run_format::progress_bar;
-pub use run_format::{format_duration, format_tokens, local_hhmm};
 pub(crate) use run_stage_pr::delivering;
 
 #[cfg(test)]
@@ -447,6 +450,9 @@ mod tests;
 
 #[cfg(test)]
 mod run_tests;
+
+#[cfg(test)]
+mod run_clock_tests;
 
 #[cfg(test)]
 mod run_nodes_tests;

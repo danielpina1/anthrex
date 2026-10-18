@@ -4,6 +4,7 @@
 //! (the stall clock, the failed turn's continue, the minutes budget). Pure (design
 //! decision 2).
 
+use common::numbers::duration;
 use proto::{AgentRole, BlockReason, Runtime, TaskState, TokenUsage};
 
 use super::clock::{not_before, stall_due};
@@ -446,7 +447,7 @@ fn exited(
             end_round(round, now);
             let reason = "its turn was interrupted before its session had an id".to_string();
             ladder::rung2(run, i, reason, now, fx);
-            let nudge = stall_nudge(run.limits.stall_after_secs / 60);
+            let nudge = stall_nudge(run.limits.stall_after_secs);
             if let Some(fresh) = run.tasks[i].fresh_session.as_mut() {
                 fresh.append = Some(nudge);
             }
@@ -585,11 +586,11 @@ pub(super) fn watch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
                 };
                 round.interrupted = true;
                 let id = run.tasks[i].id().to_string();
-                outbox::queue(run, &id, stall_nudge(stall_after / 60), now);
+                outbox::queue(run, &id, stall_nudge(stall_after), now);
                 history(run, i, now, "no progress; interrupting its turn");
             }
             StallState::Nudged if silent => {
-                let reason = format!("no stream event for {} minutes", stall_after / 60);
+                let reason = format!("no stream event for {}", duration(stall_after));
                 ladder::stall(run, i, reason, now, fx);
             }
             _ => {}

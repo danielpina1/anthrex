@@ -6,6 +6,7 @@ use super::run_format::{clean, kind_glyph, rows};
 use super::{Field, Inspection, field};
 use crate::app::App;
 use crate::tree::RowKind;
+use common::numbers::duration;
 use proto::{FullState, RunInfo, StageInfo, TaskInfo, TaskOrigin, TierInfo};
 
 /// Names a tier line shows before `+<k>`.
@@ -51,7 +52,12 @@ pub(crate) fn stage_inspection(run: &RunInfo, stage: &StageInfo, app: &App) -> I
     let glyph = kind_glyph(RowKind::Stage { run, stage }, app);
     rows(
         glyph,
-        format!("stage {}/{}", stage.n, run.stages.len()),
+        // Milestone 9.19 decision 7: `stage k of m`, `/` being for progress only.
+        format!(
+            "stage {} of {}",
+            stage.n,
+            common::progress::stage_count(run)
+        ),
         right,
         fields,
     )
@@ -59,17 +65,6 @@ pub(crate) fn stage_inspection(run: &RunInfo, stage: &StageInfo, app: &App) -> I
 
 fn short(sha: &str) -> String {
     clean(&sha.chars().take(7).collect::<String>())
-}
-
-/// `42s`, `2m10s`, `1h02m`.
-pub(crate) fn tier_duration(secs: u64) -> String {
-    if secs < 60 {
-        format!("{secs}s")
-    } else if secs < 3600 {
-        format!("{}m{:02}s", secs / 60, secs % 60)
-    } else {
-        format!("{}h{:02}m", secs / 3600, secs % 3600 / 60)
-    }
 }
 
 /// `a, b, c +2`.
@@ -82,7 +77,7 @@ fn names(list: &[String]) -> String {
     text
 }
 
-/// `green at abc1234 · 41m12s · 2 shards · flaky a::x`; `not run` before any job. The
+/// `green at abc1234 · 41m 12s · 2 shards · flaky a::x`; `not run` before any job. The
 /// failing names are a row of their own (milestone 9.0.7 decision 18).
 fn tier3_text(stage: &StageInfo) -> String {
     let full = &stage.full;
@@ -100,7 +95,7 @@ fn tier3_text(stage: &StageInfo) -> String {
         parts[0].push_str(&format!(" at {}", short(commit)));
     }
     if let Some(secs) = full.secs {
-        parts.push(tier_duration(secs));
+        parts.push(duration(secs));
     }
     if full.commit.is_some() {
         parts.push(match full.shards {
@@ -163,11 +158,11 @@ fn origin_text(task: &TaskInfo) -> String {
     }
 }
 
-/// `tier 1: 3 modules · 2m10s · 1 cached · flaky t_x`, red marked `· red`.
+/// `tier 1: 3 modules · 2m 10s · 1 cached · flaky t_x`, red marked `· red`.
 fn tier_text(tier: &TierInfo) -> String {
     let mut parts = vec![
         format!("tier {}: {}", tier.tier, clean(&tier.affected)),
-        tier_duration(tier.secs),
+        duration(tier.secs),
     ];
     if tier.cached > 0 {
         parts.push(format!("{} cached", tier.cached));
@@ -185,13 +180,11 @@ fn tier_text(tier: &TierInfo) -> String {
 /// made, and `tier` once a tier ran. A one-stage plan task gets none of them.
 pub(super) fn task_fields(run: &RunInfo, task: &TaskInfo) -> Vec<Field> {
     let mut fields = Vec::new();
-    if run.stages.len() > 1 {
+    let stages = common::progress::stage_count(run);
+    if stages > 1 {
         // Milestone 9.0.7 decision 15: the lifecycle is DETAIL's `phase`, so the stage
         // number is `stage`.
-        fields.push(field(
-            "stage",
-            format!("{} of {}", task.stage, run.stages.len()),
-        ));
+        fields.push(field("stage", format!("{} of {stages}", task.stage)));
     }
     if task.origin != TaskOrigin::Plan {
         let origin = origin_word(task.origin);

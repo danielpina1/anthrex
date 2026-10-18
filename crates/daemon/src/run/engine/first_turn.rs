@@ -100,7 +100,10 @@ pub(super) fn tick(run: &mut Run, now: u64) {
         true => "the window is not ready yet",
         false => "no MCP ready notice yet",
     };
-    let text = format!("first turn still waiting {FIRST_TURN_WAIT_SECS} s after launch: {why}");
+    let text = format!(
+        "first turn still waiting {} after launch: {why}",
+        common::numbers::duration(FIRST_TURN_WAIT_SECS)
+    );
     log(run, now, text);
 }
 
@@ -118,7 +121,9 @@ fn grace(run: &mut Run, now: u64) {
         return;
     }
     run.orch.mcp_ready = true;
-    let text =
-        format!("first turn sent without the MCP ready notice after {MCP_READY_GRACE_SECS} s");
+    let text = format!(
+        "first turn sent without the MCP ready notice after {}",
+        common::numbers::duration(MCP_READY_GRACE_SECS)
+    );
     log(run, now, text);
 }

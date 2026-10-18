@@ -123,6 +123,9 @@ impl App {
         self.repair_alerts_focus();
         self.prune_git();
         self.windows_received_at = Instant::now();
+        // Milestone 9.19 decision 11 (ruling R18): a window list thaws the window ages.
+        self.windows_frozen_at = None;
+        self.settle_listed_age();
         self.tree.prune_runs(&self.runs.runs);
         self.tree.prune(&self.windows);
         let rows = super::nav_rows_of(

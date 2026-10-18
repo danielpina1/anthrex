@@ -26,7 +26,7 @@ fn task_key(id: &str) -> NodeKey {
 fn stage_inspector_shows_branch_head_tier3_and_bisect() {
     let app = app_of(staged_fixture());
     let inspection = inspect_node(&app, &stage_key(1));
-    assert_eq!(inspection.name, "stage 1/2");
+    assert_eq!(inspection.name, "stage 1 of 2");
     assert_eq!(inspection.right.as_deref(), Some("1/3 merged"));
     assert_eq!(inspection.layout, FieldLayout::Rows);
     assert_eq!(
@@ -35,7 +35,7 @@ fn stage_inspector_shows_branch_head_tier3_and_bisect() {
             ("branch", "anthrex/add-reset-3f9a/stage-1 at 1111111"),
             (
                 "tier 3",
-                "bisecting at 2222222 · 41m12s · 2 shards · flaky a::flaky"
+                "bisecting at 2222222 · 41m 12s · 2 shards · flaky a::flaky"
             ),
             // Milestone 9.0.7 decision 18: the failing names are a row of their own.
             ("failing", "a::works"),
@@ -104,7 +104,7 @@ fn task_inspector_shows_stage_origin_and_tier() {
     );
     assert_eq!(
         value(&inspection, "tier"),
-        Some("tier 1: 3 modules · 2m10s · 1 cached · flaky t_x")
+        Some("tier 1: 3 modules · 2m 10s · 1 cached · flaky t_x")
     );
     let inspection = inspect_node(&app, &task_key("t3"));
     assert_eq!(value(&inspection, "stage"), Some("2 of 2"));
@@ -163,4 +163,15 @@ fn the_detail_section_has_one_phase_row_and_a_stage_number() {
         assert_eq!(n.map(|f| f.value.as_str()), Some(number), "{labels:?}");
         assert!(!labels.contains(&"stage no."), "{labels:?}");
     }
+}
+
+/// Milestone 9.19 decision 4: a tier-3 run of 2472 s reads `41m 12s` here as in `run
+/// status` (the CLI's test of the same name), through `numbers::duration`.
+#[test]
+fn the_same_span_reads_the_same_everywhere() {
+    let app = app_of(staged_fixture());
+    let inspection = inspect_node(&app, &stage_key(1));
+    let tier3 = value(&inspection, "tier 3").unwrap();
+    assert!(tier3.contains(" · 41m 12s · "), "{tier3}");
+    assert!(tier3.contains(&common::numbers::duration(2472)), "{tier3}");
 }

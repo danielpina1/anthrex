@@ -19,21 +19,21 @@ fn stage_node_is_drawn_between_run_and_tasks_for_a_multi_run() {
         lines_text(&lines),
         padded(
             &[
-                "                                                            ╭──────────────────────────╮",
-                "                                                          ┌─┤ ✓ t1 reset model S       │",
-                "                                                          │ ╰──────────────────────────╯",
-                "                                                          │",
-                "                      ╭─────────────────────────────────╮ │ ╭──────────────────────────╮",
-                "                    ┌─┤ ✗ stage 1/2  tier 3 ✗ bisecting ├─┼─┤ ● t2 reset endpoint S    │",
-                "                    │ ╰─────────────────────────────────╯ │ ╰──────────────────────────╯",
-                "                    │                                     │",
-                "╭─────────────────╮ │                                     │ ╭──────────────────────────╮",
-                "│ ◉ run 3f9a  1/4 ├─┤                                     └─┤ ▫ fix1 fix t2 S (bisect) │",
-                "╰─────────────────╯ │                                       ╰──────────────────────────╯",
-                "                    │",
-                "                    │ ╭─────────────────────────────────╮   ╭──────────────────────────╮",
-                "                    └─┤ ◌ stage 2/2  tier 3 ◌           ├───┤ ◌ t3 reset view S        │",
-                "                      ╰─────────────────────────────────╯   ╰──────────────────────────╯",
+                "                                                                 ╭──────────────────────────╮",
+                "                                                               ┌─┤ ✓ t1 reset model S       │",
+                "                                                               │ ╰──────────────────────────╯",
+                "                                                               │",
+                "                        ╭────────────────────────────────────╮ │ ╭──────────────────────────╮",
+                "                      ┌─┤ ✗ stage 1 of 2  tier 3 ✗ bisecting ├─┼─┤ ● t2 reset endpoint S    │",
+                "                      │ ╰────────────────────────────────────╯ │ ╰──────────────────────────╯",
+                "                      │                                        │",
+                "╭───────────────────╮ │                                        │ ╭──────────────────────────╮",
+                "│ ◉ run 3f9a  1/4 ✓ ├─┤                                        └─┤ ▫ fix1 fix t2 S (bisect) │",
+                "╰───────────────────╯ │                                          ╰──────────────────────────╯",
+                "                      │",
+                "                      │ ╭────────────────────────────────────╮   ╭──────────────────────────╮",
+                "                      └─┤ ◌ stage 2 of 2  tier 3 ◌           ├───┤ ◌ t3 reset view S        │",
+                "                        ╰────────────────────────────────────╯   ╰──────────────────────────╯",
             ],
             width
         )
@@ -52,11 +52,15 @@ fn stage_node_is_drawn_between_run_and_tasks_for_a_multi_run() {
 fn each_tier3_state_has_its_mark_and_glyph() {
     use proto::FullState;
     for (state, text, glyph) in [
-        (FullState::Green, "stage 1/2  tier 3 ✓ 41m12s", "✓"),
-        (FullState::Red, "stage 1/2  tier 3 ✗ 41m12s", "✗"),
-        (FullState::Running, "stage 1/2  tier 3 running", "⠋"),
-        (FullState::Bisecting, "stage 1/2  tier 3 ✗ bisecting", "✗"),
-        (FullState::None, "stage 1/2  tier 3 ◌", "◌"),
+        (FullState::Green, "stage 1 of 2  tier 3 ✓ 41m", "✓"),
+        (FullState::Red, "stage 1 of 2  tier 3 ✗ 41m", "✗"),
+        (FullState::Running, "stage 1 of 2  tier 3 running", "⠋"),
+        (
+            FullState::Bisecting,
+            "stage 1 of 2  tier 3 ✗ bisecting",
+            "✗",
+        ),
+        (FullState::None, "stage 1 of 2  tier 3 ◌", "◌"),
     ] {
         let (mut snap, windows) = staged_fixture();
         snap.runs[0].stages[0].full.state = state;
@@ -77,13 +81,13 @@ fn each_tier3_state_has_its_mark_and_glyph() {
 }
 
 /// Controller ruling on decision 18: every stage form draws uncut, the widest at
-/// `stage 10/10` (`MAX_STAGE_NODE_WIDTH`), while task boxes keep `MAX_NODE_WIDTH`.
+/// `stage 10 of 10` (`MAX_STAGE_NODE_WIDTH`), while task boxes keep `MAX_NODE_WIDTH`.
 #[test]
 fn every_stage_form_draws_uncut_at_stage_10_of_10() {
     use proto::FullState;
     for (state, secs, tier) in [
-        (FullState::Green, Some(64), "✓ 1m04s"),
-        (FullState::Red, Some(3720), "✗ 1h02m"),
+        (FullState::Green, Some(64), "✓ 1m"),
+        (FullState::Red, Some(3720), "✗ 1h"),
         (FullState::Running, None, "running"),
         (FullState::Bisecting, Some(64), "✗ bisecting"),
         (FullState::None, None, "◌"),
@@ -104,7 +108,7 @@ fn every_stage_form_draws_uncut_at_stage_10_of_10() {
             .skip(usize::from(rect.x))
             .take(usize::from(rect.width))
             .collect();
-        let text = format!("stage 10/10  tier 3 {tier}");
+        let text = format!("stage 10 of 10  tier 3 {tier}");
         assert!(drawn.contains(&format!("{text} ")), "{state:?}: {drawn}");
         assert!(!drawn.contains('…'), "{state:?}: {drawn}");
         assert!(rect.width <= crate::graph::MAX_STAGE_NODE_WIDTH);
@@ -126,7 +130,7 @@ fn every_stage_form_draws_uncut_at_stage_10_of_10() {
 }
 
 /// Milestone 9.2 decision 42: a `pr`-mode stage row draws whole, its pull request
-/// after its tier 3, up to `stage 10/10  tier 3 ✗ bisecting  #9999  ci ✗  99 threads`.
+/// after its tier 3, up to `stage 10 of 10  tier 3 ✗ bisecting  #9999  ci ✗  99 threads`.
 #[test]
 fn a_pr_stage_row_draws_uncut() {
     use crate::tree::pr_fixtures::{pr, pr_fixture};
@@ -144,10 +148,10 @@ fn a_pr_stage_row_draws_uncut() {
     let app = app_of((snap, windows));
     let (layout, lines) = paint_view(&app);
     for (n, text) in [
-        (2, "stage 2/10  tier 3 ✓ 38s  #142  ci ✗  3 threads"),
+        (2, "stage 2 of 10  tier 3 ✓ 38s  #142  ci ✗  3 threads"),
         (
             10,
-            "stage 10/10  tier 3 ✗ bisecting  #9999  ci ✗  99 threads",
+            "stage 10 of 10  tier 3 ✗ bisecting  #9999  ci ✗  99 threads",
         ),
     ] {
         let rect = rect_of(&layout, &stage_key(n));

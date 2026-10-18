@@ -119,9 +119,10 @@ pub struct App {
     pub modal: Option<Modal>,
     pub link: Link,
     pub spinner_frame: usize,
-    /// The local zone's offset from UTC, in seconds, for the conversation view's turn
-    /// times. `lib.rs` reads it once at start (reading the zone is I/O); 0 until then.
-    pub utc_offset_secs: i64,
+    /// The local zone's offset from UTC, in seconds, for every clock time the client
+    /// prints (milestone 9.19 decision 3). `lib.rs` reads it (reading the zone is I/O)
+    /// and the tick stores it, so a DST change mid-session is picked up; 0 until then.
+    pub utc_offset_secs: i32,
     pub scroll_offset: usize,
     pub default_dir: PathBuf,
     /// Set by `tui::run` from `dirs::home_dir()`.
@@ -150,6 +151,9 @@ pub struct App {
     stopping: Option<Instant>,
     toast: Option<toast::Toast>,
     windows_received_at: Instant,
+    /// Milestone 9.19 decision 11 (ruling R18): the tick the link was lost at, while no
+    /// window list has come since; window ages measure to it.
+    windows_frozen_at: Option<Instant>,
     /// (cols, rows) of the main inner area; (0, 0) until the first draw.
     term_size: (u16, u16),
     pending_resize: Option<Instant>,
@@ -168,6 +172,8 @@ pub struct App {
     /// Milestone 8c decision 11: the overview rooted at a run; `None` is the project tree.
     pub run_view: Option<RunView>,
     runs_received_at: Instant,
+    /// The same for run ages, until the first runs snapshot after the reconnect.
+    runs_frozen_at: Option<Instant>,
     /// Decision 1: `false` only while a refused `Run(Subscribe)` waits for `on_tick`.
     run_subscribed: bool,
     /// Milestone 9: the last tagged request's id (decision 2), and the run a goal
@@ -192,8 +198,8 @@ pub struct App {
     pub settings_cache: Option<screens::SettingsCache>,
     /// Milestone 9.8 decision 37: the discovered model catalogs (`DaemonMsg::Models`).
     pub catalogs: model_picker::Catalogs,
-    /// Milestone 9.8 (preflight F10): the last tick's clock, which the picker's
-    /// `updated <age> ago` is measured against; the renderer never reads the clock.
+    /// Milestone 9.8 (preflight F10): the last tick's clock, which every displayed age
+    /// is measured to (9.19 decision 11); the renderer never reads the clock.
     pub ticked_at: Instant,
     pub screen: Option<screens::Screen>, // Decision 33: the open full-body screen.
     /// Milestone 9.3 decision 8: each project's goal draft, and the goal request a
@@ -242,6 +248,7 @@ impl App {
             stopping: None,
             toast: None,
             windows_received_at: Instant::now(),
+            windows_frozen_at: None,
             term_size: (0, 0),
             pending_resize: None,
             pending_focus: None,
@@ -250,6 +257,7 @@ impl App {
             runs: runs::no_runs(),
             run_view: None,
             runs_received_at: Instant::now(),
+            runs_frozen_at: None,
             run_subscribed: true,
             next_request_id: 0,
             pending_open: None,
@@ -292,9 +300,38 @@ impl App {
         self.age_secs(w.since_secs)
     }
 
-    /// Seconds value from the last window list, plus the time since it arrived.
+    /// Seconds value from the last window list, plus the time from its arrival to the
+    /// last tick (milestone 9.19: an age moves with the tick, never with the wall clock
+    /// read while rendering), or to the freeze while the link is down (decision 11).
     pub fn age_secs(&self, secs: u64) -> u64 {
-        secs.saturating_add(self.windows_received_at.elapsed().as_secs())
+        let to = self.windows_frozen_at.unwrap_or(self.ticked_at);
+        let since = to.saturating_duration_since(self.windows_received_at);
+        secs.saturating_add(since.as_secs())
+    }
+
+    /// Decision 11: the tick the shown values froze at, while any still are.
+    pub fn frozen_at(&self) -> Option<Instant> {
+        match (self.windows_frozen_at, self.runs_frozen_at) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
+    }
+
+    /// Whether the window-side values (window ages, git state) are frozen: the link
+    /// was lost and no window list has come since (review round 1, M1).
+    pub fn windows_frozen(&self) -> bool {
+        self.windows_frozen_at.is_some()
+    }
+
+    /// How long, at the last tick, the shown values have been frozen.
+    pub fn frozen_for(&self) -> Option<Duration> {
+        (self.frozen_at()).map(|at| self.ticked_at.saturating_duration_since(at))
+    }
+
+    /// Keeps the tree's copy of the window list's age (`TreeState::listed_age_secs`,
+    /// which hides a finished sub-agent on time) in step with [`App::age_secs`].
+    pub(crate) fn settle_listed_age(&mut self) {
+        self.tree.listed_age_secs = self.age_secs(0);
     }
 
     /// The colour palette the kit's roles resolve against (milestone 9.0.6 decision 1).

@@ -29,19 +29,21 @@ pub(super) fn title(s: &ProfileScreen, width: usize, p: Palette) -> Line<'static
     )
 }
 
-/// The card's cell: `checking…` while the row's edit verifies, `✗ <took>` after a ✗,
-/// else its check's `✓ 12s` / `✗ 3m10s`.
+/// The card's cell: `checking…` while the row's edit verifies, `✗ <took>` after a ✗
+/// (`✗ never ran` when its check never ran: `secs == 0` and no tail, milestone 9.19
+/// decision 9, worded to fit the 11-column cell), else its check's `✓ 12s` / `✗ 3m 10s`.
 fn cell(s: &ProfileScreen, row: &Row, p: Palette) -> Option<(String, Role)> {
     match s.edit_of(&row.key) {
         Some(RowEditState::Verifying) => Some(("checking…".into(), Role::Working)),
-        Some(RowEditState::Failed { secs, .. }) => Some((
-            format!(
-                "{} {}",
-                crate::theme::glyph(crate::theme::Glyph::Failed, p.ascii),
-                profile_words::took(*secs)
-            ),
-            Role::Failed,
-        )),
+        Some(RowEditState::Failed { secs, tail, .. }) => {
+            let took = if *secs == 0 && tail.is_empty() {
+                "never ran".to_owned()
+            } else {
+                common::numbers::duration(*secs)
+            };
+            let mark = crate::theme::glyph(crate::theme::Glyph::Failed, p.ascii);
+            Some((format!("{mark} {took}"), Role::Failed))
+        }
         None => row.check.as_ref().map(|c| {
             let r = if c.ok { Role::Done } else { Role::Failed };
             (card_cell(c, p.ascii), r)

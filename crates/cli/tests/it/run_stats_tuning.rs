@@ -107,8 +107,10 @@ fn budget(tool_calls: u32, minutes: u32) -> Budget {
 }
 
 /// `yyyy-mm-dd hh:mm` (the brief's `\d{4}-\d{2}-\d{2} \d{2}:\d{2}`).
+/// `2026-10-12 14:30 UTC`: the `REFIT` column is daemon text, UTC and labelled
+/// (milestone 9.19 decision 3).
 fn is_minute(text: &str) -> bool {
-    let shape = "dddd-dd-dd dd:dd";
+    let shape = "dddd-dd-dd dd:dd UTC";
     text.len() == shape.len()
         && text
             .chars()
@@ -154,15 +156,18 @@ fn stats_prints_the_tuning_block_for_recorded_history() {
             tuning_path.display()
         )
     );
-    assert_eq!(rows[1], "  CLASS  SAMPLES  BUDGET          WEIGHT  REFIT");
+    assert_eq!(
+        rows[1],
+        "  CLASS  SAMPLES  BUDGET              WEIGHT    REFIT"
+    );
     let s = rows[2]
-        .strip_prefix("  S      34       55 calls 18m    9m      ")
+        .strip_prefix("  S      34       55 calls · 18 min   9m 10s    ")
         .unwrap_or_else(|| panic!("the S row: {text}"));
     assert!(is_minute(s), "the S row's refit date: {s:?}");
     assert_eq!(
         rows[3..].join("\n"),
-        "  M      12/30    150 calls 60m   27m*    not yet
-  hub    3/30     150 calls 60m   27m*    not yet
+        "  M      12/30    150 calls · 60 min  27m 30s*  not yet
+  hub    3/30     150 calls · 60 min  27m 30s*  not yet
   * derived from another class's median
 tuning proposals:
   thresholds.s  S line threshold 20 → 35 (p90 of 34 merged S tasks)

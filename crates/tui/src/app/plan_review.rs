@@ -4,7 +4,7 @@
 //! (decision 16). `Keymap::review_mode` is kept in step with `App.plan_review` here,
 //! in one place (Risks 1). Rendering is `ui/plan_review.rs`; this file does no I/O.
 
-use super::plan_summary::{overlap_lines, overlaps, plan_stages};
+use super::plan_summary::{overlap_lines, overlaps};
 use super::{App, Effect};
 use crate::inspector::run_format::after_text;
 use crate::inspector::run_format::{route_label, test_mode_text};
@@ -256,7 +256,8 @@ fn sections(run: &RunInfo, task: &TaskInfo, ascii: bool) -> Vec<(&'static str, V
 /// `atomic` (the plan's reason, else `yes`) and `interface change` when set. A Single
 /// plan has none, so its review is as it was.
 fn stage_sections(run: &RunInfo, task: &TaskInfo) -> Vec<(&'static str, Vec<String>)> {
-    let stages = plan_stages(run);
+    // Ruling C-28 (5), milestone 9.19 decision 7: the one stage count.
+    let stages = common::progress::stage_count(run);
     if stages <= 1 {
         return Vec::new();
     }

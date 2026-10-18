@@ -18,6 +18,7 @@ use finish::{accept, confirm_id, discard};
 
 use crate::client::CliClient;
 use clap::{Args, Subcommand};
+use common::numbers::Zone;
 use proto::{
     ClientMsg, DaemonMsg, FinishAction, PlanEdit, RunInfo, RunReply, RunRequest, RunsSnapshot,
 };
@@ -324,15 +325,20 @@ async fn dispatch(command: RunCommand, socket: &Path, dir: Option<PathBuf>) -> a
                 let id = resolve_run(&snapshot.runs, &run).map_err(anyhow::Error::msg)?;
                 snapshot.runs.retain(|r| r.run_id == id);
             }
+            // Milestone 9.19 decision 3: the viewer's zone, read once per command.
+            let zone = Zone::Local(common::localtime::offset_secs(snapshot.now));
             // Task M9.2.14 fix round 1 (m1): everything `run status` prints is sanitised.
             if json {
                 let text = serde_json::to_string_pretty(&snapshot)?;
                 println!("{}", status::printable(&text));
             } else if snapshot.runs.is_empty() {
-                print!("{}", status::brakes_head(&snapshot.brakes, snapshot.now));
+                print!(
+                    "{}",
+                    status::brakes_head(&snapshot.brakes, snapshot.now, zone)
+                );
                 eprintln!("no runs");
             } else {
-                let text = status::listing(&snapshot, tui::local_utc_offset_secs());
+                let text = status::listing(&snapshot, zone);
                 print!("{}", status::printable(&text));
             }
             Ok(())
@@ -436,12 +442,9 @@ async fn start(
         other => return print_outcome(other),
     };
     println!("{run_id}");
-    let run = runs
-        .list()
-        .await?
-        .runs
-        .into_iter()
-        .find(|r| r.run_id == run_id);
+    let listed = runs.list().await?;
+    let now = listed.now;
+    let run = listed.runs.into_iter().find(|r| r.run_id == run_id);
     let mut err = String::new();
     if let Some(run) = &run {
         for task in &run.tasks {
@@ -459,7 +462,8 @@ async fn start(
     } else {
         err.push_str(&format!("approve with: anthrex run approve {run_id}\n"));
         if let Some(run) = &run {
-            err.push_str(&status::run_block(run, tui::local_utc_offset_secs()));
+            let zone = Zone::Local(common::localtime::offset_secs(now));
+            err.push_str(&status::run_block(run, now, zone));
         }
     }
     eprint!("{}", status::printable(&err));

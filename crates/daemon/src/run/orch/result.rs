@@ -4,7 +4,7 @@
 
 use serde_json::{Map, Value, json};
 
-use super::json::{fold_all, hh_mm, label, shrink_strings, size};
+use super::json::{at_text, fold_all, label, shrink_strings, size};
 use crate::run::messages::summary;
 use crate::run::model::{Run, Task};
 
@@ -69,14 +69,14 @@ pub fn task_result(_run: &Run, task: &Task, git: Option<&Result<TaskGit, String>
             "signal": d.signal, "summary": d.summary, "test": d.test, "red": d.red,
         })),
         "checks": task.checks.iter().map(|c| json!({
-            "at": hh_mm(c.at),
+            "at": at_text(c.at),
             "ok": c.ok,
             "code": c.code,
             "timed_out": c.timed_out,
             "summary": c.summary.clone().unwrap_or_else(|| summary(&c.tail)),
         })).collect::<Vec<_>>(),
         "proofs": task.proofs.iter().map(|p| json!({
-            "at": hh_mm(p.at),
+            "at": at_text(p.at),
             "test": p.test,
             "red": p.red,
             "ok": p.red_failed && (p.red_only || (p.head_passed && p.matched)),
@@ -108,7 +108,7 @@ pub fn task_result(_run: &Run, task: &Task, git: Option<&Result<TaskGit, String>
             "interfaces": r.interfaces,
             "risks": r.risks,
         })),
-        "history": task.history.iter().map(|e| format!("{} {}", hh_mm(e.at), e.text)).collect::<Vec<_>>(),
+        "history": task.history.iter().map(|e| format!("{} {}", at_text(e.at), e.text)).collect::<Vec<_>>(),
     });
     if let (Some(map), Some(git)) = (answer.as_object_mut(), git) {
         insert_git(map, git);

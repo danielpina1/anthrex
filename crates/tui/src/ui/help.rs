@@ -7,8 +7,9 @@
 use crate::app::App;
 use crate::app::help::HelpView;
 use crate::safe_text::one_line;
-use crate::theme::{Palette, Role, fold, role};
+use crate::theme::{Palette, Role, ascii_twins, fold, role};
 use crate::ui::kit::{self, Hint};
+use common::glossary::GLOSSARY;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -29,6 +30,9 @@ pub const TITLE: &str = "keys";
 const INDENT: usize = 2;
 /// Between the key column and the words.
 const GAP: usize = 2;
+/// The glossary group's name. Its terms are words, not keys, so it sizes its own key
+/// column; the key groups share one, as they always have.
+const NUMBERS: &str = "numbers";
 
 fn rows(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
     pairs
@@ -37,9 +41,10 @@ fn rows(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
         .collect()
 }
 
-/// The ten groups in the spec's order (the document gate's added by the final fix
-/// wave), each with its context's keys; every key that
-/// names the prefix takes it from `prefix_label` (milestone 6.9 decision 38).
+/// The eleven groups in the spec's order (the document gate's added by the final fix
+/// wave, the `numbers` glossary last: milestone 9.19 decision 15), each with its
+/// context's keys; every key that names the prefix takes it from `prefix_label`
+/// (milestone 6.9 decision 38).
 pub fn help_groups(prefix_label: &str) -> Vec<HelpGroup> {
     let p = prefix_label;
     let global = [
@@ -70,7 +75,7 @@ pub fn help_groups(prefix_label: &str) -> Vec<HelpGroup> {
         .collect();
     global.push((format!("{p} {p}"), format!("send a literal {p}")));
     global.push((format!("{p} ?"), "this help".to_string()));
-    vec![
+    let mut groups = vec![
         HelpGroup {
             name: "global",
             rows: global,
@@ -207,7 +212,26 @@ pub fn help_groups(prefix_label: &str) -> Vec<HelpGroup> {
                 ("esc", "back (asks before discarding changes)"),
             ]),
         },
-    ]
+    ];
+    groups.push(numbers_group());
+    groups
+}
+
+/// The glossary's group (milestone 9.19 decision 15): each row is a term, then
+/// `shown — definition`, cut to the box like every row.
+fn numbers_group() -> HelpGroup {
+    HelpGroup {
+        name: NUMBERS,
+        rows: GLOSSARY
+            .iter()
+            .map(|t| {
+                (
+                    t.term.to_string(),
+                    format!("{} — {}", t.shown, t.definition),
+                )
+            })
+            .collect(),
+    }
 }
 
 /// The line each group's name is drawn on: the groups' names and rows, in order.
@@ -227,18 +251,34 @@ pub(crate) fn group_tops(groups: &[HelpGroup]) -> Vec<usize> {
 /// accent; words cut to `width`. Folded and sanitised (decisions 5, Global
 /// Constraint 4).
 fn lines(groups: &[HelpGroup], width: usize, p: Palette) -> Vec<Line<'static>> {
-    let clean = |s: &str| fold(&one_line(s), p.ascii);
-    let key_w = groups
-        .iter()
-        .flat_map(|g| &g.rows)
-        .map(|(k, _)| clean(k).width())
-        .max()
-        .unwrap_or(0);
-    let room = width.saturating_sub(INDENT + key_w + GAP);
+    // The glossary's rows hold glyphs (`✓`, `⚑`): their twins first, then the punctuation.
+    let clean = |s: &str| {
+        let s = one_line(s);
+        let s = if p.ascii {
+            // `fold` is shared with other screens, so the glossary's `×` and `÷` are
+            // folded here only.
+            ascii_twins(&s).replace('×', "x").replace('÷', "/")
+        } else {
+            s
+        };
+        fold(&s, p.ascii)
+    };
+    let key_width = |numbers: bool| {
+        groups
+            .iter()
+            .filter(|g| (g.name == NUMBERS) == numbers)
+            .flat_map(|g| &g.rows)
+            .map(|(k, _)| clean(k).width())
+            .max()
+            .unwrap_or(0)
+    };
+    let (keys_w, numbers_w) = (key_width(false), key_width(true));
     let ellipsis = crate::theme::ellipsis(p);
     let bold = Style::default().add_modifier(Modifier::BOLD);
     let mut out = Vec::new();
     for g in groups {
+        let key_w = if g.name == NUMBERS { numbers_w } else { keys_w };
+        let room = width.saturating_sub(INDENT + key_w + GAP);
         out.push(Line::styled(clean(g.name), bold));
         for (key, words) in &g.rows {
             let key = clean(key);
@@ -328,3 +368,7 @@ pub fn render(frame: &mut Frame, app: &App, view: &HelpView, area: Rect) {
 #[cfg(test)]
 #[path = "help_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "help_numbers_tests.rs"]
+mod numbers_tests;

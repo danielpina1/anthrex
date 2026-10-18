@@ -132,10 +132,10 @@ fn below_30_rows_the_run_view_is_a_list() {
     assert_eq!(
         rows,
         vec![
-            "◉ run 0723  1/3",
-            "  ✓ stage 1/2  tier 3 ✓ 38s",
+            "◉ run 0723  1/3 ✓",
+            "  ✓ stage 1 of 2  tier 3 ✓ 38s",
             "    ✓ t1 add mul(…  merged",
-            "  ⠋ stage 2/2  tier 3 running",
+            "  ⠋ stage 2 of 2  tier 3 running",
             "▌   ◐ t2 report_p…  in review · r1  after t1",
             "    ◌ t3 docs for…  waiting         after t2",
         ]
@@ -144,10 +144,10 @@ fn below_30_rows_the_run_view_is_a_list() {
     assert_eq!(
         canvas_rows(&app, 60, 24),
         vec![
-            "◉ run 0723  1/3",
-            "  ✓ stage 1/2  tier 3 ✓ 38s",
+            "◉ run 0723  1/3 ✓",
+            "  ✓ stage 1 of 2  tier 3 ✓ 38s",
             "    ✓ t1 add mul() to a   S tdd   merged",
-            "  ⠋ stage 2/2  tier 3 running",
+            "  ⠋ stage 2 of 2  tier 3 running",
             "▌   ◐ t2 report_product…  M tdd   in review · r1  after t1",
             "    ◌ t3 docs for repor…  S none  waiting         after t2",
         ]
@@ -179,8 +179,8 @@ fn a_selected_root_keeps_its_glyph() {
     let mut app = two_stage_run_selected("t2");
     select(&mut app, NodeKey::Run(MUL.into()));
     let rows = canvas_rows(&app, 80, 24);
-    assert_eq!(rows[0], "▌◉ run 0723  1/3");
-    assert_eq!(rows[1], "  ✓ stage 1/2  tier 3 ✓ 38s");
+    assert_eq!(rows[0], "▌◉ run 0723  1/3 ✓");
+    assert_eq!(rows[1], "  ✓ stage 1 of 2  tier 3 ✓ 38s");
 }
 
 #[test]
@@ -288,8 +288,8 @@ fn the_list_in_ascii() {
         audit::rows(&buffer).join("\n")
     );
     let rows = canvas_rows(&app, 80, 24);
-    assert_eq!(rows[0], "@ run 0723  1/3");
-    assert_eq!(rows[1], "  + stage 1/2  tier 3 + 38s");
+    assert_eq!(rows[0], "@ run 0723  1/3 +");
+    assert_eq!(rows[1], "  + stage 1 of 2  tier 3 + 38s");
     assert_eq!(rows[4], ">   % t2 report...  in review - r1  after t1");
     app.sidebar_visible = false;
     let rows = canvas_rows(&app, 60, 24);

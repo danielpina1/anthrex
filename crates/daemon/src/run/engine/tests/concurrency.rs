@@ -416,7 +416,7 @@ fn attention_and_log_name_the_cap() {
         logged(&fx, "writers"),
         vec![
             "rate limit on codex: writers 3 → 1",
-            "no rate limit on codex for 10 min: writers 1 → 2",
+            "no rate limit on codex for 10m 00s: writers 1 → 2",
         ]
     );
     assert!(attention(&fx).contains(&capped(2)), "{:?}", attention(&fx));
@@ -424,7 +424,7 @@ fn attention_and_log_name_the_cap() {
     fx.send(at + 1200, EventKind::Tick);
     assert_eq!(
         logged(&fx, "writers").last().map(String::as_str),
-        Some("no rate limit on codex for 10 min: writers 2 → 3")
+        Some("no rate limit on codex for 10m 00s: writers 2 → 3")
     );
     assert!(!attention(&fx).iter().any(|l| l.contains("capped")));
     assert!(caps(&fx).is_empty());

@@ -238,9 +238,9 @@ fn card_cells() {
     let pass = check(Some(0), false, 12);
     let fail = check(Some(1), false, 190);
     assert_eq!(card_cell(&pass, false), "✓ 12s");
-    assert_eq!(card_cell(&fail, false), "✗ 3m10s");
+    assert_eq!(card_cell(&fail, false), "✗ 3m 10s");
     assert_eq!(card_cell(&pass, true), "+ 12s");
-    assert_eq!(card_cell(&fail, true), "x 3m10s");
+    assert_eq!(card_cell(&fail, true), "x 3m 10s");
 }
 
 fn check(code: Option<i32>, timed_out: bool, secs: u64) -> CommandCheck {
@@ -262,10 +262,10 @@ fn check_cells_read_pass_fail_and_timeout() {
     let late = check(None, true, 600);
     assert_eq!(check_cell(&pass, false), "✓ 0 · 4s");
     assert_eq!(check_cell(&fail, false), "✗ 101 · 12s");
-    assert_eq!(check_cell(&late, false), "✗ timed out · 600s");
+    assert_eq!(check_cell(&late, false), "✗ timed out · 10m 00s");
     assert_eq!(check_cell(&pass, true), "+ 0 - 4s");
     assert_eq!(check_cell(&fail, true), "x 101 - 12s");
-    assert_eq!(check_cell(&late, true), "x timed out - 600s");
+    assert_eq!(check_cell(&late, true), "x timed out - 10m 00s");
 }
 
 /// A verified command's row carries its check, only while the command is the one run.

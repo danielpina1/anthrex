@@ -461,7 +461,7 @@ fn a_red_run_that_times_out_is_no_evidence_of_failure() {
     let runs = prove(&proof);
     assert!(!runs.red_failed, "{runs:?}");
     assert!(
-        runs.red_tail.ends_with("[anthrex: timed out after 1 s]"),
+        runs.red_tail.ends_with("[anthrex: timed out after 1s]"),
         "{runs:?}"
     );
     assert!(!runs.head_passed && !runs.matched, "{runs:?}");

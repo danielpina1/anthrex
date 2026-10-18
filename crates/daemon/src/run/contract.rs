@@ -390,19 +390,20 @@ pub fn is_stall_nudge(text: &str) -> bool {
 }
 
 /// Decision 32's stall nudge, after the interrupted turn.
-pub fn stall_nudge(minutes: u64) -> String {
+pub fn stall_nudge(secs: u64) -> String {
     format!(
-        "{STALL_NUDGE_HEAD}{minutes} minutes without any progress. Continue the task, or call task_blocked if you cannot."
+        "{STALL_NUDGE_HEAD}{} without any progress. Continue the task, or call task_blocked if you cannot.",
+        common::numbers::duration(secs)
     )
 }
 
 /// Decision 40's soft budget message: the session's spend against the task's budget.
 pub fn budget_wrap_up(spent: Spend, budget: Budget) -> String {
     format!(
-        "[anthrex] This task has used its budget ({}/{} tool calls, {}/{} minutes). Wrap up now: commit what works and call task_done, or call task_blocked with kind mis_sized.",
+        "[anthrex] This task has used its budget ({}/{} tool calls, {} of {} min). Wrap up now: commit what works and call task_done, or call task_blocked with kind mis_sized.",
         spent.tool_calls,
         budget.tool_calls,
-        spent.secs / 60,
+        common::numbers::duration(spent.secs),
         budget.minutes
     )
 }
@@ -441,11 +442,11 @@ pub fn sandbox_unavailable_text(error: &str) -> String {
 /// The closing line of every gate's rung-1 message (Interfaces).
 const FIX_IT: &str = "Fix it, commit, then call task_done again.";
 
-/// How a shell run ended, for a message: `exit <code>`, `timed out after <m> minutes`,
+/// How a shell run ended, for a message: `exit <code>`, `timed out after <duration>`,
 /// or (invented, a run that never started) `no exit code`.
 fn ended_how(code: Option<i32>, timed_out: bool, secs: u64) -> String {
     match (timed_out, code) {
-        (true, _) => format!("timed out after {} minutes", secs / 60),
+        (true, _) => format!("timed out after {}", common::numbers::duration(secs)),
         (false, Some(code)) => format!("exit {code}"),
         (false, None) => "no exit code".to_string(),
     }

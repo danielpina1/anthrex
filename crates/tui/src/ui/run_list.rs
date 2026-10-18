@@ -245,8 +245,17 @@ fn row_line(
             }
         }
         None => {
-            let text = theme::fold(&content_text_in(row, p.ascii), p.ascii);
             let room = width.saturating_sub(indent + 2);
+            // Milestone 9.19 review I1: a stage row's pull request fitted to the list's
+            // own room, so the CI mark outlives the thread count.
+            let text = match &row.kind {
+                RowKind::Stage { run, stage } => {
+                    let text = crate::graph::run_text::stage_text_within(run, stage, p.ascii, room);
+                    crate::safe_text::one_line(&text)
+                }
+                _ => content_text_in(row, p.ascii),
+            };
+            let text = theme::fold(&text, p.ascii);
             let cut = truncate_in(&text, room, p.ascii);
             // Review finding m2: a stage row's CI mark in its role, where the cut kept it.
             match crate::graph::stage_pr::ci_mark_span(row, &text, p.ascii) {

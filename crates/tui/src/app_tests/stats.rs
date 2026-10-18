@@ -241,7 +241,7 @@ fn a_refused_send_fails_the_screen() {
 #[test]
 fn stats_scroll() {
     let mut app = running_app();
-    // 13 rows inside the frame for the sample's 16 lines: the last first line is 4.
+    // 13 rows inside the frame for the sample's 19 lines: the last first line is 7.
     app.set_body_area(Rect::new(0, 0, 80, 15));
     let id = open(&mut app);
     reply(&mut app, id, history());
@@ -254,19 +254,19 @@ fn stats_scroll() {
     tap(&mut app, KeyCode::Up);
     assert_eq!(scroll(&app), 1);
     tap(&mut app, KeyCode::PageDown);
-    assert_eq!(scroll(&app), 4);
+    assert_eq!(scroll(&app), 7);
     tap(&mut app, KeyCode::Char('j'));
-    assert_eq!(scroll(&app), 4);
+    assert_eq!(scroll(&app), 7);
     tap(&mut app, KeyCode::Char('k'));
-    assert_eq!(scroll(&app), 3, "the first press back moves the view");
+    assert_eq!(scroll(&app), 6, "the first press back moves the view");
     tap(&mut app, KeyCode::PageUp);
     assert_eq!(scroll(&app), 0);
     tap(&mut app, KeyCode::PageDown);
-    assert_eq!(scroll(&app), 4);
-    // A taller body (15 rows inside): the last first line is 2, and `k` steps from it.
+    assert_eq!(scroll(&app), 7);
+    // A taller body (15 rows inside): the last first line is 5, and `k` steps from it.
     app.set_body_area(Rect::new(0, 0, 80, 17));
     tap(&mut app, KeyCode::Char('k'));
-    assert_eq!(scroll(&app), 1, "clamped first");
+    assert_eq!(scroll(&app), 4, "clamped first");
     app.set_body_area(Rect::new(0, 0, 80, 40));
     tap(&mut app, KeyCode::Char('j'));
     assert_eq!(scroll(&app), 0, "everything fits");

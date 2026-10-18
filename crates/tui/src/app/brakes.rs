@@ -7,6 +7,7 @@
 use super::alerts::DispatchHeldKind;
 use super::{App, Effect, Modal, PendingAction};
 use crate::safe_text::one_line;
+use common::numbers::{self, Zone};
 use proto::brakes::BrakesInfo;
 use proto::{ClientMsg, RunRequest};
 
@@ -31,13 +32,14 @@ pub fn release_ask(queued: usize) -> String {
 pub const QUOTA_WAITS: &str = "waits for the window to reset or a lower reading";
 
 /// Decision 33: the Settings screen's read-only row, never saved:
-/// `dispatch hold   on since <HH:MM> UTC (<by>) · <prefix> H`, or `… off · <prefix> H`;
-/// `dot` is the separator (`theme::dot`, `-` in ASCII).
-pub fn hold_row(brakes: &BrakesInfo, prefix: &str, dot: &str) -> String {
+/// `dispatch hold   on since <clock> (<by>) · <prefix> H`, or `… off · <prefix> H`;
+/// `dot` is the separator (`theme::dot`, `-` in ASCII). The time is the viewer's clock
+/// against the daemon's `now` (milestone 9.19 decision 3).
+pub fn hold_row(brakes: &BrakesInfo, prefix: &str, dot: &str, now: u64, zone: Zone) -> String {
     let state = match &brakes.hold {
         Some(hold) => format!(
-            "on since {} UTC ({})",
-            common::text::hh_mm(hold.since),
+            "on since {} ({})",
+            numbers::clock(hold.since, now, zone),
             one_line(&hold.by)
         ),
         None => "off".to_owned(),

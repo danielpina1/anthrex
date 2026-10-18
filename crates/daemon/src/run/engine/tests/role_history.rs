@@ -225,7 +225,7 @@ fn each_role_keeps_its_dispatch_snapshot_after_a_config_change() {
     decider_ended(
         &mut fx,
         &decider,
-        &fallback("the decider timed out after 60 s"),
+        &fallback("the decider timed out after 1m 00s"),
     );
     let ended = fx.run().role_routing_decisions.clone();
     assert_eq!(ended.len(), dispatched.len());
@@ -343,7 +343,11 @@ fn decider_fallback_is_recorded_as_fallback() {
     let mut fx = running();
     let id = decider_dispatched(&mut fx, 77);
     assert_eq!(id, format!("{RUN_ID}/decider/77"));
-    let effects = decider_ended(&mut fx, &id, &fallback("the decider timed out after 60 s"));
+    let effects = decider_ended(
+        &mut fx,
+        &id,
+        &fallback("the decider timed out after 1m 00s"),
+    );
     let lines = role_lines(&effects);
     assert_eq!(lines.len(), 1, "{effects:#?}");
     let d = &lines[0].1;
@@ -353,7 +357,7 @@ fn decider_fallback_is_recorded_as_fallback() {
     );
     assert_eq!(
         d.result.as_deref(),
-        Some("the decider timed out after 60 s")
+        Some("the decider timed out after 1m 00s")
     );
     assert_eq!(d.task_id.as_deref(), Some("t1"));
     // An answer is `completed`.

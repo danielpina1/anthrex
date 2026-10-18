@@ -78,7 +78,7 @@ fn the_fresh_card_at_80x24_and_120x40() {
                     " ",
                     "check",
                     "cargo test --workspace",
-                    &format!("{pass} 3m10s"),
+                    &format!("{pass} 3m 10s"),
                     "check",
                     iw,
                 ),
@@ -173,7 +173,7 @@ fn the_changes_card_shows_old_and_new() {
         ] {
             assert!(text.contains(&want), "{ascii}: {want}\n{text}");
         }
-        let pass = if ascii { "+ 1m10s" } else { "✓ 1m10s" };
+        let pass = if ascii { "+ 1m 10s" } else { "✓ 1m 10s" };
         assert!(text.contains(pass), "{text}");
         assert!(
             !text.contains("cargo fetch"),
@@ -278,4 +278,80 @@ fn the_card_over_an_unreadable_file_says_enter_replaces_it() {
         "{text}"
     );
     assert!(!text.contains("⏎ shows it"), "{text}");
+}
+
+/// Milestone 9.19 decision 9: a row edit whose check never ran (`secs == 0`, no tail,
+/// written only when the daemon failed or restarted before checking) is `✗ never ran`
+/// on the card (fix round 1 ruling: it fits the 11-column cell), never `✗ 0s`; a check
+/// that really ran in under a second is `✗ 0s`.
+#[test]
+fn a_check_that_never_ran_is_not_zero_seconds() {
+    for (tail, want) in [("", "✗ never ran"), ("x", "✗ 0s")] {
+        let mut app = fresh_app(false);
+        let s = screen_mut(&mut app);
+        let mut st = status_of(false, Some(ProposalState::Ready));
+        if let Some(p) = st.proposal.as_mut() {
+            p.edit = Some(proto::RowEdit {
+                key: "check".into(),
+                value: Some("\"cargo nextest run\"".into()),
+                state: proto::RowEditState::Failed {
+                    reason: "the daemon restarted".into(),
+                    tail: tail.into(),
+                    secs: 0,
+                },
+            });
+        }
+        s.status = Some(st);
+        let p = app.palette();
+        let Some(crate::app::screens::Screen::Profile(s)) = &app.screen else {
+            panic!("no profile screen");
+        };
+        let rows = s.rows();
+        let row = rows
+            .iter()
+            .find(|r| r.key == "check")
+            .expect("the check row");
+        let cell = super::card::parts(s, row, false, p).cell;
+        assert_eq!(cell, Some((want.to_owned(), Role::Failed)), "tail {tail:?}");
+    }
+}
+
+/// Fix round 1 (review I1): the never-ran cell is drawn whole at 80x24, in Unicode and
+/// in ASCII: its 11 columns fit the cell, so the row is not cut to `… did not …`.
+#[test]
+fn a_check_that_never_ran_is_drawn_whole() {
+    for ascii in [false, true] {
+        let mut app = fresh_app(ascii);
+        let s = screen_mut(&mut app);
+        let mut st = status_of(false, Some(ProposalState::Ready));
+        if let Some(p) = st.proposal.as_mut() {
+            p.edit = Some(proto::RowEdit {
+                key: "check".into(),
+                value: Some("\"cargo nextest run\"".into()),
+                state: proto::RowEditState::Failed {
+                    reason: "the daemon restarted".into(),
+                    tail: String::new(),
+                    secs: 0,
+                },
+            });
+        }
+        s.status = Some(st);
+        let cell = if ascii {
+            "x never ran"
+        } else {
+            "✗ never ran"
+        };
+        let rows = interior(&audit::draw(&app, 80, 24), ascii).rows;
+        let row = rows.iter().find(|r| r.contains(cell));
+        assert!(
+            row.is_some(),
+            "ascii {ascii}: no {cell:?} in\n{}",
+            rows.join("\n")
+        );
+        let row = row.unwrap();
+        assert!(
+            !row.contains("never ran…") && !row.contains("never ran..."),
+            "{row}"
+        );
+    }
 }

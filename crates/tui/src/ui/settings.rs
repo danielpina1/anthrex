@@ -214,7 +214,11 @@ fn limit_lines(s: &SettingsScreen, keys: bool, p: Palette) -> (Vec<Line<'static>
         };
         if let Some(note) = class {
             // Past the selection mark (2) and the label (18).
-            let text = format!("{}{note}", " ".repeat(2 + 18));
+            let text = format!(
+                "{}{}",
+                " ".repeat(2 + 18),
+                crate::theme::fold(&note, p.ascii)
+            );
             out.push(Line::styled(text, role(Role::Muted, p)));
         }
     }
@@ -236,7 +240,8 @@ fn section_lines(
     let (mut lines, at) = limit_lines(s, keys, p);
     // Milestone 9.16 decision 33: the hold, read-only (not a row the keys select).
     let prefix = &app.settings.prefix_label;
-    let hold = crate::app::brakes::hold_row(&app.runs.brakes, prefix, dot(p));
+    let hold =
+        crate::app::brakes::hold_row(&app.runs.brakes, prefix, dot(p), app.run_now(), app.zone());
     lines.push(Line::styled(format!("  {hold}"), role(Role::Muted, p)));
     (lines, at)
 }
@@ -386,7 +391,7 @@ pub fn render(frame: &mut Frame, app: &App, s: &SettingsScreen, area: Rect) {
         let lines = models_table::lines(app, s, size, keys_here, notes, outcome);
         frame.render_widget(Paragraph::new(lines), inner);
         if let Some(picker) = picker {
-            let age = app.catalogs.updated_age(app.ticked_at);
+            let age = app.catalog_age();
             model_picker::render(frame, picker, age, area, p);
         }
     } else {

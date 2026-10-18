@@ -7,6 +7,7 @@ use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
 use clap::{Args, Subcommand};
+use common::numbers::{Zone, clock};
 use proto::{
     ClientMsg, DaemonMsg, ProfileReply, ProfileRequest, ProfileStatus, ProposalOrigin,
     ProposalRecord, ProposalState, RowEditState, RunReply, RunRequest,
@@ -135,7 +136,9 @@ async fn dispatch(
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_or(0, |d| d.as_secs());
-                print!("{}", status_text(&status, now));
+                // Milestone 9.19 decision 3: the viewer's zone, read once per command.
+                let zone = Zone::Local(common::localtime::offset_secs(now));
+                print!("{}", status_text(&status, now, zone));
             }
             Ok(())
         }
@@ -268,25 +271,20 @@ async fn ask(question: &str) -> anyhow::Result<bool> {
     ))
 }
 
-/// `YYYY-MM-DD HH:MM` in UTC.
-fn minute(unix: u64) -> String {
-    let at = daemon::run::report::format_utc(unix);
-    at.get(..16).unwrap_or(&at).to_string()
-}
-
 /// A daemon-supplied string as one terminal line (goals, reasons, labels, paths).
 fn one(text: &str) -> String {
     crate::run_cmd::printable(&proto::safe_text::one_line(text))
 }
 
 /// `profile status`'s text (decision 38): the project, the status line, today's lines,
-/// then the waiting and dropped goals. `now` is Unix seconds, read once by the caller.
-/// Every daemon-supplied string goes through `printable`.
-pub fn status_text(status: &ProfileStatus, now: u64) -> String {
-    crate::run_cmd::printable(&status_body(status, now))
+/// then the waiting and dropped goals. `now` is Unix seconds and `zone` the viewer's,
+/// both read once by the caller; every clock time is labelled (milestone 9.19 decision
+/// 3). Every daemon-supplied string goes through `printable`.
+pub fn status_text(status: &ProfileStatus, now: u64, zone: Zone) -> String {
+    crate::run_cmd::printable(&status_body(status, now, zone))
 }
 
-fn status_body(status: &ProfileStatus, now: u64) -> String {
+fn status_body(status: &ProfileStatus, now: u64, zone: Zone) -> String {
     let mut out = format!("profile: {}\n", one(&status.project.display().to_string()));
     out.push_str(&format!(
         "  {}\n",
@@ -298,7 +296,7 @@ fn status_body(status: &ProfileStatus, now: u64) -> String {
         }
         (Some(at), None) => out.push_str(&format!(
             "  stored: yes, confirmed {} ({})\n",
-            minute(at),
+            clock(at, now, zone),
             one(&status.repo_dir.join("profile.toml").display().to_string())
         )),
         (None, None) => out.push_str("  stored: no\n"),
@@ -324,7 +322,7 @@ fn status_body(status: &ProfileStatus, now: u64) -> String {
                 let mut line = format!(
                     "  detection: {} since {}",
                     daemon::profile::service::state_label(state),
-                    minute(record.updated_at).get(11..).unwrap_or_default()
+                    clock(record.updated_at, now, zone)
                 );
                 if let (Some(id), Some(window)) = (&record.scout_id, record.window_id) {
                     line.push_str(&format!(" (scout {}, window {window})", one(id)));

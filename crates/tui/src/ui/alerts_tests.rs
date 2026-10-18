@@ -550,3 +550,16 @@ fn a_you_alert_wears_the_badge() {
     );
     assert!(!first(false).contains("you"));
 }
+
+/// Milestone 9.19 ruling R21: the age column is `now` under ten seconds, else the
+/// largest unit only (`numbers::duration_coarse`), so three days read `3d`, not `72h`.
+#[test]
+fn the_age_column_is_now_then_one_unit() {
+    use super::age_cell;
+    assert_eq!(age_cell(0), "now");
+    assert_eq!(age_cell(9), "now");
+    assert_eq!(age_cell(10), "10s");
+    assert_eq!(age_cell(41 * 60 + 12), "41m");
+    assert_eq!(age_cell(3 * 3600 + 59 * 60), "3h");
+    assert_eq!(age_cell(3 * 86_400), "3d");
+}

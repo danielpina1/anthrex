@@ -10,7 +10,6 @@ use super::{Layout, kit};
 use crate::app::{Alert, AlertWho, App, alerts};
 use crate::safe_text::one_line;
 use crate::theme::{self, Glyph, Palette, Role, fold, glyph};
-use crate::tree::format_elapsed;
 use crate::ui::tree_view::truncate_in;
 use ratatui::Frame;
 use ratatui::style::Style;
@@ -21,12 +20,13 @@ use unicode_width::UnicodeWidthStr;
 /// An alert's text takes at most this many lines under its who line (decision 10).
 const TEXT_LINES: usize = 2;
 
-/// Decision 8: `now` under ten seconds, else `41s`, `2m`, `3h`.
-pub(crate) fn age_text(secs: u64) -> String {
+/// The age column (decision 8; milestone 9.19 ruling R21): `now` under ten seconds,
+/// else `numbers::duration_coarse` (`41s`, `2m`, `3h`, `3d`), a fixed-width cell.
+pub(crate) fn age_cell(secs: u64) -> String {
     if secs < 10 {
         "now".to_owned()
     } else {
-        format_elapsed(secs)
+        common::numbers::duration_coarse(secs)
     }
 }
 
@@ -76,7 +76,7 @@ pub(crate) fn alert_lines(app: &App, alert: &Alert, width: u16) -> Vec<Line<'sta
     let task = alert.task.as_deref().map_or_else(String::new, |t| {
         format!(" {} {}", glyph(Glyph::Separator, p.ascii), one_line(t))
     });
-    let age = alert.age.map(age_text);
+    let age = alert.age.map(age_cell);
     let age_room = age.as_ref().map_or(0, |age| age.width() + 1);
     // Milestone 9.9 decision 23: the `you` badge, after the who, on the first line.
     let you = if alert.you { " you" } else { "" };

@@ -344,7 +344,9 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
             state.brakes.config = cfg;
             state.brakes.book.reconfigure(&cfg);
         }
-        EventKind::Hold { reply, hold } => brakes::hold(&mut state.brakes, reply, hold, &mut fx),
+        EventKind::Hold { reply, hold } => {
+            brakes::hold(&mut state.brakes, reply, (hold, now), &mut fx)
+        }
         // Milestone 9.16 decision 29 (ruling C17): shown, never acted on.
         EventKind::OrchestratorFill { run_id, fill } => {
             orch_fill::record(&mut state, &run_id, fill)

@@ -1,6 +1,7 @@
 //! `anthrex run status`'s text (the brief's CLI section) and `run accept`'s moved-base
 //! listing (decision 20). Pure: every function takes the snapshot and returns text.
 
+use common::numbers::{self, Zone};
 use daemon::run::triage::{kinds_scale, source_label};
 use proto::{
     BaseMovedInfo, GateCounts, PairPhase, Route, RunInfo, RunState, Size, TaskInfo, TestMode,
@@ -12,20 +13,21 @@ use super::status_orch::{orchestrator_lines, state_text};
 pub const LISTED_COMMITS: usize = 50;
 
 /// Decision 34: the list form's text, with the brake lines and a blank line first
-/// whenever dispatch is held or a runtime is braked.
-pub fn listing(snapshot: &proto::RunsSnapshot, utc_offset: i64) -> String {
-    let mut out = brakes_head(&snapshot.brakes, snapshot.now);
-    out.push_str(&render(&snapshot.runs, utc_offset));
+/// whenever dispatch is held or a runtime is braked. Every clock time is in `zone`, the
+/// viewer's, against the snapshot's `now` (milestone 9.19 decision 3).
+pub fn listing(snapshot: &proto::RunsSnapshot, zone: Zone) -> String {
+    let mut out = brakes_head(&snapshot.brakes, snapshot.now, zone);
+    out.push_str(&render(&snapshot.runs, snapshot.now, zone));
     out
 }
 
 /// The brake lines and a blank line while held or braked; empty otherwise.
-pub fn brakes_head(brakes: &proto::brakes::BrakesInfo, now: u64) -> String {
+pub fn brakes_head(brakes: &proto::brakes::BrakesInfo, now: u64, zone: Zone) -> String {
     let braked = brakes.quota.iter().any(|q| q.trip.is_some());
     if brakes.hold.is_none() && !braked {
         return String::new();
     }
-    let lines = crate::hold_cmd::brake_lines(brakes, now);
+    let lines = crate::hold_cmd::brake_lines(brakes, now, zone);
     format!(
         "{}
 
@@ -34,9 +36,9 @@ pub fn brakes_head(brakes: &proto::brakes::BrakesInfo, now: u64) -> String {
     )
 }
 
-/// One block per run, newest first. `utc_offset` is the local zone's, in seconds: the
-/// caller reads it, so this stays pure.
-pub fn render(runs: &[RunInfo], utc_offset: i64) -> String {
+/// One block per run, newest first. `zone` is the viewer's (`Zone::Local` of the local
+/// zone's offset): the caller reads it, so this stays pure; `now` is the daemon's.
+pub fn render(runs: &[RunInfo], now: u64, zone: Zone) -> String {
     let mut sorted: Vec<&RunInfo> = runs.iter().collect();
     sorted.sort_by(|a, b| {
         b.created_at
@@ -45,19 +47,16 @@ pub fn render(runs: &[RunInfo], utc_offset: i64) -> String {
     });
     sorted
         .into_iter()
-        .map(|run| run_block(run, utc_offset))
+        .map(|run| run_block(run, now, zone))
         .collect()
 }
 
 /// One run's block: the header, a halted run's reason, the goal, the report path, the
 /// orchestrator's lines (milestone 9), the task table, when promotion was requested
 /// (local time) and the attention lines.
-pub fn run_block(run: &RunInfo, utc_offset: i64) -> String {
-    let merged = run
-        .tasks
-        .iter()
-        .filter(|t| t.state == proto::TaskState::Merged)
-        .count();
+pub fn run_block(run: &RunInfo, now: u64, zone: Zone) -> String {
+    // Milestone 9.19 decision 5: the one progress count.
+    let common::progress::Progress { merged, total, .. } = common::progress::run_progress(run);
     let state = match (run.state, run.paused_from) {
         (RunState::Paused, Some(from)) => format!("paused (from {})", from.label()),
         // Milestone 9.2 decision 36.
@@ -75,17 +74,16 @@ pub fn run_block(run: &RunInfo, utc_offset: i64) -> String {
     let cap = |(runtime, cap): (&String, &u8)| format!(" ({} cap {cap})", one_line(runtime));
     let caps: String = run.writer_caps.iter().map(cap).collect();
     let mut out = format!(
-        "{}  {}  {}/{} merged  base {}@{}  writers {}/{}{caps}  readers {}/{}  rev {}\n",
+        "{}  {}  {}/{} merged  base {}@{}  writers {}{caps}  readers {}  rev {}\n",
         run.run_id,
         state,
         merged,
-        run.tasks.len(),
+        total,
         run.base_branch,
         short(&run.base_sha),
-        run.writers_busy,
-        run.max_writers,
-        run.readers_busy,
-        run.max_readers,
+        // Decision 10: `4/3 (over)` after a limit was lowered mid-run.
+        numbers::busy(run.writers_busy.into(), run.max_writers.into()),
+        numbers::busy(run.readers_busy.into(), run.max_readers.into()),
         run.revision
     );
     if run.state == RunState::Halted {
@@ -117,14 +115,16 @@ pub fn run_block(run: &RunInfo, utc_offset: i64) -> String {
             "  checks: unconfined (this platform cannot confine checks, proofs and setup)\n",
         );
     }
-    out.push_str(&orchestrator_lines(run));
+    out.push_str(&orchestrator_lines(run, now, zone));
     out.push_str(&super::design::status_lines(run));
     out.push_str(&super::delivery::status_lines(run));
     // Milestone 9.1 (Interfaces "CLI"): a `Multi` run's stages, before its tasks.
+    // Milestone 9.19 decision 7: `stage k of m`, with the one stage count.
+    let of = common::progress::stage_count(run);
     let multi = run.stages.len() > 1;
     if multi {
         for stage in &run.stages {
-            out.push_str(&stage_line(stage, run.stages.len()));
+            out.push_str(&stage_line(stage, of));
         }
     }
     out.push_str(&row(
@@ -145,8 +145,8 @@ pub fn run_block(run: &RunInfo, utc_offset: i64) -> String {
     }
     // Review I1 (M8c.1): the snapshot's promotion line carries no time; this is it, local.
     if let Some(at) = run.promote_requested_at {
-        let hhmm = local_hhmm(at, utc_offset);
-        out.push_str(&format!("  promotion: requested at {hhmm}\n"));
+        let at = numbers::clock(at, now, zone);
+        out.push_str(&format!("  promotion: requested at {at}\n"));
     }
     for line in &run.attention {
         out.push_str(&format!("  attention: {line}\n"));
@@ -182,13 +182,13 @@ fn pattern_lines(run: &RunInfo, task: &TaskInfo) -> String {
     out
 }
 
-/// `stage <n>/<of>  <branch>  <merged>/<tasks> merged  tier 3 <state>`, with the last
+/// `stage <n> of <of>  <branch>  <merged>/<tasks> merged  tier 3 <state>`, with the last
 /// job's duration and the stage's fix tasks in parentheses; `not created` for a stage
 /// with no branch yet.
 fn stage_line(stage: &proto::StageInfo, of: usize) -> String {
     let n = stage.n;
     if stage.head.is_none() {
-        return format!("stage {n}/{of}  not created\n");
+        return format!("stage {n} of {of}  not created\n");
     }
     let full = &stage.full;
     let state = match full.state {
@@ -202,7 +202,7 @@ fn stage_line(stage: &proto::StageInfo, of: usize) -> String {
     if matches!(full.state, proto::FullState::Green | proto::FullState::Red)
         && let Some(secs) = full.secs
     {
-        parts.push(duration(secs));
+        parts.push(common::numbers::duration(secs));
     }
     parts.extend(stage.fix_tasks.iter().cloned());
     let detail = if parts.is_empty() {
@@ -211,26 +211,11 @@ fn stage_line(stage: &proto::StageInfo, of: usize) -> String {
         format!(" ({})", parts.join(", "))
     };
     format!(
-        "stage {n}/{of}  {}  {}/{} merged  tier 3 {state}{detail}\n",
+        "stage {n} of {of}  {}  {}/{} merged  tier 3 {state}{detail}\n",
         one_line(&stage.branch),
         stage.merged,
         stage.tasks
     )
-}
-
-/// `42s`, `41m 12s` or `3h 2m`.
-fn duration(secs: u64) -> String {
-    match secs {
-        0..60 => format!("{secs}s"),
-        60..3600 => format!("{}m {}s", secs / 60, secs % 60),
-        _ => format!("{}h {}m", secs / 3600, secs % 3600 / 60),
-    }
-}
-
-/// `at` (unix seconds) as local `hh:mm`, given the zone's offset from UTC.
-fn local_hhmm(at: u64, utc_offset: i64) -> String {
-    let secs = (at as i64 + utc_offset).rem_euclid(86_400);
-    format!("{:02}:{:02}", secs / 3600, (secs / 60) % 60)
 }
 
 #[allow(clippy::too_many_arguments)]

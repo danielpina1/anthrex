@@ -8,10 +8,10 @@ use proto::DaemonMsg;
 impl App {
     pub fn on_daemon(&mut self, msg: DaemonMsg) -> Vec<Effect> {
         match msg {
-            // Milestone 9.8 decision 37 (preflight F10: stamped as received); an open
+            // Milestone 9.8 decision 37 (their age is their fetch's, 9.19 decision 11); an open
             // picker's entries follow, its selection kept on the same model.
             DaemonMsg::Models { catalogs } => {
-                self.catalogs.absorb(catalogs, std::time::Instant::now());
+                self.catalogs.absorb(catalogs);
                 if let Some(super::screens::Screen::Settings(s)) = &mut self.screen
                     && let Some(picker) = &mut s.models.picker
                 {

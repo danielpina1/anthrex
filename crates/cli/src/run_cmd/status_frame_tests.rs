@@ -1,6 +1,7 @@
 //! Milestone 9.17 task M9.17.6 (decision 19): `anthrex run status` prints the plan
 //! frame after the goal whenever the snapshot carries one.
 
+use common::numbers::Zone;
 use proto::{
     DecidedItem, Effort, PlanFrameInfo, PlannerInfo, PlannerState, Route, RunInfo, Runtime,
 };
@@ -47,7 +48,7 @@ fn planner(epic: &str, frame: Option<PlanFrameInfo>) -> PlannerInfo {
 
 /// The lines right after `  goal: …`, up to the next line that is not a frame line.
 fn after_goal(run: &RunInfo) -> Vec<String> {
-    let block = run_block(run, 0);
+    let block = run_block(run, 0, Zone::Local(0));
     let lines: Vec<&str> = block.lines().collect();
     let at = lines
         .iter()
@@ -137,6 +138,6 @@ fn frame_text_is_sanitised() {
 fn no_frame_prints_nothing() {
     let run = example();
     assert!(after_goal(&run).is_empty());
-    let block = run_block(&run, 0);
+    let block = run_block(&run, 0, Zone::Local(0));
     assert!(!block.contains("decided for you") && !block.contains("out of scope"));
 }

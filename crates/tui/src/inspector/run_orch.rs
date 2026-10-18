@@ -2,7 +2,7 @@
 //! orchestrator (decision 11) and a task's messages and notes (decision 42i). Every
 //! text an agent wrote goes through `clean`. Pure, as `run.rs` is.
 
-use super::run_format::{clean, local_hhmm};
+use super::run_format::clean;
 use crate::app::App;
 use proto::{MessageKind, OrchestratorInfo, TaskInfo, TaskNoteKind};
 
@@ -35,15 +35,15 @@ pub(super) fn orchestrator_text(orchestrator: &OrchestratorInfo) -> String {
     text
 }
 
-/// Milestone 9.13 decision 22: the `untrusted` row's text, the time in UTC
-/// (`common::text::hh_mm`, ruling C17); `None` while the session read nothing from
-/// outside the run.
-pub(super) fn untrusted_text(orchestrator: &OrchestratorInfo) -> Option<String> {
+/// Milestone 9.13 decision 22: the `untrusted` row's text, the time the viewer's local
+/// clock (milestone 9.19 decision 3, labelled, so it is not mistaken for the daemon's
+/// UTC); `None` while the session read nothing from outside the run.
+pub(super) fn untrusted_text(orchestrator: &OrchestratorInfo, app: &App) -> Option<String> {
     let u = orchestrator.untrusted.as_ref()?;
     Some(format!(
         "{} at {}; override, accept_red and approve_hold go to you",
         clean(&u.source),
-        common::text::hh_mm(u.at)
+        app.local_clock(u.at)
     ))
 }
 
@@ -97,7 +97,7 @@ pub(super) fn notes_text(task: &TaskInfo, app: &App) -> Option<String> {
             };
             format!(
                 "{} {kind} from {}: {}",
-                local_hhmm(note.at, app.utc_offset_secs),
+                app.local_clock(note.at),
                 clean(&note.task_id),
                 clean(&note.text)
             )
@@ -122,7 +122,7 @@ pub(super) fn handled_rows(orchestrator: &OrchestratorInfo, app: &App) -> Vec<(S
             String::new(),
             format!(
                 "{} {} {} — {}",
-                local_hhmm(h.at, app.utc_offset_secs),
+                app.local_clock(h.at),
                 clean(&h.op),
                 clean(&h.target),
                 clean(&h.reason)
@@ -132,16 +132,13 @@ pub(super) fn handled_rows(orchestrator: &OrchestratorInfo, app: &App) -> Vec<(S
     rows
 }
 
-/// Milestone 9.16 decision 30: `from <h4> · context <n>% full (<tokens>/<window>)`, or
-/// `from <h4> · context <tokens> tokens` with no known window.
+/// Milestone 9.16 decision 30: `from <h4> · <context>`, the context as milestone 9.19
+/// decision 10 has it (`context 85% full (170k / 200k)`, `context over 100% (…)`, or
+/// `context 170k (window unknown)`).
 pub(super) fn handoff_text(handoff: &proto::HandoffInfo) -> String {
-    let from = clean(&handoff.from_run);
-    match handoff.window_tokens.filter(|w| *w > 0) {
-        Some(window) => format!(
-            "from {from} \u{b7} context {}% full ({}/{window})",
-            u128::from(handoff.fill_tokens) * 100 / u128::from(window),
-            handoff.fill_tokens
-        ),
-        None => format!("from {from} \u{b7} context {} tokens", handoff.fill_tokens),
-    }
+    format!(
+        "from {} \u{b7} {}",
+        clean(&handoff.from_run),
+        common::numbers::context_text(handoff.fill_tokens, handoff.window_tokens)
+    )
 }

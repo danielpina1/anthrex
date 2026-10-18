@@ -2,6 +2,8 @@
 //! purity check for the pool's pure files"). `run/target_pool/{book,book_file,clean}.rs`
 //! decide from what they are given and do no I/O and read no clock; the pool's I/O lives
 //! in its other files. Milestone 9.14's Verification checked this with a grep by hand.
+//! Milestone 9.19 (decision 1, ruling R19) applies the same scan to `common`'s number
+//! modules, which format what they are given and read no clock, file or environment.
 
 use super::engine::production_lines;
 use super::{code_only, is_ident};
@@ -12,10 +14,18 @@ use std::path::Path;
 const PURE_FILES: [&str; 3] = ["book.rs", "book_file.rs", "clean.rs"];
 
 /// The `std` modules a pure file may not name: `std::<m>`, or `<m>` in `use std::{…}`.
-const STD_MODULES: [&str; 4] = ["fs", "process", "net", "thread"];
+const STD_MODULES: [&str; 5] = ["fs", "process", "net", "thread", "env"];
 /// The names a pure file may not use, each after no identifier byte (the paths may take
 /// spaces around `::`). `std::<m>` for each of `STD_MODULES` is checked beside them.
-const NAMES: [&str; 4] = ["tokio::", "Command::new", "SystemTime", "Instant::now"];
+const NAMES: [&str; 7] = [
+    "tokio::",
+    "Command::new",
+    "SystemTime",
+    "Instant::now",
+    "env::var",
+    "libc::",
+    "localtime_r",
+];
 
 /// Every forbidden name in `text`'s production code (not its comments, literals or
 /// `#[cfg(test)]` items), as (line, name), sorted.
@@ -34,8 +44,8 @@ pub(super) fn pure_scan(text: &str) -> Vec<(usize, &'static str)> {
             }
         }
         for name in NAMES {
-            // `tokio::` is followed by a path; the others are whole words.
-            if word_at(&flat, name, name != "tokio::") {
+            // `tokio::` and `libc::` are followed by a path; the others are whole words.
+            if word_at(&flat, name, !name.ends_with("::")) {
                 found.push((k + 1, name));
             }
         }
@@ -51,7 +61,13 @@ pub(super) fn pure_scan(text: &str) -> Vec<(usize, &'static str)> {
 }
 
 /// `std::<m>` for each of `STD_MODULES`, as the hits name them.
-const STD_PATHS: [&str; 4] = ["std::fs", "std::process", "std::net", "std::thread"];
+const STD_PATHS: [&str; 5] = [
+    "std::fs",
+    "std::process",
+    "std::net",
+    "std::thread",
+    "std::env",
+];
 
 /// `line` with the whitespace around each `::` removed, so `std :: fs` is `std::fs`.
 fn squeezed(line: &str) -> String {
@@ -146,6 +162,12 @@ fn the_purity_scan_finds_each_forbidden_form() {
         ("let t = std::time::Instant::now();", "Instant::now"),
         ("use std::{collections::BTreeMap, fs};", "std::fs"),
         ("use std::{\n    io,\n    net::TcpStream,\n};", "std::net"),
+        ("let z = std::env::var(\"TZ\").ok();", "std::env"),
+        ("use std::{collections::BTreeMap, env};", "std::env"),
+        ("let z = env::var(\"TZ\");", "env::var"),
+        ("unsafe { libc::localtime_r(&t, &mut tm) };", "libc::"),
+        ("use libc::localtime_r;", "libc::"),
+        ("localtime_r(&t, &mut tm);", "localtime_r"),
     ];
     for (text, name) in forbidden {
         let found = pure_scan(text);
@@ -168,6 +190,7 @@ fn the_purity_scan_finds_each_forbidden_form() {
         "/// tokio::spawn and Instant::now() are not used here",
         "let s = \"std::process and SystemTime\";",
         "fn my_tokio() {} struct MyCommand; MyCommand::new_one();",
+        "fn environment() {} let v = my_env::var_x(); let l = mylibc::x;",
         "#[cfg(test)]\nmod tests {\n    use std::fs;\n}\n",
         "#[cfg(test)]\nfn now() -> std::time::Instant { std::time::Instant::now() }\n",
     ];
@@ -218,6 +241,66 @@ fn file_hits(file: &Path, name: &str) -> Vec<String> {
         .map(|(line, what)| {
             format!(
                 "run/target_pool/{name}:{line}: {what} in a pure pool file (decision 15): {}",
+                lines[line - 1].trim()
+            )
+        })
+        .collect()
+}
+
+/// `common`'s pure number modules, relative to `crates/common/src`.
+const NUMBER_FILES: [&str; 3] = ["numbers.rs", "progress.rs", "glossary.rs"];
+
+#[test]
+fn the_common_number_modules_are_pure() {
+    let package = testexec::checkout_dir(env!("CARGO_MANIFEST_DIR"));
+    let common = package.join("../common/src");
+    let mut hits = Vec::new();
+    for name in NUMBER_FILES {
+        let file = common.join(name);
+        assert!(file.is_file(), "{} is missing", file.display());
+        hits.extend(number_hits(&file, name));
+    }
+    assert!(hits.is_empty(), "{}", hits.join("\n"));
+
+    // The same check on a constructed number file with a clock read in it.
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("numbers.rs");
+    std::fs::write(
+        &file,
+        "pub fn now_text() -> String {\n    format!(\"{:?}\", std::time::SystemTime::now())\n}\n",
+    )
+    .unwrap();
+    let hits = number_hits(&file, "numbers.rs");
+    assert_eq!(hits.len(), 1, "{hits:#?}");
+    assert!(
+        hits[0].starts_with("common/src/numbers.rs:2: SystemTime in a pure number module"),
+        "{}",
+        hits[0]
+    );
+    // The environment and the libc clock are named too (the review's I1).
+    for (body, name) in [
+        ("std::env::var(\"TZ\").ok()", "std::env"),
+        ("unsafe { libc::localtime_r(&0, &mut tm) }", "libc::"),
+    ] {
+        std::fs::write(&file, format!("pub fn f() {{\n    {body};\n}}\n")).unwrap();
+        let hits = number_hits(&file, "numbers.rs");
+        assert!(
+            hits.iter()
+                .any(|h| h.contains(&format!(":2: {name} in a pure number module"))),
+            "{name}: {hits:#?}"
+        );
+    }
+}
+
+/// One line per forbidden name in `file`, named as `common/src/<name>`.
+fn number_hits(file: &Path, name: &str) -> Vec<String> {
+    let text = std::fs::read_to_string(file).unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    pure_scan(&text)
+        .into_iter()
+        .map(|(line, what)| {
+            format!(
+                "common/src/{name}:{line}: {what} in a pure number module (milestone 9.19, decision 1): {}",
                 lines[line - 1].trim()
             )
         })

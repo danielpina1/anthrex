@@ -1,6 +1,7 @@
 //! Milestone 9.16 decision 34: `anthrex run status` prints the brake lines first while
 //! dispatch is held or a runtime is braked, and exactly what it printed before otherwise.
 
+use common::numbers::Zone;
 use proto::Runtime;
 use proto::brakes::{
     BrakeTripInfo, BrakesInfo, DispatchHold, Permille, QuotaInfo, QuotaState, QuotaWindow,
@@ -33,15 +34,18 @@ fn quota(runtime: Runtime, trip: Option<BrakeTripInfo>) -> QuotaInfo {
 
 #[test]
 fn run_status_prints_brake_lines_when_held_or_braked() {
-    let plain = render(&[example()], 0);
+    let plain = render(&[example()], 0, Zone::Local(0));
     // Nothing held, the brake on and nothing braked: the text is unchanged.
     let calm = BrakesInfo {
         hold: None,
         quota_brake: true,
         quota: vec![quota(Runtime::Claude, None), quota(Runtime::Codex, None)],
     };
-    assert_eq!(listing(&snapshot(calm.clone()), 0), plain);
-    assert_eq!(listing(&snapshot(BrakesInfo::default()), 0), plain);
+    assert_eq!(listing(&snapshot(calm.clone()), Zone::Local(0)), plain);
+    assert_eq!(
+        listing(&snapshot(BrakesInfo::default()), Zone::Local(0)),
+        plain
+    );
 
     // Held: the brake lines, a blank line, then the runs.
     let mut held = calm.clone();
@@ -49,8 +53,8 @@ fn run_status_prints_brake_lines_when_held_or_braked() {
         since: 86_400 + 14 * 3600 + 30 * 60,
         by: "user".into(),
     });
-    let text = listing(&snapshot(held), 0);
-    let head = "hold: on since 14:30 UTC (user)\nclaude quota: unmeasured · not braked\ncodex quota: unmeasured · not braked\n\n";
+    let text = listing(&snapshot(held), Zone::Local(0));
+    let head = "hold: on since 14:30 +00:00 (just now) (user)\nclaude quota: unmeasured · not braked\ncodex quota: unmeasured · not braked\n\n";
     assert_eq!(text, format!("{head}{plain}"));
 
     // Braked, with no hold.
@@ -68,12 +72,12 @@ fn run_status_prints_brake_lines_when_held_or_braked() {
         threshold_percent: 95,
         until: 86_400,
     });
-    let text = listing(&snapshot(braked), 0);
+    let text = listing(&snapshot(braked), Zone::Local(0));
     assert!(text.starts_with("hold: off\n"), "{text}");
     assert!(text.ends_with(&plain), "{text}");
     assert!(
         text.contains(
-            "codex quota: 7d 96% (read 2 min ago) · braked until 00:00 UTC (7d at 96% ≥ 95%)\n"
+            "codex quota: 7d 96% (read 2m 00s ago) · codex dispatch held: 7d at 96% (≥95%) until 00:00 +00:00\n"
         ),
         "{text}"
     );

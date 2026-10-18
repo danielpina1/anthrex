@@ -57,8 +57,8 @@ pub(super) async fn get_context(run: Run, asker: Asker, only: Option<Vec<String>
         Ok(Ok(text)) => RunReply::tool_result(true, text),
         Ok(Err(error)) => refused(format!("a blocking step did not finish: {error}")),
         Err(_) => refused(format!(
-            "the run's context could not be read within {} s",
-            CONTEXT_READ_TIMEOUT.as_secs()
+            "the run's context could not be read within {}",
+            common::numbers::duration(CONTEXT_READ_TIMEOUT.as_secs())
         )),
     }
 }

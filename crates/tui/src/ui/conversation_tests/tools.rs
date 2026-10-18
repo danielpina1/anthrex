@@ -149,3 +149,30 @@ fn a_truncated_result_says_so_when_unfolded() {
     );
     assert!(row_text(&buf, y + 1).contains("spawned"), "{out}");
 }
+
+/// Milestone 9.19 decision 4: a tool's time through `numbers::duration_ms`. The
+/// daemon's saturated `u32::MAX` is `unknown`, never `4294967.3s`; twenty minutes reads
+/// `20m 00s`.
+#[test]
+fn a_saturated_tool_time_reads_unknown() {
+    let grep_row = |ms: u32| {
+        let mut conv = main_conversation();
+        let Block::ToolCall { duration_ms, .. } = &mut conv.turns[1].blocks[1] else {
+            unreachable!()
+        };
+        *duration_ms = Some(ms);
+        let app = app_showing(UiSettings::default(), Runtime::Claude, 80, 24, conv);
+        let buf = draw(&app, 80, 24);
+        all_rows(&buf)
+            .into_iter()
+            .find(|r| r.contains("Grep"))
+            .unwrap()
+    };
+    let saturated = grep_row(u32::MAX);
+    assert!(saturated.contains("✓ unknown"), "{saturated}");
+    let long = grep_row(20 * 60 * 1000);
+    assert!(long.contains("✓ 20m 00s"), "{long}");
+    assert!(!long.contains("1200.0s"), "{long}");
+    let short = grep_row(4_290);
+    assert!(short.contains("✓ 4.2s"), "{short}");
+}

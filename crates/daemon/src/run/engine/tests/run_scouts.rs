@@ -150,7 +150,7 @@ fn scout_ended_records_the_report_and_usage() {
     scout(&mut fx, "db");
     scout_ended(&mut fx, &format!("{H4}-api"), ScoutEnd::Reported);
     let failed = ScoutEnd::Failed {
-        reason: "the scout ran longer than 900 s".into(),
+        reason: "the scout ran longer than 15m 00s".into(),
     };
     scout_ended(&mut fx, &format!("{H4}-db"), failed);
     let run = fx.run();
@@ -158,7 +158,7 @@ fn scout_ended_records_the_report_and_usage() {
     assert_eq!(run.orch.run_scouts[0].ended_at, Some(fx.now - 1));
     assert!(matches!(
         &run.orch.run_scouts[1].state,
-        RunScoutState::Failed { reason } if reason == "the scout ran longer than 900 s"
+        RunScoutState::Failed { reason } if reason == "the scout ran longer than 15m 00s"
     ));
     assert_eq!(run.scout_reports, vec![format!("{H4}-api")]);
     assert_eq!(run.scout_usage.input, 14);
@@ -167,7 +167,7 @@ fn scout_ended_records_the_report_and_usage() {
         notes,
         &vec![
             format!("scout {H4}-api reported"),
-            format!("scout {H4}-db failed: the scout ran longer than 900 s")
+            format!("scout {H4}-db failed: the scout ran longer than 15m 00s")
         ]
     );
     // A report is now evidence for the plan rules (decision 23.2).

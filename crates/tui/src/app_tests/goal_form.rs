@@ -250,7 +250,7 @@ fn a_put_that_was_not_saved_asks_for_the_settings_again() {
     let effects = app.on_daemon(reply(
         SettingsReply::Refused {
             problems: vec![
-                "config.toml was still being written after 5 s; if the write completes, new runs use the new settings"
+                "config.toml was still being written after 5s; if the write completes, new runs use the new settings"
                     .into(),
             ],
         },

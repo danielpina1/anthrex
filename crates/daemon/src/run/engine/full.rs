@@ -414,7 +414,11 @@ fn green(run: &mut Run, n: u16, commit: &str, secs: u64, now: u64) {
     log(
         run,
         now,
-        format!("stage {n}: tier 3 green at {} ({secs}s)", sha7(commit)),
+        format!(
+            "stage {n}: tier 3 green at {} ({})",
+            sha7(commit),
+            common::numbers::duration(secs)
+        ),
     );
 }
 

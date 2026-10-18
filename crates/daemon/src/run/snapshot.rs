@@ -199,6 +199,9 @@ fn run_info(run: &Run, brakes: &super::engine::brakes::Brakes, now: u64) -> RunI
 /// M8b decision 29: usage by role. Worker and reviewer rounds from their streams,
 /// deciders with triage, run scouts, and the orchestrator from OTLP. Every role is
 /// listed, and every sum saturates: OTLP totals come from any local process.
+/// Milestone 9.19 decision 2: the design agents' raw usage (`DesignState.spend`) under
+/// `brainstormer` and `doc_reviewer`, so the total covers every role; a format-6 agent
+/// (no `usage`) credits nothing.
 pub(crate) fn run_usage(run: &Run) -> RunUsage {
     let mut by_role: BTreeMap<String, TokenUsage> = [
         "worker",
@@ -207,6 +210,8 @@ pub(crate) fn run_usage(run: &Run) -> RunUsage {
         "decider",
         "orchestrator",
         "planner",
+        "brainstormer",
+        "doc_reviewer",
     ]
     .into_iter()
     .map(|role| (role.to_string(), TokenUsage::default()))
@@ -234,6 +239,14 @@ pub(crate) fn run_usage(run: &Run) -> RunUsage {
     credit("orchestrator", run.orchestrator_usage);
     // Milestone 9 decision 32: sub-planners' sessions.
     credit("planner", run.orch.planner_usage);
+    let design = run.orch.design.iter().flat_map(|d| &d.spend);
+    for agent in design.flat_map(|phase| &phase.agents) {
+        let role = match agent.role {
+            AgentRole::DocReviewer => "doc_reviewer",
+            _ => "brainstormer",
+        };
+        credit(role, agent.usage);
+    }
     let mut total = TokenUsage::default();
     for u in by_role.values() {
         total += *u;

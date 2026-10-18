@@ -12,6 +12,8 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+# Milestone 9.19 ruling R2: the local date through `common::localtime`, the one reader.
+common.workspace = true
 libc.workspace = true
 regex.workspace = true
 serde.workspace = true

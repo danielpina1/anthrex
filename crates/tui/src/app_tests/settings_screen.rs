@@ -9,6 +9,7 @@ use crate::app::screens::Screen;
 use crate::app::settings_screen::{
     SettingsScreen, SettingsSection, hard_stop_calls, hard_stop_minutes,
 };
+use common::numbers::Zone;
 use proto::settings::key;
 use proto::{Origin, RunReply, RunRequest, SettingsDoc, SettingsReply, SettingsRequest};
 use std::collections::BTreeMap;
@@ -270,8 +271,8 @@ fn an_out_of_range_limit_is_refused_inline() {
 fn budgets_show_their_hard_stop() {
     assert_eq!(hard_stop_calls(40), "hard stop at 60 calls");
     assert_eq!(hard_stop_calls(5), "hard stop at 8 calls");
-    assert_eq!(hard_stop_minutes(15), "hard stop at 22m30s");
-    assert_eq!(hard_stop_minutes(60), "hard stop at 90m");
+    assert_eq!(hard_stop_minutes(15), "hard stop at 22m 30s");
+    assert_eq!(hard_stop_minutes(60), "hard stop at 1h 30m");
     let mut app = opened();
     set_limit(&mut app, key::BUDGET_S_CALLS, "40");
     set_limit(&mut app, key::BUDGET_M_CALLS, "5");
@@ -281,8 +282,8 @@ fn budgets_show_their_hard_stop() {
     for want in [
         "s tool calls      40    at least 1   hard stop at 60 calls",
         "m tool calls      5     at least 1   hard stop at 8 calls",
-        "s minutes         15    at least 1   hard stop at 22m30s",
-        "l minutes         60    at least 1   hard stop at 90m",
+        "s minutes         15    at least 1   hard stop at 22m 30s",
+        "l minutes         60    at least 1   hard stop at 1h 30m",
     ] {
         assert!(text.contains(want), "{want}\n{text}");
     }
@@ -357,20 +358,46 @@ fn settings_screen_has_four_brake_rows_and_a_read_only_hold_row() {
     let prefix = &app.settings.prefix_label;
     let mut brakes = proto::brakes::BrakesInfo::default();
     assert_eq!(
-        crate::app::brakes::hold_row(&brakes, prefix, "·"),
+        crate::app::brakes::hold_row(&brakes, prefix, "·", 0, Zone::Local(0)),
         "dispatch hold   off · C-b H"
     );
     brakes.hold = Some(proto::brakes::DispatchHold {
         since: 86_400 + 14 * 3600 + 30 * 60,
         by: "user".into(),
     });
+    let since = 86_400 + 14 * 3600 + 30 * 60;
     assert_eq!(
-        crate::app::brakes::hold_row(&brakes, prefix, "·"),
-        "dispatch hold   on since 14:30 UTC (user) · C-b H"
+        crate::app::brakes::hold_row(&brakes, prefix, "·", since, Zone::Local(0)),
+        "dispatch hold   on since 14:30 +00:00 (user) · C-b H"
     );
     let drawn = crate::ui::settings::tests::screen_text(&app, 100, 40);
     assert!(
-        drawn.contains("dispatch hold   on since 00:00 UTC (user) · C-b H"),
+        drawn.contains("dispatch hold   on since 00:00 +00:00 (user) · C-b H"),
         "{drawn}"
     );
+}
+
+/// Milestone 9.19 decision 3 (ruling R4): each tick carries the zone offset the event
+/// loop read, and the next render's clock times follow it, labelled.
+#[test]
+fn the_offset_follows_the_tick() {
+    // 2026-10-17 14:30 UTC.
+    const SINCE: u64 = 1_792_247_400;
+    let mut app = opened();
+    to_section(&mut app, SettingsSection::Limits);
+    app.runs.now = SINCE + 600;
+    app.runs.brakes.hold = Some(proto::brakes::DispatchHold {
+        since: SINCE,
+        by: "user".into(),
+    });
+    for (offset, want) in [
+        (7200, "on since 16:30 +02:00 (user)"),
+        (3600, "on since 15:30 +01:00 (user)"),
+        // West of UTC: the hold and the daemon's `now` shift together, the same day.
+        (-36_000, "on since 04:30 -10:00 (user)"),
+    ] {
+        app.on_tick_at(std::time::Instant::now(), offset);
+        let drawn = crate::ui::settings::tests::screen_text(&app, 100, 40);
+        assert!(drawn.contains(want), "{offset}: {drawn}");
+    }
 }

@@ -9,8 +9,8 @@ mod runs;
 mod task_rounds;
 mod types;
 
-pub use forest::{SubagentNode, subagent_forest};
-pub use labels::{format_elapsed, short_model, subagent_label};
+pub use forest::{Keep, SubagentNode, subagent_forest};
+pub use labels::{short_model, subagent_label};
 pub use names::display_names;
 pub use nodes::{NodeKey, ProjectChild, Row, RowKind};
 use proto::{IdleOrchestrator, RunInfo, RunsSnapshot, Status, SubagentInfo, WindowInfo};
@@ -19,8 +19,8 @@ use rows::{SubagentWalk, emit_subagents, guide_prefix, visible_windows};
 pub use run_rows::{RunFilter, round_label, round_label_with_lane, run_rows};
 use runs::{ShownRun, group_projects, idle_matches_filter, run_matches_filter};
 pub use runs::{
-    awaiting_holds, idle_outcome, idle_text, is_paused, run_label, run_progress, run_status,
-    run_title, shown_runs, shown_state, task_held, window_row,
+    awaiting_holds, idle_outcome, idle_text, is_paused, run_label, run_status, run_title,
+    shown_runs, shown_state, task_held, window_row,
 };
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -73,6 +73,10 @@ pub struct TreeState {
     /// M6.9). Set from `UiSettings::tree_keep_finished_secs`, itself
     /// `config.toml`'s `ui.tree_keep_finished_secs`.
     pub keep_finished_secs: u64,
+    /// Milestone 9.19 decision 11: the window list's age at the last tick (or at the
+    /// freeze), kept by `App::settle_listed_age`, so a finished sub-agent's age is
+    /// `age_secs(ended)`, not the `ended_secs` the list carried.
+    pub listed_age_secs: u64,
     selected_index: usize,
     /// The projects the shown runs name, as `prune_runs` last saw them, so `prune`
     /// keeps a `Project` key whose root has a run but no window (milestone 8c
@@ -89,6 +93,7 @@ impl Default for TreeState {
             sidebar: Viewport::default(),
             overview: Viewport::default(),
             keep_finished_secs: DEFAULT_KEEP_FINISHED_SECS,
+            listed_age_secs: 0,
             selected_index: 0,
             run_roots: HashSet::new(),
         }
@@ -96,6 +101,14 @@ impl Default for TreeState {
 }
 
 impl TreeState {
+    /// What `subagent_forest` hides by: the setting and the list's age.
+    pub fn keep(&self) -> Keep {
+        Keep {
+            finished_secs: self.keep_finished_secs,
+            listed_age_secs: self.listed_age_secs,
+        }
+    }
+
     pub fn is_collapsed(&self, key: &NodeKey) -> bool {
         self.collapsed.contains(key)
     }
@@ -275,7 +288,7 @@ pub fn build_with_idle<'a>(
             filtering,
             project_matches,
             &filter,
-            state.keep_finished_secs,
+            state.keep(),
         );
         let idle_rows: Vec<_> = (project.idle.iter())
             .filter(|(idle, _)| !filtering || project_matches || idle_matches_filter(idle, &filter))

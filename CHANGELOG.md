@@ -18,12 +18,13 @@ task note kind, `RunInfo.plan_frame`, `PlannerInfo.frame`, `TaskInfo.replaces` a
 release. Stop the old daemon (`anthrex daemon
 stop`) after upgrading.
 
-**Downgrading.** `run.json` is now format 6 (milestone 9.15: a run's frozen lessons,
+**Downgrading.** `run.json` is now format 7 (milestone 9.15: a run's frozen lessons,
 its discard reason, a task's lessons shown and risk note, and the distill and
 risk-note ops; milestone 9.16: a run's failovers and its context handoff; milestone
 9.17: a run's plan frames, an epic's frame, the approved spec's Non-goals, a task's
-`replaces`, a finding's target and the `brief` notes). A 0.2.0 daemon skips a run
-this release wrote (`run format 6; this one reads up to 1`) and
+`replaces`, a finding's target and the `brief` notes; milestone 9.19: each design
+agent's raw token usage). A 0.2.0 daemon skips a run
+this release wrote (`run format 7; this one reads up to 1`) and
 leaves it as it is, as does any daemon that reads an older format. The hold lives in
 `brakes.json` in the data directory, which older releases ignore: an older daemon
 does not hold dispatch. Releases before
@@ -169,6 +170,52 @@ your runs before downgrading below 0.2.0.
   the brief, the orchestrator's digest shows them apart in a task's review text (`r1
   changes (1 brief)`), and an integration review whose findings are all about the
   brief approves its epic.
+- **Tokens are billed tokens everywhere, and a run's total counts its design agents**
+  (milestone 9.19). A brainstormer's and a document reviewer's tokens no longer count
+  cache reads (input, cache writes and output, as every other role's), and the run's
+  usage now credits them under `brainstormer` and `doc_reviewer`, so its total covers
+  every role. `history.jsonl` lines are now written at `v` 6: from `v` 6 a `phase`
+  line's agent tokens are billed tokens and a `run` line's usage includes the design
+  roles; the design budget refit takes its token samples from `v` 6 lines only. A run
+  designed before the upgrade keeps no split of its design agents' tokens, so its total
+  leaves them out (an undercount, never a cache-read overcount). The run spend row
+  reads `tokens 1.8M (all roles) · cache hits 71% of input · worker tool calls 412`
+  (`tokens ≥… (tasks only)` from a daemon without run usage), `REPORT.md` and the
+  inspector print tokens as `750k` and `1.2M`, and `run stats` leaves a merged task with
+  no recorded tokens out of its token median (`-` when none are left).
+- **Every number has one meaning, label and format** (milestone 9.19), written down in
+  `docs/numbers.md`, which `?` help (a `numbers` group) and the README link to. The
+  protocol stays 26; `run.json` is format 7 and `history.jsonl` lines are `v` 6 (both
+  from the token change above).
+- **Clock times name their zone.** The TUI and the CLI show local time with its offset
+  (`14:30 +02:00`, `Thu 14:30 +02:00` within six days, else the date); text the daemon
+  writes (attention lines, prompts, the proposal file, the `REFIT` column) stays UTC and
+  says `UTC`. On Linux, a change of the system time zone mid-session is picked up only
+  after a restart (DST changes are picked up at once).
+- **One duration and one age format**: `42s`, `41m 12s`, `1h 05m`, `3d 04h`, floored;
+  `just now` under 10 s, else `<duration> ago`. Fixed-width cells (the sidebar, graph
+  boxes, the alerts list) show the largest unit only.
+- **One progress count and one stage position.** `3/5 merged` leaves out cancelled,
+  reported and replaced tasks everywhere, a run still being designed shows its design
+  word instead of `0/0 merged`, and every position reads `stage 2 of 3`.
+- **Unknown is not zero.** A missing value reads `unknown` (`-` in a table cell): a
+  sub-agent with no end time, a check that never ran (`✗ never ran`), a doc gate still
+  loading, an age before the first snapshot.
+- **Context fill never reads `450%`**: `context 91% full (183k / 200k)`, `context over
+  100% (450k / 200k window)`, or `context 183k (window unknown)`.
+- **Ages freeze when the daemon link is lost.** Timers and ages stop counting, and the
+  badge reads ` DISCONNECTED · as of <ago> `; the model picker's age is the catalog's own
+  fetch age.
+- **`anthrex hold status` tells the truth**: `(read 3m 10s ago)`, `(stale: read 1h 35m
+  ago)` for a stale reading, the brake text the TUI shows for a braked runtime, and the
+  hold's age (`on since Thu 14:30 +02:00 (2h 05m ago)`).
+- **`anthrex tree` labels its numbers**: `#1  id 7` (the position `C-b <n>` uses and the
+  id `ls`, `kill` and `attach` take), `claude 2 · codex 1 · shell 1`, and `running 3m
+  10s`, `ran 12s` or `done -` for a sub-agent.
+- **`anthrex run stats` labels its aggregates**: `MED LINES`, `MED CALLS`, `MED TOKENS`,
+  `MED WORK` (a floored duration, was rounded minutes) and `BOUNCES (ALL)`, a footer
+  saying what the medians are over, and `rounds: 3 ended · 1 run iterated`. The TUI's
+  stats page uses the same words and shows the rounds line.
 
 ### Fixed
 

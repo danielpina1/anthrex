@@ -83,8 +83,8 @@ fn report_has_race_pair_concurrency_and_tuning() {
     run.concurrency.insert("codex".into(), codex);
     // The start's tuning lines (decision 12), one of them `configured`.
     let start = [
-        "tuning: budget S 40 calls 15m configured (refit would be 55 calls 18m)",
-        "tuning: path weights S 550s, M 1650s (derived), hub 1650s (derived)",
+        "tuning: budget S 40 calls · 15 min configured (refit would be 55 calls · 18 min)",
+        "tuning: path weights S 9m 10s, M 27m 30s (derived), hub 27m 30s (derived)",
     ];
     // As the start freezes them (ruling T21-1); they also open its log.
     run.tuning_lines = start.iter().map(|text| text.to_string()).collect();
@@ -94,7 +94,7 @@ fn report_has_race_pair_concurrency_and_tuning() {
     assert_eq!(
         block(&report, "Race: "),
         [
-            "Race: racer a won; race cost: 12 calls, 3400 tokens",
+            "Race: racer a won; race cost: 12 calls, 3.4k tokens",
             "- racer a: claude claude-opus-5-5 (medium); won",
             "- racer b: codex gpt-6.1-sol (medium); lost; salvaged `refs/anthrex/salvage/r1/t1/2`; removed stale index.lock, HEAD.lock; reason: racer a won",
         ]
@@ -187,6 +187,36 @@ fn a_running_race_an_ended_race_and_a_writing_pair() {
         report.contains(
             "\nPair: test writer codex gpt-6.1-sol (medium); test t_feat; writer failures 1; writing the test\n"
         ),
+        "{report}"
+    );
+}
+
+/// Milestone 9.19 decision 2: REPORT.md prints tokens as `numbers::tokens` does, never
+/// a raw integer: the budget, the spend, a round's and the race's cost.
+#[test]
+fn report_tokens_are_shortened() {
+    let mut run = run();
+    let t1 = &mut run.tasks[0];
+    t1.budget.tokens = Some(1_250_000);
+    t1.spent_total.tokens = 750_000;
+    let mut race = race_of(t1, [LaneState::Won, LaneState::Lost]);
+    race.lanes[1].spent.tool_calls = 12;
+    race.lanes[1].spent.tokens = 750_000;
+    t1.race = Some(race);
+    let report = render(&run, 2_000);
+    let lines: Vec<&str> = report.lines().collect();
+    let line = |start: &str| {
+        *(lines.iter())
+            .find(|l| l.starts_with(start))
+            .unwrap_or_else(|| panic!("no {start:?} in:\n{report}"))
+    };
+    assert!(line("Budget: ").ends_with(", 1.2M tokens"), "{report}");
+    assert!(
+        line("Spent: ").ends_with(", 750k tokens (billable)"),
+        "{report}"
+    );
+    assert!(
+        line("Race: ").ends_with("; race cost: 12 calls, 750k tokens"),
         "{report}"
     );
 }

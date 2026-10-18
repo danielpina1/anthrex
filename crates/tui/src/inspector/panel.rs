@@ -362,14 +362,17 @@ fn wrap_lines(field: &Field, width: usize, rows: usize, p: Palette) -> Vec<Line<
 
 /// Greedy word wrap to `width` display columns over at most `rows` lines. A
 /// word longer than the width is broken; text past the last line is elided,
-/// because the panel's height is fixed whatever the field would rather do.
+/// because the panel's height is fixed whatever the field would rather do. A clock
+/// time and its zone label are one word (milestone 9.19 decision 3), so no row ends in
+/// a bare `12:02`.
 fn wrap_value(text: &str, width: usize, rows: usize, ascii: bool) -> Vec<String> {
     if width == 0 || rows == 0 {
         return Vec::new();
     }
     let mut lines: Vec<String> = Vec::new();
     let mut current = String::new();
-    for word in text.split_whitespace() {
+    for word in &clock_words(text) {
+        let word = word.as_str();
         let joined = UnicodeWidthStr::width(current.as_str()) + 1 + UnicodeWidthStr::width(word);
         if current.is_empty() {
             current.push_str(word);
@@ -396,6 +399,33 @@ fn wrap_value(text: &str, width: usize, rows: usize, ascii: bool) -> Vec<String>
         lines[last] = truncate_in(&format!("{}{mark}", lines[last]), width, ascii);
     }
     lines
+}
+
+/// `text`'s words, a clock time (`12:02`) and the zone label after it (`+00:00`,
+/// `-05:00`, `UTC`) joined into one, with the space between them.
+fn clock_words(text: &str) -> Vec<String> {
+    let shaped = |w: &str, shape: &str| {
+        w.len() == shape.len()
+            && (w.bytes().zip(shape.bytes())).all(|(c, s)| {
+                if s == b'd' {
+                    c.is_ascii_digit()
+                } else {
+                    c == s
+                }
+            })
+    };
+    let label = |w: &str| w == "UTC" || shaped(w, "+dd:dd") || shaped(w, "-dd:dd");
+    let mut words: Vec<String> = Vec::new();
+    for word in text.split_whitespace() {
+        match words.last_mut() {
+            Some(last) if label(word) && shaped(last.rsplit(' ').next().unwrap_or(""), "dd:dd") => {
+                last.push(' ');
+                last.push_str(word);
+            }
+            _ => words.push(word.to_owned()),
+        }
+    }
+    words
 }
 
 /// `text` followed by enough spaces to fill `width` display columns.

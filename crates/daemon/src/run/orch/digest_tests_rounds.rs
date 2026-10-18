@@ -107,3 +107,19 @@ fn a_rounds_start_bumps_digest_rev() {
     assert!(note_change(&mut run), "a round's start bumps digest_rev");
     assert_eq!(run.orch.digest_rev, rev + 1);
 }
+
+/// Milestone 9.19 decision 8 (review M2): the digest's `stages[].tasks` and `merged`
+/// leave out a cancelled task, so a stage whose other task merged reads n of n.
+#[test]
+fn a_digest_stage_with_a_cancelled_task_reads_n_of_n() {
+    let mut run = complete_run();
+    task_mut(&mut run, "t1").state = proto::TaskState::Merged;
+    task_mut(&mut run, "t2").state = proto::TaskState::Cancelled;
+    let d = digest(&run, run.created_at + 10);
+    let stage = &d["stages"][0];
+    assert_eq!(
+        (&stage["merged"], &stage["tasks"]),
+        (&json!(1), &json!(1)),
+        "{stage}"
+    );
+}

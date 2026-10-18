@@ -12,10 +12,15 @@ pub struct SubagentNode<'a> {
     pub children: Vec<SubagentNode<'a>>,
 }
 
-pub fn subagent_forest(
-    subagents: &[SubagentInfo],
-    keep_finished_secs: u64,
-) -> Vec<SubagentNode<'_>> {
+/// When a finished sub-agent stops getting a row: once its age at the tick, its
+/// `ended_secs` plus the window list's age (`listed_age_secs`), passes `finished_secs`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Keep {
+    pub finished_secs: u64,
+    pub listed_age_secs: u64,
+}
+
+pub fn subagent_forest(subagents: &[SubagentInfo], keep: Keep) -> Vec<SubagentNode<'_>> {
     let index_by_id: HashMap<&str, usize> = subagents
         .iter()
         .enumerate()
@@ -61,16 +66,17 @@ pub fn subagent_forest(
     for siblings in &mut children {
         sort_subagents(siblings, subagents);
     }
-    build_visible_forest(&roots, subagents, &children, keep_finished_secs)
+    build_visible_forest(&roots, subagents, &children, keep)
 }
 
-/// Task M6.9: a `Done` or `Failed` sub-agent whose `ended_secs` is older than
-/// `keep_finished_secs` gets no row of its own.
-fn is_hidden_finished(info: &SubagentInfo, keep_finished_secs: u64) -> bool {
+/// Task M6.9: a `Done` or `Failed` sub-agent finished longer ago than
+/// `keep.finished_secs` gets no row of its own; its age is measured to the tick
+/// (milestone 9.19 decision 11), not to the window list that carried it.
+fn is_hidden_finished(info: &SubagentInfo, keep: Keep) -> bool {
     info.state != SubagentState::Running
         && info
             .ended_secs
-            .is_some_and(|secs| secs > keep_finished_secs)
+            .is_some_and(|secs| secs.saturating_add(keep.listed_age_secs) > keep.finished_secs)
 }
 
 /// Builds the forest for one level of `indices` (siblings, by index into `subagents`),
@@ -87,12 +93,12 @@ fn build_visible_forest<'a>(
     indices: &[usize],
     subagents: &'a [SubagentInfo],
     children: &[Vec<usize>],
-    keep_finished_secs: u64,
+    keep: Keep,
 ) -> Vec<SubagentNode<'a>> {
     let mut result = Vec::new();
     for &index in indices {
-        let kids = build_visible_forest(&children[index], subagents, children, keep_finished_secs);
-        if is_hidden_finished(&subagents[index], keep_finished_secs) {
+        let kids = build_visible_forest(&children[index], subagents, children, keep);
+        if is_hidden_finished(&subagents[index], keep) {
             result.extend(kids);
         } else {
             result.push(SubagentNode {

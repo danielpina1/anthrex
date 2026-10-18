@@ -72,7 +72,7 @@ pub fn digest_source(digest: &Value, run: &Run) -> Option<String> {
     let tasks = || digest["tasks"].as_array().into_iter().flatten();
     let fix = |id: &str| run.task(id).and_then(fix_kind);
     // Controller ruling (task 11): a cleared block whose line is still the entry's
-    // `last` (`{HH:MM} blocked ({reason}): …`, `dispatch::block`) shows the same text.
+    // `last` (`{at} blocked ({reason}): …`, `dispatch::block`) shows the same text.
     let is_block_line = |last: &str| line_text(last).starts_with("blocked (");
     let block = tasks().find_map(|entry| {
         let last_blocked = entry["last"].as_str().is_some_and(is_block_line);
@@ -86,8 +86,8 @@ pub fn digest_source(digest: &Value, run: &Run) -> Option<String> {
 }
 
 /// Task 8 review I1 (ruling): a fix task's note the digest shows, in `task_notes`, as
-/// its task entry's `last` (`{HH:MM} note ({kind}): …`, or a reviewer's
-/// `{HH:MM} brief finding: …`), or as an `attention` line (`{id} noted a {kind}: …`,
+/// its task entry's `last` (`{at} note ({kind}): …`, or a reviewer's
+/// `{at} brief finding: …`), or as an `attention` line (`{id} noted a {kind}: …`,
 /// or `{id} review flagged the brief: …`).
 fn note_source<'a>(
     digest: &'a Value,
@@ -122,11 +122,12 @@ fn note_source<'a>(
         })
 }
 
-/// A task entry's `last` (`{HH:MM} {text}`) without its time, and without the
-/// `racer {lane}: ` prefix a racer's lines keep once its lane's view ends
-/// (`engine/race_view.rs`; PR #60 review I1).
+/// A task entry's `last` (`{at} {text}`, `{at}` being `json::at_text`'s
+/// `2026-10-12 14:30 UTC`) without its time, and without the `racer {lane}: ` prefix a
+/// racer's lines keep once its lane's view ends (`engine/race_view.rs`; PR #60 review
+/// I1).
 fn line_text(last: &str) -> &str {
-    let text = last.split_once(' ').map_or("", |(_, t)| t);
+    let text = super::json::after_at(last);
     text.strip_prefix("racer ")
         .and_then(|rest| rest.split_once(": "))
         .filter(|(lane, _)| !lane.is_empty() && !lane.contains(' '))

@@ -410,3 +410,50 @@ fn statusbar_shows_the_run_view_hints() {
     assert!(screen.contains(" 1/3 merged · 10m "), "{screen}");
     assert!(!screen.contains(" tree overview "), "{screen}");
 }
+
+/// Milestone 9.19 decision 11: once the link is lost the badge says how old the frozen
+/// values are, and the git segment draws muted until the window list thaws it.
+#[test]
+fn the_disconnected_badge_says_as_of_when() {
+    use std::time::Duration;
+    let mut app = App::new(
+        vec![window(1, Some("/repo".into()))],
+        "/tmp".into(),
+        UiSettings::default(),
+    );
+    app.set_terminal_size(80, 24);
+    app.on_daemon(proto::DaemonMsg::Git {
+        root: "/repo".into(),
+        state: Some(clean_state()),
+    });
+    let t0 = app.ticked_at;
+    app.on_tick_at(t0, 0);
+    let tick_at = |buffer: &Buffer| {
+        (0..buffer.area.width)
+            .find(|&x| buffer[(x, 0)].symbol() == "✓")
+            .expect("the git segment is drawn")
+    };
+    let buffer = render_row(&app, 120);
+    let muted = role(Role::Muted, app.palette()).fg.unwrap();
+    assert_ne!(
+        buffer[(tick_at(&buffer), 0)].fg,
+        muted,
+        "live: in its own role"
+    );
+
+    app.on_link_lost("x");
+    app.on_tick_at(t0 + Duration::from_secs(60), 0);
+    let buffer = render_row(&app, 120);
+    let text = row_text(&buffer);
+    assert!(
+        text.starts_with(" DISCONNECTED · as of 1m 00s ago  reconnecting (attempt 1)"),
+        "{text:?}"
+    );
+    assert_eq!(buffer[(tick_at(&buffer), 0)].fg, muted, "frozen: muted");
+
+    // Review round 1, M1: the window list thaws the window-side values, the git segment
+    // among them, before the first runs snapshot comes.
+    let _ = app.on_reconnected(vec![window(1, Some("/repo".into()))]);
+    let buffer = render_row(&app, 120);
+    assert_ne!(buffer[(tick_at(&buffer), 0)].fg, muted, "reconnected: live");
+}

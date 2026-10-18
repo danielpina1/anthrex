@@ -7,6 +7,7 @@
 
 #[cfg(target_os = "macos")]
 pub mod confine;
+pub mod descriptors;
 pub mod headless;
 pub mod history;
 pub mod run_git;

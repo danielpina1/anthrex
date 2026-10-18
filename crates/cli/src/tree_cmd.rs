@@ -4,6 +4,12 @@ use std::fmt::Write;
 use std::path::Path;
 use tui::tree::{self, RowKind, RuntimeCounts, SubagentNode, TreeState};
 
+/// Every sub-agent the daemon reports, however long ago it finished.
+const KEEP_ALL: tree::Keep = tree::Keep {
+    finished_secs: u64::MAX,
+    listed_age_secs: 0,
+};
+
 #[derive(Clone, Copy)]
 pub struct ProjectQuery<'a> {
     requested: &'a Path,
@@ -95,33 +101,31 @@ pub fn tree_text(windows: &[WindowInfo], project: Option<ProjectQuery<'_>>) -> S
                 status.label(),
                 format_counts(counts)
             ),
+            // Milestone 9.19 decision 13: `#<position>` is the `C-b <n>` a client
+            // uses, `id <id>` what `ls`, `kill` and `attach` take.
             RowKind::Window { info, position, .. } => writeln!(
                 text,
-                "  {position:>2}  {}  {}  {}  {}  {}{}",
+                "  #{position}  id {}  {}  {}  {}  {} {}{}",
+                info.id,
                 info.name,
                 info.runtime.label(),
                 info.model.as_deref().unwrap_or("-"),
                 info.status.label(),
-                tree::format_elapsed(info.since_secs),
+                common::numbers::duration(info.since_secs),
                 tool_suffix(info.tool.as_deref())
             ),
             RowKind::Subagent { info, .. } => writeln!(
                 text,
                 // Sub-agents sit under a fixed window indent here, so the
                 // window's own guide level is dropped: two columns per level.
-                "      {} {}{}  {}  {}{}",
+                "      {} {}{}  {}{}",
                 row.guides.chars().skip(2).collect::<String>(),
                 info.kind,
                 info.label
                     .as_ref()
                     .map(|label| format!(": {label}"))
                     .unwrap_or_default(),
-                if info.needs_permission {
-                    "permission"
-                } else {
-                    state_label(info.state)
-                },
-                tree::format_elapsed(subagent_duration(info)),
+                subagent_time(info),
                 tool_suffix(info.tool.as_deref())
             ),
             // `tree::build` lists plain windows only; run rows need the run snapshot.
@@ -185,7 +189,7 @@ pub fn tree_json(windows: &[WindowInfo], project: Option<ProjectQuery<'_>>) -> T
                     // `tui::settings::UiSettings`), so it keeps its pre-M6.9 behaviour
                     // of listing every sub-agent the daemon reports, never hiding an
                     // old finished one the way the client's tree view now can.
-                    subagents: tree::subagent_forest(&info.subagents, u64::MAX)
+                    subagents: tree::subagent_forest(&info.subagents, KEEP_ALL)
                         .into_iter()
                         .map(subagent_json)
                         .collect(),
@@ -238,11 +242,12 @@ fn selected_windows<'a>(
     )
 }
 
+/// `claude 2 · codex 1 · shell 1`, named as `--json` names them; a zero is left out.
 fn format_counts(counts: RuntimeCounts) -> String {
     [
-        ("cl", counts.claude),
-        ("cx", counts.codex),
-        ("sh", counts.shell),
+        ("claude", counts.claude),
+        ("codex", counts.codex),
+        ("shell", counts.shell),
     ]
     .into_iter()
     .filter(|(_, count)| *count > 0)
@@ -263,13 +268,26 @@ fn state_label(state: SubagentState) -> &'static str {
     }
 }
 
-fn subagent_duration(info: &SubagentInfo) -> u64 {
+/// Milestone 9.19 decision 13: `running 3m 10s`, `ran 12s` for a done one, `failed
+/// 12s`, `permission 3m 10s`; decision 9: a stopped one with no end reads `done -`.
+fn subagent_time(info: &SubagentInfo) -> String {
+    let time = subagent_duration(info).map(common::numbers::duration);
+    let word = match (info.needs_permission, info.state, &time) {
+        (true, ..) => "permission",
+        (false, SubagentState::Done, Some(_)) => "ran",
+        (false, state, _) => state_label(state),
+    };
+    format!("{word} {}", time.as_deref().unwrap_or("-"))
+}
+
+/// How long a sub-agent has run: its age while running, else its start's age less
+/// its end's; `None` for a stopped one whose end never arrived (unknown, not zero).
+fn subagent_duration(info: &SubagentInfo) -> Option<u64> {
     match info.state {
-        SubagentState::Running => info.started_secs,
+        SubagentState::Running => Some(info.started_secs),
         SubagentState::Done | SubagentState::Failed => info
             .ended_secs
-            .map(|ended| info.started_secs.saturating_sub(ended))
-            .unwrap_or(0),
+            .map(|ended| info.started_secs.saturating_sub(ended)),
     }
 }
 

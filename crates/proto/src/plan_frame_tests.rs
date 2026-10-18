@@ -233,7 +233,7 @@ fn task_info_replaces_and_replaced_by_are_optional() {
 
 #[test]
 fn task_record_replaces_and_brief_findings_default() {
-    assert_eq!(HISTORY_VERSION, 5);
+    assert_eq!(HISTORY_VERSION, 6);
     for text in [
         include_str!("m9_history_v2.jsonl"),
         include_str!("m93_history.jsonl"),

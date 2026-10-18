@@ -15,9 +15,13 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use unicode_width::UnicodeWidthStr;
 
-/// The narrow panel row (exact): `<n> changes · <m> disputed findings (f)`.
+/// The narrow panel row (exact): `<n> changes · <m> disputed findings (f)`, and
+/// `loading…` until the gate arrives (milestone 9.19 decision 9: not `0 changes`).
 pub(crate) fn panel_row(gate: Option<&DocGateInfo>, p: Palette) -> String {
-    let (n, m) = gate.map_or((0, 0), |g| (g.changes_summary.len(), g.disputed.len()));
+    let Some(g) = gate else {
+        return fold("loading…", p.ascii);
+    };
+    let (n, m) = (g.changes_summary.len(), g.disputed.len());
     format!("{n} changes {} {m} disputed findings (f)", dot(p))
 }
 

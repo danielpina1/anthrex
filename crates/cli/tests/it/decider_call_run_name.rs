@@ -132,7 +132,7 @@ fn a_hanging_decider_is_cut_at_the_bound() {
     assert_eq!(decision.source, DeciderSource::Fallback);
     assert_eq!(
         decision.fallback_reason.as_deref(),
-        Some("the decider timed out after 2 s")
+        Some("the decider timed out after 2s")
     );
     assert!(elapsed >= BOUND, "{elapsed:?}");
     assert!(elapsed < BOUND + SPAWN_SLACK, "{elapsed:?}");

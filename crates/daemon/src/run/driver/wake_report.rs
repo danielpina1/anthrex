@@ -34,7 +34,9 @@ impl std::fmt::Display for WaitReason {
         match self {
             WaitReason::Working => f.write_str("window working"),
             WaitReason::Starting => f.write_str("window starting"),
-            WaitReason::Input { secs } => write!(f, "input {secs}s ago"),
+            WaitReason::Input { secs } => {
+                write!(f, "input {} ago", common::numbers::duration(*secs))
+            }
             WaitReason::Attention => f.write_str("attention open"),
             WaitReason::NoSignal => f.write_str("no hook signal yet"),
         }

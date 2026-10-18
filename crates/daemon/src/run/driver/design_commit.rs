@@ -48,7 +48,10 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
         Ok(Err(error)) => return failed(format!("reading the documents back failed: {error}")),
         Err(_) => {
             let secs = IO_WAIT.as_secs();
-            return failed(format!("reading the documents back took over {secs} s"));
+            return failed(format!(
+                "reading the documents back took over {}",
+                common::numbers::duration(secs)
+            ));
         }
     };
     let spec_text = (spec.files.iter().zip(&texts))

@@ -195,13 +195,13 @@ fn e2e_a_goal_that_falls_back_to_the_plan_path_is_tuned_once() {
         .filter_map(|e| e["text"].as_str())
         .filter(|t| t.starts_with("tuning: "))
         .collect();
-    let weights = "tuning: path weights S 550s, M 1650s (derived), hub 1650s (derived)";
+    let weights = "tuning: path weights S 9m 10s, M 27m 30s (derived), hub 27m 30s (derived)";
     assert_eq!(
         log,
         [
-            "tuning: budget S 40 calls 15m → 55 calls 18m from 34 samples",
+            "tuning: budget S 40 calls · 15 min → 55 calls · 18 min from 34 samples",
             weights,
-            "tuning: budget S 55 calls 18m from 34 samples",
+            "tuning: budget S 55 calls · 18 min from 34 samples",
         ],
         "each line once (ruling T9-5)"
     );

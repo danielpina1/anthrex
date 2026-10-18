@@ -86,8 +86,8 @@ pub fn on_tick(run: &mut Run, now: u64) -> bool {
         c.last_change_at = Some(now);
         c.recoveries = c.recoveries.saturating_add(1);
         lines.push(format!(
-            "no rate limit on {label} for {} min: writers {} → {}",
-            after / 60,
+            "no rate limit on {label} for {}: writers {} → {}",
+            common::numbers::duration(after),
             c.cap - 1,
             c.cap
         ));

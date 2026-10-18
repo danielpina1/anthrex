@@ -91,7 +91,7 @@ fn the_view_shows_the_whole_alert_at_120x40() {
         "phase   blocked · question",
         "asked   which crate owns the formatting helper?",
         "run     Add mul() · 0723",
-        "worker  cx gpt-6-sol · 12 calls · 4m",
+        "worker  cx gpt-6-sol · 12 calls · 4m 00s",
         "age     41s",
     ] {
         assert!(detail.contains(&want), "{want:?} not in {detail:#?}");
@@ -122,7 +122,7 @@ fn the_view_shows_the_whole_alert_at_120x40() {
             "phase   blocked · question",
             "asked   which crate owns the formatting helper?",
             "run     Add mul() · 0723",
-            "worker  cx gpt-6-sol · 12 calls · 4m",
+            "worker  cx gpt-6-sol · 12 calls · 4m 00s",
             "age     41s",
             "",
             "actions  answer · message · retry · override ·",
@@ -166,7 +166,7 @@ fn the_view_stacks_below_60_columns() {
             " asked   which crate owns the formatting",
             "         helper?",
             " run     Add mul() · 0723",
-            " worker  cx gpt-6-sol · 12 calls · 4m",
+            " worker  cx gpt-6-sol · 12 calls · 4m 00s",
             " age     41s",
             "",
             " actions  answer · message · retry ·",

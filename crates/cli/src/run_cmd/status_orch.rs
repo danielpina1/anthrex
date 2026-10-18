@@ -1,11 +1,13 @@
 //! Milestone 9's part of `anthrex run status` (task M9.14): the orchestrator, planner,
 //! hold and summary lines, and the task table's `paused(message)` and ` (held)`. Pure.
 
+use common::numbers::Zone;
 use proto::{BlockReason, HoldState, PlannerState, RunInfo, TaskInfo};
 
 /// Milestone 9's lines: the orchestrator's window, route and liveness; each planner
 /// with the tasks of its epic; each hold with its tasks; whether the summary is written.
-pub(super) fn orchestrator_lines(run: &RunInfo) -> String {
+/// The untrusted line's time is the viewer's clock in `zone` against the daemon's `now`.
+pub(super) fn orchestrator_lines(run: &RunInfo, now: u64, zone: Zone) -> String {
     let mut out = String::new();
     if let Some(o) = &run.orchestrator {
         let window = o.window_id.map_or("-".to_string(), |w| w.to_string());
@@ -24,7 +26,7 @@ pub(super) fn orchestrator_lines(run: &RunInfo) -> String {
             out.push_str(&format!(
                 "  untrusted text read: {} at {}; override, accept_red and approve_hold go to the user\n",
                 super::status::one_line(&u.source),
-                common::text::hh_mm(u.at)
+                common::numbers::clock(u.at, now, zone)
             ));
         }
         // Milestone 9.9 (OFA §4.6): what it resolved on its own, and what it asks.

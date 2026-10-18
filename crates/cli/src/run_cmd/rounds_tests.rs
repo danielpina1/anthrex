@@ -1,6 +1,7 @@
 //! Milestone 9.3 task M9.3.8: `run iterate`, `run start --continue` and `run status`'s
 //! round lines (KG §7, design decision 31).
 
+use common::numbers::Zone;
 use std::path::Path;
 use std::time::Duration;
 
@@ -345,12 +346,18 @@ fn round_lines(text: &str) -> Vec<&str> {
 fn status_shows_rounds_only_for_a_multi_round_run() {
     let one = example();
     assert!(one.rounds.is_empty());
-    assert_eq!(round_lines(&run_block(&one, 0)), Vec::<&str>::new());
+    assert_eq!(
+        round_lines(&run_block(&one, 0, Zone::Local(0))),
+        Vec::<&str>::new()
+    );
     // A run that has round 1's record (every run made since milestone 9.3) is still a
     // one-round run: no round lines.
     let mut first = example();
     first.rounds = vec![info(1, RoundOrigin::User, None, None)];
-    assert_eq!(round_lines(&run_block(&first, 0)), Vec::<&str>::new());
+    assert_eq!(
+        round_lines(&run_block(&first, 0, Zone::Local(0))),
+        Vec::<&str>::new()
+    );
 
     let mut three = example();
     three.round = 3;
@@ -369,7 +376,7 @@ fn status_shows_rounds_only_for_a_multi_round_run() {
         ),
         info(3, RoundOrigin::User, None, None),
     ];
-    let text = run_block(&three, 0);
+    let text = run_block(&three, 0, Zone::Local(0));
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(
         lines[1..6],
@@ -387,14 +394,19 @@ fn status_shows_rounds_only_for_a_multi_round_run() {
         .copied()
         .filter(|l| !l.starts_with("  round "))
         .collect();
-    assert_eq!(without, run_block(&one, 0).lines().collect::<Vec<_>>());
+    assert_eq!(
+        without,
+        run_block(&one, 0, Zone::Local(0))
+            .lines()
+            .collect::<Vec<_>>()
+    );
 
     let mut cancelled = three.clone();
     cancelled.round = 2;
     cancelled.rounds.truncate(2);
     cancelled.rounds[1].outcome = Some(RoundOutcome::Cancelled);
     assert_eq!(
-        round_lines(&run_block(&cancelled, 0)),
+        round_lines(&run_block(&cancelled, 0, Zone::Local(0))),
         [
             "  round 2 of 2",
             "  round 1 · user · completed · Added the reset form",
@@ -425,7 +437,7 @@ fn status_round_lines_are_sanitised() {
         "  round 1 · user · completed · -",
         "  round 2 · user · completed · sum xyz w [2J",
     ];
-    let text = run_block(&run, 0);
+    let text = run_block(&run, 0, Zone::Local(0));
     assert_eq!(round_lines(&text), expected);
     assert_eq!(round_lines(&printable(&text)), expected);
 }

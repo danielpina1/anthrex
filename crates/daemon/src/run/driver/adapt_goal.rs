@@ -446,8 +446,8 @@ impl RunService {
                 tracing::warn!(%error, "the triage decider's history record was not written");
             }
             Err(_) => tracing::warn!(
-                "the triage decider's history record was not written within {} s",
-                TRIAGE_WRITE_TIMEOUT.as_secs()
+                "the triage decider's history record was not written within {}",
+                common::numbers::duration(TRIAGE_WRITE_TIMEOUT.as_secs())
             ),
         }
     }

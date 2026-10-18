@@ -282,7 +282,7 @@ fn a_folded_tool_call_is_one_line_with_its_state_and_duration() {
     assert!(grep.contains("▸ Grep  \"parse_\" → 34 matches"), "{grep}");
     assert!(grep.contains("✓ 0.3s"), "{grep}");
     let bash = rows.iter().find(|r| r.contains("Bash")).unwrap();
-    assert!(bash.contains("✗ 2.5s"), "{bash}");
+    assert!(bash.contains("✗ 2.4s"), "{bash}");
     let out = text_of(&buf);
     assert!(!out.contains("parse_needle"), "the input leaked:\n{out}");
     assert!(!out.contains("\"pattern\""), "the input leaked:\n{out}");
@@ -518,14 +518,19 @@ fn the_turn_header_shows_the_role_and_local_time() {
         24,
         main_conversation(),
     );
-    // 34_920 s is 09:42 UTC; 34_980 s is 09:43.
+    // 34_920 s is 09:42 UTC; 34_980 s is 09:43. The daemon's `now` is the same day.
     let out = text_of(&draw(&app, 80, 24));
     let you = out.lines().find(|l| l.contains("you")).unwrap();
-    assert!(you.trim_end_matches(['│', ' ']).ends_with("09:42"), "{you}");
+    assert!(
+        you.trim_end_matches(['│', ' ']).ends_with("09:42 +00:00"),
+        "{you}"
+    );
     let assistant = out.lines().find(|l| l.contains("assistant")).unwrap();
     assert!(assistant.contains("◆"), "{assistant}");
     assert!(
-        assistant.trim_end_matches(['│', ' ']).ends_with("09:43"),
+        assistant
+            .trim_end_matches(['│', ' '])
+            .ends_with("09:43 +00:00"),
         "{assistant}"
     );
     // Milestone 9.0.7 decision 30: a user turn leads with `›`, not the collapsed `▸`.
@@ -537,7 +542,32 @@ fn the_turn_header_shows_the_role_and_local_time() {
     app.utc_offset_secs = -5 * 3600;
     let out = text_of(&draw(&app, 80, 24));
     let you = out.lines().find(|l| l.contains("you")).unwrap();
-    assert!(you.trim_end_matches(['│', ' ']).ends_with("04:42"), "{you}");
+    assert!(
+        you.trim_end_matches(['│', ' ']).ends_with("04:42 -05:00"),
+        "{you}"
+    );
+}
+
+/// Milestone 9.19 decision 3: a turn from the day before the daemon's `now` names its
+/// day (1970-01-01 is a Thursday).
+#[test]
+fn a_conversation_turn_from_yesterday_names_its_day() {
+    let mut app = app_showing(
+        UiSettings::default(),
+        Runtime::Claude,
+        80,
+        24,
+        main_conversation(),
+    );
+    app.runs.now = 86_400 + 12 * 3600;
+    app.utc_offset_secs = 3600;
+    let out = text_of(&draw(&app, 80, 24));
+    let you = out.lines().find(|l| l.contains("you")).unwrap();
+    assert!(
+        you.trim_end_matches(['│', ' '])
+            .ends_with("Thu 10:42 +01:00"),
+        "{you}"
+    );
 }
 
 #[path = "conversation_tests/clean.rs"]

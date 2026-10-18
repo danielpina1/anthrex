@@ -13,7 +13,6 @@ use proto::{CommandCheck, DroppedCommand, ProfileVerification, RepoProfile};
 use super::confined_hint;
 use crate::run::globs::validate_glob;
 use crate::run::plan::builtin_protected;
-use crate::run::report::format_utc;
 pub use common::profile_keys::REVERIFY_KEYS;
 
 /// What `anthrex profile edit` accepts: every `RepoProfile` field, and `env.<NAME>` for
@@ -317,9 +316,15 @@ pub fn protected_line(profile: &RepoProfile) -> String {
 /// How a command failed: its timeout, its exit code, or neither.
 pub(super) fn failure(check: &CommandCheck) -> String {
     match (check.timed_out, check.code) {
-        (true, _) => format!("timed out after {}s", check.secs),
-        (false, Some(code)) => format!("exit {code} after {}s", check.secs),
-        (false, None) => format!("no exit code after {}s", check.secs),
+        (true, _) => format!("timed out after {}", common::numbers::duration(check.secs)),
+        (false, Some(code)) => format!(
+            "exit {code} after {}",
+            common::numbers::duration(check.secs)
+        ),
+        (false, None) => format!(
+            "no exit code after {}",
+            common::numbers::duration(check.secs)
+        ),
     }
 }
 
@@ -397,9 +402,9 @@ pub fn apply_verification(
             Some(c) if c.command == single => {
                 let reason = if !c.timed_out && c.code == Some(0) {
                     format!(
-                        "exit 0 after {}s, but no output line matched test_passed for \
+                        "exit 0 after {}, but no output line matched test_passed for \
                          sample_test {}",
-                        c.secs,
+                        common::numbers::duration(c.secs),
                         proposed.sample_test.as_deref().unwrap_or_default()
                     )
                 } else {
@@ -465,12 +470,11 @@ pub fn show_text(
     }
     out.push_str(&format!("# {}\n", protected_line(profile)));
     if let Some(v) = verification {
-        let at = format_utc(v.at);
+        // Milestone 9.19 decision 3: daemon text, UTC, labelled; the long form, so the
+        // text a proposal was shown as never moves with the clock.
+        let at = common::numbers::clock_full(v.at, common::numbers::Zone::Utc);
         let confined = if v.confined { "confined" } else { "unconfined" };
-        out.push_str(&format!(
-            "# verification {} ({confined})\n",
-            at.get(..16).unwrap_or(&at)
-        ));
+        out.push_str(&format!("# verification {at} ({confined})\n"));
         for (key, check) in [
             ("setup", &v.setup),
             ("check", &v.check),
@@ -485,7 +489,11 @@ pub fn show_text(
                 continue;
             };
             let status = if c.ok { "ok" } else { "fail" };
-            let mut line = format!("#   {key:<13}{status:<4}{:>4}s   {}", c.secs, c.command);
+            let mut line = format!(
+                "#   {key:<13}{status:<4}{:>7}   {}",
+                common::numbers::duration(c.secs),
+                c.command
+            );
             if key == "single_test"
                 && let Some(sample) = &profile.sample_test
             {

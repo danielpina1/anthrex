@@ -1,14 +1,17 @@
-//! What every run inspection shares (milestone 8c decisions 30 and 31): durations,
-//! token counts, local `hh:mm`, progress bars and lines, bounded free text, the words
-//! for routes, sizes and findings, and the `session` field. Pure: no clock is read.
+//! What every run inspection shares (milestone 8c decision 30; durations are
+//! `common::numbers::duration`, milestone 9.19 decision 4):
+//! progress bars and lines, bounded free text, the words for routes, sizes and
+//! findings, and the `session` field. Token counts are `common::numbers::tokens`
+//! (milestone 9.19 decision 2) and clock times `App::local_clock` (decision 3). Pure: no
+//! clock is read.
 
 use super::{Field, FieldLayout, Inspection};
 use crate::app::App;
 use crate::graph::paint::style::node_glyph;
 use crate::tree::{NodeKey, Row, RowKind};
+use common::progress::Progress;
 use proto::{
-    BlockReason, Effort, Finding, Severity, Size, TaskInfo, TaskState, TestMode, TokenUsage,
-    WindowKind,
+    BlockReason, Effort, Finding, Severity, Size, TaskInfo, TaskState, TestMode, WindowKind,
 };
 use ratatui::text::Span;
 use std::path::Path;
@@ -16,34 +19,6 @@ use std::path::Path;
 /// Free text from the snapshot (a block reason, a summary line, a finding) is cut to
 /// this many characters, so one hostile value cannot make a row cost more than a row.
 pub(super) const TEXT_MAX_CHARS: usize = 300;
-
-/// Decision 31: `{s}s` under a minute, `{m}m` under an hour, else `{h}h{mm}m`.
-pub fn format_duration(secs: u64) -> String {
-    if secs < 60 {
-        format!("{secs}s")
-    } else if secs < 3600 {
-        format!("{}m", secs / 60)
-    } else {
-        format!("{}h{:02}m", secs / 3600, secs % 3600 / 60)
-    }
-}
-
-/// Decision 31: `{n}`, `{n/1000}k`, or `{n/1 000 000}.{tenths}M`.
-pub fn format_tokens(n: u64) -> String {
-    if n < 1000 {
-        n.to_string()
-    } else if n < 1_000_000 {
-        format!("{}k", n / 1000)
-    } else {
-        format!("{}.{}M", n / 1_000_000, n % 1_000_000 / 100_000)
-    }
-}
-
-/// Decision 31: a unix time as local `hh:mm`, the offset given, never read here.
-pub fn local_hhmm(at: u64, utc_offset_secs: i64) -> String {
-    let secs = (i128::from(at) + i128::from(utc_offset_secs)).rem_euclid(86_400);
-    format!("{:02}:{:02}", secs / 3600, secs % 3600 / 60)
-}
 
 /// Decision 30: `filled = (width × done + total / 2) / total` cells of `█`, then `░`.
 /// A done count above the total fills the bar; a zero total leaves it empty.
@@ -104,15 +79,6 @@ pub(super) fn rows(
     }
 }
 
-/// Tokens actually billed, as `TokenUsage::billable` counts them, but saturating: the
-/// numbers come from a stream or an OTLP export and must never panic the view.
-pub(super) fn billable(usage: &TokenUsage) -> u64 {
-    usage
-        .input
-        .saturating_add(usage.cache_write)
-        .saturating_add(usage.output)
-}
-
 /// `waiting`, `working`, … — decision 30's category of a task state, `None` for merged
 /// and cancelled, which are counted apart.
 fn category(state: TaskState) -> Option<usize> {
@@ -127,38 +93,41 @@ fn category(state: TaskState) -> Option<usize> {
     }
 }
 
+/// Whether `task` is in the progress count (`common::progress::counts`).
+fn counts_in(task: &TaskInfo) -> bool {
+    common::progress::counts(task.state, !task.replaced_by.is_empty())
+}
+
 const CATEGORIES: [&str; 6] = [
     "working", "checking", "review", "merging", "blocked", "waiting",
 ];
 
-/// Decision 30's progress line over `tasks`: the bar, `{merged}/{total} merged`, each
-/// non-zero category, then the cancelled; `no tasks yet` when nothing counts. A
-/// `Reported` task is not counted at all.
+/// Decision 30's progress line: the bar, `{merged}/{total} merged` from `progress`
+/// (milestone 9.19 decision 5: `common::progress::tally` over the same `tasks`), each
+/// non-zero category of the tasks that count, then the cancelled; `no tasks yet` when
+/// nothing counts. A `Reported` task is not counted at all.
 pub(super) fn progress_text<'a>(
+    progress: Progress,
     tasks: impl Iterator<Item = &'a TaskInfo>,
     width: usize,
     ascii: bool,
 ) -> String {
-    let (mut merged, mut total, mut cancelled) = (0u64, 0u64, 0u64);
-    let mut counts = [0u64; 6];
-    for task in tasks {
-        match task.state {
-            TaskState::Cancelled => cancelled += 1,
-            TaskState::Merged => merged += 1,
-            // A research or review task's report (M9.9) ends it without a merge: it
-            // is outside the progress categories and the total (M9.2 review ruling 3).
-            TaskState::Reported => continue,
-            state => counts[category(state).unwrap_or(5)] += 1,
-        }
-        total += u64::from(task.state != TaskState::Cancelled);
-    }
+    let Progress {
+        merged,
+        total,
+        cancelled,
+    } = progress;
     if total == 0 {
         return "no tasks yet".to_owned();
     }
-    let mut text = format!(
-        "{}  {merged}/{total} merged",
-        progress_bar_in(merged, total, width, ascii)
-    );
+    let mut counts = [0usize; 6];
+    let counted = tasks.filter(|t| counts_in(t) && t.state != TaskState::Merged);
+    for task in counted {
+        counts[category(task.state).unwrap_or(5)] += 1;
+    }
+    let as_u64 = |n: usize| u64::try_from(n).unwrap_or(u64::MAX);
+    let bar = progress_bar_in(as_u64(merged), as_u64(total), width, ascii);
+    let mut text = format!("{bar}  {merged}/{total} merged");
     for (count, name) in counts.iter().zip(CATEGORIES) {
         if *count > 0 {
             text.push_str(&format!(" · {count} {name}"));

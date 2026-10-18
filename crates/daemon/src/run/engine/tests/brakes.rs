@@ -3,6 +3,7 @@
 //! the engine's default brakes nothing). The readers' half (sub-planners, run scouts,
 //! the spinning-loop guard) is `brakes_readers.rs`. Pure: `now` moves by hand.
 
+use common::numbers::Zone;
 use proto::brakes::{DispatchHold, Permille, QuotaWindow};
 use proto::{RunState, Runtime, TaskState};
 
@@ -51,11 +52,12 @@ pub(super) fn trip_claude(fx: &mut Fixture) -> u64 {
     until
 }
 
-/// The held line [`trip_claude`]'s trip gives.
+/// The held line [`trip_claude`]'s trip gives, while `now` is on the day it lifts
+/// (milestone 9.19 decision 3: daemon text is UTC, labelled).
 pub(super) fn claude_held(until: u64) -> String {
     format!(
-        "claude dispatch held: 7d at 96% (≥95%) until {} UTC",
-        common::text::hh_mm(until)
+        "claude dispatch held: 7d at 96% (≥95%) until {}",
+        common::numbers::clock(until, until, Zone::Utc)
     )
 }
 
@@ -111,6 +113,60 @@ fn brake_holds_claude_dispatch_not_codex() {
     );
     // Its race decision is not latched while it waits (ruling C5).
     assert_eq!(fx.task("t1").race_decision, None);
+}
+
+/// Milestone 9.19 decision 3 (ruling R5): the daemon's own text is UTC and says so. At
+/// fixed instants, given in: the engine is handed unix seconds and never reads the zone
+/// (the `one_local_clock` source rule keeps `localtime` out of the daemon), so no `TZ`
+/// the daemon runs under can move these. A brake lifting five days on names its day,
+/// a second `hold on` says since when, and REPORT.md keeps `format_utc`'s `…Z` (R8).
+#[test]
+fn daemon_text_stays_utc() {
+    // 2026-10-17 14:30 UTC, a Saturday.
+    const NOW: u64 = 1_792_247_400;
+    let mut fx = two_runtimes(PROFILE);
+    fx.now = NOW;
+    fx.next(brake_on());
+    let until = NOW + 5 * 86_400;
+    fx.next(reading(Runtime::Claude, QuotaWindow::SevenDay, 960, until));
+    fx.ready(true);
+    assert!(
+        attention(&fx)
+            .contains(&"claude dispatch held: 7d at 96% (≥95%) until Thu 14:30 UTC".to_owned()),
+        "{:?}",
+        attention(&fx)
+    );
+    for line in attention(&fx) {
+        assert!(
+            !line.contains("+00:00"),
+            "a client label in daemon text: {line}"
+        );
+    }
+
+    let reply = fx.reply();
+    fx.next(EventKind::Hold {
+        reply,
+        hold: hold(NOW - 86_400),
+    });
+    let reply = fx.reply();
+    let effects = fx.next(EventKind::Hold {
+        reply,
+        hold: hold(NOW),
+    });
+    assert_eq!(
+        replies(&effects),
+        vec![Ok(
+            "dispatch was already held since Fri 14:30 UTC".to_owned()
+        )]
+    );
+
+    // The fixture's clock steps a second per event: `2026-10-17 14:30:0<s>Z`.
+    let report = crate::run::report::render(fx.run(), fx.now);
+    let stamped = |l: &&str| {
+        l.strip_prefix("- 2026-10-17 14:30:")
+            .is_some_and(|rest| rest.get(2..4) == Some("Z "))
+    };
+    assert!(report.lines().any(|l| stamped(&l)), "{report}");
 }
 
 #[test]
@@ -340,8 +396,8 @@ fn hold_gates_every_runtime_and_changes_no_run_state() {
         hold: hold(5_000),
     });
     let text = format!(
-        "dispatch was already held since {} UTC",
-        common::text::hh_mm(1_900)
+        "dispatch was already held since {}",
+        common::numbers::clock(1_900, fx.now, Zone::Utc)
     );
     assert_eq!(replies(&effects), vec![Ok(text)]);
     assert_eq!(fx.state.brakes.hold, hold(1_900));
@@ -405,8 +461,8 @@ fn brakes_config_event_reconfigures() {
     fx.done(op, OpResult::Worktree { head: BASE.into() });
     assert_eq!(fx.task("t1").state, TaskState::Queued);
     let line = format!(
-        "claude dispatch held: 7d at 92% (≥90%) until {} UTC",
-        common::text::hh_mm(until)
+        "claude dispatch held: 7d at 92% (≥90%) until {}",
+        common::numbers::clock(until, fx.now, Zone::Utc)
     );
     assert!(attention(&fx).contains(&line), "{:?}", attention(&fx));
     // Switched off, the stored reading brakes nothing.

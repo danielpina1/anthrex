@@ -152,3 +152,84 @@ fn an_asks_context_and_options_are_drawn_in_the_detail() {
     assert!(rows.iter().any(|r| r.contains("1. tabs")), "{text}");
     assert!(rows.iter().any(|r| r.contains("2. spaces")), "{text}");
 }
+
+/// Milestone 9.19 decision 7, ruling R13: a delivery alert on stage 3 of a plan of
+/// three reads `3 of 3`, both with the snapshot shaped as the daemon's `stage_infos`
+/// builds it (one record per stage from 1 to the plan's highest, the last not created
+/// yet) and with the brief's two records (review M1).
+#[test]
+fn the_stage_row_never_passes_its_denominator() {
+    for records in [3, 2] {
+        let text = stage_three_alert(records);
+        assert!(text.contains("stage   3 of 3"), "{records} records: {text}");
+    }
+}
+
+/// The detail of a delivery alert on stage 3 of a plan of three with `records` stage
+/// records.
+fn stage_three_alert(records: u16) -> String {
+    use crate::tree::run_fixtures::{PROJECT, RUN_ID, run, snapshot, task};
+    use proto::{DeliveryAlert, DeliveryAlertKind, DeliveryInfo, DeliveryMode, FullInfo};
+    let mut info = run(RUN_ID, PROJECT, proto::RunState::Running);
+    info.tasks = (1..=3u16)
+        .map(|n| {
+            let mut t = task(
+                &format!("t{n}"),
+                "a",
+                proto::Size::S,
+                proto::TaskState::Queued,
+            );
+            t.stage = n;
+            t
+        })
+        .collect();
+    info.stages = (1..=records)
+        .map(|n| proto::StageInfo {
+            actions: Vec::new(),
+            n,
+            branch: format!("anthrex/{RUN_ID}/stage-{n}"),
+            head: (n < 3).then(|| "abc".to_owned()),
+            tasks: 1,
+            merged: 0,
+            full: FullInfo::default(),
+            fix_tasks: Vec::new(),
+            propagate_red: None,
+            pr: None,
+            round: 1,
+        })
+        .collect();
+    info.delivery = Some(DeliveryInfo {
+        mode: DeliveryMode::Pr,
+        remote: "origin".into(),
+        repo: "o/r".into(),
+        watching: true,
+        delivering: true,
+        poll_secs: 60,
+        skipped_stages: Vec::new(),
+        alerts: vec![DeliveryAlert {
+            kind: DeliveryAlertKind::PrClosedUnmerged,
+            stage: Some(3),
+            text: "stage 3's PR closed".into(),
+            user_only: true,
+        }],
+    });
+    let app = app_of((snapshot(10_000, vec![info]), vec![]));
+    detail_text(&app)
+}
+
+/// Milestone 9.19 decision 5 (review I2): the Accept detail's `merged` row is the run's
+/// one progress count, a reported task in neither number.
+#[test]
+fn the_accept_detail_counts_as_the_run_does() {
+    use crate::tree::run_fixtures::{PROJECT, RUN_ID, run, snapshot, task};
+    use proto::{Size, TaskState};
+    let mut info = run(RUN_ID, PROJECT, proto::RunState::Complete);
+    info.tasks = vec![
+        task("t1", "a", Size::S, TaskState::Merged),
+        task("t2", "b", Size::S, TaskState::Reported),
+        task("t3", "c", Size::S, TaskState::Cancelled),
+    ];
+    let app = app_of((snapshot(10_000, vec![info]), vec![]));
+    let text = detail_text(&app);
+    assert!(text.contains("merged  1/1"), "{text}");
+}

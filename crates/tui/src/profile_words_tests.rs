@@ -158,10 +158,10 @@ fn every_status_line() {
         "Out of date — a and 2 more changed · review the changes"
     );
     assert_eq!(line(&stored(45)), "Ready · verified 45s ago");
-    assert_eq!(line(&stored(12 * 60)), "Ready · verified 12m ago");
-    assert_eq!(line(&stored(5 * 3600)), "Ready · verified 5h ago");
-    assert_eq!(line(&stored(86_400)), "Ready · verified 1 day ago");
-    assert_eq!(line(&stored(3 * 86_400)), "Ready · verified 3 days ago");
+    assert_eq!(line(&stored(12 * 60)), "Ready · verified 12m 00s ago");
+    assert_eq!(line(&stored(5 * 3600)), "Ready · verified 5h 00m ago");
+    assert_eq!(line(&stored(86_400)), "Ready · verified 1d 00h ago");
+    assert_eq!(line(&stored(3 * 86_400)), "Ready · verified 3d 00h ago");
 }
 
 /// Decision 23: the first matching rule wins.
@@ -192,7 +192,7 @@ fn the_first_rule_wins() {
     };
     assert_eq!(
         line(&with(stored(60), ProposalState::Verifying, edit)),
-        "Ready · verified 1m ago"
+        "Ready · verified 1m 00s ago"
     );
 }
 
@@ -224,18 +224,6 @@ fn hints_name_real_placeholders_only() {
         hint("single_test"),
         "how anthrex runs one test; {test} is filled in"
     );
-}
-
-#[test]
-fn took_and_age() {
-    assert_eq!(took(12), "12s");
-    assert_eq!(took(190), "3m10s");
-    assert_eq!(took(3900), "1h05m");
-    assert_eq!(age(45), "45s");
-    assert_eq!(age(12 * 60), "12m");
-    assert_eq!(age(5 * 3600), "5h");
-    assert_eq!(age(86_400), "1 day");
-    assert_eq!(age(3 * 86_400), "3 days");
 }
 
 /// Decision 26.

@@ -255,10 +255,11 @@ fn stats_medians_by_class_over_merged_tasks() {
 
     let want = [
         "history: /tmp/h/history.jsonl  (12 task records, 2 runs)",
-        "CLASS  TASKS  MERGED  LINES  TOOL CALLS  TOKENS  WORK MIN  BOUNCES  REVERTED",
-        "S      5      4       20     7           9.9k    2         4        0",
-        "M      3      3       70     20          50k     21        0        0",
-        "hub    1      0       -      -           -       -         2        0",
+        "CLASS  TASKS  MERGED  MED LINES  MED CALLS  MED TOKENS  MED WORK  BOUNCES (ALL)  REVERTED",
+        "S      5      4       20         7          9.9k        2m 00s    4              0",
+        "M      3      3       70         20         50k         20m 30s   0              0",
+        "hub    1      0       -          -          -           -         2              0",
+        "MED = median over merged tasks · tokens are billed (worker + reviewer + decider) · BOUNCES counts every task",
         "deciders: 7 calls, 1 fallback · size cross-check: 3 checked, 1 raised",
     ];
     assert_eq!(render(&stats), want.map(|l| format!("{l}\n")).concat());
@@ -267,10 +268,11 @@ fn stats_medians_by_class_over_merged_tasks() {
     let empty = aggregate(&[], Path::new(PATH));
     let want = [
         "history: /tmp/h/history.jsonl  (0 task records, 0 runs)",
-        "CLASS  TASKS  MERGED  LINES  TOOL CALLS  TOKENS  WORK MIN  BOUNCES  REVERTED",
-        "S      0      0       -      -           -       -         0        0",
-        "M      0      0       -      -           -       -         0        0",
-        "hub    0      0       -      -           -       -         0        0",
+        "CLASS  TASKS  MERGED  MED LINES  MED CALLS  MED TOKENS  MED WORK  BOUNCES (ALL)  REVERTED",
+        "S      0      0       -          -          -           -         0              0",
+        "M      0      0       -          -          -           -         0              0",
+        "hub    0      0       -          -          -           -         0              0",
+        "MED = median over merged tasks · tokens are billed (worker + reviewer + decider) · BOUNCES counts every task",
         "deciders: 0 calls, 0 fallbacks · size cross-check: 0 checked, 0 raised",
     ];
     assert_eq!(render(&empty), want.map(|l| format!("{l}\n")).concat());
@@ -310,6 +312,43 @@ fn tokens_are_shown_as_n_k_or_m() {
     ] {
         assert_eq!(tokens(n), shown, "{n}");
     }
+}
+
+/// Milestone 9.19 decision 2: the token median leaves out the merged tasks that
+/// recorded no billed tokens (as the refit does, ruling T8-5); a class with none left
+/// shows `-`. Lines, calls and work time still count every merged task.
+#[test]
+fn stats_median_tokens_skips_unrecorded() {
+    let lines: Vec<HistoryLine> = [
+        merged("r1", "a1", Size::S, (10, 5, 2_000, 60)),
+        merged("r1", "a2", Size::S, (20, 7, 0, 120)),
+        merged("r1", "a3", Size::S, (30, 9, 6_000, 180)),
+    ]
+    .into_iter()
+    .map(HistoryLine::Task)
+    .collect();
+    let stats = aggregate(&lines, Path::new(PATH));
+    let s = row(&stats, "S");
+    // The lower median of 2 000 and 6 000, not of 0, 2 000 and 6 000.
+    assert_eq!(s.median_tokens, Some(2_000));
+    assert_eq!(
+        (s.median_tool_calls, s.median_work_secs),
+        (Some(7), Some(120))
+    );
+
+    let lines: Vec<HistoryLine> = [
+        merged("r1", "a1", Size::S, (10, 5, 0, 60)),
+        merged("r1", "a2", Size::S, (20, 7, 0, 120)),
+    ]
+    .into_iter()
+    .map(HistoryLine::Task)
+    .collect();
+    let stats = aggregate(&lines, Path::new(PATH));
+    assert_eq!(row(&stats, "S").median_tokens, None);
+    let text = render(&stats);
+    let s_line = text.lines().find(|l| l.starts_with("S ")).unwrap();
+    let cells: Vec<&str> = s_line.split_whitespace().collect();
+    assert_eq!(cells[5], "-", "{text}");
 }
 
 fn revert(run: &str, task: Option<&str>, n: u32) -> HistoryLine {
@@ -486,7 +525,8 @@ fn round(run: &str, n: u32, outcome: proto::RoundOutcome) -> HistoryLine {
     })
 }
 
-/// Milestone 9.3 (KG §2.6, design decision 31): `rounds: <total> · <iterated runs>`, after
+/// Milestone 9.3 (KG §2.6, design decision 31): `rounds: <total> ended · <iterated runs>
+/// run(s) iterated` (milestone 9.19 decision 14), after
 /// the deciders' line. `<total>` is the `round` lines read; a run is iterated once a round
 /// after its first has ended. Round 1's line is written when round 2 starts (task M9.3.4b's
 /// ruling), so `r2`, whose round 2 is still open, has one line and is not yet counted. A
@@ -523,7 +563,7 @@ fn stats_counts_rounds_and_iterated_runs() {
         .expect("the deciders' line");
     assert_eq!(
         text.lines().nth(deciders + 1),
-        Some("rounds: 3 · 1"),
+        Some("rounds: 3 ended · 1 run iterated"),
         "{text}"
     );
     assert_eq!(text.matches("rounds:").count(), 1, "{text}");
@@ -533,5 +573,5 @@ fn stats_counts_rounds_and_iterated_runs() {
     lines.extend([round("r2", 2, Completed), round("r1", 3, Completed)]);
     let more = aggregate(&lines, Path::new(PATH));
     assert_eq!((more.rounds, more.iterated_runs), (5, 2));
-    assert!(render(&more).contains("\nrounds: 5 · 2\n"));
+    assert!(render(&more).contains("\nrounds: 5 ended · 2 runs iterated\n"));
 }

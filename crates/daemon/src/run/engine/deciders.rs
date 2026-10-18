@@ -101,7 +101,10 @@ pub(crate) fn dispatch(run: &mut Run, now: u64) -> Vec<Effect> {
         .partition(|q| now >= q.queued_at.saturating_add(wait));
     run.decider_queue = waiting;
     for q in late {
-        let reason = format!("no reader slot was free within {wait} s");
+        let reason = format!(
+            "no reader slot was free within {}",
+            common::numbers::duration(wait)
+        );
         let decision = fallback_decision(&q.request, reason);
         fx.extend(on_decided(
             run,

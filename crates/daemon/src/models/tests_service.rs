@@ -219,7 +219,7 @@ async fn a_failed_probe_serves_the_newest_cache_as_cached() {
     assert_eq!(codex.source, CatalogSource::Cached);
     assert_eq!(
         codex.problem.as_deref(),
-        Some("codex did not answer within 10 s")
+        Some("codex did not answer within 10s")
     );
 }
 

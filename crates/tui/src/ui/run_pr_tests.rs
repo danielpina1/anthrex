@@ -59,10 +59,10 @@ fn a_pr_run_view_draws_its_prs_at_both_sizes() {
     let app = pr_view(pr_fixture(), false, stage_key(2));
     let big = screen(&app, 120, 40);
     for text in [
-        "stage 1/3  tier 3 ✓ 38s  #141  merged",
-        "▌ ✓ stage 2/3  tier 3 ✓ 38s  #142  ci ✗  3 threads",
-        "stage 3/3  tier 3 ✓ 38s  #143  ci …",
-        "pr        #142 open, based on anthrex/add-reset-3f9a/stage-1, opened 02:30",
+        "stage 1 of 3  tier 3 ✓ 38s  #141  merged",
+        "▌ ✓ stage 2 of 3  tier 3 ✓ 38s  #142  ci ✗  3 threads",
+        "stage 3 of 3  tier 3 ✓ 38s  #143  ci …",
+        "pr        #142 open, based on anthrex/add-reset-3f9a/stage-1, opened 02:30 +00:…",
         "ci        ✓ build · ✗ test (fix3)",
         "fix tasks ci: fix3 working; review: fix4 merged",
     ] {
@@ -70,9 +70,11 @@ fn a_pr_run_view_draws_its_prs_at_both_sizes() {
     }
     let small = screen(&app, 80, 24);
     for text in [
-        "  ✓ stage 1/3  tier 3 ✓ 38s  #141  merged",
-        "▌ ✓ stage 2/3  tier 3 ✓ 38s  #142  ci ✗  3 …",
-        "  ✓ stage 3/3  tier 3 ✓ 38s  #143  ci …",
+        "  ✓ stage 1 of 3  tier 3 ✓ 38s  #141  merged",
+        // Milestone 9.19 review I1: the list's own room drops the thread count before
+        // the CI mark.
+        "▌ ✓ stage 2 of 3  tier 3 ✓ 38s  #142  ci ✗",
+        "  ✓ stage 3 of 3  tier 3 ✓ 38s  #143  ci …",
         "pr        #142 open, based on anthrex/a…",
     ] {
         assert!(small.contains(text), "{text:?} in\n{small}");
@@ -109,6 +111,7 @@ fn after(buffer: &ratatui::buffer::Buffer, needle: &str) -> (ratatui::style::Col
 #[test]
 fn a_stage_rows_ci_mark_wears_its_role() {
     use crate::theme::{Role, role};
+    use ratatui::style::Color;
     for ascii in [false, true] {
         let app = pr_view(pr_fixture(), ascii, stage_key(1));
         let fg = |r| role(r, app.palette()).fg.expect("a role has a foreground");
@@ -120,8 +123,10 @@ fn a_stage_rows_ci_mark_wears_its_role() {
                 after(&buffer, "#143  ci "),
                 (fg(Role::Working), pending.into())
             );
-            let (plain, _) = after(&buffer, "#142  ci ?  ".replace('?', red).as_str());
-            assert_eq!(plain, ratatui::style::Color::Reset, "{w}x{h} ascii {ascii}");
+            // The cell after the mark: the 80-column list drops the thread count
+            // before the mark (milestone 9.19 review I1).
+            let (plain, _) = after(&buffer, "#142  ci ?".replace('?', red).as_str());
+            assert_eq!(plain, Color::Reset, "{w}x{h} ascii {ascii}");
             let (merged, _) = after(&buffer, "#141  ");
             assert_eq!(
                 merged,

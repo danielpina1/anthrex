@@ -92,7 +92,10 @@ impl RunService {
                 Ok(Err(error)) => unread(&named, format!("its read failed: {error}")),
                 Err(_) => unread(
                     &named,
-                    format!("its read took over {} s", IO_WAIT.as_secs()),
+                    format!(
+                        "its read took over {}",
+                        common::numbers::duration(IO_WAIT.as_secs())
+                    ),
                 ),
             };
             if !service.stopped.load(Ordering::SeqCst) {

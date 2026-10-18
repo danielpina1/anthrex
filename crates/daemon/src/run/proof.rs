@@ -263,7 +263,10 @@ fn with_timeout_note(outcome: ShellOutcome) -> String {
     if !outcome.timed_out {
         return outcome.tail;
     }
-    let note = format!("[anthrex: timed out after {} s]", outcome.secs);
+    let note = format!(
+        "[anthrex: timed out after {}]",
+        common::numbers::duration(outcome.secs)
+    );
     if outcome.tail.is_empty() {
         note
     } else {
@@ -299,7 +302,7 @@ mod tests {
         };
         assert_eq!(
             with_timeout_note(outcome),
-            "compiling\n[anthrex: timed out after 7 s]"
+            "compiling\n[anthrex: timed out after 7s]"
         );
     }
 }

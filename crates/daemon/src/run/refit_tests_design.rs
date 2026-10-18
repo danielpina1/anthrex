@@ -115,13 +115,15 @@ fn design_budgets_refit_from_phase_records() {
     assert_eq!(file.budgets.get("doc_review"), Some(&review));
     assert!(
         log.contains(
-            &"tuning: budget brainstorm 40 calls 15m → 75 calls 38m from 64 samples".to_string()
+            &"tuning: budget brainstorm 40 calls · 15 min → 75 calls · 38 min from 64 samples"
+                .to_string()
         ),
         "{log:?}"
     );
     assert!(
         log.contains(
-            &"tuning: budget doc review 20 calls 10m → 15 calls 10m from 64 samples".to_string()
+            &"tuning: budget doc review 20 calls · 10 min → 15 calls · 10 min from 64 samples"
+                .to_string()
         ),
         "{log:?}"
     );
@@ -133,7 +135,7 @@ fn design_budgets_refit_from_phase_records() {
     assert_eq!(t.effective(&cfg, SizeClass::Brainstorm), budget(75, 38));
     assert_eq!(t.effective(&cfg, SizeClass::DocReview), budget(15, 10));
     // Ruling T13-5 (m5): a design class's lines are a design run's only.
-    let line = "tuning: budget brainstorm 75 calls 38m from 64 samples".to_string();
+    let line = "tuning: budget brainstorm 75 calls · 38 min from 64 samples".to_string();
     assert!(t.design_lines.contains(&line), "{:?}", t.design_lines);
     assert!(!t.log.contains(&line), "{:?}", t.log);
 
@@ -160,7 +162,8 @@ fn design_budgets_refit_from_phase_records() {
         t.effective(&explicit, SizeClass::Brainstorm),
         budget(40, 15)
     );
-    let line = "tuning: budget brainstorm 40 calls 15m configured (refit would be 75 calls 38m)";
+    let line =
+        "tuning: budget brainstorm 40 calls · 15 min configured (refit would be 75 calls · 38 min)";
     assert!(t.design_lines.contains(&line.to_string()), "{t:?}");
 
     // Ruling RH-8: a design run freezes them at its start (ruling T13-5, m5: when it
@@ -205,8 +208,8 @@ fn a_non_design_run_keeps_9_5s_tuning_lines() {
     design.design_mode = proto::DesignMode::Full;
     crate::run::engine::design::enter(&mut design);
     let starts = [
-        "tuning: budget brainstorm 75 calls 38m from 64 samples",
-        "tuning: budget doc review 15 calls 10m from 64 samples",
+        "tuning: budget brainstorm 75 calls · 38 min from 64 samples",
+        "tuning: budget doc review 15 calls · 10 min from 64 samples",
     ];
     assert_eq!(design.tuning_lines, starts);
     let logged: Vec<&str> = (design.log.iter()).map(|e| e.text.as_str()).collect();
@@ -245,6 +248,47 @@ fn a_two_session_agent_contributes_its_per_session_mean() {
     // 30.5 calls round to 31: × 250% is 77.5, rounded up to 78.
     let (file, _) = refit(&history(61, 1_800), &TuningFile::default(), &cfg, NOW);
     assert_eq!(file.budgets["brainstorm"].tool_calls, 78);
+}
+
+/// Milestone 9.19 decision 2: a phase line's agent tokens are billed tokens from
+/// `HISTORY_VERSION` 6; before it they counted cache reads. The token refit takes its
+/// samples from `v >= 6` lines only; calls and seconds still come from every line.
+#[test]
+fn the_design_refit_takes_tokens_from_version_6_only() {
+    let mut cfg = config::Orchestrator::default();
+    cfg.tuning.table.refit_tokens = true;
+    let at_version = |v: u32, run: u32, (calls, secs, tokens)| {
+        let HistoryLine::Phase(mut record) = phase(
+            run,
+            "brainstorming",
+            1_000 + u64::from(run),
+            vec![agent(AgentRole::Brainstormer, (calls, secs, tokens), "ok")],
+        ) else {
+            unreachable!()
+        };
+        record.v = v;
+        HistoryLine::Phase(record)
+    };
+    // 40 version-5 lines, inflated by cache reads, and 32 version-6 lines.
+    let old: Vec<HistoryLine> = (0..40)
+        .map(|run| at_version(5, run, (10, 600, 1_000_000)))
+        .collect();
+    let new: Vec<HistoryLine> = (40..72)
+        .map(|run| at_version(6, run, (50, 1_200, 40_000)))
+        .collect();
+    let all: Vec<HistoryLine> = old.iter().chain(&new).cloned().collect();
+    let (file, _) = refit(&all, &TuningFile::default(), &cfg, NOW);
+    let fit = &file.budgets["brainstorm"];
+    // Calls and minutes: the lower median of all 72 is a version-5 sample's (10 calls,
+    // 10 min), × 250%.
+    assert_eq!((fit.tool_calls, fit.minutes, fit.samples), (25, 25, 72));
+    // Tokens: the version-6 median only (40 000 × 250%).
+    assert_eq!(fit.tokens, Some(100_000));
+    let (alone, _) = refit(&new, &TuningFile::default(), &cfg, NOW);
+    assert_eq!(fit.tokens, alone.budgets["brainstorm"].tokens);
+    // Version 5 alone: no token samples, so no token budget.
+    let (old_only, _) = refit(&old, &TuningFile::default(), &cfg, NOW);
+    assert_eq!(old_only.budgets["brainstorm"].tokens, None);
 }
 
 /// Ruling T13-4: a phase approved again after a back is a new record, `…/v<n>`; the
@@ -321,19 +365,19 @@ fn stats_list_the_design_classes_without_proposals() {
     assert!(!r.proposals.iter().any(names), "{:?}", r.proposals);
     let text = render(&r);
     assert!(
-        text.contains("\n  CLASS       SAMPLES  BUDGET          WEIGHT  REFIT\n"),
+        text.contains("\n  CLASS       SAMPLES  BUDGET              WEIGHT    REFIT\n"),
         "{text}"
     );
     assert!(
-        text.contains("\n  S           0/30     40 calls 15m"),
+        text.contains("\n  S           0/30     40 calls · 15 min"),
         "{text}"
     );
     assert!(
-        text.contains("\n  brainstorm  64       75 calls 38m    -       "),
+        text.contains("\n  brainstorm  64       75 calls · 38 min   -         "),
         "{text}"
     );
     assert!(
-        text.contains("\n  doc review  64       15 calls 10m    -       "),
+        text.contains("\n  doc review  64       15 calls · 10 min   -         "),
         "{text}"
     );
     // A design class below the minimum shows its count against it.
@@ -348,7 +392,9 @@ fn stats_list_the_design_classes_without_proposals() {
         (r.classes[3].samples, r.classes[3].refit),
         (6, proto::RefitState::NotYet)
     );
-    assert!(render(&r).contains("\n  brainstorm  6/30     40 calls 15m    -       not yet\n"));
+    assert!(
+        render(&r).contains("\n  brainstorm  6/30     40 calls · 15 min   -         not yet\n")
+    );
 }
 
 /// Task M9.6.16: a history with no design phase reports as 9.5 did: the three task
@@ -365,7 +411,7 @@ fn stats_without_design_history_keep_the_task_classes_only() {
     assert_eq!(classes, ["S", "M", "hub"]);
     let text = render(&r);
     assert!(
-        text.contains("\n  CLASS  SAMPLES  BUDGET          WEIGHT  REFIT\n"),
+        text.contains("\n  CLASS  SAMPLES  BUDGET              WEIGHT    REFIT\n"),
         "{text}"
     );
 }

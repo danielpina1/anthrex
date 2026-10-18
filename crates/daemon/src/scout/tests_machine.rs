@@ -93,7 +93,7 @@ fn machine_times_out() {
     let (machine, effects) = step(machine, ScoutEvent::Tick { now: 1899 }, &l);
     assert!(effects.is_empty());
     let (machine, effects) = step(machine, ScoutEvent::Tick { now: 1900 }, &l);
-    assert_eq!(effects, failed("the scout ran longer than 900 s", true));
+    assert_eq!(effects, failed("the scout ran longer than 15m 00s", true));
     assert_eq!(machine.state, ScoutState::Failed);
 }
 

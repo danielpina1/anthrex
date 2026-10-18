@@ -89,7 +89,7 @@ fn a_research_stall_is_interrupted_and_nudged_before_it_counts() {
         "{effects:#?}"
     );
     assert_eq!(fx.task("r1").state, TaskState::Working);
-    let nudge = crate::run::engine::research::research_stall_nudge(stall / 60);
+    let nudge = crate::run::engine::research::research_stall_nudge(stall);
     assert!(
         fx.run().outbox.iter().any(|m| m.text == nudge),
         "{:#?}",

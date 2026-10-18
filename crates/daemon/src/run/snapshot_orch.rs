@@ -59,12 +59,17 @@ pub(super) fn task_notes(task: &Task) -> Vec<TaskNoteInfo> {
 /// long.
 pub const PAUSED_ATTENTION_SECS: u64 = 600;
 
-/// Decision 42c: `<t> paused(message) for <n> min`, once the pause has lasted
+/// Decision 42c: `<t> paused(message) for <duration>`, once the pause has lasted
 /// [`PAUSED_ATTENTION_SECS`].
 pub(super) fn paused_line(task: &Task, now: u64) -> Option<String> {
     let lasted = now.saturating_sub(task.phase_since);
-    (lasted >= PAUSED_ATTENTION_SECS)
-        .then(|| format!("{} paused(message) for {} min", task.id(), lasted / 60))
+    (lasted >= PAUSED_ATTENTION_SECS).then(|| {
+        format!(
+            "{} paused(message) for {}",
+            task.id(),
+            common::numbers::duration(lasted)
+        )
+    })
 }
 
 /// Decision 42i: the last three `discovery`, `risk` and `brief` notes across tasks,
