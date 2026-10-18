@@ -486,3 +486,18 @@ fn a_promoted_run_shows_its_local_request_time() {
     );
     assert!(!run_block(&example(), now, Zone::Local(3_600)).contains("promotion"));
 }
+
+/// Milestone 9.19 decision 10: more readers busy than allowed (a limit lowered
+/// mid-run) reads `4/3 (over)`; at the limit it stays `3/3`.
+#[test]
+fn readers_past_their_limit_say_over() {
+    let mut run = example();
+    run.readers_busy = 4;
+    run.writers_busy = 3;
+    let text = run_block(&run, 0, Zone::Local(0));
+    let head = text.lines().next().unwrap();
+    assert!(
+        head.contains("  writers 3/3  readers 4/3 (over)  rev 57"),
+        "{head}"
+    );
+}

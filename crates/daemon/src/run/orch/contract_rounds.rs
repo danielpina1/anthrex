@@ -9,7 +9,7 @@ use proto::GOAL_MAX_CHARS;
 use super::contract::WAKE_MAX_BYTES;
 use crate::run::delivery::quote::fence;
 use crate::run::model::HandoffRecord;
-use crate::transcript::fill::fill_percent;
+use common::numbers::context_text;
 
 /// Decision 27: rules 43 to 46 (KG §4), appended to `ORCHESTRATOR_CONTRACT` after
 /// 9.2's rule 42, which ends with no newline. One literal, so `orch/contract.rs` can
@@ -211,20 +211,15 @@ pub const FILL_ATTENTION_PERCENT: u64 = 90;
 /// Decision 28: a continued goal whose session's fill could not be measured adopts it.
 pub const FILL_UNKNOWN_TEXT: &str = "context fill unknown; continuing in the same session";
 
-/// Decision 25: the handoff prompt's last line, `The previous session was <n>% full
-/// (<tokens>/<window>); this one starts fresh.`, or with no known window `The previous
-/// session had <tokens> tokens of context; this one starts fresh.`
+/// Decision 25: the handoff prompt's last line, `The previous session ended with
+/// <context>; this one starts fresh.`, the context as milestone 9.19 decision 10 has it
+/// (`context 85% full (170k / 200k)`, `context over 100% (900k / 200k window)`, or
+/// `context 170k (window unknown)`).
 pub fn handoff_line(handoff: &HandoffRecord) -> String {
-    let tokens = handoff.fill_tokens;
-    match handoff.window_tokens {
-        Some(window) => format!(
-            "The previous session was {}% full ({tokens}/{window}); this one starts fresh.",
-            fill_percent(tokens, window)
-        ),
-        None => {
-            format!("The previous session had {tokens} tokens of context; this one starts fresh.")
-        }
-    }
+    format!(
+        "The previous session ended with {}; this one starts fresh.",
+        context_text(handoff.fill_tokens, handoff.window_tokens)
+    )
 }
 
 /// Decision 27 (`HANDED_OFF_NAME`): the old window's name, `<h4>/orchestrator (handed off)`.
@@ -233,24 +228,20 @@ pub fn handed_off_name(h4: &str) -> String {
 }
 
 /// Decision 25 (`HANDED_OFF_TEXT`): the continued run's log line, `handed off from <h4>:
-/// context <n>% full`, or with no known window `… context <tokens> tokens`.
+/// <context>`, the context as [`handoff_line`] has it.
 pub fn handed_off_text(handoff: &HandoffRecord) -> String {
-    let h4 = &handoff.from_run;
-    match handoff.window_tokens {
-        Some(window) => format!(
-            "handed off from {h4}: context {}% full",
-            fill_percent(handoff.fill_tokens, window)
-        ),
-        None => format!(
-            "handed off from {h4}: context {} tokens",
-            handoff.fill_tokens
-        ),
-    }
+    format!(
+        "handed off from {}: {}",
+        handoff.from_run,
+        context_text(handoff.fill_tokens, handoff.window_tokens)
+    )
 }
 
-/// Decision 29: a live orchestrator's attention line, `orchestrator context <n>% full`.
-pub fn fill_attention_text(percent: u64) -> String {
-    format!("orchestrator context {percent}% full")
+/// Decision 29: a live orchestrator's attention line, `orchestrator <context>`
+/// (`orchestrator context 92% full (184k / 200k)`, or `… over 100% (…)` past the
+/// window: milestone 9.19 decision 10).
+pub fn fill_attention_text(tokens: u64, window: u64) -> String {
+    format!("orchestrator {}", context_text(tokens, Some(window)))
 }
 
 /// The final fix wave (review A, M3): the first prompt of a fresh session for run `h4`

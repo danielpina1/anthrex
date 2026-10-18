@@ -38,7 +38,9 @@ pub fn status_line(status: &ProfileStatus, now: u64) -> String {
     status_line_tone(status, now).0
 }
 
-/// Decision 23: the status line and its tone, both from the same rule.
+/// Decision 23: the status line and its tone, both from the same rule. `now` is the
+/// daemon's clock; `0` means it is not known yet (no snapshot), and the line then
+/// carries no age (milestone 9.19 decision 9: `Ready`, not `Ready · verified 0s ago`).
 pub fn status_line_tone(status: &ProfileStatus, now: u64) -> (String, StatusTone) {
     use StatusTone::*;
     if status.unparseable.is_some() {
@@ -85,8 +87,8 @@ pub fn status_line_tone(status: &ProfileStatus, now: u64) -> (String, StatusTone
             );
         }
         let line = match status.verified_at.or(status.confirmed_at) {
-            Some(at) => format!("Ready · verified {}", ago(now.saturating_sub(at))),
-            None => "Ready".to_string(),
+            Some(at) if now != 0 => format!("Ready · verified {}", ago(now.saturating_sub(at))),
+            _ => "Ready".to_string(),
         };
         return (line, Ready);
     }

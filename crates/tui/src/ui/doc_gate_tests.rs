@@ -72,6 +72,19 @@ fn below_100_columns_the_panel_is_one_line() {
     assert_eq!(rows[2].matches('│').count(), 2, "{rows:#?}");
 }
 
+/// Milestone 9.19 decision 9: before its gate arrives the narrow row is `loading…`,
+/// not `0 changes · 0 disputed findings (f)`.
+#[test]
+fn the_doc_gate_row_waits_for_its_gate() {
+    let plain = crate::theme::Palette::PLAIN;
+    assert_eq!(super::panel_row(None, plain), "loading…");
+    let ascii = crate::theme::Palette {
+        ascii: true,
+        ..plain
+    };
+    assert_eq!(super::panel_row(None, ascii), "loading...");
+}
+
 #[test]
 fn d_shows_the_coloured_diff() {
     let mut app = opened(DocGateKind::Spec, 120, 40);

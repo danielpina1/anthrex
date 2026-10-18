@@ -301,7 +301,7 @@ fn window_fields(info: &WindowInfo, app: &App) -> Vec<Field> {
 /// this milestone exists for would be the wrong way round.
 fn subagent_fields(row: &Row<'_>, info: &SubagentInfo, app: &App) -> Vec<Field> {
     let (state, duration) = match info.state {
-        SubagentState::Running => ("running", app.age_secs(info.started_secs)),
+        SubagentState::Running => ("running", Some(app.age_secs(info.started_secs))),
         SubagentState::Done => ("done", finished_secs(info)),
         SubagentState::Failed => ("failed", finished_secs(info)),
     };
@@ -319,7 +319,12 @@ fn subagent_fields(row: &Row<'_>, info: &SubagentInfo, app: &App) -> Vec<Field> 
     }
     fields.push(field("spawned by", spawned_by(row, info, app)));
     fields.push(field("state", with_tool(state, info.tool.as_deref())));
-    fields.push(field("for", common::numbers::duration(duration)));
+    // Decision 9: a stopped sub-agent with no end ran for an unknown time.
+    let duration = duration.map_or(
+        common::numbers::UNKNOWN.to_owned(),
+        common::numbers::duration,
+    );
+    fields.push(field("for", duration));
     fields.push(field("model", info.model.as_deref().unwrap_or("-")));
     fields.push(field("kind", info.kind.clone()));
     // A window's own sub-agents sit at row depth 2, and one level below the
@@ -372,10 +377,10 @@ fn subagent_name(info: &SubagentInfo) -> String {
 }
 
 /// How long a sub-agent that has stopped ran for. Both fields are ages, so the
-/// run is the difference between them, and a missing end reads as zero.
-fn finished_secs(info: &SubagentInfo) -> u64 {
+/// run is the difference between them; a missing end is unknown (decision 9).
+fn finished_secs(info: &SubagentInfo) -> Option<u64> {
     info.ended_secs
-        .map_or(0, |ended| info.started_secs.saturating_sub(ended))
+        .map(|ended| info.started_secs.saturating_sub(ended))
 }
 
 fn with_tool(label: &str, tool: Option<&str>) -> String {

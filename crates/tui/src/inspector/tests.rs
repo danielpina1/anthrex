@@ -475,6 +475,32 @@ fn a_finished_subagent_shows_how_long_it_ran() {
     );
 }
 
+/// Milestone 9.19 decision 9: a stopped sub-agent whose end never arrived ran for an
+/// unknown time, not for `0s`.
+#[test]
+fn a_done_subagent_without_an_end_has_no_duration() {
+    for state in [SubagentState::Done, SubagentState::Failed] {
+        let mut info = window(1, "/r/shop", "api-worker", Runtime::Claude);
+        let mut done = subagent("a1", "tests", Some("run the unit suite"));
+        done.state = state;
+        done.started_secs = 60;
+        done.ended_secs = None;
+        info.subagents = vec![done];
+        let app = app(vec![info]);
+        let inspection = inspect_key(
+            &app,
+            &NodeKey::Subagent {
+                window_id: 1,
+                id: "a1".into(),
+            },
+        );
+        let for_ = pairs(&inspection)
+            .into_iter()
+            .find(|(label, _)| *label == "for");
+        assert_eq!(for_, Some(("for", "unknown")), "{state:?}");
+    }
+}
+
 #[test]
 fn a_project_with_only_some_windows_on_a_worktree_shows_neither() {
     // One agent in a worktree beside a plain shell. Showing that worktree's

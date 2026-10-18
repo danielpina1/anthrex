@@ -9,12 +9,14 @@ use crate::run::orch::contract_rounds::{FILL_ATTENTION_PERCENT, fill_attention_t
 use crate::transcript::fill::{Fill, fill_percent};
 use proto::RunState;
 
-/// `orchestrator context <n>% full` for `fill`, at or past [`FILL_ATTENTION_PERCENT`] of
-/// its known window.
+/// `orchestrator context <n>% full (<tokens> / <window>)` for `fill` (or `… over 100%`
+/// past the window), at or past [`FILL_ATTENTION_PERCENT`] of its known window. The
+/// threshold is `fill_percent`'s, unchanged; only the text is milestone 9.19's.
 fn line_of(fill: Option<&Fill>) -> Option<String> {
     let fill = fill?;
-    let percent = fill_percent(fill.tokens, fill.window?);
-    (percent >= FILL_ATTENTION_PERCENT).then(|| fill_attention_text(percent))
+    let window = fill.window?;
+    let percent = fill_percent(fill.tokens, window);
+    (percent >= FILL_ATTENTION_PERCENT).then(|| fill_attention_text(fill.tokens, window))
 }
 
 /// Decision 29's attention line of `run`, while it is running.

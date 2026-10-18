@@ -187,7 +187,8 @@ pub(crate) fn idle_inspection(
     }
     let fields = vec![
         field("after", format!("run {after} · {outcome}")),
-        field("runs", idle.runs.max(1).to_string()),
+        // Decision 9: the real count; a 0 is a real zero, not a missing value.
+        field("runs", idle.runs.to_string()),
         field("agent", agent),
         field(
             "window",
@@ -230,9 +231,12 @@ fn path_text(run: &RunInfo) -> String {
 }
 
 fn agents_text(run: &RunInfo, app: &App) -> String {
+    // Decision 10: `4/3 (over)` after a limit was lowered mid-run.
+    let busy = |busy: u8, max: u8| common::numbers::busy(busy.into(), max.into());
     let mut text = format!(
-        "workers {}/{} · readers {}/{}",
-        run.writers_busy, run.max_writers, run.readers_busy, run.max_readers
+        "workers {} · readers {}",
+        busy(run.writers_busy, run.max_writers),
+        busy(run.readers_busy, run.max_readers)
     );
     // Milestone 9.5: a race's lanes and a test writer route their own runtimes.
     let routes = || {

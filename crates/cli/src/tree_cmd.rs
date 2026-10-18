@@ -121,7 +121,8 @@ pub fn tree_text(windows: &[WindowInfo], project: Option<ProjectQuery<'_>>) -> S
                 } else {
                     state_label(info.state)
                 },
-                common::numbers::duration(subagent_duration(info)),
+                // Decision 9: a stopped sub-agent with no end has no duration: `-`.
+                subagent_duration(info).map_or("-".to_owned(), common::numbers::duration),
                 tool_suffix(info.tool.as_deref())
             ),
             // `tree::build` lists plain windows only; run rows need the run snapshot.
@@ -263,13 +264,14 @@ fn state_label(state: SubagentState) -> &'static str {
     }
 }
 
-fn subagent_duration(info: &SubagentInfo) -> u64 {
+/// How long a sub-agent has run: its age while running, else its start's age less
+/// its end's; `None` for a stopped one whose end never arrived (unknown, not zero).
+fn subagent_duration(info: &SubagentInfo) -> Option<u64> {
     match info.state {
-        SubagentState::Running => info.started_secs,
+        SubagentState::Running => Some(info.started_secs),
         SubagentState::Done | SubagentState::Failed => info
             .ended_secs
-            .map(|ended| info.started_secs.saturating_sub(ended))
-            .unwrap_or(0),
+            .map(|ended| info.started_secs.saturating_sub(ended)),
     }
 }
 

@@ -62,10 +62,11 @@ pub(super) fn status_line(app: &App, s: &ProfileScreen, width: usize, p: Palette
             status_role(StatusTone::Attention),
         ),
         (Some(status), _) => {
-            let (line, tone) = profile_words::status_line_tone(status, app.run_now());
+            let now = known_now(app);
+            let (line, tone) = profile_words::status_line_tone(status, now);
             match saved_failing(s).filter(|_| tone == StatusTone::Ready) {
                 Some(key) => {
-                    let line = saved_failing_line(status, key, app.run_now());
+                    let line = saved_failing_line(status, key, now);
                     (plain(&line, p), status_role(StatusTone::Attention))
                 }
                 None => (plain(&line, p), status_role(tone)),
@@ -92,19 +93,27 @@ fn saved_failing(s: &ProfileScreen) -> Option<&'static str> {
         .find(|key| check_of(v, key).is_some_and(|c| !c.ok))
 }
 
+/// Milestone 9.19 decision 9: the daemon's clock, or `0` before the first runs
+/// snapshot, when it is not known and no age is shown (`run_now` would count the
+/// client's own seconds since it started).
+fn known_now(app: &App) -> u64 {
+    if app.runs.now == 0 { 0 } else { app.run_now() }
+}
+
 /// `Ready · <label> saved failing its check · verified <age> ago`. The age is the
-/// daemon's `verified_at` (the last verification of the commands that passed).
+/// daemon's `verified_at` (the last verification of the commands that passed); none
+/// while `now` is unknown (`0`).
 fn saved_failing_line(status: &ProfileStatus, key: &str, now: u64) -> String {
     let line = format!(
         "Ready · {} saved failing its check",
         profile_words::label(key)
     );
     match status.verified_at.or(status.confirmed_at) {
-        Some(at) => format!(
+        Some(at) if now != 0 => format!(
             "{line} · verified {}",
             common::numbers::ago(now.saturating_sub(at))
         ),
-        None => line,
+        _ => line,
     }
 }
 

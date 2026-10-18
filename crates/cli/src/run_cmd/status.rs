@@ -74,17 +74,16 @@ pub fn run_block(run: &RunInfo, now: u64, zone: Zone) -> String {
     let cap = |(runtime, cap): (&String, &u8)| format!(" ({} cap {cap})", one_line(runtime));
     let caps: String = run.writer_caps.iter().map(cap).collect();
     let mut out = format!(
-        "{}  {}  {}/{} merged  base {}@{}  writers {}/{}{caps}  readers {}/{}  rev {}\n",
+        "{}  {}  {}/{} merged  base {}@{}  writers {}{caps}  readers {}  rev {}\n",
         run.run_id,
         state,
         merged,
         total,
         run.base_branch,
         short(&run.base_sha),
-        run.writers_busy,
-        run.max_writers,
-        run.readers_busy,
-        run.max_readers,
+        // Decision 10: `4/3 (over)` after a limit was lowered mid-run.
+        numbers::busy(run.writers_busy.into(), run.max_writers.into()),
+        numbers::busy(run.readers_busy.into(), run.max_readers.into()),
         run.revision
     );
     if run.state == RunState::Halted {

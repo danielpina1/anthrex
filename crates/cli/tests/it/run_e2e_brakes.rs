@@ -421,7 +421,8 @@ fn e2e_continue_hands_off_a_full_orchestrator() {
         REQUEST_WAIT,
     );
     let said = h.io_lines(fresh, "stdin").join("\n");
-    let fill = "The previous session was 90% full (180000/200000); this one starts fresh.";
+    let fill =
+        "The previous session ended with context 90% full (180k / 200k); this one starts fresh.";
     assert!(said.contains(fill), "{said}");
     let handoff = &h.status_json(&next)["handoff"];
     assert!(handoff.is_object(), "{handoff}");

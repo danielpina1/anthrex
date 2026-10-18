@@ -279,3 +279,38 @@ fn the_card_over_an_unreadable_file_says_enter_replaces_it() {
     );
     assert!(!text.contains("⏎ shows it"), "{text}");
 }
+
+/// Milestone 9.19 decision 9: a row edit whose check never ran (`secs == 0`, no tail,
+/// written only when the daemon failed or restarted before checking) is `✗ did not
+/// run` on the card, never `✗ 0s`; a check that really ran in under a second is `✗ 0s`.
+#[test]
+fn a_check_that_never_ran_is_not_zero_seconds() {
+    for (tail, want) in [("", "✗ did not run"), ("x", "✗ 0s")] {
+        let mut app = fresh_app(false);
+        let s = screen_mut(&mut app);
+        let mut st = status_of(false, Some(ProposalState::Ready));
+        if let Some(p) = st.proposal.as_mut() {
+            p.edit = Some(proto::RowEdit {
+                key: "check".into(),
+                value: Some("\"cargo nextest run\"".into()),
+                state: proto::RowEditState::Failed {
+                    reason: "the daemon restarted".into(),
+                    tail: tail.into(),
+                    secs: 0,
+                },
+            });
+        }
+        s.status = Some(st);
+        let p = app.palette();
+        let Some(crate::app::screens::Screen::Profile(s)) = &app.screen else {
+            panic!("no profile screen");
+        };
+        let rows = s.rows();
+        let row = rows
+            .iter()
+            .find(|r| r.key == "check")
+            .expect("the check row");
+        let cell = super::card::parts(s, row, false, p).cell;
+        assert_eq!(cell, Some((want.to_owned(), Role::Failed)), "tail {tail:?}");
+    }
+}

@@ -228,7 +228,8 @@ fn subagent_states_and_durations_use_the_cli_contract() {
         (SubagentState::Running, None, "running", "1m 00s"),
         (SubagentState::Done, Some(15), "done", "45s"),
         (SubagentState::Failed, Some(10), "failed", "50s"),
-        (SubagentState::Done, None, "done", "0s"),
+        (SubagentState::Done, None, "done", "-"),
+        (SubagentState::Failed, None, "failed", "-"),
         (SubagentState::Failed, Some(90), "failed", "0s"),
     ] {
         let mut window = window(1, "worker", "/r/shop");
@@ -264,4 +265,26 @@ fn counts_omit_zero_runtimes_and_keep_runtime_order() {
         Some("shop  /r/shop  attention  cl 2 · cx 1 · sh 1")
     );
     assert_eq!(as_json(&windows, None)["projects"][0]["counts"]["shell"], 1);
+}
+
+/// Milestone 9.19 decision 9: a stopped sub-agent with no end has no duration: `-`,
+/// never `0s`. The JSON keeps the raw `null`.
+#[test]
+fn a_done_subagent_without_an_end_has_no_duration() {
+    let mut window = window(1, "worker", "/r/shop");
+    let mut agent = subagent("a1", "tests", "run unit suite", 60);
+    agent.state = SubagentState::Done;
+    agent.ended_secs = None;
+    window.subagents = vec![agent];
+    let windows = [window];
+    let text = tree_text(&windows, None);
+    assert_eq!(
+        text.lines().last(),
+        Some("      └─ tests: run unit suite  done  -")
+    );
+    let value = as_json(&windows, None);
+    assert_eq!(
+        value["projects"][0]["windows"][0]["subagents"][0]["ended_secs"],
+        Value::Null
+    );
 }

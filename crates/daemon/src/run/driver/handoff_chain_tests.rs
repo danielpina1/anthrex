@@ -142,15 +142,16 @@ async fn claude_orchestrator_at_80_percent_hands_off() {
     let o = run.orch.orchestrator.as_ref().unwrap();
     assert_ne!(o.window_id, Some(rig.window), "the old window was adopted");
     assert!(
-        o.first_prompt
-            .ends_with("The previous session was 85% full (170000/200000); this one starts fresh."),
+        o.first_prompt.ends_with(
+            "The previous session ended with context 85% full (170k / 200k); this one starts fresh."
+        ),
         "{}",
         o.first_prompt
     );
     assert!(o.first_prompt.contains(MARK), "{}", o.first_prompt);
     let texts: Vec<&str> = run.log.iter().map(|l| l.text.as_str()).collect();
     assert!(
-        texts.contains(&"handed off from 3f9a: context 85% full"),
+        texts.contains(&"handed off from 3f9a: context 85% full (170k / 200k)"),
         "{texts:?}"
     );
     named(&rig, "3f9a/orchestrator (handed off)").await;
@@ -345,7 +346,7 @@ async fn the_live_check_reports_a_running_orchestrators_fill() {
     let run = crate::lock(&rig.s.state).runs[PREV].clone();
     let lines = crate::run::snapshot::attention(&run, super::super::unix_now());
     assert!(
-        lines.contains(&"orchestrator context 92% full".to_string()),
+        lines.contains(&"orchestrator context 92% full (184k / 200k)".to_string()),
         "{lines:?}"
     );
     finish(rig).await;

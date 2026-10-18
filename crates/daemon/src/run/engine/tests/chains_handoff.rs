@@ -68,7 +68,7 @@ fn fill_at_threshold_starts_fresh_session() {
     assert!(
         next.log
             .iter()
-            .any(|e| e.text == "handed off from 3f9a: context 83% full"),
+            .any(|e| e.text == "handed off from 3f9a: context 83% full (166k / 200k)"),
         "{:#?}",
         next.log
     );
@@ -114,7 +114,7 @@ fn mid_run_fill_adds_an_attention_line_only() {
     let mut fx = ended(FinishAction::Accept);
     fx.run_mut().state = RunState::Running;
     let window = fx.run().orch.orchestrator.as_ref().unwrap().window_id;
-    let line = "orchestrator context 92% full".to_string();
+    let line = "orchestrator context 92% full (184k / 200k)".to_string();
     let report = |fx: &mut Fixture, f| {
         fx.next(EventKind::OrchestratorFill {
             run_id: RUN_ID.into(),

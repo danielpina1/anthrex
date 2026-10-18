@@ -269,6 +269,23 @@ fn a_delivered_runs_window_is_its_idle_row_only() {
     );
 }
 
+/// Milestone 9.19 decision 9: the idle row's `runs` is the chain's real count; a
+/// chain the daemon reports with 0 runs reads `0`, not `1`.
+#[test]
+fn an_idle_orchestrator_shows_zero_runs_as_zero() {
+    for (runs, want) in [(0, "0"), (1, "1"), (3, "3")] {
+        let app = app_of(idle_fixture(runs), false);
+        let rows = app.rows();
+        let idle = rows
+            .iter()
+            .find(|row| matches!(row.kind, RowKind::IdleOrchestrator { .. }))
+            .expect("the idle row");
+        let inspection = crate::inspector::inspect(idle, &app);
+        let field = inspection.fields.iter().find(|f| f.label == "runs");
+        assert_eq!(field.map(|f| f.value.as_str()), Some(want), "{runs} runs");
+    }
+}
+
 fn chord(app: &mut App, c: char) -> Vec<Effect> {
     app.on_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
     tap(app, KeyCode::Char(c))

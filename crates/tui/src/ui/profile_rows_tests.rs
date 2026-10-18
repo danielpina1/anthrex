@@ -472,3 +472,39 @@ fn hints_offer_only_what_works() {
     assert!(s.showing_card());
     assert!(!pairs(s).iter().any(|(k, _)| k == "a"), "{:?}", pairs(s));
 }
+
+/// Milestone 9.19 decision 9: before the first runs snapshot the daemon's clock is
+/// unknown, so the status line shows no age: `Ready`, not `Ready · verified 0s ago`
+/// (nor the age of the seconds since the client started).
+#[test]
+fn no_age_before_the_first_snapshot() {
+    let mut app = App::new(
+        vec![],
+        "/tmp".into(),
+        crate::settings::UiSettings::default(),
+    );
+    app.set_terminal_size(80, 24);
+    let _ = app.open_profile_on("/p/shop".into());
+    assert_eq!(app.runs.now, 0, "no snapshot yet");
+    // A tick well after start: the client's own seconds are not the daemon's clock.
+    let later = app.ticked_at + std::time::Duration::from_secs(90);
+    app.on_tick_at(later, 0);
+    let s = screen_mut(&mut app);
+    s.status = Some(status_of(true, None));
+    s.stored = shown(sp_profile(), sp_verification(), vec![]);
+    s.proposal = crate::app::profile_screen::Side::Absent("no proposal".into());
+    let rows = interior(&audit::draw(&app, 120, 40), false).rows;
+    assert!(rows[0].ends_with(" Ready"), "{}", rows[0]);
+    assert!(!rows[0].contains("verified"), "{}", rows[0]);
+
+    // Kept by Save anyway with a failing check: the same line, no age either.
+    let mut v = sp_verification();
+    v.check = Some(check("cargo nextest run", Some(101), 3));
+    screen_mut(&mut app).stored = shown(sp_profile(), v, vec![]);
+    let rows = interior(&audit::draw(&app, 120, 40), false).rows;
+    assert!(
+        rows[0].ends_with("Ready · check saved failing its check"),
+        "{}",
+        rows[0]
+    );
+}

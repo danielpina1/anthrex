@@ -472,6 +472,32 @@ fn run_orch_shows_the_untrusted_row() {
     );
 }
 
+/// Milestone 9.19 decision 10: a session past its window is `over 100%`, never
+/// `450%`; a zero window is an unknown one.
+#[test]
+fn a_million_token_session_is_over_not_450_percent() {
+    let (mut snapshot, windows) = orch_fixture(RunState::Running);
+    for (window, want) in [
+        (
+            Some(200_000),
+            "from a1b2 · context over 100% (900k / 200k window)",
+        ),
+        (Some(0), "from a1b2 · context 900k (window unknown)"),
+    ] {
+        snapshot.runs[0].handoff = Some(proto::HandoffInfo {
+            from_run: "a1b2".into(),
+            fill_tokens: 900_000,
+            window_tokens: window,
+            at: ORCH_NOW,
+        });
+        let app = app_of((snapshot.clone(), windows.clone()));
+        assert_eq!(
+            value(&inspect_node(&app, &run_key()), "handoff"),
+            Some(want)
+        );
+    }
+}
+
 /// Milestone 9.16 decision 30: a run whose orchestrator was handed off names where from,
 /// and how full the old session was; with no known window, its tokens.
 #[test]
@@ -487,13 +513,13 @@ fn inspector_shows_the_handoff_row() {
     let inspection = inspect_node(&app, &run_key());
     assert_eq!(
         value(&inspection, "handoff"),
-        Some("from a1b2 · context 85% full (170000/200000)")
+        Some("from a1b2 · context 85% full (170k / 200k)")
     );
     snapshot.runs[0].handoff.as_mut().unwrap().window_tokens = None;
     let app = app_of((snapshot.clone(), windows.clone()));
     assert_eq!(
         value(&inspect_node(&app, &run_key()), "handoff"),
-        Some("from a1b2 · context 170000 tokens")
+        Some("from a1b2 · context 170k (window unknown)")
     );
     snapshot.runs[0].handoff = None;
     let app = app_of((snapshot, windows));

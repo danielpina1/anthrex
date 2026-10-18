@@ -381,6 +381,21 @@ fn run_with_no_tasks_says_so() {
     );
 }
 
+/// Milestone 9.19 decision 10: a limit lowered mid-run leaves more busy than allowed,
+/// and the row says so rather than printing a bare `4/3`.
+#[test]
+fn readers_past_their_limit_say_over() {
+    let app = gate_with(|run| {
+        run.readers_busy = 4;
+        run.writers_busy = 3;
+    });
+    let inspection = inspect_node(&app, &run_key(RUN_ID));
+    assert_eq!(
+        value(&inspection, "agents"),
+        Some("workers 3/3 · readers 4/3 (over) · claude ok")
+    );
+}
+
 #[test]
 fn cancelled_tasks_are_out_of_the_total_and_appended() {
     let app = gate_with(|run| run.tasks[1].state = TaskState::Cancelled);
