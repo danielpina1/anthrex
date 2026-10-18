@@ -183,6 +183,39 @@ your runs before downgrading below 0.2.0.
   (`tokens ≥… (tasks only)` from a daemon without run usage), `REPORT.md` and the
   inspector print tokens as `750k` and `1.2M`, and `run stats` leaves a merged task with
   no recorded tokens out of its token median (`-` when none are left).
+- **Every number has one meaning, label and format** (milestone 9.19), written down in
+  `docs/numbers.md`, which `?` help (a `numbers` group) and the README link to. The
+  protocol stays 26; `run.json` is format 7 and `history.jsonl` lines are `v` 6 (both
+  from the token change above).
+- **Clock times name their zone.** The TUI and the CLI show local time with its offset
+  (`14:30 +02:00`, `Thu 14:30 +02:00` within six days, else the date); text the daemon
+  writes (attention lines, prompts, the proposal file, the `REFIT` column) stays UTC and
+  says `UTC`. On Linux, a change of the system time zone mid-session is picked up only
+  after a restart (DST changes are picked up at once).
+- **One duration and one age format**: `42s`, `41m 12s`, `1h 05m`, `3d 04h`, floored;
+  `just now` under 10 s, else `<duration> ago`. Fixed-width cells (the sidebar, graph
+  boxes, the alerts list) show the largest unit only.
+- **One progress count and one stage position.** `3/5 merged` leaves out cancelled,
+  reported and replaced tasks everywhere, a run still being designed shows its design
+  word instead of `0/0 merged`, and every position reads `stage 2 of 3`.
+- **Unknown is not zero.** A missing value reads `unknown` (`-` in a table cell): a
+  sub-agent with no end time, a check that never ran (`✗ never ran`), a doc gate still
+  loading, an age before the first snapshot.
+- **Context fill never reads `450%`**: `context 92% full (183k / 200k)`, `context over
+  100% (450k / 200k window)`, or `context 183k (window unknown)`.
+- **Ages freeze when the daemon link is lost.** Timers and ages stop counting, and the
+  badge reads ` DISCONNECTED · as of <ago> `; the model picker's age is the catalog's own
+  fetch age.
+- **`anthrex hold status` tells the truth**: `(read 3m 10s ago)`, `(stale: read 1h 35m
+  ago)` for a stale reading, the brake text the TUI shows for a braked runtime, and the
+  hold's age (`on since Thu 14:30 +02:00 (2h 05m ago)`).
+- **`anthrex tree` labels its numbers**: `#1  id 7` (the position `C-b <n>` uses and the
+  id `ls`, `kill` and `attach` take), `claude 2 · codex 1 · shell 1`, and `running 3m
+  10s`, `ran 12s` or `done -` for a sub-agent.
+- **`anthrex run stats` labels its aggregates**: `MED LINES`, `MED CALLS`, `MED TOKENS`,
+  `MED WORK` (a floored duration, was rounded minutes) and `BOUNCES (ALL)`, a footer
+  saying what the medians are over, and `rounds: 3 ended · 1 run iterated`. The TUI's
+  stats page uses the same words and shows the rounds line.
 
 ### Fixed
 
