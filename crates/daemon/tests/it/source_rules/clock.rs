@@ -11,8 +11,18 @@ use std::path::Path;
 /// The one file that reads the zone, relative to `crates/`.
 const READER: &str = "common/src/localtime.rs";
 
-/// The libc names only [`READER`] may use.
-const LIBC_NAMES: [&str; 2] = ["localtime_r", "tm_gmtoff"];
+/// The libc names only [`READER`] may use: the reentrant clock, its non-reentrant twin,
+/// the reverse conversion, the struct and its offset field (review round 1, Minor 2).
+const LIBC_NAMES: [&str; 5] = [
+    "localtime_r",
+    "tm_gmtoff",
+    "libc::localtime",
+    "libc::mktime",
+    "libc::tm",
+];
+
+/// The client's pure state, where no `libc` path may appear at all (hard rule 5).
+const PURE_DIRS: [&str; 2] = ["tui/src/app/", "tui/src/ui/"];
 
 /// Where `localtime` (the module) may be named, relative to `crates/`: a file, or a
 /// directory ending in `/`.
@@ -49,6 +59,13 @@ fn clock_hits(rel: &str, text: &str) -> Vec<String> {
                     "{rel}:{line}: {name} outside {READER} (milestone 9.19, decision 3)"
                 ));
             }
+        }
+    }
+    if PURE_DIRS.iter().any(|d| rel.starts_with(d)) {
+        for line in word_lines(text, "libc") {
+            hits.push(format!(
+                "{rel}:{line}: libc in the client's pure state (hard rule 5)"
+            ));
         }
     }
     let allowed = CALLERS.iter().any(|c| match c.strip_suffix('/') {
@@ -129,6 +146,23 @@ fn the_clock_scan_finds_each_form() {
             "{hits:#?}"
         );
     }
+    // Review round 1: the non-reentrant clock and its kin are the reader's alone, even in
+    // a file that may call `localtime::`; and the pure state names no `libc` at all.
+    let other = "fn f() {\n    unsafe { libc::localtime(&t) };\n    let tm: libc::tm = z;\n    libc::mktime(&mut tm)\n}\n";
+    assert!(clock_hits(READER, other).is_empty());
+    let hits = clock_hits("cli/src/run_cmd.rs", other);
+    assert_eq!(hits.len(), 3, "{hits:#?}");
+    assert!(
+        hits[0].starts_with("cli/src/run_cmd.rs:2: libc::localtime outside"),
+        "{hits:#?}"
+    );
+    let time = "fn f() -> i64 {\n    unsafe { libc::time(std::ptr::null_mut()) }\n}\n";
+    for rel in ["tui/src/app/tick.rs", "tui/src/ui/settings.rs"] {
+        let hits = clock_hits(rel, time);
+        assert_eq!(hits.len(), 1, "{rel}: {hits:#?}");
+        assert!(hits[0].starts_with(&format!("{rel}:2: libc in the client's pure state")));
+    }
+    assert!(clock_hits("tui/src/lib.rs", time).is_empty());
     // An import is a use; a comment, a literal and a longer name are not.
     let import = "use common::{localtime, numbers};\n";
     assert_eq!(clock_hits("daemon/src/lib.rs", import).len(), 1);

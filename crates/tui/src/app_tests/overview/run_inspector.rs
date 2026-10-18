@@ -365,11 +365,22 @@ fn task_panel_renders_at_80x24() {
 }
 
 /// Decision 17 at 120x40: the whole panel, 25 rows (the labelled history wraps once,
-/// milestone 9.19 decision 3), nothing below it.
+/// between events, milestone 9.19 decision 3), nothing below it.
 #[test]
 fn task_panel_renders_at_120x40() {
     let rows = task_panel(120, 40);
     assert_eq!(rows.len(), 25, "{rows:#?}");
+    // Review round 1: no row ends in a clock time parted from its zone label.
+    for row in &rows {
+        let text = row.trim_end_matches(['│', '╯', ' ']);
+        // The last six characters, newest last: a sign then `dd:dd` is a label.
+        let tail: Vec<char> = text.chars().rev().take(6).collect();
+        let clock = tail.len() >= 5
+            && tail[2] == ':'
+            && [0, 1, 3, 4].iter().all(|&i| tail[i].is_ascii_digit());
+        let bare = clock && !matches!(tail.get(5), Some('+' | '-'));
+        assert!(!bare, "a bare clock time: {row}");
+    }
     let inner: Vec<&str> = rows[1..rows.len() - 1]
         .iter()
         .map(|row| row.trim_start_matches("│ ").trim_end_matches(['│', ' ']))
@@ -397,8 +408,8 @@ fn task_panel_renders_at_120x40() {
             "budget    ███████░░░ 104/150 tool calls · 38/60 min · 410k tokens",
             "tries     review 1/2 bounces · check 0/2 · escalation step 1",
             "route     codex · high → reviewer claude · claude-opus-5 · high",
-            "history   12:31 +00:00 review r1 changes · 12:20 +00:00 check passed · 12:02",
-            "          +00:00 started",
+            "history   12:31 +00:00 review r1 changes · 12:20 +00:00 check passed ·",
+            "          12:02 +00:00 started",
             "cx default · M · tdd",
         ]
     );

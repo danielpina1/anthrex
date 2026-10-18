@@ -11,15 +11,11 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 /// The built binary, its agent programs pinned to paths that do not exist (M9.13
-/// re-review): `anthrex mcp` starts none, and none could run if it did.
+/// re-review) and its zone to `TZ=UTC0` (milestone 9.19 ruling R6), through
+/// `support::pin_agents`: `anthrex mcp` starts none, and none could run if it did.
 fn anthrex() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_anthrex"));
-    command
-        .env("ANTHREX_CLAUDE_BIN", "/nonexistent/anthrex-test/claude")
-        .env("ANTHREX_CODEX_BIN", "/nonexistent/anthrex-test/codex")
-        .env("ANTHREX_DECIDER_BIN", "/nonexistent/anthrex-test/decider")
-        .env("ANTHREX_CODE_HOST", "gh")
-        .env("ANTHREX_GH_BIN", "/nonexistent/anthrex-test/gh");
+    crate::support::pin_agents(&mut command);
     command
 }
 
