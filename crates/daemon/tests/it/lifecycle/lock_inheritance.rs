@@ -46,8 +46,9 @@ fn the_child_reader_sees_an_inherited_descriptor() {
 /// close-on-exec, so no child any spawn makes can inherit it; and a real window child, the
 /// shell, holds no descriptor on it. The first half is the one a lock opened inheritable
 /// fails (checked by mutant); the second cannot be, as `portable-pty` closes every
-/// descriptor above 2 in a PTY child before exec, so it pins that guarantee instead. The shell names its own pid (`$$`) in a file, so the
-/// check reads that process and no other.
+/// descriptor above 2 in a PTY child before exec, so it pins that guarantee instead. The
+/// shell names its own pid in a file (through `sh`'s `$PPID`, so any login shell works,
+/// fish included), so the check reads that process and no other.
 #[tokio::test]
 async fn a_window_child_does_not_hold_the_lock() {
     let dir = tempfile::tempdir().unwrap();
@@ -73,8 +74,7 @@ async fn a_window_child_does_not_hold_the_lock() {
     };
     let tmp = dir.path().join("shell.pid.tmp");
     let line = format!(
-        "echo $$ > '{}' && mv '{}' '{}'\n",
-        tmp.display(),
+        "sh -c 'echo $PPID > \"$1\" && mv \"$1\" \"$2\"' sh '{}' '{}'\n",
         tmp.display(),
         pid_file.display()
     );
