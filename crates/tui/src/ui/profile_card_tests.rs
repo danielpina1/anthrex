@@ -281,11 +281,12 @@ fn the_card_over_an_unreadable_file_says_enter_replaces_it() {
 }
 
 /// Milestone 9.19 decision 9: a row edit whose check never ran (`secs == 0`, no tail,
-/// written only when the daemon failed or restarted before checking) is `✗ did not
-/// run` on the card, never `✗ 0s`; a check that really ran in under a second is `✗ 0s`.
+/// written only when the daemon failed or restarted before checking) is `✗ never ran`
+/// on the card (fix round 1 ruling: it fits the 11-column cell), never `✗ 0s`; a check
+/// that really ran in under a second is `✗ 0s`.
 #[test]
 fn a_check_that_never_ran_is_not_zero_seconds() {
-    for (tail, want) in [("", "✗ did not run"), ("x", "✗ 0s")] {
+    for (tail, want) in [("", "✗ never ran"), ("x", "✗ 0s")] {
         let mut app = fresh_app(false);
         let s = screen_mut(&mut app);
         let mut st = status_of(false, Some(ProposalState::Ready));
@@ -312,5 +313,45 @@ fn a_check_that_never_ran_is_not_zero_seconds() {
             .expect("the check row");
         let cell = super::card::parts(s, row, false, p).cell;
         assert_eq!(cell, Some((want.to_owned(), Role::Failed)), "tail {tail:?}");
+    }
+}
+
+/// Fix round 1 (review I1): the never-ran cell is drawn whole at 80x24, in Unicode and
+/// in ASCII: its 11 columns fit the cell, so the row is not cut to `… did not …`.
+#[test]
+fn a_check_that_never_ran_is_drawn_whole() {
+    for ascii in [false, true] {
+        let mut app = fresh_app(ascii);
+        let s = screen_mut(&mut app);
+        let mut st = status_of(false, Some(ProposalState::Ready));
+        if let Some(p) = st.proposal.as_mut() {
+            p.edit = Some(proto::RowEdit {
+                key: "check".into(),
+                value: Some("\"cargo nextest run\"".into()),
+                state: proto::RowEditState::Failed {
+                    reason: "the daemon restarted".into(),
+                    tail: String::new(),
+                    secs: 0,
+                },
+            });
+        }
+        s.status = Some(st);
+        let cell = if ascii {
+            "x never ran"
+        } else {
+            "✗ never ran"
+        };
+        let rows = interior(&audit::draw(&app, 80, 24), ascii).rows;
+        let row = rows.iter().find(|r| r.contains(cell));
+        assert!(
+            row.is_some(),
+            "ascii {ascii}: no {cell:?} in\n{}",
+            rows.join("\n")
+        );
+        let row = row.unwrap();
+        assert!(
+            !row.contains("never ran…") && !row.contains("never ran..."),
+            "{row}"
+        );
     }
 }

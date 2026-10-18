@@ -30,14 +30,14 @@ pub(super) fn title(s: &ProfileScreen, width: usize, p: Palette) -> Line<'static
 }
 
 /// The card's cell: `checking…` while the row's edit verifies, `✗ <took>` after a ✗
-/// (`✗ did not run` when its check never ran: `secs == 0` and no tail, milestone 9.19
-/// decision 9), else its check's `✓ 12s` / `✗ 3m 10s`.
+/// (`✗ never ran` when its check never ran: `secs == 0` and no tail, milestone 9.19
+/// decision 9, worded to fit the 11-column cell), else its check's `✓ 12s` / `✗ 3m 10s`.
 fn cell(s: &ProfileScreen, row: &Row, p: Palette) -> Option<(String, Role)> {
     match s.edit_of(&row.key) {
         Some(RowEditState::Verifying) => Some(("checking…".into(), Role::Working)),
         Some(RowEditState::Failed { secs, tail, .. }) => {
             let took = if *secs == 0 && tail.is_empty() {
-                "did not run".to_owned()
+                "never ran".to_owned()
             } else {
                 common::numbers::duration(*secs)
             };
