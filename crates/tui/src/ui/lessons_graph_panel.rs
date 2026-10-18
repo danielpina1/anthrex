@@ -68,7 +68,10 @@ pub fn lesson_lines(
     rows.extend([
         ("useful".into(), usefulness),
         ("reconfirmed".into(), lesson.reconfirmed.to_string()),
-        ("last seen".into(), numbers::clock(lesson.last_seen, now, zone)),
+        (
+            "last seen".into(),
+            numbers::clock(lesson.last_seen, now, zone),
+        ),
     ]);
     for (i, headline) in lesson.headlines.iter().enumerate() {
         let label = if i == 0 { "signature" } else { "" };

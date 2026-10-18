@@ -91,6 +91,7 @@ fn plain(label: &'static str, value: &str) -> Field {
         label,
         value: value.to_owned(),
         wrap: false,
+        parts: false,
         marks: Vec::new(),
     }
 }
@@ -108,11 +109,12 @@ const RUN: [&str; 12] = [
     "│ progress  ██████████░░░░░░░░  5/9 merged · 2 working · 1 review · 1 blocked        │",
     "│ path      critical path t0 → t6 → t2 → t3 · 2 tasks left · 1.2× the bound          │",
     "│ agents    writers 3/3 · readers 1/3 · claude ok · codex rate-limited 4m 00s        │",
-    "│ spend     tokens 1.8M (all roles) · cache hits 71% of input · worker tool calls 6… │",
+    // 9.19 follow-up 1: the spend row wraps at a separator, a whole part to a row.
+    "│ spend     tokens 1.8M (all roles) · cache hits 71% of input ·                      │",
+    "│           worker tool calls 612                                                    │",
     "│ gate      plan approved 11:02 +00:00 · 2 plan edits since · last: split t2         │",
     "│ attention t5 blocked: question — \"Gemini has no subagent-stop event\"               │",
     "│ est. left ~40m 00s                                                                 │",
-    "│                                                                                    │",
     "│                                                                                    │",
     "╰────────────────────────────────────────────────────────────────────────────────────╯",
 ];
@@ -275,11 +277,15 @@ fn the_estimate_keeps_its_own_row() {
 }
 
 /// Milestone 4.7's eight rows: the title and five fields, `attention` dropped from the
-/// end.
+/// end; the spend row has one row left, so it is cut there as before it wrapped.
 #[test]
 fn run_panel_in_eight_rows_drops_from_the_end() {
     let inspection = node(gemini_fixture(), run_key("r1"));
-    let mut expected: Vec<&str> = RUN[..7].to_vec();
+    let mut expected: Vec<&str> = RUN[..5].to_vec();
+    expected.push(
+        "│ spend     tokens 1.8M (all roles) · cache hits 71% of input · worker tool calls 6… │",
+    );
+    expected.push(RUN[7]);
     expected.push(RUN[11]);
     assert_eq!(panel(&inspection, 86, 8), expected);
 }

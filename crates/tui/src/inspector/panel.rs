@@ -339,7 +339,7 @@ fn flow_line(
 fn wrap_lines(field: &Field, width: usize, rows: usize, p: Palette) -> Vec<Line<'static>> {
     let label_width = UnicodeWidthStr::width(field.label).min(width);
     let value_width = width.saturating_sub(label_width + LABEL_GAP);
-    wrap_value(&field.value, value_width, rows, p.ascii)
+    wrap_field(field, value_width, rows, p.ascii)
         .into_iter()
         .enumerate()
         .map(|(index, chunk)| {
@@ -397,6 +397,65 @@ fn wrap_value(text: &str, width: usize, rows: usize, ascii: bool) -> Vec<String>
         let last = lines.len() - 1;
         let mark = if ascii { "..." } else { "…" };
         lines[last] = truncate_in(&format!("{}{mark}", lines[last]), width, ascii);
+    }
+    lines
+}
+
+/// A wrapping field's value over at most `rows` lines: by its parts ([`wrap_parts`])
+/// when the field says so, else by its words ([`wrap_value`]).
+fn wrap_field(field: &Field, width: usize, rows: usize, ascii: bool) -> Vec<String> {
+    if field.parts {
+        wrap_parts(&field.value, width, rows, ascii)
+    } else {
+        wrap_value(&field.value, width, rows, ascii)
+    }
+}
+
+/// 9.19 follow-up 1: `text` wrapped at its ` · ` separators (` - ` once folded for
+/// ASCII), as many whole parts to a line as fit, each separator kept at the end of its
+/// line; a part wider than the line wraps by its words. Past `rows` lines the rest joins
+/// the last line and is cut there, so one row reads as an unwrapped field's cut. The
+/// lines joined with spaces are `text` again.
+fn wrap_parts(text: &str, width: usize, rows: usize, ascii: bool) -> Vec<String> {
+    if width == 0 || rows == 0 {
+        return Vec::new();
+    }
+    let mut parts: Vec<String> = Vec::new();
+    let mut part = String::new();
+    for word in text.split(' ') {
+        if !part.is_empty() {
+            part.push(' ');
+        }
+        part.push_str(word);
+        if word == "\u{b7}" || word == "-" {
+            parts.push(std::mem::take(&mut part));
+        }
+    }
+    if !part.is_empty() {
+        parts.push(part);
+    }
+    let mut lines: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for part in parts {
+        let used = UnicodeWidthStr::width(current.as_str());
+        if !current.is_empty() && used + 1 + UnicodeWidthStr::width(part.as_str()) <= width {
+            current.push(' ');
+            current.push_str(&part);
+            continue;
+        }
+        if !current.is_empty() {
+            lines.push(std::mem::take(&mut current));
+        }
+        let mut chunks = wrap_value(&part, width, usize::MAX, ascii);
+        current = chunks.pop().unwrap_or_default();
+        lines.extend(chunks);
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    if lines.len() > rows {
+        let rest = lines.split_off(rows - 1).join(" ");
+        lines.push(truncate_in(&rest, width, ascii));
     }
     lines
 }

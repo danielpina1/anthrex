@@ -330,7 +330,10 @@ fn the_panel_says_last_seen_as_a_clock_time() {
             .iter()
             .find(|r| r.contains("last seen"))
             .unwrap_or_else(|| panic!("{rows:#?}"));
-        assert!(row.contains(&format!("last seen    {want} ")), "{now}: {row:?}");
+        assert!(
+            row.contains(&format!("last seen    {want} ")),
+            "{now}: {row:?}"
+        );
         if !want.starts_with("2025") {
             assert!(!row.contains("2025-10-13"), "{row:?}");
         }
