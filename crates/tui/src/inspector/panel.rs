@@ -503,3 +503,6 @@ mod tests;
 
 #[cfg(test)]
 mod outcome_tests;
+
+#[cfg(test)]
+mod parts_tests;
