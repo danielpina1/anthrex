@@ -115,3 +115,39 @@ fn a_finished_subagent_hides_on_time() {
     app.on_tick_at(t0 + Duration::from_secs(21), 0);
     assert!(!shown(&app), "121 s finished is past it");
 }
+
+/// Milestone 9.19.9 review I1: the tick that hides the selected finished sub-agent
+/// repairs the selection, as a window list does, so it is never left on no row.
+#[test]
+fn the_tick_that_hides_the_selected_subagent_repairs_the_selection() {
+    let finished = proto::SubagentInfo {
+        id: "s1".into(),
+        parent_id: None,
+        kind: "agent".into(),
+        label: None,
+        model: None,
+        state: proto::SubagentState::Done,
+        tool: None,
+        started_secs: 200,
+        ended_secs: Some(100),
+        needs_permission: false,
+    };
+    let window = WindowInfo {
+        subagents: vec![finished],
+        ..win(1, "a", Status::Idle)
+    };
+    let mut app = app_with(vec![window]);
+    app.tree.keep_finished_secs = 120;
+    let t0 = Instant::now();
+    app.set_windows_received_at(t0);
+    app.tree.selected = Some(crate::tree::NodeKey::Subagent {
+        window_id: 1,
+        id: "s1".into(),
+    });
+    app.on_tick_at(t0 + Duration::from_secs(21), 0);
+    assert!(
+        app.tree.selected_index(&app.nav_rows()).is_some(),
+        "{:?} is not a row",
+        app.tree.selected
+    );
+}

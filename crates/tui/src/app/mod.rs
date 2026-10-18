@@ -317,6 +317,12 @@ impl App {
         }
     }
 
+    /// Whether the window-side values (window ages, git state) are frozen: the link
+    /// was lost and no window list has come since (review round 1, M1).
+    pub fn windows_frozen(&self) -> bool {
+        self.windows_frozen_at.is_some()
+    }
+
     /// How long, at the last tick, the shown values have been frozen.
     pub fn frozen_for(&self) -> Option<Duration> {
         (self.frozen_at()).map(|at| self.ticked_at.saturating_duration_since(at))

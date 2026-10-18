@@ -242,8 +242,9 @@ fn body_spans(
         if !parts.is_empty() {
             out.push(Span::raw(" ".repeat(usize::from(gap))));
         }
-        // Milestone 9.19 decision 11: frozen values draw in the muted role.
-        if app.frozen_at().is_some() {
+        // Milestone 9.19 decision 11: frozen values draw in the muted role; git state is
+        // window-side, so the window list's thaw ends it (review round 1, M1).
+        if app.windows_frozen() {
             parts = parts.into_iter().map(|s| muted_span(s, palette)).collect();
         }
         out.extend(parts);

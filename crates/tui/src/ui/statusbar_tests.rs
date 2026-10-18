@@ -412,7 +412,7 @@ fn statusbar_shows_the_run_view_hints() {
 }
 
 /// Milestone 9.19 decision 11: once the link is lost the badge says how old the frozen
-/// values are, and the git segment draws muted.
+/// values are, and the git segment draws muted until the window list thaws it.
 #[test]
 fn the_disconnected_badge_says_as_of_when() {
     use std::time::Duration;
@@ -450,4 +450,10 @@ fn the_disconnected_badge_says_as_of_when() {
         "{text:?}"
     );
     assert_eq!(buffer[(tick_at(&buffer), 0)].fg, muted, "frozen: muted");
+
+    // Review round 1, M1: the window list thaws the window-side values, the git segment
+    // among them, before the first runs snapshot comes.
+    let _ = app.on_reconnected(vec![window(1, Some("/repo".into()))]);
+    let buffer = render_row(&app, 120);
+    assert_ne!(buffer[(tick_at(&buffer), 0)].fg, muted, "reconnected: live");
 }

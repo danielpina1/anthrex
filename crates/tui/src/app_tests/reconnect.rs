@@ -317,4 +317,7 @@ fn a_cached_catalog_reports_its_fetch_age() {
         Some("updated 3d 00h ago"),
         "a catalog delivered again keeps its fetch's age"
     );
+    // Review round 1, M3: exactly, so a run clock that kept ticking past the freeze
+    // (30 s more, the same text) is caught here too.
+    assert_eq!(app.catalog_age(), Some(Duration::from_secs(3 * DAY)));
 }

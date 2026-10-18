@@ -80,6 +80,9 @@ pub fn render(frame: &mut Frame, app: &App, layout: &Layout) {
     }
     frame.render_widget(block, layout.sidebar);
     let pos_width = tree::numbered_order(&rows).len().max(1).to_string().len();
+    // Milestone 9.19 decision 11 (review round 1, M1 and M2): while the link is down
+    // only the ages are frozen values, and a row's age cell draws in the muted role
+    // always, so the rows keep their status and attention colours.
     let mut lines: Vec<_> = rows[geometry.first..geometry.first + geometry.count]
         .iter()
         .map(|row| {
@@ -92,17 +95,6 @@ pub fn render(frame: &mut Frame, app: &App, layout: &Layout) {
             )
         })
         .collect();
-    // Milestone 9.19 decision 11: while the link is down the rows hold frozen values.
-    if app.frozen_at().is_some() {
-        lines = (lines.into_iter())
-            .map(|line| Line {
-                spans: (line.spans.into_iter())
-                    .map(|span| super::statusbar::muted_span(span, p))
-                    .collect(),
-                ..line
-            })
-            .collect();
-    }
     if app.windows.is_empty() {
         lines.push(Line::from(Span::styled(" no agents yet", muted)));
         lines.push(Line::from(Span::styled(

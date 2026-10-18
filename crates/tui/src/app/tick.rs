@@ -82,7 +82,19 @@ impl App {
     pub fn on_tick_at(&mut self, now: Instant, utc_offset_secs: i32) -> Vec<Effect> {
         self.ticked_at = now;
         self.utc_offset_secs = utc_offset_secs;
+        let listed_age = self.tree.listed_age_secs;
         self.settle_listed_age();
+        // Milestone 9.19.9 review I1: a tick can now hide a finished sub-agent between
+        // window lists, so it repairs the selection as `replace_windows` does.
+        if self.tree.listed_age_secs != listed_age {
+            let rows = super::nav_rows_of(
+                &self.windows,
+                &self.runs,
+                &self.tree,
+                self.run_view.as_ref(),
+            );
+            self.tree.repair_selection(&rows);
+        }
         let mut effects = self.expire_replies();
         effects.extend(self.screens_tick(now));
         effects.extend(self.tick(now));
