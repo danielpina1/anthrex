@@ -224,3 +224,97 @@ fn a_reconnect_leaves_the_view_where_the_user_left_it() {
     assert_eq!(app.graph_pan, before.8, "graph pan");
     assert_eq!(app.focused, before.9, "focused window");
 }
+
+/// Milestone 9.19 decision 11 (ruling R18): while the link is down no age moves. The
+/// freeze is the last tick before the loss; the reconnect's window list thaws the
+/// window ages, its first runs snapshot the run ages.
+#[test]
+fn ages_stop_when_the_link_is_lost() {
+    use super::runs::{deliver, snapshot};
+    let secs = Duration::from_secs;
+    let listed = |since_secs| WindowInfo {
+        since_secs,
+        ..win(1, "a", Status::Working)
+    };
+    let mut app = app_with(vec![listed(10)]);
+    let _ = app.run_subscription();
+    deliver(&mut app, snapshot(1, 6000, vec![]));
+    let t0 = Instant::now();
+    app.set_windows_received_at(t0);
+    app.set_runs_received_at(t0);
+    let approved = 6000 - 60;
+
+    app.on_tick_at(t0 + secs(5), 0);
+    app.on_link_lost("x");
+    app.on_tick_at(t0 + secs(65), 0);
+    let window = app.windows[0].clone();
+    assert_eq!(
+        app.elapsed_secs(&window),
+        15,
+        "the window's age froze at +5 s"
+    );
+    assert_eq!(app.run_age(approved), 65, "the run's age froze at +5 s");
+    assert_eq!(app.run_now(), 6005);
+
+    // The reconnect's window list thaws the windows; the runs wait for their snapshot.
+    // Each arrives at the +65 s tick.
+    app.on_reconnected(vec![listed(3)]);
+    app.set_windows_received_at(t0 + secs(65));
+    let window = app.windows[0].clone();
+    assert_eq!(app.elapsed_secs(&window), 3, "the new list's own age");
+    assert_eq!(app.run_now(), 6005, "still frozen until the runs snapshot");
+    deliver(&mut app, snapshot(2, 7000, vec![]));
+    app.set_runs_received_at(t0 + secs(65));
+    assert_eq!(app.run_now(), 7000, "the new snapshot's own clock");
+
+    // Both move with the tick again.
+    app.on_tick_at(t0 + secs(70), 0);
+    let window = app.windows[0].clone();
+    assert_eq!(app.elapsed_secs(&window), 8);
+    assert_eq!(app.run_now(), 7005);
+}
+
+/// Decision 11: the picker's `updated <age> ago` is the catalog's fetch age on the
+/// daemon's clock, so a cached catalog fetched three days ago says so, also when the
+/// reconnect delivers it again; before any runs snapshot it is left out (decision 9).
+#[test]
+fn a_cached_catalog_reports_its_fetch_age() {
+    use super::runs::{deliver, snapshot};
+    use proto::{CatalogSource, ModelCatalog};
+    const NOW: u64 = 1_780_000_000;
+    const DAY: u64 = 86_400;
+    let catalogs = || DaemonMsg::Models {
+        catalogs: vec![ModelCatalog {
+            runtime: Runtime::Claude,
+            cli_version: "2.1.290".into(),
+            fetched_at: NOW - 3 * DAY,
+            source: CatalogSource::Cached,
+            models: vec![],
+            problem: None,
+        }],
+    };
+    let updated = |app: &App| {
+        app.catalog_age()
+            .map(|age| format!("updated {}", common::numbers::ago(age.as_secs())))
+    };
+    let mut app = app_with(vec![]);
+    app.on_daemon(catalogs());
+    assert_eq!(updated(&app), None, "no runs snapshot yet: no age");
+
+    let _ = app.run_subscription();
+    deliver(&mut app, snapshot(1, NOW, vec![]));
+    let t0 = Instant::now();
+    app.set_runs_received_at(t0);
+    app.on_tick_at(t0, 0);
+    assert_eq!(updated(&app).as_deref(), Some("updated 3d 00h ago"));
+
+    app.on_link_lost("x");
+    app.on_tick_at(t0 + Duration::from_secs(30), 0);
+    app.on_reconnected(vec![]);
+    app.on_daemon(catalogs());
+    assert_eq!(
+        updated(&app).as_deref(),
+        Some("updated 3d 00h ago"),
+        "a catalog delivered again keeps its fetch's age"
+    );
+}

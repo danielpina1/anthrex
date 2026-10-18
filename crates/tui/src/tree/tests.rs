@@ -356,7 +356,7 @@ fn orphans_and_cycles_become_roots() {
             20,
         ),
     ];
-    let forest = subagent_forest(&subagents, 300);
+    let forest = subagent_forest(&subagents, TreeState::default().keep());
     let roots: Vec<_> = forest.iter().map(|node| node.info.id.as_str()).collect();
 
     assert_eq!(roots, vec!["orphan", "cycle-a", "cycle-b"]);
@@ -377,7 +377,7 @@ fn siblings_sort_oldest_first() {
             30,
         ),
     ];
-    let forest = subagent_forest(&subagents, 300);
+    let forest = subagent_forest(&subagents, TreeState::default().keep());
 
     assert_eq!(
         forest

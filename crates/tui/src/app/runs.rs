@@ -184,6 +184,9 @@ impl App {
                 let mut effects = self.watch_queued_goals(&snapshot, now);
                 self.replace_runs(snapshot);
                 self.runs_received_at = now;
+                // Decision 11 (ruling R18): the first snapshot after a reconnect thaws
+                // the run ages.
+                self.runs_frozen_at = None;
                 self.run_subscribed = true;
                 effects.extend(self.focus_off_idle());
                 return effects;
@@ -320,14 +323,22 @@ impl App {
     }
 
     /// Decision 2: the daemon's unix seconds as this client sees them at the last tick —
-    /// the snapshot's `now` plus the whole seconds from its arrival to that tick
-    /// (milestone 9.19, pulled forward from task 9). A snapshot newer than the tick
-    /// reads as it arrived.
+    /// the snapshot's `now` plus the whole seconds from its arrival to that tick, or to
+    /// the freeze while the link is down (milestone 9.19 decision 11). A snapshot newer
+    /// than the tick reads as it arrived.
     pub fn run_now(&self) -> u64 {
-        let since = self
-            .ticked_at
-            .saturating_duration_since(self.runs_received_at);
+        let to = self.runs_frozen_at.unwrap_or(self.ticked_at);
+        let since = to.saturating_duration_since(self.runs_received_at);
         self.runs.now.saturating_add(since.as_secs())
+    }
+
+    /// The model picker's `updated <age> ago` (decision 11): the catalogs' fetch age on
+    /// the daemon's clock, left out before the first runs snapshot (decision 9, R18).
+    pub fn catalog_age(&self) -> Option<std::time::Duration> {
+        if self.runs.now == 0 {
+            return None;
+        }
+        self.catalogs.updated_age(self.run_now())
     }
 
     /// Decision 2: seconds since `unix_secs` on the daemon's clock; 0 for a time that
@@ -499,6 +510,13 @@ impl App {
         self.runs_received_at = at;
     }
 
+    /// Tests move the window list's arrival instead of sleeping.
+    #[cfg(test)]
+    pub(crate) fn set_windows_received_at(&mut self, at: Instant) {
+        self.windows_received_at = at;
+        self.settle_listed_age();
+    }
+
     /// Tests age the last runs snapshot by exactly `by` at the last tick: it arrived
     /// `by` before the tick (or, on a host up for less, the tick moves `by` on).
     #[cfg(test)]
@@ -522,5 +540,6 @@ impl App {
                 self.ticked_at += by;
             }
         }
+        self.settle_listed_age();
     }
 }

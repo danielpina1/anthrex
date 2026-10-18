@@ -155,6 +155,12 @@ impl App {
             attempts: 1,
             reason: reason.into(),
         };
+        // Milestone 9.19 decision 11 (ruling R18): the shown values freeze at the last
+        // tick; one still frozen from an earlier loss keeps its instant.
+        let at = self.ticked_at;
+        self.windows_frozen_at.get_or_insert(at);
+        self.runs_frozen_at.get_or_insert(at);
+        self.settle_listed_age();
         // Review I1: the daemon dropped the view's subscriptions with the connection.
         self.conversation.link_lost();
         // Whole-branch review M2: a submitting edit form's reply went with the link.

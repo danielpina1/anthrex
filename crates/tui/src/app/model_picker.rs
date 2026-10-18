@@ -12,7 +12,7 @@ use crate::text_area::TextArea;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use proto::models::{CatalogModel, CatalogSource, ModelRef, Role, valid_effort};
 use proto::{ModelCatalog, Runtime};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// The runtimes the picker lists, in order.
 pub const RUNTIMES: [Runtime; 2] = [Runtime::Claude, Runtime::Codex];
@@ -49,44 +49,36 @@ pub fn runtime_name(runtime: Runtime) -> &'static str {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Catalogs {
     pub list: Vec<ModelCatalog>,
-    /// Preflight F10: when this client received each runtime's catalog (the picker's
-    /// `updated <age> ago`), stamped by `app/daemon.rs::on_daemon`.
-    pub received_at: Vec<(Runtime, Instant)>,
 }
 
 impl Catalogs {
-    /// Stores `incoming`, received at `now`, a catalog replacing the one already held
-    /// for its runtime (a `ListModels` for one runtime says nothing about the other).
-    pub fn absorb(&mut self, incoming: Vec<ModelCatalog>, now: Instant) {
+    /// Stores `incoming`, a catalog replacing the one already held for its runtime (a
+    /// `ListModels` for one runtime says nothing about the other).
+    pub fn absorb(&mut self, incoming: Vec<ModelCatalog>) {
         for catalog in incoming {
             let runtime = catalog.runtime;
             match self.list.iter_mut().find(|c| c.runtime == runtime) {
                 Some(held) => *held = catalog,
                 None => self.list.push(catalog),
             }
-            self.received_at.retain(|(r, _)| *r != runtime);
-            self.received_at.push((runtime, now));
         }
     }
 
-    /// When `runtime`'s catalog was received.
-    pub fn received(&self, runtime: Runtime) -> Option<Instant> {
-        (self.received_at.iter())
-            .find(|(r, _)| *r == runtime)
-            .map(|(_, at)| *at)
+    /// Milestone 9.19 decision 11: how long before `now_unix` (the daemon's clock,
+    /// `App::run_now`) `runtime`'s catalog was fetched; `None` without one, or before
+    /// the daemon's clock is known (`now_unix == 0`, decision 9).
+    pub fn fetch_age(&self, runtime: Runtime, now_unix: u64) -> Option<Duration> {
+        let catalog = self.of(runtime).filter(|_| now_unix > 0)?;
+        Some(Duration::from_secs(
+            now_unix.saturating_sub(catalog.fetched_at),
+        ))
     }
 
-    /// How long ago, at `now`, `runtime`'s catalog was received.
-    pub fn age(&self, runtime: Runtime, now: Instant) -> Option<Duration> {
-        self.received(runtime)
-            .map(|at| now.saturating_duration_since(at))
-    }
-
-    /// The picker's `updated <age> ago` at `now`: the oldest catalog's age, since `r`
-    /// refreshes them all; `None` before any arrived.
-    pub fn updated_age(&self, now: Instant) -> Option<Duration> {
-        (self.received_at.iter())
-            .map(|(_, at)| now.saturating_duration_since(*at))
+    /// The picker's `updated <age> ago` at `now_unix`: the oldest catalog's fetch age,
+    /// since `r` refreshes them all; `None` before any arrived.
+    pub fn updated_age(&self, now_unix: u64) -> Option<Duration> {
+        (self.list.iter())
+            .filter_map(|c| self.fetch_age(c.runtime, now_unix))
             .max()
     }
 

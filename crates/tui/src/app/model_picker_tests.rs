@@ -133,7 +133,6 @@ pub(crate) fn with_opus_full_id(catalogs: &mut Catalogs) {
 pub(crate) fn fixture_catalogs() -> Catalogs {
     Catalogs {
         list: vec![claude_catalog(), codex_catalog()],
-        ..Default::default()
     }
 }
 
@@ -365,7 +364,7 @@ fn r_asks_for_a_live_probe() {
     );
     assert_eq!(selected_model(&p), Some(mref("codex:gpt-6.1-sol")));
     assert_eq!(current_models(&p), [mref("codex:gpt-6-sol")]);
-    assert!(app.catalogs.received(Runtime::Codex).is_some());
+    assert!(app.catalogs.of(Runtime::Codex).is_some());
 }
 
 #[test]

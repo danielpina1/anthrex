@@ -4,6 +4,12 @@ use std::fmt::Write;
 use std::path::Path;
 use tui::tree::{self, RowKind, RuntimeCounts, SubagentNode, TreeState};
 
+/// Every sub-agent the daemon reports, however long ago it finished.
+const KEEP_ALL: tree::Keep = tree::Keep {
+    finished_secs: u64::MAX,
+    listed_age_secs: 0,
+};
+
 #[derive(Clone, Copy)]
 pub struct ProjectQuery<'a> {
     requested: &'a Path,
@@ -186,7 +192,7 @@ pub fn tree_json(windows: &[WindowInfo], project: Option<ProjectQuery<'_>>) -> T
                     // `tui::settings::UiSettings`), so it keeps its pre-M6.9 behaviour
                     // of listing every sub-agent the daemon reports, never hiding an
                     // old finished one the way the client's tree view now can.
-                    subagents: tree::subagent_forest(&info.subagents, u64::MAX)
+                    subagents: tree::subagent_forest(&info.subagents, KEEP_ALL)
                         .into_iter()
                         .map(subagent_json)
                         .collect(),

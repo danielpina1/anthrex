@@ -391,7 +391,7 @@ pub fn render(frame: &mut Frame, app: &App, s: &SettingsScreen, area: Rect) {
         let lines = models_table::lines(app, s, size, keys_here, notes, outcome);
         frame.render_widget(Paragraph::new(lines), inner);
         if let Some(picker) = picker {
-            let age = app.catalogs.updated_age(app.ticked_at);
+            let age = app.catalog_age();
             model_picker::render(frame, picker, age, area, p);
         }
     } else {

@@ -12,9 +12,19 @@ use unicode_width::UnicodeWidthStr;
 
 /// The red ` DISCONNECTED ` badge, common to both `Link::Reconnecting` and
 /// `Link::Lost` (decision 34); each pushes its own status text right after it.
-fn push_disconnected(spans: &mut Vec<Span<'static>>) {
+/// Milestone 9.19 decision 11: ` DISCONNECTED · as of <ago> `, how old the frozen
+/// values are at the last tick.
+fn push_disconnected(spans: &mut Vec<Span<'static>>, app: &App) {
+    let badge = match app.frozen_for() {
+        Some(age) => format!(
+            " DISCONNECTED{}as of {} ",
+            theme::fold(" · ", app.palette().ascii),
+            common::numbers::ago(age.as_secs())
+        ),
+        None => " DISCONNECTED ".to_string(),
+    };
     spans.push(Span::styled(
-        " DISCONNECTED ",
+        badge,
         Style::default()
             .fg(Color::Black)
             .bg(Color::Red)
@@ -55,7 +65,7 @@ pub(crate) fn render_with(frame: &mut Frame, app: &App, area: Rect, all: &[crate
             // Decision 34: the persistent status while a retry is scheduled or in
             // flight.
             Link::Reconnecting { attempts, .. } => {
-                push_disconnected(&mut spans);
+                push_disconnected(&mut spans, app);
                 spans.push(Span::styled(
                     format!("reconnecting (attempt {attempts})"),
                     muted,
@@ -64,7 +74,7 @@ pub(crate) fn render_with(frame: &mut Frame, app: &App, area: Rect, all: &[crate
             }
             // Decision 34: the 30 s window elapsed; only a fresh `C-b r` tries again.
             Link::Lost { .. } => {
-                push_disconnected(&mut spans);
+                push_disconnected(&mut spans, app);
                 spans.push(Span::styled(
                     format!("{} r to reconnect", app.settings.prefix_label),
                     muted,
@@ -228,13 +238,26 @@ fn body_spans(
     if let Some(state) = git {
         let gap = if out.is_empty() { 0 } else { GAP };
         let budget = remaining.saturating_sub(line_width).saturating_sub(gap);
-        let parts = git_spans_in(state, usize::from(budget), palette);
+        let mut parts = git_spans_in(state, usize::from(budget), palette);
         if !parts.is_empty() {
             out.push(Span::raw(" ".repeat(usize::from(gap))));
+        }
+        // Milestone 9.19 decision 11: frozen values draw in the muted role.
+        if app.frozen_at().is_some() {
+            parts = parts.into_iter().map(|s| muted_span(s, palette)).collect();
         }
         out.extend(parts);
     }
     out
+}
+
+/// `span` in the muted role's colour, its modifiers kept.
+pub(crate) fn muted_span(span: Span<'static>, p: theme::Palette) -> Span<'static> {
+    let fg = role(Role::Muted, p).fg;
+    Span {
+        style: Style { fg, ..span.style },
+        ..span
+    }
 }
 
 fn spans_width(spans: &[Span<'_>]) -> u16 {

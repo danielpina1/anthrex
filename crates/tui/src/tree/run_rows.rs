@@ -8,7 +8,7 @@ use super::rows::{SubagentWalk, emit_subagents, guide_prefix};
 use super::runs::orchestrator_of;
 use super::task_rounds::rounds_with;
 use super::{
-    NodeKey, Row, RowKind, SubagentNode, TreeState, matches_filter, subagent_branch_matches,
+    Keep, NodeKey, Row, RowKind, SubagentNode, TreeState, matches_filter, subagent_branch_matches,
     subagent_forest,
 };
 use proto::{
@@ -77,7 +77,7 @@ pub fn run_rows<'a>(
         text: &text,
         run: filter,
     };
-    let mut tree = build_tree(run, windows, state.keep_finished_secs);
+    let mut tree = build_tree(run, windows, state.keep());
     let inherit = Inherit::of(&tree, &filters);
     tree.children = filter_children(std::mem::take(&mut tree.children), inherit, &filters);
     let mut rows = Vec::new();
@@ -124,7 +124,7 @@ struct Builder<'a> {
     run: &'a RunInfo,
     /// The listed windows by id, the first of a repeated id kept, as a scan would find.
     windows: HashMap<u32, &'a WindowInfo>,
-    keep_finished_secs: u64,
+    keep: Keep,
     claimed: HashSet<u32>,
 }
 
@@ -133,7 +133,7 @@ impl<'a> Builder<'a> {
         let window = window?;
         self.claimed.insert(window.id).then(|| Subagents {
             window,
-            forest: subagent_forest(&window.subagents, self.keep_finished_secs),
+            forest: subagent_forest(&window.subagents, self.keep),
             show_all: true,
         })
     }
@@ -257,7 +257,7 @@ impl Entry<'_> {
     }
 }
 
-fn build_tree<'a>(run: &'a RunInfo, windows: &'a [WindowInfo], keep: u64) -> Node<'a> {
+fn build_tree<'a>(run: &'a RunInfo, windows: &'a [WindowInfo], keep: Keep) -> Node<'a> {
     let orchestrator = orchestrator_of(run, windows);
     let mut by_id = HashMap::new();
     for window in windows {
@@ -266,7 +266,7 @@ fn build_tree<'a>(run: &'a RunInfo, windows: &'a [WindowInfo], keep: u64) -> Nod
     let mut builder = Builder {
         run,
         windows: by_id,
-        keep_finished_secs: keep,
+        keep,
         claimed: orchestrator.iter().map(|window| window.id).collect(),
     };
 

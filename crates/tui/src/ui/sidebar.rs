@@ -92,6 +92,17 @@ pub fn render(frame: &mut Frame, app: &App, layout: &Layout) {
             )
         })
         .collect();
+    // Milestone 9.19 decision 11: while the link is down the rows hold frozen values.
+    if app.frozen_at().is_some() {
+        lines = (lines.into_iter())
+            .map(|line| Line {
+                spans: (line.spans.into_iter())
+                    .map(|span| super::statusbar::muted_span(span, p))
+                    .collect(),
+                ..line
+            })
+            .collect();
+    }
     if app.windows.is_empty() {
         lines.push(Line::from(Span::styled(" no agents yet", muted)));
         lines.push(Line::from(Span::styled(

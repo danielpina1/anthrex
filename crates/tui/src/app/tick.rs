@@ -82,6 +82,7 @@ impl App {
     pub fn on_tick_at(&mut self, now: Instant, utc_offset_secs: i32) -> Vec<Effect> {
         self.ticked_at = now;
         self.utc_offset_secs = utc_offset_secs;
+        self.settle_listed_age();
         let mut effects = self.expire_replies();
         effects.extend(self.screens_tick(now));
         effects.extend(self.tick(now));

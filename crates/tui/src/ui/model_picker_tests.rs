@@ -7,7 +7,6 @@ use crate::app::models_table::tests::{opened_models, row, select_role, spec_role
 use crate::theme::{Role as Look, role};
 use crate::ui::settings::tests::{draw, screen_text};
 use crossterm::event::KeyCode;
-use proto::Runtime;
 use proto::models::{CatalogSource, Role};
 use std::time::Duration;
 
@@ -36,13 +35,12 @@ pub(crate) fn dialog(app: &App, w: u16, h: u16) -> (String, Vec<String>, u16) {
     (top.trim_end().to_string(), inner, y0)
 }
 
-/// The spec's table, the picker open on `implementer · medium`, the catalogs received
-/// two minutes before the last tick.
+/// The spec's table, the picker open on `implementer · medium`, the catalogs fetched
+/// (`fetched_at` 1) 2m 05s before the daemon's clock at the last tick (9.19 decision 11).
 fn picker_app() -> App {
     let mut app = opened_models(spec_roles(), fixture_catalogs());
-    let at = app.ticked_at;
-    app.catalogs.received_at = vec![(Runtime::Claude, at), (Runtime::Codex, at)];
-    app.ticked_at = at + Duration::from_secs(125);
+    app.runs.now = 1 + 125;
+    app.age_runs_by(Duration::ZERO);
     select_role(&mut app, Role::ImplementerMedium);
     tap(&mut app, KeyCode::Enter);
     app
@@ -121,12 +119,12 @@ fn the_age_and_the_catalogs_source() {
     let mut app = picker_app();
     app.catalogs.list[0].source = CatalogSource::Cached;
     app.catalogs.list[1].source = CatalogSource::Builtin;
-    app.catalogs.received_at.clear();
+    app.runs.now = 0;
     let catalogs = app.catalogs.clone();
     let s = crate::ui::settings::tests::screen_mut(&mut app);
     s.models.picker.as_mut().unwrap().refresh(&catalogs);
     let (top, inner, _) = dialog(&app, 120, 40);
-    // No catalog received: only the key.
+    // No runs snapshot yet, so no daemon clock: only the key (9.19 decision 9).
     assert!(top.ends_with("─ r refresh ┐"), "{top}");
     assert_eq!(inner[0], "  CLAUDE  (cached)");
     assert_eq!(inner[6], "  CODEX  (built-in list)");

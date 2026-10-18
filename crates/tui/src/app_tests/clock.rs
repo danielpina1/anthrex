@@ -78,3 +78,40 @@ fn a_double_click_is_measured_against_the_given_now() {
         "a second press at the window's end is a new single click"
     );
 }
+
+/// Milestone 9.19 decision 11: a finished sub-agent hides once its age at the tick,
+/// `age_secs(ended)`, passes `keep_finished_secs`, before the next window list comes.
+#[test]
+fn a_finished_subagent_hides_on_time() {
+    let finished = proto::SubagentInfo {
+        id: "s1".into(),
+        parent_id: None,
+        kind: "agent".into(),
+        label: None,
+        model: None,
+        state: proto::SubagentState::Done,
+        tool: None,
+        started_secs: 200,
+        ended_secs: Some(100),
+        needs_permission: false,
+    };
+    let window = WindowInfo {
+        subagents: vec![finished],
+        ..win(1, "a", Status::Idle)
+    };
+    let mut app = app_with(vec![window]);
+    app.tree.keep_finished_secs = 120;
+    let t0 = Instant::now();
+    app.set_windows_received_at(t0);
+    let shown = |app: &App| {
+        let key = crate::tree::NodeKey::Subagent {
+            window_id: 1,
+            id: "s1".into(),
+        };
+        app.rows().iter().any(|row| row.key == key)
+    };
+    app.on_tick_at(t0 + Duration::from_secs(20), 0);
+    assert!(shown(&app), "120 s finished is not past the setting");
+    app.on_tick_at(t0 + Duration::from_secs(21), 0);
+    assert!(!shown(&app), "121 s finished is past it");
+}

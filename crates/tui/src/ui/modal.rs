@@ -158,7 +158,7 @@ fn form_picker(
     area: Rect,
 ) {
     if let Some(picker) = picker {
-        let age = app.catalogs.updated_age(app.ticked_at);
+        let age = app.catalog_age();
         crate::ui::model_picker::render(frame, picker, age, area, app.palette());
     }
 }

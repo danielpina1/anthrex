@@ -386,3 +386,28 @@ fn the_title_cuts_agents_beside_a_six_digit_mark() {
         "agents"
     );
 }
+
+/// Milestone 9.19 decision 11: while the link is down the sidebar's rows hold frozen
+/// values, so they draw muted, every cell; live, the row keeps its roles.
+#[test]
+fn a_frozen_sidebar_draws_muted() {
+    let windows = vec![pty(1, "shell-1", PROJECT, Status::Working)];
+    let mut app = App::new(windows, "/tmp".into(), UiSettings::default());
+    let _ = app.set_terminal_size(80, 24);
+    let muted = theme::role(Role::Muted, app.palette()).fg.unwrap();
+    let row_colours = |app: &mut App| {
+        let (buffer, l) = frame(app, 80, 24);
+        let list = l.sidebar_list;
+        let y = (list.y..list.bottom())
+            .find(|&y| text_in(&buffer, list, y).contains("shell-1"))
+            .expect("the window's row is drawn");
+        (list.x..list.right())
+            .filter(|&x| buffer[(x, y)].symbol() != " ")
+            .map(|x| buffer[(x, y)].fg)
+            .collect::<Vec<_>>()
+    };
+    assert!(row_colours(&mut app).iter().any(|fg| *fg != muted), "live");
+    app.on_link_lost("x");
+    let colours = row_colours(&mut app);
+    assert!(colours.iter().all(|fg| *fg == muted), "{colours:?}");
+}

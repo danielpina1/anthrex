@@ -223,7 +223,7 @@ fn dialog_width(width: u16) -> u16 {
     PICKER_MAX.min(width.saturating_sub(2 * MARGIN).max(DIALOG_MAX.min(width)))
 }
 
-/// Draws `picker` over `area`, `age` after the catalogs were received.
+/// Draws `picker` over `area`, `age` the catalogs' fetch age (`App::catalog_age`).
 pub fn render(
     frame: &mut Frame,
     picker: &ModelPicker,
