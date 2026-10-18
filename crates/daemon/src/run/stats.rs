@@ -283,13 +283,9 @@ pub fn render(stats: &HistoryStats) -> String {
     }
     out.push_str(STATS_FOOTER);
     out.push('\n');
-    out.push_str(&format!(
-        "deciders: {}, {} · size cross-check: {} checked, {} raised\n",
-        count(stats.decider_calls, "call"),
-        count(stats.decider_fallbacks, "fallback"),
-        stats.size_checked,
-        stats.size_raised
-    ));
+    // 9.19 follow-up 2: the TUI's stats page prints this line too.
+    out.push_str(&common::labels::deciders_text(stats));
+    out.push('\n');
     // Milestone 9.17 decision 26: only once a record was replaced.
     if stats.replaced > 0 {
         let n = stats.replaced;

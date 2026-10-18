@@ -140,14 +140,9 @@ fn ready_lines(stats: &HistoryStats, width: usize, p: Palette) -> Vec<Line<'stat
             .map(|l| line(l, muted)),
     );
     out.push(Line::default());
+    // 9.19 follow-up 2: `anthrex run stats`' deciders line, word for word.
     out.push(line(
-        format!(
-            "deciders {} {d} {} {d} size raised {}/{}",
-            count(stats.decider_calls, "call"),
-            count(stats.decider_fallbacks, "fallback"),
-            stats.size_raised,
-            stats.size_checked
-        ),
+        fold(&common::labels::deciders_text(stats), p.ascii),
         plain,
     ));
     // Milestone 9.17 decision 26: only once a record was replaced.

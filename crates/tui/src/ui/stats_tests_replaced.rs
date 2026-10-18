@@ -19,7 +19,7 @@ fn stats_page_says_replaced_only_above_zero() {
             assert!(!base.iter().any(|l| l.contains("replaced")), "{w}x{h}");
             let deciders = all
                 .iter()
-                .position(|l| l.starts_with("deciders "))
+                .position(|l| l.starts_with("deciders: "))
                 .expect("the deciders line");
             assert_eq!(all[..=deciders], base[..=deciders], "{w}x{h}");
             assert_eq!(
