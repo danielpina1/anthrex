@@ -221,6 +221,17 @@ your runs before downgrading below 0.2.0.
 
 ### Fixed
 
+- **A host sleep no longer stalls an open turn or delivers into it.** Across a laptop
+  sleep the wall clock jumped, so the stall watchdog interrupted an open worker turn
+  and the outbox delivered a message mid-turn (against decision 42), and the minutes
+  budget charged the sleep. The daemon now measures each sleep (wall time against the
+  awake clock) and excuses it from an agent session's stall clock, its waits (rate
+  limit, delivery and count retries, the interrupt's grace, a failed turn's continue)
+  and its minutes budget, and from a design phase's budget, a design agent's session
+  seconds and a stopped racer's exit wait; budgets count awake time. Orchestrator
+  notices and the GitHub-facing delivery polls still run on wall time. Records of what
+  happened stay wall times.
+
 Backlog hardening (milestone 9.18), no new features. The protocol (26) and the run
 format (6) are unchanged.
 

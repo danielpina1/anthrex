@@ -159,6 +159,8 @@ mod history_tiers;
 mod history_tiers_c23;
 mod holds;
 mod holds_conflicts;
+mod host_sleep;
+mod host_sleep_more;
 mod kinds;
 mod kinds_cancel;
 mod kinds_complete;

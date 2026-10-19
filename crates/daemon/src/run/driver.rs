@@ -18,6 +18,7 @@
 //! resume), and `driver/restore.rs` restores the runs of an earlier daemon (decision 44).
 
 mod adapt;
+mod awake;
 mod book;
 mod brakes_io;
 pub(crate) mod build;
@@ -184,6 +185,8 @@ pub struct RunService {
     hold_io: hold::HoldIo,
     /// Milestone 9.16 decisions 22–29: the context fill reads (`driver/handoff.rs`).
     handoff: handoff::FillCheck,
+    /// The host's sleeps, measured for the reducer (`driver/awake.rs`).
+    awake: awake::AwakeClock,
     /// Tests only (M9.11.8): run on each effect `execute` takes, before it is carried out.
     #[cfg(test)]
     execute_hook: Mutex<Option<effects::ExecuteHook>>,
@@ -291,6 +294,7 @@ impl RunService {
             quota,
             hold_io: Default::default(),
             handoff: Default::default(),
+            awake: Default::default(),
             #[cfg(test)]
             execute_hook: Mutex::new(None),
             #[cfg(test)]
