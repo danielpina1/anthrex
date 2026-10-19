@@ -184,22 +184,7 @@ pub(super) fn slept(run: &mut Run, secs: u64, now: u64) {
                     round.excused_secs = round.excused_secs.saturating_add(secs).min(elapsed);
                 }
             }
-            for at in [
-                round.rate_limited_until.as_mut(),
-                round.delivery_retry_at.as_mut(),
-                round.count_retry_at.as_mut(),
-            ]
-            .into_iter()
-            .flatten()
-            {
-                later(at);
-            }
-            if let StallState::Interrupted { deadline } = &mut round.stall {
-                later(deadline);
-            }
-            if let FailedTurn::WaitingContinue { at, .. } = &mut round.failed_turn {
-                later(at);
-            }
+            waits(round).into_iter().for_each(later);
         }
     }
     for task in run.tasks.iter_mut() {
@@ -229,6 +214,97 @@ pub(super) fn slept(run: &mut Run, secs: u64, now: u64) {
     {
         *started = started.saturating_add(secs).min(now);
     }
+}
+
+/// `EventKind::SteppedBack`: the wall clock was set `secs` back at `now`. Every anchor
+/// and deadline [`slept`] moves keeps the awake time it had left on the clock before
+/// the step: an anchor (a stall clock's last event, a session's or a phase's start, a
+/// stopped racer's kill) moves back by `secs`, so the span since it is unchanged; a
+/// wait still to come ends at `now` plus what remained of it, and one that had come is
+/// clamped to `now`, so it stays come. A brief forward step (which the driver measures
+/// as a sleep) and its correction so leave every wait as it was, or later by the
+/// driver's rounding (`driver/awake.rs`: every error runs late). Every round's elapsed
+/// minutes shrink by the step, so a round not ended has its excused minutes shrink too,
+/// down to none (an undercount past that: late).
+///
+/// Review round 1 of this fix: anchors `slept` leaves are moved back too, since one
+/// stamped while the clock was ahead would otherwise wait out the step. A task's and a
+/// racing lane's clock (`stopped`, so a stop keeps its span, which is why a stopped
+/// round's excused minutes shrink as a running one's do; `restarted`, so a restore
+/// stops the clock no later than `now`, M2), the orchestrator's wait (`orch_stall`'s
+/// `waiting_since`) and each runtime's writer-cap anchors (`concurrency`'s
+/// `last_rate_limit_at`, `last_change_at`, M3). A paused design phase keeps its start:
+/// its pause and its age shrink alike, unless the pause so far is shorter than the step,
+/// where the pause saturates and the phase undercounts (late, never early).
+///
+/// Review round 2 (N3): a round not ended whose `started_at` is later than `now` (it
+/// started within the step) has it clamped to `now`, or its spend would read 0 until
+/// the wall caught up, its minutes budget off; its minutes count from the correction,
+/// an undercount (late). Every other timestamp of what happened stays as it was: wall
+/// times.
+pub(super) fn stepped_back(run: &mut Run, secs: u64, now: u64) {
+    let before = now.saturating_add(secs);
+    let back = |at: &mut u64| *at = (*at).min(now + at.saturating_sub(before));
+    let anchor = |at: &mut u64| *at = at.saturating_sub(secs).min(now);
+    let clock = |c: &mut TaskClock| {
+        c.stopped.as_mut().into_iter().for_each(anchor);
+        anchor(&mut c.restarted);
+    };
+    for task in run.tasks.iter_mut() {
+        for round in task.rounds.iter_mut() {
+            if round.ended_at.is_none() && !round.ended {
+                anchor(&mut round.last_event);
+                round.excused_secs = round.excused_secs.saturating_sub(secs);
+                // Review round 2 (N3): a start stamped while the clock was ahead.
+                round.started_at = round.started_at.min(now);
+            }
+            waits(round).into_iter().for_each(back);
+        }
+        clock(&mut task.clock);
+        for lane in task.race.iter_mut().flat_map(|r| r.lanes.iter_mut()) {
+            lane.kill_sent_at.as_mut().into_iter().for_each(anchor);
+            clock(&mut lane.gates.clock);
+        }
+    }
+    run.orch.waiting_since.as_mut().into_iter().for_each(anchor);
+    for c in run.concurrency.values_mut() {
+        let at = [c.last_rate_limit_at.as_mut(), c.last_change_at.as_mut()];
+        at.into_iter().flatten().for_each(anchor);
+    }
+    let Some(design) = run.orch.design.as_mut() else {
+        return;
+    };
+    let agents = design
+        .brainstormers
+        .iter_mut()
+        .chain(design.reviewer.as_mut());
+    let running = agents.filter(|a| a.state == DesignAgentState::Running);
+    running.filter_map(|a| a.started.as_mut()).for_each(anchor);
+    if !matches!(run.state, RunState::Paused | RunState::Halted)
+        && let Some(started) = design.phase_started.as_mut()
+    {
+        anchor(started);
+    }
+}
+
+/// A round's deadlines that [`slept`] and [`stepped_back`] move: a rate limit's end, a
+/// delivery or count retry, the interrupt's grace and a failed turn's continue.
+fn waits(round: &mut AgentRound) -> Vec<&mut u64> {
+    let mut waits: Vec<&mut u64> = [
+        round.rate_limited_until.as_mut(),
+        round.delivery_retry_at.as_mut(),
+        round.count_retry_at.as_mut(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if let StallState::Interrupted { deadline } = &mut round.stall {
+        waits.push(deadline);
+    }
+    if let FailedTurn::WaitingContinue { at, .. } = &mut round.failed_turn {
+        waits.push(at);
+    }
+    waits
 }
 
 /// The clock a round is charged on: its racing lane's, out of the lane's view

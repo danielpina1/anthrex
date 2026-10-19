@@ -1,74 +1,175 @@
-//! The host's sleeps, measured for the reducer (`EventKind::Slept`). The reducer's
-//! `now` is wall time (`unix_now`), which a suspend moves forward; `Instant`
-//! (`CLOCK_UPTIME_RAW` on macOS, `CLOCK_MONOTONIC` on Linux) does not advance while the
-//! host sleeps. Between two reads, the wall clock's lead over the awake clock is the
-//! time the host slept. In memory only: a new daemon starts a new anchor, and the
-//! downtime before it is the restore's (`engine/restore.rs`).
+//! The host's sleeps and the wall clock's backward steps, measured for the reducer
+//! (`EventKind::Slept`, `EventKind::SteppedBack`). The reducer's `now` is wall time
+//! (`unix_now`), which a suspend moves forward; `Instant` (`CLOCK_UPTIME_RAW` on macOS,
+//! `CLOCK_MONOTONIC` on Linux) does not advance while the host sleeps. The wall clock's
+//! lead over the awake clock since the first read is its offset, read to the
+//! nanosecond; a rise of the offset is a sleep (or a forward step of the clock, which
+//! looks the same), a fall a step back. In memory only: a new daemon starts a new
+//! anchor, and the downtime before it is the restore's (`engine/restore.rs`).
+//!
+//! **Every error runs late** (review round 2 of the clock-step fix). The reducer moves
+//! each live wait by every step reported while it runs, in whole seconds. A wait never
+//! ends before its true awake time if, between any read and a later one, the steps
+//! reported add up to at least the offset's true change between them. Write
+//! `lead = reported − offset`, the seconds reported beyond the offset. Then that holds
+//! exactly when `lead` never falls from one read to a later one, and the clock keeps
+//! it so: `lead` is never let below the highest it has been (`high`, less
+//! [`READ_TOLERANCE`]), and a step is reported only in whole seconds that keep it
+//! there. A rise of the offset is reported at once, rounded up, as a `Slept`. A fall
+//! is reported as a `Back` only in whole seconds past `high`, rounded down, so a slow
+//! drift back is never reported (the waits it spans run long by it), and a step back
+//! is understated by under a second. The cost is lateness: each `Slept` overstates by
+//! under a second, and a slow awake clock (the wall gaining on it) reports `Slept(1)`
+//! each time the wall gains [`READ_TOLERANCE`] on `high`.
+//!
+//! **A read brackets the wall clock** (review round 3, N4): the awake clock, the wall
+//! clock, the awake clock again. A thread descheduled between the two clock reads
+//! would misread the offset by the stall; a read whose two awake instants are more than
+//! [`READ_SPREAD`] apart is sampled again, up to [`READ_ATTEMPTS`] times, and if every
+//! attempt is stalled it reports nothing and leaves the clock as it was. The first
+//! instant is the awake time, so the wall is read at most `READ_SPREAD` after it: the
+//! offset reads high by at most that, which runs a wait armed at that read early by at
+//! most that. So no wait ends more than `READ_TOLERANCE + READ_SPREAD` (0.11 s) before
+//! its true awake time.
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-/// A lead of up to this many seconds is not a sleep: `now` is truncated to whole
-/// seconds, and a clock adjustment slews it a little.
+/// A step reported of up to this many seconds is logged at debug, not info: the wall
+/// gaining on a slow awake clock, or the rounding up of a short sleep.
 pub(super) const SLEEP_SLACK_SECS: u64 = 2;
 
-/// The last `(wall seconds, awake instant)` read.
-#[derive(Default)]
-pub(super) struct AwakeClock(Mutex<Option<(u64, Instant)>>);
+/// How far the seconds reported may lag a rise of the offset before a `Slept` makes
+/// them up: the two clocks are not read at the same instant, and the wall clock may
+/// slew between reads. An error that may run early, by at most this much; a larger
+/// one would let more run early, a smaller one report `Slept(1)` more often under a
+/// slow awake clock (each a second late).
+pub(super) const READ_TOLERANCE: Duration = Duration::from_millis(100);
 
-impl AwakeClock {
-    /// The seconds the host slept since the last read (0 if none), with `wall` and
-    /// `awake` the new anchor.
-    pub(super) fn read(&self, wall: u64, awake: Instant) -> u64 {
-        let last = crate::lock(&self.0).replace((wall, awake));
-        last.map_or(0, |(was, at)| {
-            slept(
-                wall.saturating_sub(was),
-                awake.saturating_duration_since(at),
-            )
-        })
+/// The most a sample's two awake instants may be apart (review round 3, N4): a sample
+/// further apart had its thread descheduled between the clock reads, and is taken
+/// again.
+pub(super) const READ_SPREAD: Duration = Duration::from_millis(10);
+
+/// How many times a read samples the clocks before giving up on a stalled thread.
+pub(super) const READ_ATTEMPTS: usize = 4;
+
+/// A second, in nanoseconds.
+const SEC: i128 = 1_000_000_000;
+
+/// One sample of the clocks: the awake instant, then the wall time since the epoch,
+/// then the awake instant again.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Sample {
+    pub(super) before: Instant,
+    pub(super) wall: Duration,
+    pub(super) after: Instant,
+}
+
+impl Sample {
+    /// The clocks, now.
+    pub(super) fn now() -> Self {
+        let before = Instant::now();
+        let wall = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        Sample {
+            before,
+            wall,
+            after: Instant::now(),
+        }
     }
 }
 
-/// The sleep in a span the wall clock measured as `wall` seconds and the awake clock
-/// as `awake`: the wall's lead, rounded down, once it is past [`SLEEP_SLACK_SECS`].
-pub(super) fn slept(wall: u64, awake: Duration) -> u64 {
-    let awake = awake.as_secs() + u64::from(awake.subsec_nanos() > 0);
-    match wall.saturating_sub(awake) {
-        lead if lead > SLEEP_SLACK_SECS => lead,
-        _ => 0,
+/// What the wall clock did since the last read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ClockStep {
+    /// It kept pace with the awake clock (or this is the first read).
+    Kept,
+    /// It ran this many seconds ahead: the host slept, or the clock was set forward.
+    Slept(u64),
+    /// It fell this many seconds behind: the clock was set back.
+    Back(u64),
+}
+
+/// The first read, `(wall time, awake instant)`; the seconds reported since; and the
+/// highest `lead` (reported less the offset, in nanoseconds) after any read.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Anchor {
+    wall: Duration,
+    at: Instant,
+    reported: i128,
+    high: i128,
+}
+
+impl Anchor {
+    pub(super) fn new(wall: Duration, at: Instant) -> Self {
+        Anchor {
+            wall,
+            at,
+            reported: 0,
+            high: 0,
+        }
     }
+}
+
+#[derive(Default)]
+pub(super) struct AwakeClock(Mutex<Option<Anchor>>);
+
+impl AwakeClock {
+    /// What the wall clock did since the last read, its clocks sampled by `sample`
+    /// (see [`Sample::now`]) until a sample's awake instants are within [`READ_SPREAD`]
+    /// of each other; the first read is the anchor.
+    pub(super) fn read(&self, mut sample: impl FnMut() -> Sample) -> ClockStep {
+        let tight = (0..READ_ATTEMPTS)
+            .map(|_| sample())
+            .find(|s| s.after.saturating_duration_since(s.before) <= READ_SPREAD);
+        let Some(Sample {
+            before: awake,
+            wall,
+            ..
+        }) = tight
+        else {
+            tracing::warn!(
+                attempts = READ_ATTEMPTS,
+                "the clocks could not be read together; this read reports nothing"
+            );
+            return ClockStep::Kept;
+        };
+        let mut anchor = crate::lock(&self.0);
+        let Some(a) = anchor.as_mut() else {
+            *anchor = Some(Anchor::new(wall, awake));
+            return ClockStep::Kept;
+        };
+        let nanos = |d: Duration| i128::try_from(d.as_nanos()).unwrap_or(i128::MAX);
+        let off = nanos(wall) - nanos(a.wall) - nanos(awake.saturating_duration_since(a.at));
+        let lead = a.reported * SEC - off;
+        let tolerance = nanos(READ_TOLERANCE);
+        let step = if lead < a.high - tolerance {
+            // Rounded up: `lead` back to `high` at least.
+            let secs = (a.high - lead + SEC - 1) / SEC;
+            a.reported += secs;
+            ClockStep::Slept(whole(secs))
+        } else if lead >= a.high + SEC {
+            // Rounded down: `lead` stays at `high` at least.
+            let secs = (lead - a.high) / SEC;
+            a.reported -= secs;
+            ClockStep::Back(whole(secs))
+        } else {
+            ClockStep::Kept
+        };
+        a.high = a.high.max(a.reported * SEC - off);
+        step
+    }
+}
+
+fn whole(secs: i128) -> u64 {
+    u64::try_from(secs).unwrap_or(u64::MAX)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_wall_jump_with_no_awake_time_is_a_sleep() {
-        assert_eq!(slept(1_001, Duration::from_millis(1_200)), 999);
-        assert_eq!(slept(1_000, Duration::ZERO), 1_000);
-    }
-
-    #[test]
-    fn awake_time_and_rounding_are_not_a_sleep() {
-        assert_eq!(slept(1, Duration::from_millis(300)), 0);
-        assert_eq!(slept(3, Duration::from_millis(1_000)), 0);
-        assert_eq!(slept(600, Duration::from_secs(600)), 0);
-        // A clock set back is no sleep.
-        assert_eq!(slept(0, Duration::from_secs(5)), 0);
-    }
-
-    #[test]
-    fn the_clock_reads_from_its_last_anchor() {
-        let clock = AwakeClock::default();
-        let at = Instant::now();
-        assert_eq!(clock.read(100, at), 0, "the first read is the anchor");
-        assert_eq!(clock.read(101, at + Duration::from_secs(1)), 0);
-        assert_eq!(clock.read(1_102, at + Duration::from_secs(2)), 1_000);
-        assert_eq!(clock.read(1_103, at + Duration::from_secs(3)), 0);
-    }
-}
+#[path = "awake_tests.rs"]
+mod tests;
 
 #[cfg(test)]
 #[path = "awake_handle_tests.rs"]

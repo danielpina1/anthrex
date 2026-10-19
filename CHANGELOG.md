@@ -231,6 +231,12 @@ your runs before downgrading below 0.2.0.
   seconds and a stopped racer's exit wait; budgets count awake time. Orchestrator
   notices and the GitHub-facing delivery polls still run on wall time. Records of what
   happened stay wall times.
+- **A wall clock set back now moves every session clock back with it.** A clock set
+  ahead by mistake and then corrected looked like a sleep and then like nothing, so
+  every open turn's stall clock and every running wait stayed out by the mistake:
+  a turn set a year ahead and back never stalled. The daemon now also detects a wall
+  clock that falls behind the awake clock and gives each stall clock, wait, budget,
+  orchestrator-stall wait and writer-cap recovery the awake time it had left.
 
 Backlog hardening (milestone 9.18), no new features. The protocol (26) and the run
 format (6) are unchanged.
