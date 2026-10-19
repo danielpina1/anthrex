@@ -336,7 +336,7 @@ fn agents_row_shows_capped_writers() {
     let inspection = inspect_node(&app, &NodeKey::Run("r1".into()));
     assert_eq!(
         value(&inspection, "agents"),
-        Some("workers 2/3 · readers 1/3 · claude ok · codex ok (writers 1/3)")
+        Some("writers 2/3 · readers 1/3 · claude ok · codex ok (writers 1/3)")
     );
 }
 

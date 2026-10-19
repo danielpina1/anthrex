@@ -307,3 +307,35 @@ fn lesson_labels_follow_selection_and_zoom() {
     let all = audit::rows(&audit::draw(&app, 160, 48)).join("\n");
     assert!(all.contains("○ Prefer the Invoice buil…"), "{all}");
 }
+
+/// 9.19 follow-up 3: `last seen` is a glossary clock time against the daemon's `now`,
+/// in the viewer's zone (`numbers::clock`): the weekday within six days, the long form
+/// beyond, never a bare date with a zone.
+#[test]
+fn the_panel_says_last_seen_as_a_clock_time() {
+    // The fixture's lesson was last seen at 2025-10-13 00:00 UTC, a Monday.
+    let seen = 1_760_313_600;
+    let mut app = app_with(false, fixture::graph());
+    gs_mut(&mut app).selected = Some(APPROVED.into());
+    gs_mut(&mut app).panel = Some(Panel::default());
+    app.utc_offset_secs = 2 * 3600;
+    for (now, want) in [
+        (seen + 3 * 3600, "02:00 +02:00"),
+        (seen + 2 * 86_400, "Mon 02:00 +02:00"),
+        (seen + 30 * 86_400, "2025-10-13 02:00 +02:00"),
+    ] {
+        app.runs.now = now;
+        let rows = audit::rows(&audit::draw(&app, 160, 48));
+        let row = rows
+            .iter()
+            .find(|r| r.contains("last seen"))
+            .unwrap_or_else(|| panic!("{rows:#?}"));
+        assert!(
+            row.contains(&format!("last seen    {want} ")),
+            "{now}: {row:?}"
+        );
+        if !want.starts_with("2025") {
+            assert!(!row.contains("2025-10-13"), "{row:?}");
+        }
+    }
+}

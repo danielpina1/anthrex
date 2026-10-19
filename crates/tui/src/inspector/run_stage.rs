@@ -28,6 +28,7 @@ pub(crate) fn stage_inspection(run: &RunInfo, stage: &StageInfo, app: &App) -> I
             label: "failing",
             value: names.join(", "),
             wrap: true,
+            parts: false,
             marks: Vec::new(),
         });
     }

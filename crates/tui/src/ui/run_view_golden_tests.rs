@@ -2,7 +2,8 @@
 //! is drawn exactly as before, its run view at 80×24 (the compact list) and 120×40 (the
 //! graph), running and at its plan gate. The rows were captured on `264f3539`, before
 //! the task touched the run view; milestone 9.19 decision 5 then gave the run box its
-//! narrow `1/3 ✓`, two columns wider, and moved the boxes after it.
+//! narrow `1/3 ✓`, two columns wider, and moved the boxes after it; its 9.19
+//! follow-up 1 wrapped the 80×24 spend row at a separator, a row taller.
 
 use super::tests::{app_of, run_view};
 use crate::app::App;
@@ -13,6 +14,52 @@ fn rows_at(fixture: (proto::RunsSnapshot, Vec<proto::WindowInfo>), w: u16, h: u1
     let mut app: App = run_view(app_of(fixture, false), RUN_ID);
     let _ = app.set_terminal_size(w, h);
     audit::rows(&audit::draw(&app, w, h))
+}
+
+/// 9.19 follow-up 1: at 80×24 the spend row wraps at its ` · ` separators, a whole part
+/// to a row, so the cache share and the worker tool calls stay readable; at 120×40 a
+/// row that fits is decision 2's one row.
+#[test]
+fn the_spend_row_keeps_its_parts_readable() {
+    let (mut snapshot, windows) = crate::tree::run_fixtures::gemini_fixture();
+    let run = &mut snapshot.runs[0];
+    // 75 billed, 71 of 100 input tokens read from cache, 12 tool calls.
+    run.usage.as_mut().expect("usage").total = proto::TokenUsage {
+        input: 29,
+        output: 46,
+        cache_read: 71,
+        cache_write: 0,
+    };
+    for (i, task) in run.tasks.iter_mut().enumerate() {
+        task.spent_total.tool_calls = if i == 0 { 12 } else { 0 };
+    }
+    let rows_of = |w: u16, h: u16| {
+        let mut app: App = run_view(app_of((snapshot.clone(), windows.clone()), false), "r1");
+        let _ = app.set_terminal_size(w, h);
+        audit::rows(&audit::draw(&app, w, h))
+    };
+    let small = rows_of(80, 24);
+    let at = small
+        .iter()
+        .position(|r| r.contains("│ spend     "))
+        .unwrap_or_else(|| panic!("{small:#?}"));
+    let parts = [
+        "│ spend     tokens 75 (all roles) ·",
+        "│           cache hits 71% of input ·",
+        "│           worker tool calls 12",
+    ];
+    for (i, part) in parts.iter().enumerate() {
+        let row = &small[at + i];
+        let end = row.find(part).map(|x| &row[x + part.len()..]);
+        assert!(
+            end.is_some_and(|e| e.starts_with(' ') && !e.contains('…')),
+            "{part:?} in {row:?}\n{small:#?}"
+        );
+    }
+    let large = rows_of(120, 40);
+    let full =
+        "│ spend     tokens 75 (all roles) · cache hits 71% of input · worker tool calls 12 │";
+    assert!(large.iter().any(|r| r.contains(full)), "{large:#?}");
 }
 
 #[test]
@@ -39,13 +86,13 @@ const RUNNING_80X24: [&str; 24] = [
     "│                                ││                                            │",
     "│                                ││                                            │",
     "│                                ││                                            │",
-    "│                                ││                                            │",
     "│                                ││╭──────────────────────────────────────────╮│",
     "│                                │││ ◉ add-reset-3f9a  Add password reset     ││",
     "│                                │││ progress  ██████░░░░░░░░░░░░  1/3 merge… ││",
     "│                                │││ path      critical path t0 → t1 · 1 tas… ││",
-    "│3 agents                        │││ agents    workers 0/3 · readers 0/3 · c… ││",
-    "╰────────────────────────────────╯││ spend     tokens unknown (tasks only) ·… ││",
+    "│                                │││ agents    writers 0/3 · readers 0/3 · c… ││",
+    "│3 agents                        │││ spend     tokens unknown (tasks only) ·  ││",
+    "╰────────────────────────────────╯││           worker tool calls 0            ││",
     "╭ Alerts ────────────────────────╮││ gate      plan not approved              ││",
     "│no alerts                       ││╰──────────────────────────────────────────╯│",
     "╰────────────────────────────────╯╰────────────────────────────────────────────╯",
@@ -72,10 +119,10 @@ const GATE_80X24: [&str; 24] = [
     "│                                ││╭──────────────────────────────────────────╮│",
     "│                                │││ ⚑ add-reset-3f9a  Add password reset     ││",
     "│1 agent                         │││ progress  ░░░░░░░░░░░░░░░░░░  0/2 merge… ││",
-    "╰────────────────────────────────╯││ agents    workers 0/3 · readers 0/3 · c… ││",
-    "╭ ⚑ Alerts 1 ────────────────────╮││ spend     tokens unknown (tasks only) ·… ││",
-    "│⚑ Add password reset · 3f9a     │││ gate      awaiting approval · a approve… ││",
-    "│  plan awaits approval · 2 tasks│││                                          ││",
+    "╰────────────────────────────────╯││ agents    writers 0/3 · readers 0/3 · c… ││",
+    "╭ ⚑ Alerts 1 ────────────────────╮││ spend     tokens unknown (tasks only) ·  ││",
+    "│⚑ Add password reset · 3f9a     │││           worker tool calls 0            ││",
+    "│  plan awaits approval · 2 tasks│││ gate      awaiting approval · a approve… ││",
     "│                                ││╰──────────────────────────────────────────╯│",
     "╰─────────────────── C-b a open ─╯╰────────────────────────────────────────────╯",
     " RUN  a approve  x reject  e edit  d remove  p review  . actions  esc back",
@@ -118,7 +165,7 @@ const RUNNING_120X40: [&str; 40] = [
     "│                                │││ ◉ add-reset-3f9a  Add password reset                           running · 10m 00s ││",
     "│                                │││ progress  ██████░░░░░░░░░░░░  1/3 merged · 1 working · 1 waiting                 ││",
     "│                                │││ path      critical path t0 → t1 · 1 task left                                    ││",
-    "│3 agents                        │││ agents    workers 0/3 · readers 0/3 · claude ok                                  ││",
+    "│3 agents                        │││ agents    writers 0/3 · readers 0/3 · claude ok                                  ││",
     "╰────────────────────────────────╯││ spend     tokens unknown (tasks only) · worker tool calls 0                      ││",
     "╭ Alerts ────────────────────────╮││ gate      plan not approved                                                      ││",
     "│no alerts                       ││╰──────────────────────────────────────────────────────────────────────────────────╯│",
@@ -162,7 +209,7 @@ const GATE_120X40: [&str; 40] = [
     "│                                ││╭──────────────────────────────────────────────────────────────────────────────────╮│",
     "│                                │││ ⚑ add-reset-3f9a  Add password reset                  awaiting approval · 2h 46m ││",
     "│1 agent                         │││ progress  ░░░░░░░░░░░░░░░░░░  0/2 merged · 2 waiting                             ││",
-    "╰────────────────────────────────╯││ agents    workers 0/3 · readers 0/3 · claude ok                                  ││",
+    "╰────────────────────────────────╯││ agents    writers 0/3 · readers 0/3 · claude ok                                  ││",
     "╭ ⚑ Alerts 1 ────────────────────╮││ spend     tokens unknown (tasks only) · worker tool calls 0                      ││",
     "│⚑ Add password reset · 3f9a     │││ gate      awaiting approval · a approve · x reject · e edit · d remove           ││",
     "│  plan awaits approval · 2 tasks│││                                                                                  ││",

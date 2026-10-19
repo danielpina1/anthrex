@@ -191,7 +191,9 @@ your runs before downgrading below 0.2.0.
   (`14:30 +02:00`, `Thu 14:30 +02:00` within six days, else the date); text the daemon
   writes (attention lines, prompts, the proposal file, the `REFIT` column) stays UTC and
   says `UTC`. On Linux, a change of the system time zone mid-session is picked up only
-  after a restart (DST changes are picked up at once).
+  after a restart (DST changes are picked up at once). After the upgrade the
+  orchestrator digest's `at` values read `2026-09-21 11:40 UTC`, not `11:40`
+  (cosmetic: the times are the same).
 - **One duration and one age format**: `42s`, `41m 12s`, `1h 05m`, `3d 04h`, floored;
   `just now` under 10 s, else `<duration> ago`. Fixed-width cells (the sidebar, graph
   boxes, the alerts list) show the largest unit only.

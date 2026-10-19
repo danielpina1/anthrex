@@ -53,7 +53,7 @@ pub const GLOSSARY: &[Term] = &[
     Term {
         term: "clock time",
         shown: "14:30 +02:00, Thu 14:30 +02:00, 2026-10-12 14:30 UTC",
-        definition: "Always labelled with its zone. The TUI and CLI show your local time with its offset (an offset of 0 prints `+00:00`); text the daemon writes (attention lines, prompts) is labelled `UTC`, and `REPORT.md` writes `YYYY-MM-DD HH:MM:SSZ`. A weekday within six days, a date beyond. Past times across a DST change use today's offset.",
+        definition: "Always labelled with its zone. The TUI and CLI show your local time with its offset (an offset of 0 prints `+00:00`); text the daemon writes (attention lines, prompts) is labelled `UTC`, and `REPORT.md` writes `YYYY-MM-DD HH:MM:SSZ`. A weekday within six days, a date beyond; never a date alone (a lesson's `last seen` is a clock time). Past times across a DST change use today's offset.",
     },
     Term {
         term: "merged",

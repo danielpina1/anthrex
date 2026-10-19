@@ -26,7 +26,7 @@ fn lane(lane: RaceLane, runtime: Runtime, state: LaneState) -> LaneInfo {
     }
 }
 
-/// Run `r1`, `running`, `max_writers = 3`, `writer_caps = {"codex": 1}`, workers 2/3
+/// Run `r1`, `running`, `max_writers = 3`, `writer_caps = {"codex": 1}`, writers 2/3
 /// and readers 1/3 busy. Task `t2`, M, `working`, on the critical path, racing with
 /// no winner: lane a Claude `working`, its racer (session 1) live on window 7; lane b
 /// Codex `review`, its racer (session 2) ended, and its Claude reviewer `review b#1`

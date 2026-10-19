@@ -133,7 +133,7 @@ const READY: [&str; 19] = [
     "med = median over merged tasks · tokens are billed (worker + reviewer +",
     "decider) · bounces counts every task",
     "",
-    "deciders 6 calls · 1 fallback · size raised 1/4",
+    "deciders: 6 calls, 1 fallback · size cross-check: 4 checked, 1 raised",
     "",
     "flaky proposals (14 days, after 3)",
     "  tests::login_retries  4 runs",
@@ -195,7 +195,7 @@ fn stats_render_in_ascii() {
         );
         let deciders = if w >= 120 { 8 } else { 9 };
         assert_eq!(
-            all[deciders], "deciders 6 calls - 1 fallback - size raised 1/4",
+            all[deciders], "deciders: 6 calls, 1 fallback - size cross-check: 4 checked, 1 raised",
             "{w}x{h}"
         );
         let text = screen_text(&app, w, h);
@@ -226,7 +226,7 @@ fn stats_render_an_empty_history() {
             "med = median over merged tasks · tokens are billed (worker + reviewer +",
             "decider) · bounces counts every task",
             "",
-            "deciders 6 calls · 1 fallback · size raised 1/4",
+            "deciders: 6 calls, 1 fallback · size cross-check: 4 checked, 1 raised",
             "",
             "flaky proposals (14 days, after 3)",
             "  none",

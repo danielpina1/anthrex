@@ -7,7 +7,7 @@
 //!
 //! Pure like the rest of the panel: it lays out what it was handed.
 
-use super::{Inspection, fitted_name, pad, sections, title_line, wrap_value};
+use super::{Inspection, fitted_name, pad, sections, title_line, wrap_field};
 use crate::inspector::{FieldLayout, INSPECTOR_HEIGHT, RUN_LABEL_WIDTH};
 use crate::theme::{self, Palette, Role};
 use crate::ui::tree_view::truncate_in;
@@ -37,7 +37,7 @@ pub(super) fn lines(
             // that the later fields are dropped from the end like any others.
             let later = inspection.fields.len() - index - 1;
             let rows = left.saturating_sub(later).max(1);
-            let chunks = wrap_value(&field.value, value_width, rows, p.ascii);
+            let chunks = wrap_field(field, value_width, rows, p.ascii);
             let taken = chunks.len().max(1);
             let mut spans = marked(&chunks, &field.value, &field.marks, p).into_iter();
             out.push(row_spans(field.label, label_width, spans.next(), p));
@@ -72,7 +72,7 @@ pub fn panel_rows(inspection: &Inspection, width: u16) -> u16 {
             let value_width = width - RUN_LABEL_WIDTH.min(width);
             let field_rows = |field: &crate::inspector::Field| {
                 if field.wrap {
-                    wrap_value(&field.value, value_width, usize::MAX, false)
+                    wrap_field(field, value_width, usize::MAX, false)
                         .len()
                         .max(1)
                 } else {

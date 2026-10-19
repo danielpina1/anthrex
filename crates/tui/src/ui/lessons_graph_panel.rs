@@ -1,7 +1,7 @@
 //! Milestone 9.15 decision 48 (task M9.15.15): the graph page's inspect panel. For a
 //! lesson: its title, layer, status, the full body (`multi_line`, wrapped), files,
-//! origin runs, usefulness `green/outcomes`, reconfirmed count, last seen
-//! (`YYYY-MM-DD +02:00`, the viewer's day and zone), and a known failure's signature
+//! origin runs, usefulness `green/outcomes`, reconfirmed count, last seen (a clock
+//! time in the viewer's zone, `Mon 14:30 +02:00`), and a known failure's signature
 //! headlines. For a module (or the root hub): its lessons and known failures as a list,
 //! the panel's row selected while the panel has the keys (`Tab`). Every stored string is
 //! sanitised and folded in ASCII. Pure.
@@ -18,9 +18,14 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 
-/// A lesson's panel lines at `width` columns; its `last seen` date is the day in `zone`,
-/// labelled (`numbers::date`, milestone 9.19 ruling R17).
-pub fn lesson_lines(lesson: &LessonInfo, width: u16, p: Palette, zone: Zone) -> Vec<Line<'static>> {
+/// A lesson's panel lines at `width` columns; its `last seen` is a glossary clock time
+/// against the daemon's `now`, in `zone` (`numbers::clock`, 9.19 follow-up 3).
+pub fn lesson_lines(
+    lesson: &LessonInfo,
+    width: u16,
+    p: Palette,
+    (now, zone): (u64, Zone),
+) -> Vec<Line<'static>> {
     let usefulness = if lesson.outcomes == 0 {
         "unmeasured".to_string()
     } else {
@@ -63,7 +68,10 @@ pub fn lesson_lines(lesson: &LessonInfo, width: u16, p: Palette, zone: Zone) -> 
     rows.extend([
         ("useful".into(), usefulness),
         ("reconfirmed".into(), lesson.reconfirmed.to_string()),
-        ("last seen".into(), numbers::date(lesson.last_seen, zone)),
+        (
+            "last seen".into(),
+            numbers::clock(lesson.last_seen, now, zone),
+        ),
     ]);
     for (i, headline) in lesson.headlines.iter().enumerate() {
         let label = if i == 0 { "signature" } else { "" };
@@ -136,12 +144,12 @@ pub fn module_lines(
 }
 
 /// Draws the panel for the selected node in `area`, framed; its border in the accent
-/// while it has the keys.
+/// while it has the keys. `now` is the daemon's clock (`App::run_now`).
 pub fn render(
     frame: &mut Frame,
     s: &LessonsGraphScreen,
     area: Rect,
-    (keys, zone): (bool, Zone),
+    (keys, now, zone): (bool, u64, Zone),
     p: Palette,
 ) {
     let Some(node) = s.selected_node() else {
@@ -158,7 +166,7 @@ pub fn render(
     let (lines, at) = match node.kind {
         GraphNodeKind::Lesson => match s.lesson(&node.id) {
             Some(lesson) => {
-                let lines = lesson_lines(lesson, inner.width, p, zone);
+                let lines = lesson_lines(lesson, inner.width, p, (now, zone));
                 let at = s.panel.map_or(0, |panel| panel.row);
                 let at = at.min(lines.len().saturating_sub(1));
                 (lines, at)
