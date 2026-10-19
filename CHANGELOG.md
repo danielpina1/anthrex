@@ -254,6 +254,12 @@ format (6) are unchanged.
   breaks the force-remove prompt's box.
 - **A failed tool call shows as failed at once** in the conversation view, from Claude's
   `PostToolUseFailure` hook, instead of staying pending until the transcript is read.
+- **Lessons requests never hang.** `anthrex lessons` (`list`, `graph`, `approve`,
+  `reject`, `forget`) refuses a store or history that is not a regular file, such as a
+  FIFO, instead of blocking on it, and gives up after 30 s on a file system that stops
+  answering. A stuck `approve`, `reject` or `forget` no longer holds the store's lock,
+  so later changes and the lesson distiller still write. A FIFO at `history.jsonl` no
+  longer holds a run start's tuning or `run stats` either: it is refused unread.
 - **`lessons.jsonl` is compacted.** Once it reaches 1 MiB, the lines no reader needs
   (a closed lesson's day-old attempts, and records a later line replaces) are dropped.
   Only the newest three moved-aside `tuning.toml.bad-*` files are kept.

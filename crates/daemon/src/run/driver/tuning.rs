@@ -8,6 +8,10 @@
 //! until it ends, so a start that gave up never lets a second writer in. One bound,
 //! [`TUNING_START_BOUND`], covers both the wait for the lock and the work (ruling
 //! T9-3): a start never waits longer for its tuning, whatever another start does.
+//! `history.jsonl` is read through `history_io::read_history_regular`: one that is not
+//! a regular file (a FIFO) is refused unread, so it cannot hold the guard. A regular
+//! file on a stalled file system still can, through the thread the bound leaves behind
+//! (followups: the lessons-bounds fix).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -19,7 +23,7 @@ use proto::{ProposalValue, TuningFile, TuningReport};
 use tokio::sync::OwnedMutexGuard;
 
 use crate::run::engine::HISTORY_FILE;
-use crate::run::history_io::read_history;
+use crate::run::history_io::read_history_regular;
 use crate::run::refit::{self, Tuned};
 use crate::run::refit_render::moved_bad_line;
 use crate::run::tuning_io::{self, Loaded, TUNING_FILE};
@@ -151,7 +155,15 @@ fn tune_blocking(repo_dir: &Path, cfg: &config::Orchestrator, now: u64) -> Tuned
             );
         }
     };
-    let (lines, _) = read_history(&repo_dir.join(HISTORY_FILE));
+    // The lessons-bounds review, I1: a history that is not a regular file (a FIFO,
+    // whose `open` would block under the tuning lock for good) is refused unread.
+    let lines = match read_history_regular(&repo_dir.join(HISTORY_FILE)) {
+        Ok((lines, _)) => lines,
+        Err(refused) => {
+            tracing::warn!(repo = %repo_dir.display(), "{refused}");
+            return untuned(cfg, none_because(refused));
+        }
+    };
     let (refitted, written) = refit::refit(&lines, &file, cfg, now);
     let used = if refitted == file {
         file
@@ -361,7 +373,8 @@ fn stats_blocking(
             }
         }
     };
-    let (lines, _) = read_history(&repo_dir.join(HISTORY_FILE));
+    // I1, as at a start: refused unread, the request answered with the reason.
+    let (lines, _) = read_history_regular(&repo_dir.join(HISTORY_FILE))?;
     let (refitted, written) = refit::refit(&lines, &file, cfg, now);
     let current = refit::proposals(&lines, &refitted, cfg);
     // Whole-branch review C, m-2: only the value the user confirmed is applied.

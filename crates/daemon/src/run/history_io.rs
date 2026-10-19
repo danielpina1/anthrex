@@ -121,22 +121,70 @@ pub fn contains_record(path: &Path, record_id: &str) -> std::io::Result<bool> {
     Ok(false)
 }
 
+/// The bytes of the regular file at `path`, `None` when there is none. Opened
+/// `O_NONBLOCK`, so the `open` of a FIFO cannot block (it has no effect on a regular
+/// file), then refused by `fstat` unless it is a regular file: an error of kind
+/// `InvalidInput` saying [`not_regular`], before any read. The check is on the
+/// descriptor that is read, so a FIFO swapped in after it is never read either. A
+/// regular file on a stalled file system can still block in `read`, so callers bound
+/// it. Blocking.
+pub fn read_regular(path: &Path) -> std::io::Result<Option<Vec<u8>>> {
+    use std::io::Read;
+    use std::os::unix::fs::OpenOptionsExt;
+    let opened = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)
+        .open(path);
+    let mut file = match opened {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    if !file.metadata()?.file_type().is_file() {
+        let kind = std::io::ErrorKind::InvalidInput;
+        return Err(std::io::Error::new(kind, not_regular(path)));
+    }
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    Ok(Some(bytes))
+}
+
+/// [`read_regular`]'s refusal of anything but a regular file.
+pub fn not_regular(path: &Path) -> String {
+    format!("{} is not a regular file", path.display())
+}
+
 /// Every record, the last line of each `record_id` kept, in the order of those lines;
 /// and one problem per line that does not parse (a torn last line included). No file
 /// is no history.
 pub fn read_history(path: &Path) -> (Vec<HistoryLine>, Vec<String>) {
-    let text = match std::fs::read(path) {
-        Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return (Vec::new(), Vec::new());
-        }
-        Err(error) => {
-            return (
-                Vec::new(),
-                vec![format!("{UNREADABLE}{}: {error}", path.display())],
-            );
-        }
-    };
+    match std::fs::read(path) {
+        Ok(bytes) => parse_history(&String::from_utf8_lossy(&bytes), path),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => (Vec::new(), Vec::new()),
+        Err(error) => (
+            Vec::new(),
+            vec![format!("{UNREADABLE}{}: {error}", path.display())],
+        ),
+    }
+}
+
+/// [`read_history`] through [`read_regular`]: anything but a regular file is refused
+/// (`Err`, [`not_regular`]'s words) and never read; any other error reads as
+/// [`read_history`]'s. The lessons requests' read.
+pub fn read_history_regular(path: &Path) -> Result<(Vec<HistoryLine>, Vec<String>), String> {
+    match read_regular(path) {
+        Ok(Some(bytes)) => Ok(parse_history(&String::from_utf8_lossy(&bytes), path)),
+        Ok(None) => Ok((Vec::new(), Vec::new())),
+        Err(error) if error.kind() == std::io::ErrorKind::InvalidInput => Err(error.to_string()),
+        Err(error) => Ok((
+            Vec::new(),
+            vec![format!("{UNREADABLE}{}: {error}", path.display())],
+        )),
+    }
+}
+
+/// [`read_history`]'s parse of `text`, read from `path`.
+fn parse_history(text: &str, path: &Path) -> (Vec<HistoryLine>, Vec<String>) {
     let mut lines: Vec<Option<HistoryLine>> = Vec::new();
     let mut last: HashMap<String, usize> = HashMap::new();
     let mut problems = Vec::new();
