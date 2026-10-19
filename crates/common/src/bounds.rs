@@ -31,6 +31,17 @@ pub const TUNING_START_BOUND: Duration = Duration::from_secs(10);
 pub const LESSONS_START_BOUND: Duration = Duration::from_secs(5);
 const _: () = assert!(LESSONS_START_BOUND.as_secs() <= TUNING_START_BOUND.as_secs());
 
+/// How long a lessons request (`lessons list`, `graph`, `approve`, `reject`, `forget`)
+/// waits for its read of the store and the history, and `approve`, `reject` and
+/// `forget` for their lock and then again for their write; and how long the distill
+/// worker's `append_once` waits for its read under the store's lock. Past it the
+/// request is refused in the daemon's words and the lock is released (the daemon's
+/// `run::driver::lessons_requests`). A regular file on a stalled network file system
+/// is the only read it cuts (a FIFO is refused before any read). Two of it, plus the
+/// git step's own timeout, stay under the CLI's 180 s `RUN_REQUEST_TIMEOUT`
+/// (`docs/timing-budgets.md`).
+pub const LESSONS_READ_BOUND: Duration = Duration::from_secs(30);
+
 /// Milestone 9.18 decision 11: how long `lessons graph`'s profile fallback may walk the
 /// checkout for its module directories; past it the graph has no modules (the daemon's
 /// `run::driver::lessons_requests::modules_at`). It is checked between `read_dir`

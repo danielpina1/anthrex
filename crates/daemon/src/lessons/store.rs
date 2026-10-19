@@ -9,7 +9,9 @@ use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
+use common::bounds::LESSONS_READ_BOUND;
 use proto::LessonLine;
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
@@ -64,6 +66,24 @@ pub fn read_store(path: &Path) -> (Vec<LessonLine>, Vec<String>) {
     }
 }
 
+/// [`read_store`] through `history_io::read_regular`: anything but a regular file is
+/// refused (`Err`, `history_io::not_regular`'s words) and never read; any other error
+/// reads as [`read_store`]'s. The lessons requests' read. Blocking.
+pub fn read_store_regular(path: &Path) -> Result<(Vec<LessonLine>, Vec<String>), String> {
+    match history_io::read_regular(path) {
+        Ok(Some(bytes)) => Ok(fold::parse(
+            &String::from_utf8_lossy(&bytes),
+            &path.display().to_string(),
+        )),
+        Ok(None) => Ok((Vec::new(), Vec::new())),
+        Err(error) if error.kind() == io::ErrorKind::InvalidInput => Err(error.to_string()),
+        Err(error) => Ok((
+            Vec::new(),
+            vec![format!("{UNREADABLE}{}: {error}", path.display())],
+        )),
+    }
+}
+
 /// Appends `line` to `<repo_dir>/lessons.jsonl`.
 pub async fn append(locks: &LessonLocks, repo_dir: &Path, line: LessonLine) -> io::Result<()> {
     let path = repo_dir.join(LESSONS_FILE);
@@ -77,17 +97,45 @@ pub async fn append(locks: &LessonLocks, repo_dir: &Path, line: LessonLine) -> i
 /// by the fold's own parse. A torn line (a crash or a full disk mid-append) carries
 /// the `record_id` in its first bytes but is skipped by the fold, so it must not stop
 /// the record from being written whole. An unreadable store is an error.
+///
+/// The read never runs unbounded under the lock: it is awaited for at most
+/// [`LESSONS_READ_BOUND`], and past it the guard drops (the lock is released) and the
+/// call is an error of kind `TimedOut`, writing nothing; its blocking thread is left
+/// to end when the file system answers, holding no lock. The append then runs with
+/// the guard moved into it, so it is never unlocked, untimed as [`append`]'s.
 pub async fn append_once(
     locks: &LessonLocks,
     repo_dir: &Path,
     line: LessonLine,
 ) -> io::Result<bool> {
+    append_once_reading(locks, repo_dir, line, LESSONS_READ_BOUND, holds_record).await
+}
+
+/// [`append_once`] with its read and that read's bound given (the tests' seam).
+pub(crate) async fn append_once_reading(
+    locks: &LessonLocks,
+    repo_dir: &Path,
+    line: LessonLine,
+    bound: Duration,
+    holds: impl FnOnce(&Path, &str) -> io::Result<bool> + Send + 'static,
+) -> io::Result<bool> {
     let path = repo_dir.join(LESSONS_FILE);
-    let _guard = locks.lock(repo_dir).await;
-    blocking(move || {
-        if holds_record(&path, line.record_id())? {
-            return Ok(false);
+    let guard = locks.lock(repo_dir).await;
+    let (read_path, id) = (path.clone(), line.record_id().to_string());
+    match tokio::time::timeout(bound, blocking(move || holds(&read_path, &id))).await {
+        Ok(held) => {
+            if held? {
+                return Ok(false);
+            }
         }
+        Err(_) => {
+            let (shown, secs) = (path.display(), bound.as_secs_f64());
+            let what = format!("{shown} could not be read within {secs} s");
+            return Err(io::Error::new(io::ErrorKind::TimedOut, what));
+        }
+    }
+    blocking(move || {
+        let _guard = guard;
         history_io::append_json(&path, &line).map(|()| true)
     })
     .await
@@ -95,12 +143,13 @@ pub async fn append_once(
 
 /// Whether the store at `path` holds a line of `record_id` that parses, by the fold's
 /// own parse: [`append_once`]'s test, and the `QueueDistill` reconcile row's (a torn
-/// line is no record). No file holds nothing; an unreadable one is an error. Blocking.
+/// line is no record). No file holds nothing; an unreadable one is an error, and so is
+/// anything but a regular file, refused before any read (`history_io::read_regular`).
+/// Blocking.
 pub fn holds_record(path: &Path, record_id: &str) -> io::Result<bool> {
-    let text = match std::fs::read(path) {
-        Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => return Err(error),
+    let text = match history_io::read_regular(path)? {
+        Some(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+        None => return Ok(false),
     };
     let (lines, _) = fold::parse(&text, "");
     Ok(lines.iter().any(|l| l.record_id() == record_id))
