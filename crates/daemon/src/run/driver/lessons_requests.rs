@@ -82,16 +82,18 @@ impl RunService {
 /// `RunReply::LessonsGraph`, `Decide` and `Forget` with `Done` (`approved <n>`,
 /// `rejected <n>`, `forgot <n>`), every refusal with `Refused` under `request::LESSONS`.
 pub async fn answer(locks: &LessonLocks, at: LessonsAt, req: LessonsRequest, now: u64) -> RunReply {
-    answer_within(locks, at, req, now, LESSONS_READ_BOUND).await
+    answer_within(locks, at, req, now, LESSONS_READ_BOUND, read_both).await
 }
 
-/// [`answer`] with its requests' bound given (the tests' seam).
+/// [`answer`] with its requests' bound and their read of the store and the history
+/// given (the tests' seam: review m1).
 pub(crate) async fn answer_within(
     locks: &LessonLocks,
     at: LessonsAt,
     req: LessonsRequest,
     now: u64,
     bound: Duration,
+    read: impl FnOnce(&Path) -> Result<Read, String> + Send + 'static,
 ) -> RunReply {
     let refused = |message: String| RunReply::refused(request::LESSONS, message);
     let dir = match &req {
@@ -114,7 +116,19 @@ pub(crate) async fn answer_within(
     let cfg = at.cfg;
     let result = match req {
         LessonsRequest::Graph { .. } => {
-            let work = move || graph_at(&repo_dir, &checkout, project, now, &cfg);
+            let work = move || {
+                let dir = repo_dir.clone();
+                let read = move || read(&dir);
+                graph_reading(
+                    read,
+                    &repo_dir,
+                    &checkout,
+                    project,
+                    now,
+                    &cfg,
+                    GRAPH_MODULES_BOUND,
+                )
+            };
             return match bounded(bound, work).await {
                 Ok(graph) => RunReply::LessonsGraph {
                     graph: Box::new(graph),
@@ -124,7 +138,8 @@ pub(crate) async fn answer_within(
             };
         }
         LessonsRequest::List { all, .. } => {
-            return match bounded(bound, move || list_at(&repo_dir, all, now, &cfg)).await {
+            let work = move || Ok(listed(&consolidated(read(&repo_dir)?, now, &cfg), all));
+            return match bounded(bound, work).await {
                 Ok(lessons) => RunReply::Lessons {
                     lessons,
                     message: None,
@@ -135,12 +150,12 @@ pub(crate) async fn answer_within(
         }
         LessonsRequest::Decide { ids, approve, .. } => {
             let dir = repo_dir.clone();
-            let read = move || lessons_at(&dir, now, &cfg);
+            let read = move || Ok(consolidated(read(&dir)?, now, &cfg));
             decide_within(locks, &repo_dir, ids, approve, now, bound, read).await
         }
         LessonsRequest::Forget { ids, .. } => {
             let dir = repo_dir.clone();
-            let read = move || lessons_at(&dir, now, &cfg);
+            let read = move || Ok(consolidated(read(&dir)?, now, &cfg));
             forget_within(locks, &repo_dir, ids, now, bound, read).await
         }
     };
@@ -228,7 +243,7 @@ async fn change_within(
         Ok(read) => read?,
         Err(_) => {
             return Err(format!(
-                "the lessons store could not be read within {secs} s; nothing was written"
+                "the lessons store or history could not be read within {secs} s; nothing was written"
             ));
         }
     };
@@ -255,10 +270,16 @@ pub fn list_at(
     now: u64,
     cfg: &config::Lessons,
 ) -> Result<Vec<LessonInfo>, String> {
-    Ok((lessons_at(repo_dir, now, cfg)?.iter())
+    Ok(listed(&lessons_at(repo_dir, now, cfg)?, all))
+}
+
+/// `lessons` as `List` shows them: without `all`, the rejected and retired ones left
+/// out.
+fn listed(lessons: &[Lesson], all: bool) -> Vec<LessonInfo> {
+    (lessons.iter())
         .filter(|l| all || !matches!(l.status, LessonStatus::Rejected | LessonStatus::Retired))
         .map(Lesson::info)
-        .collect())
+        .collect()
 }
 
 /// `Graph`'s blocking core (decision 41): the store and the history of `repo_dir`,
@@ -470,8 +491,12 @@ fn forget_lines(
 /// The store and the history of `repo_dir`, consolidated at `now`; refused unless each
 /// is a regular file (or absent). Blocking.
 fn lessons_at(repo_dir: &Path, now: u64, cfg: &config::Lessons) -> Result<Vec<Lesson>, String> {
-    let (lines, history) = read_both(repo_dir)?;
-    Ok(consolidate(&fold(&lines), &history, now, cfg))
+    Ok(consolidated(read_both(repo_dir)?, now, cfg))
+}
+
+/// What was read, consolidated at `now`.
+fn consolidated((lines, history): Read, now: u64, cfg: &config::Lessons) -> Vec<Lesson> {
+    consolidate(&fold(&lines), &history, now, cfg)
 }
 
 /// Each of `ids` resolved, in order, a lesson named twice kept once; the first id that
@@ -531,7 +556,7 @@ async fn bounded<T: Send + 'static>(
     match tokio::time::timeout(bound, blocking(work)).await {
         Ok(done) => done,
         Err(_) => Err(format!(
-            "the lessons store could not be read within {} s",
+            "the lessons store or history could not be read within {} s",
             bound.as_secs_f64()
         )),
     }

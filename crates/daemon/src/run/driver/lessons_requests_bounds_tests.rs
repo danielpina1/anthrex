@@ -35,7 +35,10 @@ where
             .enable_all()
             .build()
             .unwrap();
-        let _ = tx.send(runtime.block_on(work()));
+        let got = runtime.block_on(work());
+        // Not a plain drop, which would wait for a blocking thread a read left behind.
+        runtime.shutdown_background();
+        let _ = tx.send(got);
     });
     let got = (rx.recv_timeout(GUARD)).unwrap_or_else(|_| panic!("no reply within {GUARD:?}"));
     // It has sent, so the join cannot wait.
@@ -100,11 +103,9 @@ fn refuses_a_fifo_at(file: &str, n: usize) {
     let fifo = repo_dir.join(file);
     mkfifo(&fifo);
     let (at, req) = (at(tmp.path()), requests(&checkout)[n].clone());
-    let started = std::time::Instant::now();
     let reply = replied(move || async move { answer(&LessonLocks::default(), at, req, NOW).await });
     let message = format!("{} is not a regular file", fifo.display());
     assert_eq!(reply, RunReply::refused(request::LESSONS, message));
-    assert!(started.elapsed() < GUARD, "{:?}", started.elapsed());
 }
 
 #[test]
@@ -131,22 +132,29 @@ fn forget_refuses_a_fifo_store_and_history() {
     refuses_a_fifo_at(HISTORY_FILE, 3);
 }
 
+/// Review m1: `List` and `Graph` await their read under the bound. Each is answered
+/// through `answer_within`'s read seam with a read that never ends: refused at the
+/// bound, in the daemon's words.
 #[test]
 fn a_stuck_list_or_graph_read_times_out() {
-    let (release, read) = stuck::<()>();
-    let started = std::time::Instant::now();
-    let got = replied(move || async move {
-        let got = bounded(STUCK_BOUND, read).await;
-        // Released before the runtime drops, which waits for its blocking threads.
-        drop(release);
-        got
-    });
-    let took = started.elapsed();
-    assert_eq!(
-        got,
-        Err("the lessons store could not be read within 0.2 s".to_string())
-    );
-    assert!(took >= STUCK_BOUND, "{took:?}");
+    let (tmp, checkout, _project, _repo_dir) = git_repo();
+    for n in [0, 1] {
+        let (at, req) = (at(tmp.path()), requests(&checkout)[n].clone());
+        let (release, read) = stuck::<Read>();
+        let started = std::time::Instant::now();
+        let reply = replied(move || async move {
+            let read = move |_: &Path| read();
+            let locks = LessonLocks::default();
+            let reply = answer_within(&locks, at, req, NOW, STUCK_BOUND, read).await;
+            // Released before the runtime drops, which waits for its blocking threads.
+            drop(release);
+            reply
+        });
+        let took = started.elapsed();
+        let message = "the lessons store or history could not be read within 0.2 s";
+        assert_eq!(reply, RunReply::refused(request::LESSONS, message), "{n}");
+        assert!(took >= STUCK_BOUND, "{took:?}");
+    }
 }
 
 /// A distilled line for `append_once`.
@@ -184,7 +192,10 @@ fn a_stuck_decide_or_forget_releases_the_lock() {
         });
         assert_eq!(
             decided,
-            Err("the lessons store could not be read within 0.2 s; nothing was written".into())
+            Err(
+                "the lessons store or history could not be read within 0.2 s; nothing was written"
+                    .into()
+            )
         );
         assert_eq!(later, Ok("approved 1".to_string()));
         assert_eq!(appended, Ok(true));
@@ -267,7 +278,7 @@ fn append_once_never_reads_unbounded_under_the_lock() {
     );
 }
 
-/// Ruling 6's other half: a regular store answers every request as before.
+/// Rulings 1 and 4's other half: a regular store answers every request as before.
 #[test]
 fn a_regular_store_answers_every_request() {
     let (tmp, checkout, _project, repo_dir) = git_repo();
