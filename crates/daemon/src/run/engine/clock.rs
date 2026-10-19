@@ -222,9 +222,10 @@ pub(super) fn slept(run: &mut Run, secs: u64, now: u64) {
 /// stopped racer's kill) moves back by `secs`, so the span since it is unchanged; a
 /// wait still to come ends at `now` plus what remained of it, and one that had come is
 /// clamped to `now`, so it stays come. A brief forward step (which the driver measures
-/// as a sleep) and its correction so leave every wait as it was. Every round's elapsed
+/// as a sleep) and its correction so leave every wait as it was, or later by the
+/// driver's rounding (`driver/awake.rs`: every error runs late). Every round's elapsed
 /// minutes shrink by the step, so a round not ended has its excused minutes shrink too,
-/// down to none (an undercount past that: late, never early).
+/// down to none (an undercount past that: late).
 ///
 /// Review round 1 of this fix: anchors `slept` leaves are moved back too, since one
 /// stamped while the clock was ahead would otherwise wait out the step. A task's and a
@@ -236,7 +237,11 @@ pub(super) fn slept(run: &mut Run, secs: u64, now: u64) {
 /// its pause and its age shrink alike, unless the pause so far is shorter than the step,
 /// where the pause saturates and the phase undercounts (late, never early).
 ///
-/// Timestamps of what happened stay as they were: wall times.
+/// Review round 2 (N3): a round not ended whose `started_at` is later than `now` (it
+/// started within the step) has it clamped to `now`, or its spend would read 0 until
+/// the wall caught up, its minutes budget off; its minutes count from the correction,
+/// an undercount (late). Every other timestamp of what happened stays as it was: wall
+/// times.
 pub(super) fn stepped_back(run: &mut Run, secs: u64, now: u64) {
     let before = now.saturating_add(secs);
     let back = |at: &mut u64| *at = (*at).min(now + at.saturating_sub(before));
@@ -250,6 +255,8 @@ pub(super) fn stepped_back(run: &mut Run, secs: u64, now: u64) {
             if round.ended_at.is_none() && !round.ended {
                 anchor(&mut round.last_event);
                 round.excused_secs = round.excused_secs.saturating_sub(secs);
+                // Review round 2 (N3): a start stamped while the clock was ahead.
+                round.started_at = round.started_at.min(now);
             }
             waits(round).into_iter().for_each(back);
         }

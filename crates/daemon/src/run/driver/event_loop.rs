@@ -4,15 +4,15 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use tokio::sync::{broadcast, mpsc};
 use tokio_util::sync::CancellationToken;
 
 use super::super::engine::{Event, EventKind};
 use super::super::slots;
-use super::awake::ClockStep;
-use super::{Msg, RunService, guard, translate, unix_now};
+use super::awake::{ClockStep, SLEEP_SLACK_SECS};
+use super::{Msg, RunService, guard, translate};
 use crate::headless::SessionEvent;
 use crate::manager::{TerminalRecord, WindowSignal, WindowSignalKind};
 
@@ -83,14 +83,21 @@ impl RunService {
     /// first, at the same `now` (`driver/awake.rs`), so the event finds every running
     /// duration excused the sleep, or moved back by the step.
     pub(super) async fn handle(self: &Arc<Self>, kind: EventKind) {
-        let now = unix_now();
-        match self.awake.read(now, Instant::now()) {
+        let wall = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default();
+        let now = wall.as_secs();
+        match self.awake.read(wall, Instant::now()) {
             ClockStep::Kept => {}
             ClockStep::Slept(secs) => {
-                tracing::info!(
-                    secs,
-                    "the host slept; its sleep is excused from every session clock"
-                );
+                if secs > SLEEP_SLACK_SECS {
+                    tracing::info!(
+                        secs,
+                        "the host slept; its sleep is excused from every session clock"
+                    );
+                } else {
+                    tracing::debug!(secs, "the wall clock gained on the awake clock");
+                }
                 self.handle_at(EventKind::Slept { secs }, now).await;
             }
             ClockStep::Back(secs) => {

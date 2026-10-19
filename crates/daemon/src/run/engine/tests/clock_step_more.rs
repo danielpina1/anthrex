@@ -181,3 +181,19 @@ fn unequal_steps_net_their_difference() {
         assert_alive(&fx);
     }
 }
+
+/// Review round 2 (N3): a round started while the clock was ahead had its minutes
+/// budget off for the step's length (its spend `now - started_at` saturated at 0). Its
+/// start is clamped to `now`, so its minutes count from the correction (an undercount
+/// of the minutes before it: late, never early).
+#[test]
+fn a_start_stamped_ahead_is_clamped_so_the_minutes_budget_counts() {
+    let (mut fx, _window) = working();
+    let t = fx.now;
+    let round = &mut fx.run_mut().tasks[0].rounds[0];
+    (round.started_at, round.excused_secs) = (t + YEAR - 5, 2);
+    clock::stepped_back(fx.run_mut(), YEAR, t);
+    let round = &fx.task("t1").rounds[0];
+    assert_eq!(round.started_at, t);
+    assert_eq!(round_spend(round, None, t + 100).secs, 100);
+}
