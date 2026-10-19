@@ -190,3 +190,34 @@ fn a_sleep_between_a_lanes_kill_and_its_exit_salvages_normally() {
         fx.run().log
     );
 }
+
+/// Lane `a` stopped (`passes` on `b`), and its `kill_sent_at` after a sleep of
+/// [`SLEPT`] that began at `kill_sent_at + LANE_EXIT_WAIT_SECS + after`.
+fn kill_sent_after_a_sleep_past_the_wait(after: u64) -> (u64, u64) {
+    let (mut fx, _, _) = racing();
+    passes(&mut fx, RaceLane::B, HEAD_B);
+    let sent = lane(&fx, RaceLane::A)
+        .kill_sent_at
+        .expect("lane a was stopped");
+    let asleep = sent + crate::run::engine::race_end::LANE_EXIT_WAIT_SECS + after;
+    clock::slept(fx.run_mut(), SLEPT, asleep + SLEPT);
+    (
+        sent,
+        lane(&fx, RaceLane::A).kill_sent_at.expect("still stopped"),
+    )
+}
+
+/// Review N1: an exit wait that had run out before the sleep began is over; the sleep
+/// does not reopen it.
+#[test]
+fn a_sleep_after_the_exit_wait_ran_out_does_not_move_it() {
+    let (sent, after) = kill_sent_after_a_sleep_past_the_wait(1);
+    assert_eq!(after, sent);
+}
+
+/// Review N1: a sleep that began the second the exit wait ran out finds it over too.
+#[test]
+fn a_sleep_beginning_as_the_exit_wait_runs_out_does_not_move_it() {
+    let (sent, after) = kill_sent_after_a_sleep_past_the_wait(0);
+    assert_eq!(after, sent);
+}
