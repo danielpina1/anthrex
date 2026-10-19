@@ -59,7 +59,7 @@ async fn the_first_tick_after_a_sleep_steps_the_sleep_first() {
     let run_id = run.id.clone();
     crate::lock(&s.state).runs.insert(run_id.clone(), run);
     // The awake clock last read just before the sleep: no awake time has passed since.
-    *crate::lock(&s.awake.0) = Some((asleep, Instant::now()));
+    *crate::lock(&s.awake.0) = Some(super::Anchor::new(asleep, Instant::now()));
 
     s.handle(EventKind::Tick).await;
 
@@ -110,7 +110,7 @@ async fn the_first_tick_after_a_step_back_steps_it_first() {
     let run_id = run.id.clone();
     crate::lock(&s.state).runs.insert(run_id.clone(), run);
     // The awake clock last read on the clock a year ahead; no awake time since.
-    *crate::lock(&s.awake.0) = Some((ahead, Instant::now()));
+    *crate::lock(&s.awake.0) = Some(super::Anchor::new(ahead, Instant::now()));
 
     s.handle(EventKind::Tick).await;
 

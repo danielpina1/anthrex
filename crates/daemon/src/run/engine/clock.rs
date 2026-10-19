@@ -222,31 +222,47 @@ pub(super) fn slept(run: &mut Run, secs: u64, now: u64) {
 /// stopped racer's kill) moves back by `secs`, so the span since it is unchanged; a
 /// wait still to come ends at `now` plus what remained of it, and one that had come is
 /// clamped to `now`, so it stays come. A brief forward step (which the driver measures
-/// as a sleep) and its correction so leave every wait as it was. While a round's clock
-/// runs, its elapsed minutes shrink by the step, so its excused minutes do too, down to
-/// none; a stopped clock's span shrinks with its elapsed minutes, as `slept` leaves it.
+/// as a sleep) and its correction so leave every wait as it was. Every round's elapsed
+/// minutes shrink by the step, so a round not ended has its excused minutes shrink too,
+/// down to none (an undercount past that: late, never early).
+///
+/// Review round 1 of this fix: anchors `slept` leaves are moved back too, since one
+/// stamped while the clock was ahead would otherwise wait out the step. A task's and a
+/// racing lane's clock (`stopped`, so a stop keeps its span, which is why a stopped
+/// round's excused minutes shrink as a running one's do; `restarted`, so a restore
+/// stops the clock no later than `now`, M2), the orchestrator's wait (`orch_stall`'s
+/// `waiting_since`) and each runtime's writer-cap anchors (`concurrency`'s
+/// `last_rate_limit_at`, `last_change_at`, M3). A paused design phase keeps its start:
+/// its pause and its age shrink alike, unless the pause so far is shorter than the step,
+/// where the pause saturates and the phase undercounts (late, never early).
+///
 /// Timestamps of what happened stay as they were: wall times.
 pub(super) fn stepped_back(run: &mut Run, secs: u64, now: u64) {
     let before = now.saturating_add(secs);
     let back = |at: &mut u64| *at = (*at).min(now + at.saturating_sub(before));
     let anchor = |at: &mut u64| *at = at.saturating_sub(secs).min(now);
+    let clock = |c: &mut TaskClock| {
+        c.stopped.as_mut().into_iter().for_each(anchor);
+        anchor(&mut c.restarted);
+    };
     for task in run.tasks.iter_mut() {
-        let stopped: Vec<bool> = (task.rounds.iter())
-            .map(|r| round_clock(task, r).stopped.is_some())
-            .collect();
-        for (round, stopped) in task.rounds.iter_mut().zip(stopped) {
+        for round in task.rounds.iter_mut() {
             if round.ended_at.is_none() && !round.ended {
                 anchor(&mut round.last_event);
-                if !stopped {
-                    round.excused_secs = round.excused_secs.saturating_sub(secs);
-                }
+                round.excused_secs = round.excused_secs.saturating_sub(secs);
             }
             waits(round).into_iter().for_each(back);
         }
-        let lanes = task.race.iter_mut().flat_map(|r| r.lanes.iter_mut());
-        lanes
-            .filter_map(|l| l.kill_sent_at.as_mut())
-            .for_each(anchor);
+        clock(&mut task.clock);
+        for lane in task.race.iter_mut().flat_map(|r| r.lanes.iter_mut()) {
+            lane.kill_sent_at.as_mut().into_iter().for_each(anchor);
+            clock(&mut lane.gates.clock);
+        }
+    }
+    run.orch.waiting_since.as_mut().into_iter().for_each(anchor);
+    for c in run.concurrency.values_mut() {
+        let at = [c.last_rate_limit_at.as_mut(), c.last_change_at.as_mut()];
+        at.into_iter().flatten().for_each(anchor);
     }
     let Some(design) = run.orch.design.as_mut() else {
         return;

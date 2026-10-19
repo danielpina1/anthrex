@@ -155,23 +155,6 @@ fn a_step_back_moves_every_wait_back_by_it() {
     assert_eq!(spend(&fx), spent);
 }
 
-/// A stopped clock's span shrinks with the step, as its round's elapsed time does: the
-/// minutes excused stay, as `slept` leaves them.
-#[test]
-fn a_step_back_leaves_a_stopped_clocks_excused_minutes() {
-    let (mut fx, window) = working();
-    fx.now += 200;
-    super::control::blocked(&mut fx, window, "question", "which table?");
-    fx.turn_completed(window);
-    assert!(fx.task("t1").clock.stopped.is_some(), "the clock stopped");
-    let round = &mut fx.run_mut().tasks[0].rounds[0];
-    assert!(round.ended_at.is_none() && !round.ended, "{round:#?}");
-    round.excused_secs = 50;
-    let now = fx.now - BACK;
-    clock::stepped_back(fx.run_mut(), BACK, now);
-    assert_eq!(fx.task("t1").rounds[0].excused_secs, 50);
-}
-
 /// A stopped racer's exit wait (review M1 of #87) moves back by the step.
 #[test]
 fn a_step_back_moves_a_stopped_lanes_exit_wait() {

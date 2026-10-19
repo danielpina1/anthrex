@@ -235,8 +235,8 @@ your runs before downgrading below 0.2.0.
   ahead by mistake and then corrected looked like a sleep and then like nothing, so
   every open turn's stall clock and every running wait stayed out by the mistake:
   a turn set a year ahead and back never stalled. The daemon now also detects a wall
-  clock that falls behind the awake clock and gives each stall clock, wait and
-  budget the awake time it had left.
+  clock that falls behind the awake clock and gives each stall clock, wait, budget,
+  orchestrator-stall wait and writer-cap recovery the awake time it had left.
 
 Backlog hardening (milestone 9.18), no new features. The protocol (26) and the run
 format (6) are unchanged.
