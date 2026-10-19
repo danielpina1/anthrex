@@ -12,8 +12,10 @@ use serde::{Deserialize, Serialize};
 
 use super::dispatch::history;
 use super::ladder::{breached, round_spend, worker_round};
+use super::race_end::LANE_EXIT_WAIT_SECS;
 use super::{Effect, INTERRUPT_GRACE_SECS, outbox};
 use crate::run::contract::stall_nudge;
+use crate::run::design::state::DesignAgentState;
 use crate::run::model::{AgentRound, FailedTurn, Run, StallState, Task};
 
 /// The spend before a `run retry` (ruling T15-C1).
@@ -159,8 +161,9 @@ pub(super) fn watch_open_turns(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
 /// anchor (`last_event`, as a restore re-arms it) moved, and, while its clock runs, the
 /// span excused from its minutes (decision 40 counts awake time); a wait still to come
 /// at the sleep's start (a rate limit, a delivery or count retry, the interrupt's grace,
-/// a failed turn's continue) ends `secs` later; a design phase's budget clock is shifted
-/// as `design::restored` shifts it for a restart. A stopped clock excuses the span
+/// a failed turn's continue, a stopped racer's exit wait) ends `secs` later; a running
+/// design agent's start and a design phase's budget clock are shifted, as
+/// `design::restored` shifts the latter for a restart. A stopped clock excuses the span
 /// already. Timestamps of what happened stay as they were: wall times.
 pub(super) fn slept(run: &mut Run, secs: u64, now: u64) {
     let asleep = now.saturating_sub(secs);
@@ -199,11 +202,32 @@ pub(super) fn slept(run: &mut Run, secs: u64, now: u64) {
             }
         }
     }
-    if !matches!(run.state, RunState::Paused | RunState::Halted) {
-        let design = run.orch.design.as_mut();
-        if let Some(started) = design.and_then(|d| d.phase_started.as_mut()) {
+    for task in run.tasks.iter_mut() {
+        // A stopped lane's exit wait (review M1): a time input of the salvage only.
+        let lanes = task.race.iter_mut().flat_map(|r| r.lanes.iter_mut());
+        for at in lanes.filter_map(|l| l.kill_sent_at.as_mut()) {
+            if at.saturating_add(LANE_EXIT_WAIT_SECS) > asleep {
+                *at = at.saturating_add(secs).min(now);
+            }
+        }
+    }
+    let Some(design) = run.orch.design.as_mut() else {
+        return;
+    };
+    // A running design agent's session seconds (review M4, `design_spend`).
+    let agents = design
+        .brainstormers
+        .iter_mut()
+        .chain(design.reviewer.as_mut());
+    for agent in agents.filter(|a| a.state == DesignAgentState::Running) {
+        if let Some(started) = agent.started.as_mut() {
             *started = started.saturating_add(secs).min(now);
         }
+    }
+    if !matches!(run.state, RunState::Paused | RunState::Halted)
+        && let Some(started) = design.phase_started.as_mut()
+    {
+        *started = started.saturating_add(secs).min(now);
     }
 }
 

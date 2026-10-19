@@ -69,3 +69,7 @@ mod tests {
         assert_eq!(clock.read(1_103, at + Duration::from_secs(3)), 0);
     }
 }
+
+#[cfg(test)]
+#[path = "awake_handle_tests.rs"]
+mod handle_tests;

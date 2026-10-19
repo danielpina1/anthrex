@@ -2587,9 +2587,11 @@ Found during the 9.19 follow-ups, both older than 9.19:
 
 ## From the host-sleep clock fix (fix/sleep-wall-clock, 2026-10-19), for later
 
-`EventKind::Slept` excuses a host sleep from every `AgentRound`'s stall clock, waits and minutes, and from a design phase's budget (`engine/clock.rs` `slept`). These wall-clock waits still count a sleep; none interrupts a turn or delivers, so they were left alone:
+`EventKind::Slept` excuses a host sleep from every `AgentRound`'s stall clock, waits and minutes, from a design phase's budget, a running design agent's session seconds (`DesignAgent.started`) and a stopped racer's exit wait (`Lane.kill_sent_at`) (`engine/clock.rs` `slept`; review round 1 added the last two). These wall-clock waits still count a sleep. None interrupts or kills a turn; the one that can deliver is marked:
 
-- **Orchestrator notices**: `first_turn` (`FIRST_TURN_WAIT_SECS`, `MCP_READY_GRACE_SECS`), `orch_stall` (`waiting_since`) and `concurrency`'s quiet span can post a notice right after a wake.
-- **Other waits**: `early`'s `HOLD_LIMIT_SECS`, the deciders' queue wait (`queued_at`), `bisect`'s `retry_at` and `full`'s infra backoff end early after a sleep.
-- **`race_salvage`'s `LANE_EXIT_WAIT_SECS`** (`kill_sent_at`): kill-path code, deliberately not touched (never mutate process-kill code); a sleep shortens the wait for a killed lane's exit.
-- **A wall clock set backwards** is not detected as anything; waits then run long.
+- **`first_turn::grace`** (`MCP_READY_GRACE_SECS`, `first_turn.rs:120`): a sleep between an orchestrator's first signal and its MCP-ready notice ends the grace at the wake, so the orchestrator's first turn is delivered early, without the notice. A delivery, though never into an open turn.
+- **Orchestrator notices**: `first_turn`'s late first turn (`FIRST_TURN_WAIT_SECS`), `orch_stall` (`waiting_since`) and `concurrency`'s quiet span (`concurrency.rs:55/82`) can post a notice, or give a writer back, right after a wake.
+- **`race.rs:87` `race_wait_since`**: a sleep while a race waits for a second writer slot skips the race ("race skipped: no second writer slot") at the wake.
+- **The `delivery/*` polls and batch windows** (`review.rs:222`, `watch.rs:167/202`, `ci.rs:140`, `reply.rs:162`, `review_batch.rs:40/51`, `land.rs:58`, `sync.rs:165`): wall time on purpose, since they face GitHub, whose clock does not stop; a sleep makes the next poll due at the wake and ends a batch window early.
+- **Other waits**: `early`'s `HOLD_LIMIT_SECS` (`early.rs:407`), the deciders' queue wait (`deciders.rs:101`, `queued_at`), `bisect`'s `retry_at` (`bisect.rs:292`) and `full`'s infra backoff (`full.rs:94/149`) end early after a sleep.
+- **A wall clock set backwards** is not detected (`awake::slept` returns 0 and re-anchors); every wait then runs long, never short.
