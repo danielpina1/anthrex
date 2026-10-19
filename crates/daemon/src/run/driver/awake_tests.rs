@@ -1,6 +1,6 @@
 //! `AwakeClock`: what a read reports, and the property every report keeps (review
-//! round 2 of the clock-step fix): no wait ends before its true awake time, by more
-//! than `READ_TOLERANCE`.
+//! rounds 2 and 3 of the clock-step fix): no wait ends before its true awake time by
+//! more than `READ_TOLERANCE + READ_SPREAD`, and none later than a few seconds past it.
 
 use super::*;
 
@@ -12,14 +12,41 @@ fn ms(ms: u64) -> Duration {
     Duration::from_millis(ms)
 }
 
-/// One read of `clock` at wall time `wall`, `awake` the awake instant.
+/// One read of `clock` at wall time `wall`, `awake` the awake instant, both clocks
+/// sampled at once.
 fn read_at(clock: &AwakeClock, wall: Duration, awake: Instant) -> ClockStep {
-    clock.read(wall, awake)
+    sampled(clock, &[(awake, wall, awake)]).0
 }
 
-/// A simulated host: its true wall and awake clocks, and what the clock reported.
-/// `stamps` are waits armed at earlier reads: the wall time and awake time they were
-/// armed at, and the seconds reported by then.
+/// A read whose attempts sample `(awake before, wall, awake after)` in turn (the last
+/// repeated if the clock asks for more): what it reported, and the wall time the
+/// driver's `now` comes from.
+fn sampled(clock: &AwakeClock, samples: &[(Instant, Duration, Instant)]) -> (ClockStep, Duration) {
+    let mut next = samples.iter().copied();
+    let mut wall = Duration::ZERO;
+    let step = clock.read(|| {
+        let (before, w, after) = next.next().unwrap_or(samples[samples.len() - 1]);
+        wall = w;
+        Sample {
+            before,
+            wall: w,
+            after,
+        }
+    });
+    (step, wall)
+}
+
+/// A wait armed at a read: the wall and awake times it was armed at, the seconds
+/// reported by then, and whether it has ended.
+struct Stamp {
+    wall: u128,
+    awake: u128,
+    reported: i128,
+    ended: bool,
+}
+
+/// A simulated host: its true wall and awake clocks, what the clock reported, and the
+/// waits armed at earlier reads.
 struct Host {
     clock: AwakeClock,
     at: Instant,
@@ -27,11 +54,15 @@ struct Host {
     wall: u128,
     awake: u128,
     reported: i128,
-    stamps: Vec<(u128, u128, i128)>,
+    stamps: Vec<Stamp>,
+    /// Review round 3 (T1): every wait has ended by `BOUND` plus this, awake.
+    late: u128,
 }
 
 /// A wait's bound: a stall's `stall_after_secs`.
 const BOUND: u64 = 300;
+/// A second, in nanoseconds.
+const NS: u128 = 1_000_000_000;
 
 impl Host {
     fn new(wall_ms: u64) -> Self {
@@ -42,6 +73,7 @@ impl Host {
             awake: 0,
             reported: 0,
             stamps: Vec::new(),
+            late: 3 * NS,
         };
         host.read();
         host
@@ -60,7 +92,7 @@ impl Host {
     }
 
     fn set(&mut self, ahead: bool, secs: u64) {
-        let ns = u128::from(secs) * 1_000_000_000;
+        let ns = u128::from(secs) * NS;
         self.wall = if ahead {
             self.wall + ns
         } else {
@@ -68,39 +100,80 @@ impl Host {
         };
     }
 
-    /// A read, as the driver's `handle` makes one, then the check of every armed wait:
-    /// once the reducer's integer clock says its bound has passed (`not_before` from its
-    /// truncated arming second, moved by the steps reported since), its awake time is at
-    /// least the bound, less the tolerance.
-    fn read(&mut self) -> ClockStep {
+    fn now(&self) -> (Duration, Instant) {
         let wall = Duration::from_nanos(u64::try_from(self.wall).unwrap());
         let awake = self.at + Duration::from_nanos(u64::try_from(self.awake).unwrap());
-        let step = read_at(&self.clock, wall, awake);
+        (wall, awake)
+    }
+
+    /// A read, as the driver's `handle` makes one.
+    fn read(&mut self) -> ClockStep {
+        let (wall, awake) = self.now();
+        let (step, used) = sampled(&self.clock, &[(awake, wall, awake)]);
+        self.check(step, used)
+    }
+
+    /// Review round 3 (N4): a read whose thread is descheduled for `ns` after reading
+    /// the wall clock, before the awake clock: its next attempt samples both at once.
+    fn read_stalled(&mut self, ns: u128) -> ClockStep {
+        let (wall, before) = self.now();
+        self.pass(ns, 0);
+        let (wall2, after) = self.now();
+        let (step, used) = sampled(&self.clock, &[(before, wall, after), (after, wall2, after)]);
+        self.check(step, used)
+    }
+
+    /// The check of every armed wait after a read whose `now` came from wall time
+    /// `used`: once the reducer's integer clock says its bound has passed (`not_before`
+    /// from its truncated arming second, moved by the steps reported since), its awake
+    /// time is at least the bound, less the tolerance; and by `late` past the bound, it
+    /// has passed.
+    fn check(&mut self, step: ClockStep, used: Duration) -> ClockStep {
         match step {
             ClockStep::Kept => {}
             ClockStep::Slept(s) => self.reported += i128::from(s),
             ClockStep::Back(s) => self.reported -= i128::from(s),
         }
-        let now = self.wall / 1_000_000_000;
-        let tolerance = READ_TOLERANCE.as_nanos();
-        for &(wall_at, awake_at, reported_at) in &self.stamps {
-            let shift = self.reported - reported_at;
-            let due =
-                i128::try_from(wall_at / 1_000_000_000).unwrap() + i128::from(BOUND) + 1 + shift;
-            if i128::try_from(now).unwrap() >= due {
-                let spent = self.awake - awake_at;
+        let now = i128::from(used.as_secs());
+        let tolerance = (READ_TOLERANCE + READ_SPREAD).as_nanos();
+        let bound = u128::from(BOUND) * NS;
+        for stamp in &mut self.stamps {
+            let shift = self.reported - stamp.reported;
+            let due = i128::try_from(stamp.wall / NS).unwrap() + i128::from(BOUND) + 1 + shift;
+            let spent = self.awake - stamp.awake;
+            if now >= due && !stamp.ended {
+                stamp.ended = true;
                 assert!(
-                    spent + tolerance >= u128::from(BOUND) * 1_000_000_000,
-                    "a wait armed at {wall_at} ns ended after {spent} ns awake ({step:?})"
+                    spent + tolerance >= bound,
+                    "a wait armed at {} ns ended after {spent} ns awake ({step:?})",
+                    stamp.wall
                 );
             }
+            assert!(
+                stamp.ended || spent <= bound + self.late,
+                "a wait armed at {} ns had not ended after {spent} ns awake",
+                stamp.wall
+            );
         }
         step
     }
 
     /// A wait armed now, at the read just made.
     fn arm(&mut self) {
-        self.stamps.push((self.wall, self.awake, self.reported));
+        let (wall, awake, reported) = (self.wall, self.awake, self.reported);
+        self.stamps.push(Stamp {
+            wall,
+            awake,
+            reported,
+            ended: false,
+        });
+    }
+
+    /// Drops the waits armed more than twice the bound ago (each has ended).
+    fn forget(&mut self) {
+        let awake = self.awake;
+        self.stamps
+            .retain(|s| awake - s.awake < 2 * u128::from(BOUND) * NS);
     }
 }
 
@@ -200,16 +273,16 @@ fn a_step_reported_before_a_step_and_its_correction_ends_no_wait_early() {
 fn a_fast_awake_clock_ends_no_wait_early() {
     for ppm in [50, 1_000, 10_000] {
         let mut host = Host::new(100_000);
+        // The drift back is never reported: a wait runs long by the drift over it.
+        host.late += u128::from(BOUND) * NS * ppm / 1_000_000;
         for i in 0..20_000_u64 {
             host.pass(1_000_000_000 + u128::from(i % 7) * 13_000_000, ppm);
             host.read();
             if i % 97 == 0 {
                 host.arm();
             }
-            // Keep the check bounded: drop waits long past their bound.
-            let awake = host.awake;
-            host.stamps
-                .retain(|&(_, at, _)| awake - at < 2 * u128::from(BOUND) * 1_000_000_000);
+            // Keep the check bounded.
+            host.forget();
         }
     }
 }
@@ -219,6 +292,8 @@ fn a_fast_awake_clock_ends_no_wait_early() {
 #[test]
 fn a_slow_awake_clock_ends_no_wait_early() {
     let mut host = Host::new(100_000);
+    // A `Slept(1)` for each 0.1 s the wall gains: 0.3 s over a wait, so 3 s late.
+    host.late += 4 * NS;
     for i in 0..5_000_u64 {
         host.awake += 1_000_000_000;
         host.wall += 1_000_000_000 + 1_000_000; // the wall gains 1,000 ppm
@@ -226,9 +301,7 @@ fn a_slow_awake_clock_ends_no_wait_early() {
         if i % 31 == 0 {
             host.arm();
         }
-        let awake = host.awake;
-        host.stamps
-            .retain(|&(_, at, _)| awake - at < 2 * u128::from(BOUND) * 1_000_000_000);
+        host.forget();
     }
 }
 
@@ -309,4 +382,56 @@ fn a_drift_back_is_not_reported() {
         let step = read_at(&clock, wall, at + Duration::from_secs(i));
         assert_eq!(step, ClockStep::Kept, "read {i}");
     }
+}
+
+/// Review round 3 (N4): the thread descheduled for 1.1 to 2 s between reading the wall
+/// clock and the awake clock understated the offset by the stall, so the read reported
+/// a false `Back` and a wait due at that read ended up to the stall early. A read whose
+/// awake clock moved more than `READ_SPREAD` across it is sampled again, so no wait
+/// here ends early, and none ends late.
+#[test]
+fn a_thread_stalled_between_the_clock_reads_ends_no_wait_early() {
+    for stall in [1_100_u64, 1_500, 1_900, 2_000, 5_000] {
+        for phase in [0, 300, 700] {
+            let mut host = Host::new(100_000 + phase);
+            for i in 0..2_000_u64 {
+                if i % 37 == 11 {
+                    host.read_stalled(u128::from(stall) * 1_000_000);
+                } else {
+                    host.pass(300_000_000, 0);
+                    host.read();
+                }
+                host.arm();
+                host.forget();
+            }
+        }
+    }
+}
+
+/// A read whose every attempt is stalled reports nothing and leaves the clock as it
+/// was: the next read measures from the same anchor.
+#[test]
+fn a_read_stalled_on_every_attempt_reports_nothing() {
+    let clock = AwakeClock::default();
+    let at = Instant::now();
+    assert_eq!(read_at(&clock, ms(100_000), at), ClockStep::Kept);
+    let stalled = (at + ms(1_000), ms(101_000), at + ms(3_000));
+    assert_eq!(sampled(&clock, &[stalled]).0, ClockStep::Kept);
+    // A real step back at the next read is still seen in full.
+    assert_eq!(
+        read_at(&clock, ms(91_000), at + ms(4_000)),
+        ClockStep::Back(13)
+    );
+}
+
+/// The first awake instant is the one the offset is measured from: the wall is read
+/// after it, so the offset reads high (late), never low. A step back of exactly 1 s
+/// read 5 ms into the sample is not reported in full.
+#[test]
+fn a_sample_is_measured_from_its_first_awake_instant() {
+    let clock = AwakeClock::default();
+    let at = Instant::now();
+    assert_eq!(read_at(&clock, ms(100_000), at), ClockStep::Kept);
+    let sample = (at + ms(2_000), ms(101_005), at + ms(2_005));
+    assert_eq!(sampled(&clock, &[sample]).0, ClockStep::Kept);
 }

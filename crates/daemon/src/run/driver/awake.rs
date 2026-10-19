@@ -19,25 +19,67 @@
 //! is reported as a `Back` only in whole seconds past `high`, rounded down, so a slow
 //! drift back is never reported (the waits it spans run long by it), and a step back
 //! is understated by under a second. The cost is lateness: each `Slept` overstates by
-//! under a second, and a forward drift of the awake clock reports `Slept(1)` each time
-//! it gains [`READ_TOLERANCE`] on `high`.
+//! under a second, and a slow awake clock (the wall gaining on it) reports `Slept(1)`
+//! each time the wall gains [`READ_TOLERANCE`] on `high`.
+//!
+//! **A read brackets the wall clock** (review round 3, N4): the awake clock, the wall
+//! clock, the awake clock again. A thread descheduled between the two clock reads
+//! would misread the offset by the stall; a read whose two awake instants are more than
+//! [`READ_SPREAD`] apart is sampled again, up to [`READ_ATTEMPTS`] times, and if every
+//! attempt is stalled it reports nothing and leaves the clock as it was. The first
+//! instant is the awake time, so the wall is read at most `READ_SPREAD` after it: the
+//! offset reads high by at most that, which runs a wait armed at that read early by at
+//! most that. So no wait ends more than `READ_TOLERANCE + READ_SPREAD` (0.11 s) before
+//! its true awake time.
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-/// A step reported of up to this many seconds is logged at debug, not info: a forward
-/// drift of the awake clock, or the rounding up of a short sleep.
+/// A step reported of up to this many seconds is logged at debug, not info: the wall
+/// gaining on a slow awake clock, or the rounding up of a short sleep.
 pub(super) const SLEEP_SLACK_SECS: u64 = 2;
 
 /// How far the seconds reported may lag a rise of the offset before a `Slept` makes
 /// them up: the two clocks are not read at the same instant, and the wall clock may
-/// slew between reads. The one error that may run early, by at most this much; a larger
+/// slew between reads. An error that may run early, by at most this much; a larger
 /// one would let more run early, a smaller one report `Slept(1)` more often under a
 /// slow awake clock (each a second late).
 pub(super) const READ_TOLERANCE: Duration = Duration::from_millis(100);
 
+/// The most a sample's two awake instants may be apart (review round 3, N4): a sample
+/// further apart had its thread descheduled between the clock reads, and is taken
+/// again.
+pub(super) const READ_SPREAD: Duration = Duration::from_millis(10);
+
+/// How many times a read samples the clocks before giving up on a stalled thread.
+pub(super) const READ_ATTEMPTS: usize = 4;
+
 /// A second, in nanoseconds.
 const SEC: i128 = 1_000_000_000;
+
+/// One sample of the clocks: the awake instant, then the wall time since the epoch,
+/// then the awake instant again.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Sample {
+    pub(super) before: Instant,
+    pub(super) wall: Duration,
+    pub(super) after: Instant,
+}
+
+impl Sample {
+    /// The clocks, now.
+    pub(super) fn now() -> Self {
+        let before = Instant::now();
+        let wall = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        Sample {
+            before,
+            wall,
+            after: Instant::now(),
+        }
+    }
+}
 
 /// What the wall clock did since the last read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,9 +117,25 @@ impl Anchor {
 pub(super) struct AwakeClock(Mutex<Option<Anchor>>);
 
 impl AwakeClock {
-    /// What the wall clock did since the last read, `wall` the time since the epoch;
-    /// the first read is the anchor.
-    pub(super) fn read(&self, wall: Duration, awake: Instant) -> ClockStep {
+    /// What the wall clock did since the last read, its clocks sampled by `sample`
+    /// (see [`Sample::now`]) until a sample's awake instants are within [`READ_SPREAD`]
+    /// of each other; the first read is the anchor.
+    pub(super) fn read(&self, mut sample: impl FnMut() -> Sample) -> ClockStep {
+        let tight = (0..READ_ATTEMPTS)
+            .map(|_| sample())
+            .find(|s| s.after.saturating_duration_since(s.before) <= READ_SPREAD);
+        let Some(Sample {
+            before: awake,
+            wall,
+            ..
+        }) = tight
+        else {
+            tracing::warn!(
+                attempts = READ_ATTEMPTS,
+                "the clocks could not be read together; this read reports nothing"
+            );
+            return ClockStep::Kept;
+        };
         let mut anchor = crate::lock(&self.0);
         let Some(a) = anchor.as_mut() else {
             *anchor = Some(Anchor::new(wall, awake));
