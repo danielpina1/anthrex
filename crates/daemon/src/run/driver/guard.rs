@@ -146,6 +146,7 @@ pub(super) fn kind_name(kind: &EventKind) -> &'static str {
         EventKind::Stop => "Stop",
         EventKind::Tick => "Tick",
         EventKind::Slept { .. } => "Slept",
+        EventKind::SteppedBack { .. } => "SteppedBack",
         EventKind::Orch(_) => "Orch",
         EventKind::Delivery(_) => "Delivery",
         EventKind::Iterate { .. } => "Iterate",
@@ -192,6 +193,7 @@ pub(super) fn reply_of(kind: &EventKind) -> Option<ReplyId> {
         | EventKind::OrchestratorFill { .. }
         | EventKind::Stop
         | EventKind::Slept { .. }
+        | EventKind::SteppedBack { .. }
         | EventKind::Tick => None,
     }
 }

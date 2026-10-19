@@ -11,6 +11,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::super::engine::{Event, EventKind};
 use super::super::slots;
+use super::awake::ClockStep;
 use super::{Msg, RunService, guard, translate, unix_now};
 use crate::headless::SessionEvent;
 use crate::manager::{TerminalRecord, WindowSignal, WindowSignalKind};
@@ -78,17 +79,27 @@ impl RunService {
     }
 
     /// One event: a step under the engine lock, then its effects with the lock released.
-    /// A host sleep since the last event is stepped first, at the same `now`
-    /// (`driver/awake.rs`), so the event finds every running duration excused it.
+    /// A host sleep since the last event, or a step back of the wall clock, is stepped
+    /// first, at the same `now` (`driver/awake.rs`), so the event finds every running
+    /// duration excused the sleep, or moved back by the step.
     pub(super) async fn handle(self: &Arc<Self>, kind: EventKind) {
         let now = unix_now();
-        let secs = self.awake.read(now, Instant::now());
-        if secs > 0 {
-            tracing::info!(
-                secs,
-                "the host slept; its sleep is excused from every session clock"
-            );
-            self.handle_at(EventKind::Slept { secs }, now).await;
+        match self.awake.read(now, Instant::now()) {
+            ClockStep::Kept => {}
+            ClockStep::Slept(secs) => {
+                tracing::info!(
+                    secs,
+                    "the host slept; its sleep is excused from every session clock"
+                );
+                self.handle_at(EventKind::Slept { secs }, now).await;
+            }
+            ClockStep::Back(secs) => {
+                tracing::info!(
+                    secs,
+                    "the wall clock was set back; every session clock is moved back with it"
+                );
+                self.handle_at(EventKind::SteppedBack { secs }, now).await;
+            }
         }
         self.handle_at(kind, now).await;
     }

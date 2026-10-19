@@ -185,7 +185,8 @@ pub struct RunService {
     hold_io: hold::HoldIo,
     /// Milestone 9.16 decisions 22–29: the context fill reads (`driver/handoff.rs`).
     handoff: handoff::FillCheck,
-    /// The host's sleeps, measured for the reducer (`driver/awake.rs`).
+    /// The host's sleeps and the wall clock's steps back, measured for the reducer
+    /// (`driver/awake.rs`).
     awake: awake::AwakeClock,
     /// Tests only (M9.11.8): run on each effect `execute` takes, before it is carried out.
     #[cfg(test)]

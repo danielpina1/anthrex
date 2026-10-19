@@ -184,22 +184,7 @@ pub(super) fn slept(run: &mut Run, secs: u64, now: u64) {
                     round.excused_secs = round.excused_secs.saturating_add(secs).min(elapsed);
                 }
             }
-            for at in [
-                round.rate_limited_until.as_mut(),
-                round.delivery_retry_at.as_mut(),
-                round.count_retry_at.as_mut(),
-            ]
-            .into_iter()
-            .flatten()
-            {
-                later(at);
-            }
-            if let StallState::Interrupted { deadline } = &mut round.stall {
-                later(deadline);
-            }
-            if let FailedTurn::WaitingContinue { at, .. } = &mut round.failed_turn {
-                later(at);
-            }
+            waits(round).into_iter().for_each(later);
         }
     }
     for task in run.tasks.iter_mut() {
@@ -229,6 +214,74 @@ pub(super) fn slept(run: &mut Run, secs: u64, now: u64) {
     {
         *started = started.saturating_add(secs).min(now);
     }
+}
+
+/// `EventKind::SteppedBack`: the wall clock was set `secs` back at `now`. Every anchor
+/// and deadline [`slept`] moves keeps the awake time it had left on the clock before
+/// the step: an anchor (a stall clock's last event, a session's or a phase's start, a
+/// stopped racer's kill) moves back by `secs`, so the span since it is unchanged; a
+/// wait still to come ends at `now` plus what remained of it, and one that had come is
+/// clamped to `now`, so it stays come. A brief forward step (which the driver measures
+/// as a sleep) and its correction so leave every wait as it was. While a round's clock
+/// runs, its elapsed minutes shrink by the step, so its excused minutes do too, down to
+/// none; a stopped clock's span shrinks with its elapsed minutes, as `slept` leaves it.
+/// Timestamps of what happened stay as they were: wall times.
+pub(super) fn stepped_back(run: &mut Run, secs: u64, now: u64) {
+    let before = now.saturating_add(secs);
+    let back = |at: &mut u64| *at = (*at).min(now + at.saturating_sub(before));
+    let anchor = |at: &mut u64| *at = at.saturating_sub(secs).min(now);
+    for task in run.tasks.iter_mut() {
+        let stopped: Vec<bool> = (task.rounds.iter())
+            .map(|r| round_clock(task, r).stopped.is_some())
+            .collect();
+        for (round, stopped) in task.rounds.iter_mut().zip(stopped) {
+            if round.ended_at.is_none() && !round.ended {
+                anchor(&mut round.last_event);
+                if !stopped {
+                    round.excused_secs = round.excused_secs.saturating_sub(secs);
+                }
+            }
+            waits(round).into_iter().for_each(back);
+        }
+        let lanes = task.race.iter_mut().flat_map(|r| r.lanes.iter_mut());
+        lanes
+            .filter_map(|l| l.kill_sent_at.as_mut())
+            .for_each(anchor);
+    }
+    let Some(design) = run.orch.design.as_mut() else {
+        return;
+    };
+    let agents = design
+        .brainstormers
+        .iter_mut()
+        .chain(design.reviewer.as_mut());
+    let running = agents.filter(|a| a.state == DesignAgentState::Running);
+    running.filter_map(|a| a.started.as_mut()).for_each(anchor);
+    if !matches!(run.state, RunState::Paused | RunState::Halted)
+        && let Some(started) = design.phase_started.as_mut()
+    {
+        anchor(started);
+    }
+}
+
+/// A round's deadlines that [`slept`] and [`stepped_back`] move: a rate limit's end, a
+/// delivery or count retry, the interrupt's grace and a failed turn's continue.
+fn waits(round: &mut AgentRound) -> Vec<&mut u64> {
+    let mut waits: Vec<&mut u64> = [
+        round.rate_limited_until.as_mut(),
+        round.delivery_retry_at.as_mut(),
+        round.count_retry_at.as_mut(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if let StallState::Interrupted { deadline } = &mut round.stall {
+        waits.push(deadline);
+    }
+    if let FailedTurn::WaitingContinue { at, .. } = &mut round.failed_turn {
+        waits.push(at);
+    }
+    waits
 }
 
 /// The clock a round is charged on: its racing lane's, out of the lane's view

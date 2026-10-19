@@ -117,6 +117,12 @@ pub enum EventKind {
     Slept {
         secs: u64,
     },
+    /// The wall clock was set back `secs` before this step (the driver's `awake` clock:
+    /// the wall clock moved that much less than the awake clock). Every anchor and
+    /// deadline `Slept` moves is moved back by it (`clock::stepped_back`).
+    SteppedBack {
+        secs: u64,
+    },
     /// Milestone 9: the orchestrator's and sub-planners' events (`orch.rs`).
     Orch(OrchEvent),
     /// Milestone 9.2 decision 25: `run deliver` and `run watch` (`delivery/`).
