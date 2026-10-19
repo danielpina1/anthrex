@@ -355,6 +355,10 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
             state.stopped = true;
             return (state, fx);
         }
+        EventKind::Slept { secs } => state
+            .runs
+            .values_mut()
+            .for_each(|run| clock::slept(run, secs, now)),
         // Milestone 9 decision 29: a promotion recorded before milestone 9.
         EventKind::Tick => {
             promote::on_tick(&mut state, now, &mut fx);

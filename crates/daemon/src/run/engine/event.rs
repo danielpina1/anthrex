@@ -111,6 +111,12 @@ pub enum EventKind {
     },
     Stop,
     Tick,
+    /// The host slept `secs` before this step (the driver's `awake` clock: the wall
+    /// clock moved that much more than the awake clock). Nothing a session is charged
+    /// for or waits on counted it (`clock::slept`).
+    Slept {
+        secs: u64,
+    },
     /// Milestone 9: the orchestrator's and sub-planners' events (`orch.rs`).
     Orch(OrchEvent),
     /// Milestone 9.2 decision 25: `run deliver` and `run watch` (`delivery/`).

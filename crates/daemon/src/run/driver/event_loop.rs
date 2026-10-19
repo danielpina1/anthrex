@@ -78,8 +78,23 @@ impl RunService {
     }
 
     /// One event: a step under the engine lock, then its effects with the lock released.
+    /// A host sleep since the last event is stepped first, at the same `now`
+    /// (`driver/awake.rs`), so the event finds every running duration excused it.
     pub(super) async fn handle(self: &Arc<Self>, kind: EventKind) {
         let now = unix_now();
+        let secs = self.awake.read(now, Instant::now());
+        if secs > 0 {
+            tracing::info!(
+                secs,
+                "the host slept; its sleep is excused from every session clock"
+            );
+            self.handle_at(EventKind::Slept { secs }, now).await;
+        }
+        self.handle_at(kind, now).await;
+    }
+
+    /// [`Self::handle`] at `now`.
+    async fn handle_at(self: &Arc<Self>, kind: EventKind, now: u64) {
         let tick = matches!(kind, EventKind::Tick);
         let kind = slots::stamp(self.mark_killed(kind), self.scheduler.slots());
         let reply = guard::reply_of(&kind);
