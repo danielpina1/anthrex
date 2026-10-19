@@ -219,6 +219,13 @@ your runs before downgrading below 0.2.0.
 
 ### Fixed
 
+- **A host sleep no longer stalls an open turn or delivers into it.** Across a laptop
+  sleep the wall clock jumped, so the stall watchdog interrupted an open worker turn
+  and the outbox delivered a message mid-turn (against decision 42), and the minutes
+  budget charged the sleep. The daemon now measures each sleep (wall time against the
+  awake clock) and excuses it from every session's stall clock, waits and minutes
+  budget; budgets count awake time. Stored timestamps stay wall times.
+
 Backlog hardening (milestone 9.18), no new features. The protocol (26) and the run
 format (6) are unchanged.
 

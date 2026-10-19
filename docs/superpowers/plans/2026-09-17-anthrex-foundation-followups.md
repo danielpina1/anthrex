@@ -2577,3 +2577,12 @@ Parked during 9.19:
 - **The 120×40 task panel's history is 25 rows, not 24** (M9.19.5).
 - **`anthrex run stats`' header is 91 columns** (M9.19.10). Decision 14's headers (`MED LINES … BOUNCES (ALL)`) and its footer line are wider than an 80-column terminal, which wraps them. The TUI stacks its header over two rows (`med` over `lines`) and wraps the footer; the CLI prints decision 14's words on one row.
 - **Under plain `cargo test` on macOS, a sibling's child can inherit a descriptor in the close-on-exec gap** (9.19 flake fix, 171a6e24). Two hazards remain: a long-lived child forked in that gap can hold `daemon.lock` past `LOCK_WAIT`, and a sibling's spawn can catch the admit test's stdin pipe, making `admit` wait for that child to exit. Neither has been seen under nextest, which runs one test per process; both are possible only where many tests share one process.
+
+## From the host-sleep clock fix (fix/sleep-wall-clock, 2026-10-19), for later
+
+`EventKind::Slept` excuses a host sleep from every `AgentRound`'s stall clock, waits and minutes, and from a design phase's budget (`engine/clock.rs` `slept`). These wall-clock waits still count a sleep; none interrupts a turn or delivers, so they were left alone:
+
+- **Orchestrator notices**: `first_turn` (`FIRST_TURN_WAIT_SECS`, `MCP_READY_GRACE_SECS`), `orch_stall` (`waiting_since`) and `concurrency`'s quiet span can post a notice right after a wake.
+- **Other waits**: `early`'s `HOLD_LIMIT_SECS`, the deciders' queue wait (`queued_at`), `bisect`'s `retry_at` and `full`'s infra backoff end early after a sleep.
+- **`race_salvage`'s `LANE_EXIT_WAIT_SECS`** (`kill_sent_at`): kill-path code, deliberately not touched (never mutate process-kill code); a sleep shortens the wait for a killed lane's exit.
+- **A wall clock set backwards** is not detected as anything; waits then run long.

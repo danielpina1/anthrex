@@ -14,7 +14,7 @@ use super::dispatch::history;
 use super::ladder::{breached, round_spend, worker_round};
 use super::{Effect, INTERRUPT_GRACE_SECS, outbox};
 use crate::run::contract::stall_nudge;
-use crate::run::model::{AgentRound, Run, StallState, Task};
+use crate::run::model::{AgentRound, FailedTurn, Run, StallState, Task};
 
 /// The spend before a `run retry` (ruling T15-C1).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -151,6 +151,68 @@ pub(super) fn watch_open_turns(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         }
         history(run, i, now, format!("{why} while {state}; interrupting it"));
     }
+}
+
+/// `EventKind::Slept`: the host slept `secs` up to `now`. Asleep, no session ran, so
+/// none is charged for it or waits through it: every duration still running at the
+/// sleep's start moves by `secs`. A round that has not ended has its stall clock's
+/// anchor (`last_event`, as a restore re-arms it) moved, and, while its clock runs, the
+/// span excused from its minutes (decision 40 counts awake time); a wait still to come
+/// at the sleep's start (a rate limit, a delivery or count retry, the interrupt's grace,
+/// a failed turn's continue) ends `secs` later; a design phase's budget clock is shifted
+/// as `design::restored` shifts it for a restart. A stopped clock excuses the span
+/// already. Timestamps of what happened stay as they were: wall times.
+pub(super) fn slept(run: &mut Run, secs: u64, now: u64) {
+    let asleep = now.saturating_sub(secs);
+    let later = |at: &mut u64| {
+        if *at > asleep {
+            *at = at.saturating_add(secs);
+        }
+    };
+    for task in run.tasks.iter_mut() {
+        let stopped: Vec<bool> = (task.rounds.iter())
+            .map(|r| round_clock(task, r).stopped.is_some())
+            .collect();
+        for (round, stopped) in task.rounds.iter_mut().zip(stopped) {
+            if round.ended_at.is_none() && !round.ended {
+                round.last_event = round.last_event.saturating_add(secs).min(now);
+                if !stopped {
+                    let elapsed = now.saturating_sub(round.started_at);
+                    round.excused_secs = round.excused_secs.saturating_add(secs).min(elapsed);
+                }
+            }
+            for at in [
+                round.rate_limited_until.as_mut(),
+                round.delivery_retry_at.as_mut(),
+                round.count_retry_at.as_mut(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                later(at);
+            }
+            if let StallState::Interrupted { deadline } = &mut round.stall {
+                later(deadline);
+            }
+            if let FailedTurn::WaitingContinue { at, .. } = &mut round.failed_turn {
+                later(at);
+            }
+        }
+    }
+    if !matches!(run.state, RunState::Paused | RunState::Halted) {
+        let design = run.orch.design.as_mut();
+        if let Some(started) = design.and_then(|d| d.phase_started.as_mut()) {
+            *started = started.saturating_add(secs).min(now);
+        }
+    }
+}
+
+/// The clock a round is charged on: its racing lane's, out of the lane's view
+/// (`race_view`), or its task's.
+fn round_clock<'a>(task: &'a Task, round: &AgentRound) -> &'a TaskClock {
+    let lane = super::race_view::view_lane(task, round.lane);
+    let lane = lane.and_then(|l| task.race.as_ref()?.lanes.iter().find(|x| x.lane == l));
+    lane.map_or(&task.clock, |l| &l.gates.clock)
 }
 
 /// A restore stops a running task clock at its session's last sign of life: the
