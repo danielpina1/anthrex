@@ -9,6 +9,7 @@ use proto::{
 
 use super::*;
 use crate::lessons::fold::title_fp;
+use crate::lessons::store::read_store;
 use crate::run::history_io::append_json;
 
 const NOW: u64 = 1_800_000_000;
@@ -115,7 +116,7 @@ fn repo() -> tempfile::TempDir {
 }
 
 fn status_of(dir: &Path, wanted: &str) -> Option<LessonStatus> {
-    (list_at(dir, true, NOW, &cfg()).into_iter())
+    (list_at(dir, true, NOW, &cfg()).unwrap().into_iter())
         .find(|l| l.id == wanted)
         .map(|l| l.status)
 }
@@ -129,7 +130,7 @@ fn list_folds_store_and_history() {
     let dir = repo();
     let kf = format!("kf-{FP}");
     let ids = |all| {
-        (list_at(dir.path(), all, NOW, &cfg()).into_iter())
+        (list_at(dir.path(), all, NOW, &cfg()).unwrap().into_iter())
             .map(|l| (l.id, l.status))
             .collect::<Vec<_>>()
     };
@@ -145,7 +146,7 @@ fn list_folds_store_and_history() {
     assert_eq!(all.len(), 4, "{all:?}");
     assert_eq!(all[3], (id(GAMMA), LessonStatus::Rejected));
     let empty = tempfile::tempdir().unwrap();
-    assert!(list_at(empty.path(), true, NOW, &cfg()).is_empty());
+    assert!(list_at(empty.path(), true, NOW, &cfg()).unwrap().is_empty());
 }
 
 #[test]
@@ -232,7 +233,7 @@ fn forget_distilled_writes_retired() {
         forget_at(dir.path(), &[id(ALPHA), id(BETA)], NOW, &cfg()),
         Ok("forgot 2".to_string())
     );
-    let lessons = list_at(dir.path(), true, NOW, &cfg());
+    let lessons = list_at(dir.path(), true, NOW, &cfg()).unwrap();
     for title in [ALPHA, BETA] {
         let lesson = lessons.iter().find(|l| l.id == id(title)).unwrap();
         assert_eq!(lesson.status, LessonStatus::Retired);
@@ -432,6 +433,20 @@ fn module_source_prefers_cache_then_profile_then_none() {
 }
 
 /// Milestone 9.18 decision 11 (task M9.18.9): a deadline already past.
+/// The graph of `repo_dir`'s store and history, its walk bounded by `bound`.
+fn graph_within(
+    repo_dir: &Path,
+    checkout: &Path,
+    project: PathBuf,
+    now: u64,
+    cfg: &config::Lessons,
+    bound: Duration,
+) -> LessonGraph {
+    let dir = repo_dir.to_path_buf();
+    let read = move || read_both(&dir);
+    graph_reading(read, repo_dir, checkout, project, now, cfg, bound).unwrap()
+}
+
 fn past() -> std::time::Instant {
     let now = std::time::Instant::now();
     now.checked_sub(Duration::from_secs(1)).unwrap_or(now)
@@ -558,96 +573,39 @@ async fn graph_is_answered() {
 /// `the_module_walk_bound_starts_after_the_store_read` (docs/timing-budgets.md).
 const STORE_HOLD: Duration = Duration::from_secs(2);
 const WALK_BOUND: Duration = Duration::from_secs(1);
-/// That test's hang guard: how long past `STORE_HOLD` the writer waits for the read to
-/// open the FIFO and drain it, and the graph's wait beyond that. Never reached by a
-/// correct build, which needs milliseconds past the hold.
-const FIFO_GUARD: Duration = Duration::from_secs(30);
-/// The newlines the writer sends: far more than a FIFO buffers (8 KiB on macOS, 64 KiB
-/// by default on Linux), so the writes finish only once the read has drained most of
-/// them, and blank lines, so the store still folds to nothing.
-const FILL: usize = 1 << 20;
-
-/// Holds the store read at the FIFO `path` for `STORE_HOLD`, then ends it with EOF.
-///
-/// macOS can lose the EOF of a writer that closes before the reader's first `read`,
-/// even once the reader's `open` has returned: the reader then blocks in `read` for
-/// good, with no writer left (CI run 39205779893 timed out so at 600 s; locally about
-/// one run in twenty). Opening `O_NONBLOCK` does not close that window, so the writer
-/// closes only after the reader has drained most of `FILL`, which proves it is in its
-/// `read`s; every step is non-blocking and gives up at `deadline`. An `Err` says the
-/// read never opened the FIFO or stopped draining it.
-fn feed_store_fifo(path: &Path, deadline: std::time::Instant) -> Result<(), String> {
-    use std::io::{ErrorKind, Write};
-    use std::os::unix::fs::OpenOptionsExt;
-    std::thread::sleep(STORE_HOLD);
-    let mut file = loop {
-        let opened = std::fs::OpenOptions::new()
-            .write(true)
-            .custom_flags(libc::O_NONBLOCK)
-            .open(path);
-        match opened {
-            Ok(file) => break file,
-            // ENXIO: no reader has the FIFO open yet.
-            Err(e)
-                if e.raw_os_error() == Some(libc::ENXIO)
-                    && std::time::Instant::now() < deadline =>
-            {
-                std::thread::sleep(Duration::from_millis(5));
-            }
-            Err(e) => return Err(format!("the store read never opened the FIFO: {e}")),
-        }
-    };
-    let fill = vec![b'\n'; FILL];
-    let mut sent = 0;
-    while sent < FILL {
-        match file.write(&fill[sent..]) {
-            Ok(n) => sent += n,
-            Err(e) if e.kind() == ErrorKind::Interrupted => {}
-            Err(e) if e.kind() == ErrorKind::WouldBlock && std::time::Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(1));
-            }
-            Err(e) => {
-                return Err(format!(
-                    "the store read stopped draining the FIFO after {sent} of {FILL} bytes: {e}"
-                ));
-            }
-        }
-    }
-    Ok(())
-}
+/// That test's hang guard over the graph's answer, past `STORE_HOLD`. Never reached by
+/// a correct build, which needs milliseconds past the hold.
+const GRAPH_GUARD: Duration = Duration::from_secs(30);
 
 #[test]
 fn the_module_walk_bound_starts_after_the_store_read() {
     // Task 9's review, B2: a store read slower than the bound still draws the modules.
-    use std::os::unix::ffi::OsStrExt;
+    // The read is held `STORE_HOLD` by the read seam (a store that is not a regular
+    // file is refused since the lessons-bounds fix, so a FIFO can no longer hold it).
     use std::sync::mpsc;
     // Dropped on every exit of this thread, a failed wait's panic included.
     let (_tmp, checkout, project, repo_dir) = git_repo();
     write_profile(&repo_dir, &["crates/*"]);
-    let path = store_path(&repo_dir);
-    let fifo = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
-    // SAFETY: a plain mkfifo on a path this test owns.
-    assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
-    let deadline = std::time::Instant::now() + STORE_HOLD + FIFO_GUARD;
-    let (fed_tx, fed) = mpsc::channel();
-    let writer = std::thread::spawn(move || {
-        let _ = fed_tx.send(feed_store_fifo(&path, deadline));
-    });
-    // The read runs off this thread, so a read that never ends fails the wait below
-    // instead of hanging the test.
+    // The graph is drawn off this thread, so a graph that never ends fails the wait
+    // below instead of hanging the test.
     let (drawn_tx, drawn) = mpsc::channel();
     let reader = std::thread::spawn(move || {
-        let graph = graph_within(&repo_dir, &checkout, project, NOW, &cfg(), WALK_BOUND);
+        let dir = repo_dir.clone();
+        let slow = move || {
+            std::thread::sleep(STORE_HOLD);
+            read_both(&dir)
+        };
+        let graph = graph_reading(slow, &repo_dir, &checkout, project, NOW, &cfg(), WALK_BOUND);
         let _ = drawn_tx.send(graph);
     });
-    let fed = fed.recv_timeout(STORE_HOLD + FIFO_GUARD + FIFO_GUARD);
-    fed.expect("the writer gives up at its deadline")
-        .unwrap_or_else(|why| panic!("{why}"));
-    let graph = (drawn.recv_timeout(FIFO_GUARD))
-        .expect("the store read ends once the writer has closed the FIFO");
-    // Both threads have sent their last message, so neither join can wait.
-    writer.join().unwrap();
+    let graph = (drawn.recv_timeout(STORE_HOLD + GRAPH_GUARD))
+        .expect("the graph is drawn once the store read ends")
+        .unwrap();
+    // It has sent its last message, so the join cannot wait.
     reader.join().unwrap();
     assert_eq!(graph.module_source, ModuleSource::Profile);
     assert!(graph.nodes.iter().any(|n| n.id == "m:a"));
 }
+
+#[path = "lessons_requests_bounds_tests.rs"]
+mod bounds;

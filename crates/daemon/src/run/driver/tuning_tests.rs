@@ -173,3 +173,56 @@ async fn a_design_refit_at_a_start_keeps_its_lines_apart() {
         Loaded::File(f) if f.budgets.contains_key("brainstorm")
     ));
 }
+
+/// The lessons-bounds review, I1: a FIFO `history.jsonl` is refused before any read, so
+/// a start's tuning ends at once with the reason, holding the tuning lock no longer,
+/// and a later start and `run stats` are answered, not `busy`. Before the fix the first
+/// tuning blocked in the FIFO's `open` while holding the lock, past its bound for good.
+///
+/// The three calls run on a thread and a runtime of their own, awaited with
+/// `recv_timeout`, the runtime shut down without waiting for its blocking threads: a
+/// read that never ends fails the test instead of hanging it. The `TempDir` is this thread's, so it
+/// drops on every exit.
+#[test]
+fn a_fifo_history_is_refused_and_frees_the_tuning_lock() {
+    use std::os::unix::ffi::OsStrExt;
+    // Each call's bound, and the hang guard over all three (docs/timing-budgets.md).
+    const BOUND: Duration = Duration::from_secs(2);
+    const GUARD: Duration = Duration::from_secs(20);
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("repos").join("p-1");
+    std::fs::create_dir_all(&dir).unwrap();
+    let fifo = dir.join(HISTORY_FILE);
+    let path = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+    // SAFETY: a plain mkfifo on a path this test owns.
+    assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+    let (tx, rx) = mpsc::channel();
+    let repo = dir.clone();
+    let thread = std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        let got = runtime.block_on(async {
+            let (locks, cfg) = (TuningLocks::default(), config::Orchestrator::default());
+            let first = tune_within(&cfg, &locks, &repo, NOW, BOUND).await.log;
+            let later = tune_within(&cfg, &locks, &repo, NOW, BOUND).await.log;
+            let ask = StatsAsk::default();
+            let stats = stats_within(&cfg, &locks, (&repo, &repo), ask, NOW, BOUND).await;
+            (first, later, stats.err())
+        });
+        // Not a plain drop, which would wait for a blocking thread a read left behind.
+        runtime.shutdown_background();
+        let _ = tx.send(got);
+    });
+    let (first, later, stats) =
+        (rx.recv_timeout(GUARD)).unwrap_or_else(|_| panic!("no answer within {GUARD:?}"));
+    // It has shut its runtime down without waiting and sent, so the join cannot wait.
+    thread.join().unwrap();
+    let refused = format!("{} is not a regular file", fifo.display());
+    let line = format!("tuning: none ({refused}; started without what history taught)");
+    assert_eq!(first, std::slice::from_ref(&line));
+    assert_eq!(later, [line]);
+    assert_eq!(stats, Some(refused));
+}

@@ -117,7 +117,7 @@ real-io = { max-threads = 8 }
 # 72 send_never_suspends_and_reports_a_dead_connection: cli/tests/it/tui_connection.rs:121, < 500 ms for 5000 sends; never suspending is the property.
 # 73 e2e_plan_path_scouts_plans_and_reads_the_approval: cli/tests/it/run_e2e_orch/gate.rs:98, each logged `run_status` call's `ms` <= (wait_secs + 5) * 1000 (decision 16); row "Every scripted run_status answered within wait_secs + 5 s" (M9.12.3 review, Important 1: a logged duration, a shape the first sweep did not parse).
 # daemon (unit tests, from M9.18.9's review, m5 of its fix round 2):
-# 74 the_module_walk_bound_starts_after_the_store_read: daemon/src/run/driver/lessons_requests_tests.rs:563, the walk within WALK_BOUND (1 s) after a 2 s store hold; row of that name ("Recorded, from M9.18.9").
+# 74 the_module_walk_bound_starts_after_the_store_read: daemon/src/run/driver/lessons_requests_tests.rs:581, the walk within WALK_BOUND (1 s) after a 2 s store hold; row of that name ("Recorded, from M9.18.9").
 # cli (from the 2026-10-18 flake diagnosis: the twin of 7, missing until then):
 # 75 without_a_daemon_admit_exits_zero_silently_and_fast: cli/tests/it/admit_hook.rs:144, < LIMIT (3 s); row "without_a_daemon_admit_exits_zero_silently_and_fast".
 [[profile.default.overrides]]
