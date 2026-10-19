@@ -45,7 +45,13 @@ pub(crate) fn run_inspection(
         fields.push(field("path", path_text(run)));
     }
     fields.push(field("agents", agents_text(run, app)));
-    fields.push(field("spend", spend_text(run)));
+    // 9.19 follow-up 1: at 80×24 the row wraps at its separators, so the cache share
+    // and the tool calls stay readable; a row that fits stays decision 2's one row.
+    fields.push(Field {
+        wrap: true,
+        parts: true,
+        ..field("spend", spend_text(run))
+    });
     fields.push(field("gate", gate_text(run, app)));
     // Milestone 9.6 task 17: `anthrex run status`'s two design lines.
     if let Some(text) = design_text(run) {
@@ -163,6 +169,7 @@ pub(crate) fn goal_round_inspection(run: &RunInfo, round: &RoundInfo, app: &App)
         label: "request",
         value: clean(&round.goal_head),
         wrap: true,
+        parts: false,
         marks: Vec::new(),
     }];
     if let Some(summary) = &round.summary_head {
@@ -231,10 +238,11 @@ fn path_text(run: &RunInfo) -> String {
 }
 
 fn agents_text(run: &RunInfo, app: &App) -> String {
-    // Decision 10: `4/3 (over)` after a limit was lowered mid-run.
+    // Decision 10: `4/3 (over)` after a limit was lowered mid-run; the glossary's and
+    // the CLI's `writers` (9.19 follow-up 4).
     let busy = |busy: u8, max: u8| common::numbers::busy(busy.into(), max.into());
     let mut text = format!(
-        "workers {} · readers {}",
+        "writers {} · readers {}",
         busy(run.writers_busy, run.max_writers),
         busy(run.readers_busy, run.max_readers)
     );
@@ -514,6 +522,7 @@ pub(crate) fn scout_inspection(
             label: "question",
             value: clean(&scout.question),
             wrap: true,
+            parts: false,
             marks: Vec::new(),
         },
         field("state", state_value),

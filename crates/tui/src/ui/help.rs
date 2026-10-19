@@ -33,6 +33,14 @@ const GAP: usize = 2;
 /// The glossary group's name. Its terms are words, not keys, so it sizes its own key
 /// column; the key groups share one, as they always have.
 const NUMBERS: &str = "numbers";
+/// 9.19 follow-up 5: over a terminal at least this big (columns, rows) the glossary's
+/// rows wrap whole, by words, under their term; over a smaller one (80×24) they are cut
+/// to the box, as ruling R3 has it. The box is 64 columns either way, so the threshold
+/// cannot be the box's width: it is the terminal's. Wrapping roughly doubles the
+/// glossary's lines (about 70 more), which R3 keeps off the 22-row 80×24 help; 30 rows
+/// is where a page holds a wrapped definition with its neighbours, and 100 columns
+/// marks a terminal clearly past the 80-column minimum, so 120×40 wraps.
+pub(crate) const WRAP_AT: (u16, u16) = (100, 30);
 
 fn rows(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
     pairs
@@ -218,7 +226,8 @@ pub fn help_groups(prefix_label: &str) -> Vec<HelpGroup> {
 }
 
 /// The glossary's group (milestone 9.19 decision 15): each row is a term, then
-/// `shown — definition`, cut to the box like every row.
+/// `shown — definition`, cut to the box like every row, or wrapped whole over a big
+/// terminal ([`WRAP_AT`]).
 fn numbers_group() -> HelpGroup {
     HelpGroup {
         name: NUMBERS,
@@ -234,7 +243,8 @@ fn numbers_group() -> HelpGroup {
     }
 }
 
-/// The line each group's name is drawn on: the groups' names and rows, in order.
+/// The line each group's name is drawn on: the groups' names and rows, in order. Only
+/// the last group (`numbers`) ever wraps a row, so no top moves when it does.
 pub(crate) fn group_tops(groups: &[HelpGroup]) -> Vec<usize> {
     let mut at = 0;
     groups
@@ -248,9 +258,9 @@ pub(crate) fn group_tops(groups: &[HelpGroup]) -> Vec<usize> {
 }
 
 /// Every line of the help, the groups' names bold and an aligned key column in the
-/// accent; words cut to `width`. Folded and sanitised (decisions 5, Global
-/// Constraint 4).
-fn lines(groups: &[HelpGroup], width: usize, p: Palette) -> Vec<Line<'static>> {
+/// accent; words cut to `width`, or, with `wrap`, the glossary's wrapped under their
+/// term. Folded and sanitised (decisions 5, Global Constraint 4).
+fn lines(groups: &[HelpGroup], width: usize, wrap: bool, p: Palette) -> Vec<Line<'static>> {
     // The glossary's rows hold glyphs (`✓`, `⚑`): their twins first, then the punctuation.
     let clean = |s: &str| {
         let s = one_line(s);
@@ -283,26 +293,47 @@ fn lines(groups: &[HelpGroup], width: usize, p: Palette) -> Vec<Line<'static>> {
         for (key, words) in &g.rows {
             let key = clean(key);
             let pad = " ".repeat(key_w - key.width() + GAP);
+            let words = clean(words);
+            let mut parts = if wrap && g.name == NUMBERS {
+                kit::wrap_words(&words, room).into_iter()
+            } else {
+                vec![kit::cut(&words, room, ellipsis)].into_iter()
+            };
             out.push(Line::from(vec![
                 Span::raw(" ".repeat(INDENT)),
                 Span::styled(key, role(Role::Accent, p)),
                 Span::raw(pad),
-                Span::raw(kit::cut(&clean(words), room, ellipsis)),
+                Span::raw(parts.next().unwrap_or_default()),
             ]));
+            let under = " ".repeat(INDENT + key_w + GAP);
+            out.extend(parts.map(|part| Line::raw(format!("{under}{part}"))));
         }
     }
     out
 }
 
-/// How many lines the groups take: each group's name and its rows.
-pub(crate) fn line_count(groups: &[HelpGroup]) -> usize {
-    groups.iter().map(|g| 1 + g.rows.len()).sum()
+/// Every line of the help over `area` (the whole terminal): cut or wrapped to the
+/// box's interior ([`WRAP_AT`]). The box's width does not depend on its height.
+fn all_lines(groups: &[HelpGroup], area: Rect, p: Palette) -> Vec<Line<'static>> {
+    let rect = Rect {
+        height: 3,
+        ..kit::dialog_area(area, 1)
+    };
+    let width = kit::dialog_frame(TITLE, false, p).inner(rect).width;
+    let wrap = area.width >= WRAP_AT.0 && area.height >= WRAP_AT.1;
+    lines(groups, usize::from(width), wrap, p)
+}
+
+/// How many lines the groups take over `area`: each group's name and its rows, a
+/// wrapped glossary row counted by its lines.
+pub(crate) fn line_count(groups: &[HelpGroup], area: Rect, p: Palette) -> usize {
+    all_lines(groups, area, p).len()
 }
 
 /// The box over `area` (the whole terminal) and its interior.
 fn boxed(groups: &[HelpGroup], area: Rect, p: Palette) -> (Rect, Rect) {
     // The lines and the hint row.
-    let content = u16::try_from(line_count(groups) + 1).unwrap_or(u16::MAX);
+    let content = u16::try_from(line_count(groups, area, p) + 1).unwrap_or(u16::MAX);
     let rect = kit::dialog_area(area, content);
     let inner = kit::dialog_frame(TITLE, false, p).inner(rect);
     (rect, inner)
@@ -317,7 +348,7 @@ pub(crate) fn view_rows(groups: &[HelpGroup], area: Rect, p: Palette) -> usize {
 /// line the help opened on when that lies past it, so the context's group is the first
 /// drawn at every size (fix round 1 ruling on decision 34; blank rows may follow).
 pub(crate) fn max_scroll(groups: &[HelpGroup], view: &HelpView, area: Rect, p: Palette) -> usize {
-    let end = kit::last_top(line_count(groups), view_rows(groups, area, p));
+    let end = kit::last_top(line_count(groups, area, p), view_rows(groups, area, p));
     end.max(usize::from(view.opened))
 }
 
@@ -347,7 +378,7 @@ pub fn render(frame: &mut Frame, app: &App, view: &HelpView, area: Rect) {
     }
     let rows = inner.height - 1;
     let limit = max_scroll(&groups, view, area, p);
-    let all = lines(&groups, usize::from(inner.width), p);
+    let all = all_lines(&groups, area, p);
     let top = usize::from(view.scroll);
     let shown = kit::from_top_until(all, top, limit, usize::from(rows), p);
     frame.render_widget(

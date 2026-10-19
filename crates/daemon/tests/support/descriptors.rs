@@ -51,6 +51,69 @@ pub fn descriptors_on(path: &Path) -> Vec<libc::c_int> {
         .collect()
 }
 
+/// Whether this process's descriptor `fd` is close-on-exec: a child this process spawns
+/// cannot inherit it, whatever the spawn does with the rest of the table. `None` when
+/// `fd` is no longer open.
+pub fn close_on_exec(fd: libc::c_int) -> Option<bool> {
+    // SAFETY: `F_GETFD` reads the descriptor's flags and changes nothing; a closed or
+    // reused number only yields `EBADF` or another descriptor's flags.
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+    (flags >= 0).then_some(flags & libc::FD_CLOEXEC != 0)
+}
+
+/// The descriptors of another process, `pid`, that refer to the same file as `path`,
+/// compared by `(st_dev, st_ino)`. Linux: each `/proc/<pid>/fd/<n>` link, `stat`ed
+/// through. macOS: `lsof -p <pid>`'s names, each `stat`ed. Read-only: it signals nothing.
+pub fn child_descriptors_on(pid: u32, path: &Path) -> Vec<String> {
+    let meta = std::fs::metadata(path).unwrap_or_else(|e| panic!("stat {}: {e}", path.display()));
+    let want = (meta.dev(), meta.ino());
+    let same = |p: &Path| std::fs::metadata(p).is_ok_and(|m| (m.dev(), m.ino()) == want);
+    other_process_files(pid)
+        .into_iter()
+        .filter(|(_, target)| same(target))
+        .map(|(fd, _)| fd)
+        .collect()
+}
+
+/// `pid`'s open descriptors as `(name, path to stat)`.
+#[cfg(target_os = "linux")]
+fn other_process_files(pid: u32) -> Vec<(String, std::path::PathBuf)> {
+    let dir = format!("/proc/{pid}/fd");
+    std::fs::read_dir(&dir)
+        .unwrap_or_else(|e| panic!("listing {dir}: {e}"))
+        .filter_map(|e| {
+            let e = e.ok()?;
+            Some((e.file_name().to_str()?.to_string(), e.path()))
+        })
+        .collect()
+}
+
+/// `pid`'s open descriptors as `(name, path to stat)`, from `lsof`'s field output: an
+/// `f<fd>` line, then that descriptor's `n<name>` line.
+#[cfg(target_os = "macos")]
+fn other_process_files(pid: u32) -> Vec<(String, std::path::PathBuf)> {
+    let out = std::process::Command::new("lsof")
+        .args(["-n", "-P", "-w", "-a", "-p", &pid.to_string(), "-F", "fn"])
+        .output()
+        .expect("running lsof");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.lines().any(|l| l == format!("p{pid}")),
+        "lsof listed nothing for pid {pid}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let mut fd = String::new();
+    let mut files = Vec::new();
+    for line in text.lines() {
+        if let Some(f) = line.strip_prefix('f') {
+            fd = f.to_string();
+        } else if let Some(name) = line.strip_prefix('n') {
+            files.push((fd.clone(), std::path::PathBuf::from(name)));
+        }
+    }
+    files
+}
+
 /// The descriptors of this process that are sockets bound to `addr` (`getsockname`). A
 /// listener and every connection it accepted both answer with the listening address.
 pub fn sockets_bound_to(addr: SocketAddr) -> Vec<libc::c_int> {

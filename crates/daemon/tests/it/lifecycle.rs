@@ -294,3 +294,6 @@ async fn a_failed_final_flush_leaves_the_socket_in_place() {
 
 #[path = "lifecycle/restart_persistence.rs"]
 mod restart_persistence;
+
+#[path = "lifecycle/lock_inheritance.rs"]
+mod lock_inheritance;

@@ -252,7 +252,7 @@ fn an_expired_rate_limit_is_not_shown() {
     let run = inspect_node(&app, &NodeKey::Run("r1".into()));
     assert_eq!(
         value(&run, "agents"),
-        Some("workers 3/3 · readers 1/3 · claude ok · codex ok")
+        Some("writers 3/3 · readers 1/3 · claude ok · codex ok")
     );
     // Waiting between turns, and a limit with no recorded start.
     let app = t7_on_window(|round| round.rate_limited_until = None);
@@ -265,7 +265,7 @@ fn an_expired_rate_limit_is_not_shown() {
     let run = inspect_node(&app, &NodeKey::Run("r1".into()));
     assert_eq!(
         value(&run, "agents"),
-        Some("workers 3/3 · readers 1/3 · claude ok · codex rate-limited")
+        Some("writers 3/3 · readers 1/3 · claude ok · codex rate-limited")
     );
 }
 
@@ -504,7 +504,7 @@ fn the_agents_row_ages_the_earliest_live_limit() {
     let run = inspect_node(&app, &NodeKey::Run("r1".into()));
     assert_eq!(
         value(&run, "agents"),
-        Some("workers 3/3 · readers 1/3 · claude ok · codex rate-limited 4m 00s")
+        Some("writers 3/3 · readers 1/3 · claude ok · codex rate-limited 4m 00s")
     );
 }
 

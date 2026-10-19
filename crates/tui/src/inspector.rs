@@ -93,6 +93,10 @@ pub struct Field {
     pub label: &'static str,
     pub value: String,
     pub wrap: bool,
+    /// With `wrap`: the value breaks only at its ` · ` separators where it can, as many
+    /// whole parts to a row as fit (the run's spend row, 9.19 follow-up 1), so a narrow
+    /// panel never splits `cache hits 71% of input` across rows.
+    pub parts: bool,
     /// The words of `value` (`split_whitespace`'s, by index) the run view's row layout
     /// draws in a role: marks the client wrote from structured state (the stage's `ci`
     /// row, deferred from task 15), never found by reading the text.
@@ -123,6 +127,7 @@ fn field(label: &'static str, value: impl Into<String>) -> Field {
         label,
         value: value.into(),
         wrap: false,
+        parts: false,
         marks: Vec::new(),
     }
 }
@@ -314,6 +319,7 @@ fn subagent_fields(row: &Row<'_>, info: &SubagentInfo, app: &App) -> Vec<Field> 
             label: "task",
             value: label.to_owned(),
             wrap: true,
+            parts: false,
             marks: Vec::new(),
         });
     }

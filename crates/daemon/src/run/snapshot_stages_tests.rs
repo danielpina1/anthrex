@@ -178,3 +178,34 @@ fn a_stage_with_a_cancelled_task_reaches_n_of_n() {
     let stage = &stage_infos(&run)[0];
     assert_eq!((stage.merged, stage.tasks), (2, 2));
 }
+
+/// The replaced set is the whole run's: a task in stage 1 replaced by a stage 2 task
+/// leaves stage 1's count even while it is not cancelled (a merged task, here), and a
+/// task named by no `replaces` stays in. Pins the precomputed set (one pass over the
+/// run) against the per-task `replaced_by` it stands for.
+#[test]
+fn a_task_replaced_from_another_stage_leaves_its_stages_count() {
+    use crate::run::orch::test_support::task_mut;
+    use proto::TaskState;
+    let mut run = run_with(&[
+        task_toml("t1", "S", "[\"crates/a/**\"]", ""),
+        task_toml("t2", "S", "[\"crates/b/**\"]", ""),
+        task_toml("t3", "S", "[\"crates/c/**\"]", ""),
+        task_toml("t4", "S", "[\"crates/d/**\"]", ""),
+    ]);
+    run.state = RunState::Running;
+    task_mut(&mut run, "t1").state = TaskState::Merged;
+    task_mut(&mut run, "t2").state = TaskState::Merged;
+    task_mut(&mut run, "t3").state = TaskState::Working;
+    let t4 = task_mut(&mut run, "t4");
+    t4.spec.stage = 2;
+    t4.state = TaskState::Merged;
+    t4.replaces = vec!["t2".into()];
+    let replaced: Vec<bool> = (run.tasks.iter())
+        .map(|t| !crate::run::snapshot_plan::replaced_by(&run, t.id()).is_empty())
+        .collect();
+    assert_eq!(replaced, [false, true, false, false]);
+    let stages = stage_infos(&run);
+    assert_eq!((stages[0].merged, stages[0].tasks), (1, 2));
+    assert_eq!((stages[1].merged, stages[1].tasks), (1, 1));
+}

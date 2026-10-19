@@ -52,6 +52,20 @@ pub const STATS_HEADER: [&str; 9] = [
 /// Milestone 9.19 decision 14: the line under the table, in lower case on the TUI.
 pub const STATS_FOOTER: &str = "MED = median over merged tasks \u{b7} tokens are billed (worker + reviewer + decider) \u{b7} BOUNCES counts every task";
 
+/// `anthrex run stats`' deciders line, which the TUI's stats page prints word for word
+/// (9.19 follow-up 2): `deciders: 6 calls, 1 fallback · size cross-check: 4 checked, 1
+/// raised`.
+pub fn deciders_text(stats: &proto::HistoryStats) -> String {
+    let count = |n: u32, one: &str, many: &str| crate::numbers::count(u64::from(n), one, many);
+    format!(
+        "deciders: {}, {} \u{b7} size cross-check: {} checked, {} raised",
+        count(stats.decider_calls, "call", "calls"),
+        count(stats.decider_fallbacks, "fallback", "fallbacks"),
+        stats.size_checked,
+        stats.size_raised
+    )
+}
+
 /// Milestone 9.19 decision 14: the rounds line's words after `rounds`: `3 ended · 1 run
 /// iterated`, `2 runs` pluralised.
 pub fn rounds_text(rounds: u32, iterated_runs: u32) -> String {

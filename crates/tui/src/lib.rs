@@ -236,7 +236,10 @@ async fn event_loop(
                 },
                 _ => vec![],
             },
-            // Ruling R4: every tick carries the zone's offset, so a DST change shows.
+            // Ruling R4: every tick carries the offset at this instant, so a DST change
+            // shows. It is not a fresh read of the zone: glibc's `localtime_r` keeps the
+            // zone it loaded at first use (no `tzset`, 9.19 Minor 4), so on Linux a new
+            // system zone shows only after a restart; macOS picks it up.
             _ = tick.tick() => app.on_tick_at(std::time::Instant::now(), local_offset_now()),
             effects = driver.step(conn, app, socket_path) => effects,
         };

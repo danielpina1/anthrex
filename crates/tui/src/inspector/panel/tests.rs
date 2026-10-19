@@ -32,6 +32,7 @@ fn plain(label: &'static str, value: &str) -> Field {
         label,
         value: value.to_owned(),
         wrap: false,
+        parts: false,
         marks: Vec::new(),
     }
 }
@@ -166,6 +167,7 @@ fn subagent(task: &str) -> Inspection {
                 label: "task",
                 value: task.to_owned(),
                 wrap: true,
+                parts: false,
                 marks: Vec::new(),
             },
             plain("spawned by", "1 api-worker"),
@@ -465,6 +467,7 @@ fn no_panic_at_any_size() {
                 label: "task",
                 value: task.into(),
                 wrap: true,
+                parts: false,
                 marks: Vec::new(),
             },
             plain("spawned by", "1 api-worker"),

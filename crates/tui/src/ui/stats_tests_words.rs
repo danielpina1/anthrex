@@ -53,6 +53,12 @@ fn tui_stats_matches_the_cli_words() {
             all.iter().any(|r| r == "rounds 3 ended · 1 run iterated"),
             "{w}x{h}: {all:#?}"
         );
+        // 9.19 follow-up 2: the deciders line is the CLI's, word for word
+        // (`daemon/src/run/stats.rs` prints the same `common::labels::deciders_text`).
+        let deciders = "deciders: 6 calls, 1 fallback · size cross-check: 4 checked, 1 raised";
+        assert_eq!(common::labels::deciders_text(&history()), deciders);
+        assert!(all.iter().any(|r| r == deciders), "{w}x{h}: {all:#?}");
+        assert!(!all.iter().any(|r| r.contains("size raised")), "{all:#?}");
     }
     // Without a round line, no rounds row.
     let app = app_with(false, StatsState::Ready(Box::new(history())));

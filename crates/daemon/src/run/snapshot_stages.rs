@@ -2,6 +2,8 @@
 //! read by the orchestrator's digest (decision 58) and by the snapshot. Pure: it reads
 //! the model only.
 
+use std::collections::HashSet;
+
 use proto::{DeliveryMode, FullInfo, FullState, PrState, StageInfo, TaskOrigin, TaskState};
 
 use super::engine::OpKind;
@@ -15,8 +17,17 @@ const NAMES_SHOWN: usize = 20;
 /// will be created on (ruling C-24).
 pub(crate) fn stage_infos(run: &Run) -> Vec<StageInfo> {
     let planned = planned(run);
+    let replaced = replaced(run);
     (1..=stage_count(run))
-        .map(|n| stage_info(run, n, planned))
+        .map(|n| stage_info(run, n, planned, &replaced))
+        .collect()
+}
+
+/// Every task some task's `replaces` names: the snapshot's `replaced_by` (decision 26)
+/// for the whole run in one pass, rather than one scan of the run per task.
+fn replaced(run: &Run) -> HashSet<&str> {
+    (run.tasks.iter())
+        .flat_map(|t| t.replaces.iter().map(String::as_str))
         .collect()
 }
 
@@ -41,17 +52,13 @@ fn created(run: &Run, n: u16, planned: u16) -> Option<&StageRecord> {
     run.stage(n).filter(|_| !placeholder)
 }
 
-fn stage_info(run: &Run, n: u16, planned: u16) -> StageInfo {
+fn stage_info(run: &Run, n: u16, planned: u16, replaced: &HashSet<&str>) -> StageInfo {
     let of_stage = || run.tasks.iter().filter(move |t| t.stage() == n);
     // Milestone 9.19 decision 8: the stage's count leaves out what the run's progress
     // leaves out, through the one predicate (ruling R14). "Replaced" is the snapshot's
-    // own `replaced_by`, which the other tasks' `replaces` name.
-    let counted = || {
-        of_stage().filter(|t| {
-            let replaced = !super::snapshot_plan::replaced_by(run, t.id()).is_empty();
-            common::progress::counts(t.state, replaced)
-        })
-    };
+    // own `replaced_by`, which the other tasks' `replaces` name, precomputed once.
+    let counted =
+        || of_stage().filter(|t| common::progress::counts(t.state, replaced.contains(t.id())));
     let record = created(run, n, planned);
     let head = record.and_then(|_| run.stage_head(n)).map(str::to_string);
     let branch = match record {

@@ -120,6 +120,7 @@ fn pr_fields(pr: &StagePrInfo, app: &App) -> Vec<Field> {
                 label: "ci",
                 value,
                 wrap: true,
+                parts: false,
                 marks,
             }
         },

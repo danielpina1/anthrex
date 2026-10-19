@@ -279,11 +279,14 @@ fn the_help_over_the_alerts_view_gives_it_back() {
 /// Fix round 1: opened on a group whose name lies past the last page (`settings` at
 /// 120×40), the view holds it at the top: `j` and PgDn stop there, `k` leaves it, and
 /// the rows under the last group are blank. Milestone 9.19.3 put `numbers` after
-/// `settings`, so the box is taller (120×60) for `settings` to lie past the end.
+/// `settings`, so the box is taller (60 rows) for `settings` to lie past the end; 9.19
+/// follow-up 5 wraps the glossary from 100 columns, so the terminal is 99 wide, the
+/// widest that still cuts it (the box is 64 columns at both).
 #[test]
 fn an_opened_group_past_the_end_holds_its_place() {
     let mut app = gate_app();
-    app.set_body_area(Rect::new(0, 0, 120, 59));
+    let w = crate::ui::help::WRAP_AT.0 - 1;
+    app.set_body_area(Rect::new(0, 0, w, 59));
     chord(&mut app, 'S');
     chord(&mut app, '?');
     let settings = group_tops(&help_groups("C-b"))[9];
@@ -294,14 +297,14 @@ fn an_opened_group_past_the_end_holds_its_place() {
     tap(&mut app, KeyCode::Char('k'));
     assert_eq!(usize::from(scroll(&app)), settings - 1);
     tap(&mut app, KeyCode::Char('j'));
-    assert_eq!(drawn_headers(&app, 120, 60), ["settings", "numbers"]);
-    let rows = crate::ui::audit::rows(&crate::ui::audit::draw(&app, 120, 60));
+    assert_eq!(drawn_headers(&app, w, 60), ["settings", "numbers"]);
+    let rows = crate::ui::audit::rows(&crate::ui::audit::draw(&app, w, 60));
     assert!(rows[2].contains("│ settings "), "{rows:#?}");
     assert!(rows[14].contains("esc          back (asks before discarding changes)"));
     assert!(rows[15].contains("│ numbers "), "{rows:#?}");
     let blank = rows[rows.len() - 3]
         .chars()
-        .skip(29)
+        .skip(usize::from((w - 64) / 2 + 1))
         .take(62)
         .collect::<String>();
     assert_eq!(blank.trim(), "", "the rows under the last group are blank");
