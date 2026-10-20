@@ -12,8 +12,10 @@ use super::tests_compact::{NOW, padding, write_lines};
 use super::{Compacted, LessonLocks, compact, compact_locked};
 
 /// Names beside the store that are not a crashed rewrite's temporary file.
-const KEPT: [&str; 7] = [
+const KEPT: [&str; 9] = [
     "lessons.jsonl.tmp",
+    "lessons.pending.json.tmp",
+    "lessons.pending.json.corrupt",
     "lessons.jsonl.12.tmp",
     "lessons.jsonl.a.0.tmp",
     "lessons.jsonl.1.2.tmp.old",
@@ -32,7 +34,13 @@ async fn a_crashed_compactions_temp_file_is_swept_under_the_lock() {
         } else {
             write_lines(&path, &padding());
         }
-        let stale = ["lessons.jsonl.4242.0.tmp", "lessons.jsonl.7.63.tmp"];
+        // The pending results' file (`super::super::pending`) is written by the same
+        // worker, between its passes, so its crashed writes go too.
+        let stale = [
+            "lessons.jsonl.4242.0.tmp",
+            "lessons.jsonl.7.63.tmp",
+            "lessons.pending.json.5.1.tmp",
+        ];
         for name in stale {
             std::fs::write(dir.path().join(name), vec![b'x'; 1024 * 1024]).unwrap();
         }
