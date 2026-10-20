@@ -7,6 +7,8 @@ release is a pre-release and any release may change behaviour or the protocol.
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-10-20
+
 The protocol version is now 26 (22 for milestone 9.13's `OrchestratorInfo.untrusted`,
 23 for milestone 9.14's build admission, 24 for milestone 9.15's lessons, 25 for
 milestone 9.16's brakes: `RunRequest::Hold`, `RunReply::Held`, `RunsSnapshot.brakes`,
@@ -622,7 +624,8 @@ see [docs/install.md](https://github.com/danielpina1/anthrex/blob/main/docs/inst
 - macOS and Linux only. anthrex runs `claude` and `codex` as installed on your
   machine; it does not ship or install them.
 
-[Unreleased]: https://github.com/danielpina1/anthrex/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/danielpina1/anthrex/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/danielpina1/anthrex/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/danielpina1/anthrex/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/danielpina1/anthrex/releases/tag/v0.1.2
 [0.1.1]: https://github.com/danielpina1/anthrex/releases/tag/v0.1.1
