@@ -63,6 +63,23 @@ impl Rig {
         mode: DeciderMode,
         braked: Option<crate::run::driver::BrakeProbe>,
     ) -> Arc<LessonService> {
+        let calls = self.calls.clone();
+        let decide: DecideFn = Arc::new(move |_request, _project| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async move { (None, answered()) })
+        });
+        self.start_seamed(max_per_day, (mode, braked), decide, |_| {})
+    }
+
+    /// A worker calling `decide` (which counts nothing itself), its timing as
+    /// [`Rig::start`]'s with `tweak` applied.
+    fn start_seamed(
+        &self,
+        max_per_day: u32,
+        (mode, braked): (DeciderMode, Option<crate::run::driver::BrakeProbe>),
+        decide: DecideFn,
+        tweak: impl FnOnce(&mut ServiceTiming),
+    ) -> Arc<LessonService> {
         let mut cfg = config::Orchestrator::default();
         cfg.deciders.mode = mode;
         let mut manager =
@@ -75,17 +92,14 @@ impl Rig {
             ..config::Lessons::default()
         };
         let clock = self.clock.clone();
-        let timing = ServiceTiming {
+        let mut timing = ServiceTiming {
             bound: Duration::from_secs(5),
             retry: [Duration::from_secs(60), Duration::from_secs(300)],
             now: Arc::new(move || clock.load(Ordering::SeqCst)),
             brake_recheck: Duration::from_secs(1),
+            ..ServiceTiming::default()
         };
-        let calls = self.calls.clone();
-        let decide: DecideFn = Arc::new(move |_request, _project| {
-            calls.fetch_add(1, Ordering::SeqCst);
-            Box::pin(async move { (None, answered()) })
-        });
+        tweak(&mut timing);
         let parts = ServiceParts {
             deciders,
             data_dir: self.data.clone(),
@@ -105,7 +119,7 @@ impl Rig {
     }
 }
 
-fn answered() -> Decision {
+pub(super) fn answered() -> Decision {
     Decision {
         kind: DeciderKind::Distill,
         answer: DeciderAnswer::Distill {
@@ -362,6 +376,10 @@ async fn deciders_off_close_every_open_entry_without_a_call() {
 #[cfg(test)]
 #[path = "service_brake_tests.rs"]
 mod brake;
+
+#[cfg(test)]
+#[path = "service_pending_tests.rs"]
+mod pending;
 
 /// Waits (a deadline loop) until `n` holders share `repo`'s store lock: one per guard
 /// and one per waiter, plus the lock map's own.

@@ -19,7 +19,10 @@
 //!   never holds another repository); `max_distills_per_day = 0` never calls;
 //! - otherwise the `distill` decider is asked with `decide_within`, bounded by
 //!   [`DISTILL_BOUND`], and the worker appends `attempt { n, error, usage }`, then
-//!   `distilled` on an answer. The call's route is a `role_route` line with no run,
+//!   `distilled` on an answer, both through [`super::pending`] (kept on disk until the
+//!   store holds them, retried with a backoff, and closed `gave_up` past
+//!   [`DISTILL_WRITE_TRIES`]; a repository with a result pending is served nothing
+//!   else until it is written). The call's route is a `role_route` line with no run,
 //!   `distill/<queued record id>/<n>`, in the repository's `history.jsonl`.
 //!
 //! The decider receives only the entry's dossier, which the engine redacted when it
@@ -34,16 +37,16 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use proto::{
-    AttemptLine, DeciderSource, DistilledLine, GaveUpLine, HistoryLine, LESSONS_VERSION,
-    LessonLine, QueuedLine, RoleRoutingInput,
+    AttemptLine, DeciderSource, DistilledLine, GaveUpLine, LESSONS_VERSION, LessonLine, QueuedLine,
 };
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use super::LESSONS_FILE;
+use super::pending::{Flushed, PENDING_FILE, PendingRecord, PendingWrites};
 use super::store::{LessonLocks, append_once, compact_locked, read_store};
 use crate::decider::call::{Routed, decide_within};
 use crate::decider::fallback::OFF_REASON;
@@ -60,6 +63,12 @@ pub const DAY_SECS: u64 = 86_400;
 /// How long a repository whose store could not be written waits before it is served
 /// again, so a full disk never turns into a loop of decider calls.
 pub const WRITE_FAILED_WAIT_SECS: u64 = 60;
+
+/// The first wait before a distilled result the store did not take is appended again;
+/// each later wait doubles (`super::pending`).
+pub const DISTILL_WRITE_BACKOFF: Duration = Duration::from_secs(30);
+/// Tries at writing a distilled result before its entry is closed `gave_up`.
+pub const DISTILL_WRITE_TRIES: u32 = 5;
 
 /// Milestone 9.16 ruling C28: how often a braked worker looks again.
 pub const DISTILL_BRAKE_RECHECK: Duration = Duration::from_secs(30);
@@ -82,6 +91,10 @@ pub struct ServiceTiming {
     pub now: Clock,
     /// Ruling C28: how long a braked repository waits before it is served again.
     pub brake_recheck: Duration,
+    /// The first wait before a distilled result is appended again (monotonic).
+    pub write_backoff: Duration,
+    /// Tries at writing a distilled result before it gives up.
+    pub write_tries: u32,
 }
 
 impl Default for ServiceTiming {
@@ -91,6 +104,8 @@ impl Default for ServiceTiming {
             retry: DISTILL_RETRY_SECS.map(Duration::from_secs),
             now: Arc::new(crate::run::driver::unix_now),
             brake_recheck: DISTILL_BRAKE_RECHECK,
+            write_backoff: DISTILL_WRITE_BACKOFF,
+            write_tries: DISTILL_WRITE_TRIES,
         }
     }
 }
@@ -139,8 +154,10 @@ impl LessonService {
         let (tx, rx) = mpsc::unbounded_channel();
         let cancel = CancellationToken::new();
         let passes = Arc::new(AtomicU64::new(0));
+        let pending = PendingWrites::new(timing.write_backoff, timing.write_tries);
         let worker = Worker {
             parts,
+            pending,
             timing,
             decide,
             cancel: cancel.clone(),
@@ -175,6 +192,8 @@ impl Drop for LessonService {
 
 struct Worker {
     parts: ServiceParts,
+    /// The distilled results not yet in their stores.
+    pending: PendingWrites,
     timing: ServiceTiming,
     decide: DecideFn,
     cancel: CancellationToken,
@@ -189,15 +208,17 @@ struct Entry {
     last: Option<(u64, Option<String>)>,
 }
 
-/// What serving a repository left: nothing open, or entries due at a later time.
+/// What serving a repository left: nothing open, entries due at a later time, or a
+/// pending result's retry due at a monotonic instant.
 enum Served {
     Done,
     Later(u64),
+    Retry(Instant),
     Stopped,
 }
 
 impl Worker {
-    async fn run(self, mut rx: mpsc::UnboundedReceiver<PathBuf>) {
+    async fn run(mut self, mut rx: mpsc::UnboundedReceiver<PathBuf>) {
         let mut repos = tokio::select! {
             _ = self.cancel.cancelled() => return,
             found = self.scan() => found,
@@ -207,17 +228,24 @@ impl Worker {
                 repos.insert(repo);
             }
             let mut next: Option<u64> = None;
+            let mut retry: Option<Instant> = None;
             for repo in repos.clone() {
                 match self.serve(&repo).await {
                     Served::Done => {
                         repos.remove(&repo);
                     }
                     Served::Later(at) => next = Some(next.map_or(at, |n| n.min(at))),
+                    Served::Retry(at) => retry = Some(retry.map_or(at, |r| r.min(at))),
                     Served::Stopped => return,
                 }
             }
             self.passes.fetch_add(1, Ordering::SeqCst);
             let wait = next.map(|at| Duration::from_secs(at.saturating_sub(self.now()).max(1)));
+            let retry = retry.map(|at| at.saturating_duration_since(Instant::now()));
+            let wait = match (wait, retry) {
+                (Some(wait), Some(retry)) => Some(wait.min(retry)),
+                (wait, retry) => wait.or(retry),
+            };
             tokio::select! {
                 _ = self.cancel.cancelled() => return,
                 woken = rx.recv() => match woken {
@@ -240,8 +268,8 @@ impl Worker {
         self.parts.config.enabled && self.parts.config.distill
     }
 
-    /// Decision 12's start scan: every repository data directory with a store; none
-    /// when distillation is off.
+    /// Decision 12's start scan: every repository data directory with a store or a
+    /// pending result; none when distillation is off.
     async fn scan(&self) -> BTreeSet<PathBuf> {
         if !self.distilling() {
             return BTreeSet::new();
@@ -253,7 +281,7 @@ impl Worker {
             };
             (entries.flatten())
                 .map(|entry| entry.path())
-                .filter(|dir| dir.join(LESSONS_FILE).is_file())
+                .filter(|dir| dir.join(LESSONS_FILE).is_file() || dir.join(PENDING_FILE).is_file())
                 .collect()
         })
         .await;
@@ -262,7 +290,7 @@ impl Worker {
 
     /// Serves `repo`'s due entries, one call at a time, until none is due. With
     /// distillation off, nothing: the entries stay open, untouched.
-    async fn serve(&self, repo: &Path) -> Served {
+    async fn serve(&mut self, repo: &Path) -> Served {
         // Milestone 9.18 ruling C19: once per call, before the loop.
         if self.distilling() {
             compact_locked(&self.parts.locks, repo, self.now()).await;
@@ -273,6 +301,11 @@ impl Worker {
             }
             if !self.distilling() {
                 return Served::Done;
+            }
+            // A result already paid for is written before anything else is served.
+            let now = self.now();
+            if let Flushed::Wait(at) = self.pending.flush(&self.parts.locks, repo, now).await {
+                return Served::Retry(at);
             }
             let lines = read(repo).await;
             let now = self.now();
@@ -365,7 +398,7 @@ impl Worker {
 
     /// One call for `entry`, and its lines. `Some(false)`: a line was not written.
     /// `None`: the worker was stopped during the call.
-    async fn attempt(&self, repo: &Path, entry: Entry, now: u64) -> Option<bool> {
+    async fn attempt(&mut self, repo: &Path, entry: Entry, now: u64) -> Option<bool> {
         let queued = &entry.queued;
         let n = entry.attempts + 1;
         let request = DeciderRequest::Distill(DistillInput {
@@ -407,31 +440,42 @@ impl Worker {
             error: error.clone(),
             usage: decision.usage,
         });
+        if let Some((items, dropped)) = answer {
+            tracing::info!(
+                "lessons: distilled {id}: {} lessons, {dropped} dropped",
+                items.len()
+            );
+            let distilled = LessonLine::Distilled(DistilledLine {
+                v: LESSONS_VERSION,
+                record_id: format!("{id}/distilled"),
+                at,
+                queued: id.clone(),
+                items,
+                dropped,
+                usage: decision.usage,
+            });
+            // Paid for: kept on disk until the store holds both lines (the serve
+            // loop's next flush appends them).
+            let record = PendingRecord {
+                queued: id.clone(),
+                lines: vec![line, distilled],
+                tries: 0,
+                last_error: None,
+                gave_up: false,
+            };
+            self.pending.hold(repo, record).await;
+            return Some(true);
+        }
         if !self.append(repo, line).await {
             return Some(false);
         }
-        let closing = match (answer, error) {
-            (Some((items, dropped)), _) => {
-                tracing::info!(
-                    "lessons: distilled {id}: {} lessons, {dropped} dropped",
-                    items.len()
-                );
-                Some(LessonLine::Distilled(DistilledLine {
-                    v: LESSONS_VERSION,
-                    record_id: format!("{id}/distilled"),
-                    at,
-                    queued: id.clone(),
-                    items,
-                    dropped,
-                    usage: decision.usage,
-                }))
-            }
-            (None, Some(reason)) if n >= DISTILL_ATTEMPTS => Some(gave_up(id, &reason, at)),
-            (None, Some(reason)) => {
+        let closing = match error {
+            Some(reason) if n >= DISTILL_ATTEMPTS => Some(gave_up(id, &reason, at)),
+            Some(reason) => {
                 tracing::info!("lessons: distill attempt {n} of {id} fell back: {reason}");
                 None
             }
-            (None, None) => None,
+            None => None,
         };
         match closing {
             Some(line) => Some(self.append(repo, line).await),
@@ -535,7 +579,7 @@ pub(super) fn capped(lines: &[LessonLine], now: u64, max: u64) -> Option<u64> {
     (recent.len() as u64 >= max).then(|| oldest.saturating_add(DAY_SECS).max(now + 1))
 }
 
-fn gave_up(queued: &str, reason: &str, at: u64) -> LessonLine {
+pub(super) fn gave_up(queued: &str, reason: &str, at: u64) -> LessonLine {
     LessonLine::GaveUp(GaveUpLine {
         v: LESSONS_VERSION,
         record_id: format!("{queued}/gave_up"),
@@ -545,45 +589,9 @@ fn gave_up(queued: &str, reason: &str, at: u64) -> LessonLine {
     })
 }
 
-/// The repository's project, from its stored profile's meta, for the call's route
-/// (`models.toml`); `None` routes on the global table. On `spawn_blocking`.
-async fn project_of(repo: &Path) -> Option<PathBuf> {
-    let path = repo.join(crate::profile::store::META_FILE);
-    let read = tokio::task::spawn_blocking(move || {
-        let text = std::fs::read_to_string(path).ok()?;
-        serde_json::from_str::<proto::ProfileMeta>(&text)
-            .ok()?
-            .project
-    });
-    read.await.ok().flatten()
-}
-
-/// The call's `role_route` record with no run, `distill/<queued>/<n>`, appended once
-/// to the repository's `history.jsonl` on `spawn_blocking`, as `record_run_name`'s.
-async fn record_route(
-    repo: &Path,
-    queued: &QueuedLine,
-    n: u32,
-    (routed, decision): (&Routed, &Decision),
-    at: u64,
-) {
-    use crate::run::orch::roles;
-    let session = format!("{}/{n}", queued.record_id);
-    let label = crate::decider::DeciderKind::Distill.label();
-    let tasks: Vec<String> = queued.task_id.iter().cloned().collect();
-    let input = (RoleRoutingInput::default(), at);
-    let mut record = roles::decider_routed(None, (session.as_str(), label), &tasks, routed, input);
-    let (outcome, result) = roles::decider_outcome(decision);
-    roles::finish(&mut record, outcome, result);
-    let path = repo.join(crate::run::engine::HISTORY_FILE);
-    let line = HistoryLine::RoleRoute(record);
-    let written =
-        tokio::task::spawn_blocking(move || crate::run::history_io::append_once(&path, &line))
-            .await;
-    if !matches!(written, Ok(Ok(_))) {
-        tracing::warn!("lessons: the distill call's history record was not written");
-    }
-}
+#[path = "service_route.rs"]
+mod route;
+use route::{project_of, record_route};
 
 #[cfg(test)]
 #[path = "service_tests.rs"]
