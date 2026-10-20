@@ -30,12 +30,19 @@ use super::service::ProfileService;
 pub(super) struct TailSeam {
     pub(super) bound: Option<Duration>,
     pub(super) parked: usize,
-    /// When set, `after_ready` panics: a detection's tail panicking after `Ready`.
+    /// The panic seams (`tests_ready_panic.rs`). `after_ready` panics: a detection's
+    /// tail panicking after `Ready`.
     pub(super) panic_after_ready: bool,
+    /// `save_if_current` panics in its `ready_gap`: a detection's first save there is
+    /// `advance(Scouting)`, before any agent starts.
+    pub(super) panic_in_gap: bool,
+    /// `verify_row_edit` panics after its verification.
+    pub(super) panic_in_row_edit: bool,
 }
 
 /// One proposal's registration, ended by `unregister` when dropped: at the end of the
-/// background work, after `end` and `unmark`, or during a panic's unwind, or when the
+/// background work (`detect_in_background`, `verify_in_background` after `end` and
+/// `unmark`; `verify_row_edit` under `writes`), or during a panic's unwind, or when the
 /// task is dropped or aborted. `unregister` removes the entry only while `generation`
 /// still owns it, so a newer registration is never removed. `Drop` takes only the sync
 /// table lock (`daemon::lock`, which recovers from poisoning) and awaits nothing.
@@ -125,15 +132,13 @@ impl ProfileService {
     #[cfg(not(test))]
     fn parked(&self) {}
 
-    /// The panic seam (`tests_ready_panic.rs`), at the start of `after_ready`.
+    /// A panic seam (`TailSeam`'s `panic_*` flags): panics when the test set `at`'s.
+    /// The seam's lock is released first, so it is never poisoned.
     #[cfg(test)]
-    pub(super) fn panic_after_ready(&self) {
-        let panics = crate::lock(&self.tail_seam).panic_after_ready;
-        assert!(!panics, "the test panicked this detection after Ready");
+    pub(super) fn panic_seam(&self, at: fn(&TailSeam) -> bool) {
+        let panics = at(&crate::lock(&self.tail_seam));
+        assert!(!panics, "the test panicked this work at its seam");
     }
-
-    #[cfg(not(test))]
-    pub(super) fn panic_after_ready(&self) {}
 
     fn tail_bound(&self) -> Duration {
         #[cfg(test)]

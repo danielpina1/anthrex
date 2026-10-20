@@ -26,6 +26,7 @@ use super::row_edit::{
 use super::service::{ProfileService, already_running, blocking};
 use super::service_requests::{LIVE_RUN, no_stored, ready_profile, unparseable};
 use super::service_run::{Job, confirm_record};
+use super::service_tail::Registration;
 use super::store::{self, Stored};
 use crate::run::driver::unix_now;
 
@@ -371,10 +372,13 @@ impl ProfileService {
     /// calls no `after_ready`: the proposal still needs **Use this**.
     pub(super) async fn verify_row_edit(self: Arc<Self>, job: Job, edited: RepoProfile) {
         let (project, generation) = (job.pre.project.clone(), job.generation);
+        let registration = Registration::new(&self, &project, generation);
         let verified = match self.mark(&project).await {
             Ok(()) => self.run_verification(&job, &edited).await,
             Err(stop) => Err(stop),
         };
+        #[cfg(test)]
+        self.panic_seam(|seam| seam.panic_in_row_edit);
         let confined = self.verify_confined();
         let outcome = proposal_outcome(&job, edited, verified, (unix_now(), confined));
         self.unmark(&project).await;
@@ -391,7 +395,8 @@ impl ProfileService {
                 Err(error) => tracing::warn!(%error, "could not save a row edit's outcome"),
             }
         }
-        self.unregister(&project, generation);
+        // Still under `writes`; on a panic the guard ends the registration all the same.
+        drop(registration);
     }
 
     /// Decision 19: a `Failed` row edit reverted. On the stored profile its `Edit`-origin

@@ -155,6 +155,7 @@ impl ProfileService {
             reached.notify_one();
             resume.notified().await;
         }
+        self.panic_seam(|seam| seam.panic_in_gap);
     }
 
     #[cfg(not(test))]
