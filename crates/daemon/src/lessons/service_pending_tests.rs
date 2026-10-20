@@ -89,7 +89,12 @@ async fn a_stalled_store_keeps_the_distilled_result_and_appends_it_once() {
     let repo = rig.repo("a");
     write(&repo, &[queued("r", super::T)]);
     let decide = stalling(&repo, rig.calls.clone());
-    let service = rig.start_seamed(20, (DeciderMode::Claude, None), decide, fast);
+    // Review m3: no give-up within the test's window, however slow its restore.
+    let patient = |t: &mut ServiceTiming| {
+        fast(t);
+        t.write_tries = 1000;
+    };
+    let service = rig.start_seamed(20, (DeciderMode::Claude, None), decide, patient);
     until("the pending result on disk", || pending(&repo).len() == 1).await;
     let record = &pending(&repo)[0];
     assert_eq!(record["queued"], "r/t1/distill");
@@ -195,6 +200,35 @@ async fn a_pending_result_already_in_the_store_is_not_appended_again() {
     until("the pending file removed", || !pending_path(&repo).exists()).await;
     passes(&service, 1).await;
     assert_eq!(std::fs::read(repo.join(LESSONS_FILE)).unwrap(), before);
+    assert_eq!(rig.calls(), 0);
+    service.stop();
+}
+
+/// Review m1: a stale snapshot of the pending file (a save that outlived its bound and
+/// renamed late) holds `distilled` for an entry the store already closed `gave_up`:
+/// the record is dropped, and the entry is never closed twice.
+#[tokio::test]
+async fn a_pending_result_of_an_entry_the_store_closed_is_dropped() {
+    let rig = Rig::new();
+    let repo = rig.repo("a");
+    let closed = LessonLine::GaveUp(proto::GaveUpLine {
+        v: proto::LESSONS_VERSION,
+        record_id: "r/t1/distill/gave_up".into(),
+        at: super::T,
+        queued: "r/t1/distill".into(),
+        reason: "the distilled result could not be written to the store after 5 tries: x".into(),
+    });
+    let tried = attempt("r", 1, super::T, None);
+    write(&repo, &[queued("r", super::T), tried.clone(), closed]);
+    write_pending(&repo, "r", &[tried, distilled("r", super::T)], 3);
+    let before = std::fs::read_to_string(repo.join(LESSONS_FILE)).unwrap();
+    let service = rig.start(20, DeciderMode::Claude);
+    until("the pending file removed", || !pending_path(&repo).exists()).await;
+    passes(&service, 1).await;
+    assert_eq!(
+        std::fs::read_to_string(repo.join(LESSONS_FILE)).unwrap(),
+        before
+    );
     assert_eq!(rig.calls(), 0);
     service.stop();
 }

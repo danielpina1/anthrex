@@ -20,8 +20,41 @@ fn a_file_that_does_not_parse_is_moved_aside() {
     std::fs::write(&path, b"{\"v\":1,\"records\":[").unwrap();
     assert_eq!(load_blocking(&path).unwrap(), Vec::new());
     assert!(!path.exists());
-    let aside = dir.path().join("lessons.pending.json.corrupt");
-    assert_eq!(std::fs::read(aside).unwrap(), b"{\"v\":1,\"records\":[");
+    let aside: Vec<_> = (std::fs::read_dir(dir.path()).unwrap().flatten())
+        .map(|e| e.path())
+        .filter(|p| {
+            p.to_string_lossy()
+                .contains("lessons.pending.json.corrupt.")
+        })
+        .collect();
+    assert_eq!(aside.len(), 1, "{aside:?}");
+    assert_eq!(std::fs::read(&aside[0]).unwrap(), b"{\"v\":1,\"records\":[");
+    // A second corrupt file does not overwrite the first.
+    std::fs::write(&path, b"no").unwrap();
+    assert_eq!(load_blocking(&path).unwrap(), Vec::new());
+    let count = (std::fs::read_dir(dir.path()).unwrap().flatten())
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with("lessons.pending.json.corrupt.")
+        })
+        .count();
+    assert_eq!(count, 2);
+}
+
+#[tokio::test]
+async fn a_save_never_makes_a_removed_repository_directory_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path().join("gone");
+    let record = super::PendingRecord {
+        queued: "r/t1/distill".into(),
+        lines: vec![],
+        tries: 0,
+        last_error: None,
+        gave_up: false,
+    };
+    super::save(&repo, vec![record]).await;
+    assert!(!repo.exists());
 }
 
 #[test]

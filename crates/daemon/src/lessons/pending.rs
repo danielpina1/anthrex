@@ -30,6 +30,7 @@ use common::bounds::LESSONS_READ_BOUND;
 use proto::LessonLine;
 use serde::{Deserialize, Serialize};
 
+use super::LESSONS_FILE;
 use super::store::{LessonLocks, append_once};
 
 /// The pending results' file in a repository's data directory.
@@ -125,9 +126,15 @@ impl PendingWrites {
             return Flushed::Wait(at);
         }
         while let Some(record) = state.records.first_mut() {
-            match append_lines(locks, repo, &record.lines).await {
-                Ok(()) => {
-                    tracing::info!("lessons: wrote the pending result of {}", record.queued);
+            match append_open(locks, repo, record).await {
+                Ok(written) => {
+                    let queued = &record.queued;
+                    match written {
+                        true => tracing::info!("lessons: wrote the pending result of {queued}"),
+                        false => tracing::info!(
+                            "lessons: dropped the pending result of {queued}: the store closes it"
+                        ),
+                    }
                     state.records.remove(0);
                     state.retry_at = None;
                     save(repo, state.records.clone()).await;
@@ -192,12 +199,36 @@ fn failed(record: &mut PendingRecord, error: &io::Error, (cap, now): (u32, u64))
     true
 }
 
-/// Each of `lines` appended once, in order; the first failure stops.
-async fn append_lines(locks: &LessonLocks, repo: &Path, lines: &[LessonLine]) -> io::Result<()> {
-    for line in lines {
+/// Each of `record`'s lines appended once, in order, the first failure stopping;
+/// false, appending nothing, when the store already closes its entry (a `distilled` or
+/// `gave_up` line of it that parses). Review m1: a save that outlived its bound can
+/// rename a stale snapshot in late, bringing back `distilled` for an entry closed
+/// `gave_up` since, and m2: a compaction drops a closed entry's day-old `attempt`, so
+/// its re-append would not be a no-op. The check reads the store under the bound, with
+/// no lock: only this worker writes an entry's closing lines.
+async fn append_open(locks: &LessonLocks, repo: &Path, record: &PendingRecord) -> io::Result<bool> {
+    let (path, queued) = (repo.join(LESSONS_FILE), record.queued.clone());
+    if bounded("the store's read", move || closes(&path, &queued)).await? {
+        return Ok(false);
+    }
+    for line in &record.lines {
         append_once(locks, repo, line.clone()).await?;
     }
-    Ok(())
+    Ok(true)
+}
+
+/// Whether the store at `path` holds a line that parses closing `queued`'s entry.
+/// Anything but a regular file is refused (`history_io::read_regular`). Blocking.
+fn closes(path: &Path, queued: &str) -> io::Result<bool> {
+    let Some(bytes) = crate::run::history_io::read_regular(path)? else {
+        return Ok(false);
+    };
+    let (lines, _) = super::fold::parse(&String::from_utf8_lossy(&bytes), "");
+    Ok(lines.iter().any(|l| match l {
+        LessonLine::Distilled(d) => d.queued == queued,
+        LessonLine::GaveUp(g) => g.queued == queued,
+        _ => false,
+    }))
 }
 
 /// `work` on `spawn_blocking` under [`LESSONS_READ_BOUND`]; past it, an error of kind
@@ -219,7 +250,7 @@ async fn bounded<T: Send + 'static>(
 }
 
 /// `repo`'s pending records; none without a file. A file that does not parse is
-/// moved aside (`.corrupt`), with a warning, and holds none.
+/// moved aside (`.corrupt.<unix nanos>`), with a warning, and holds none.
 async fn load(repo: &Path) -> io::Result<Vec<PendingRecord>> {
     let path = repo.join(PENDING_FILE);
     bounded("the pending results' read", move || load_blocking(&path)).await
@@ -233,7 +264,10 @@ fn load_blocking(path: &Path) -> io::Result<Vec<PendingRecord>> {
     match serde_json::from_slice::<PendingFile>(&bytes) {
         Ok(file) => Ok(file.records),
         Err(error) => {
-            let aside = path.with_extension("json.corrupt");
+            // Review m5: each corrupt file keeps its own name.
+            let nanos = (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH))
+                .map_or(0, |d| d.as_nanos());
+            let aside = path.with_extension(format!("json.corrupt.{nanos}"));
             tracing::warn!(
                 "lessons: {} does not parse ({error}); moved to {}",
                 path.display(),
@@ -252,10 +286,18 @@ async fn save(repo: &Path, records: Vec<PendingRecord>) {
     let shown = path.display().to_string();
     let saved = bounded("the pending results' write", move || {
         if records.is_empty() {
+            // Review m5: the removal is made durable, so a crash cannot bring it back.
             return match std::fs::remove_file(&path) {
-                Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
-                _ => Ok(()),
+                Ok(()) => crate::profile::store::sync_parent(&path),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(error),
             };
+        }
+        // Review m5: a repository data directory removed meanwhile is not made again
+        // (`write_atomic` would create it).
+        if !path.parent().is_some_and(Path::is_dir) {
+            let message = "the repository's data directory is gone";
+            return Err(io::Error::new(io::ErrorKind::NotFound, message));
         }
         let file = PendingFile {
             v: PENDING_VERSION,
