@@ -119,6 +119,11 @@ impl ProfileService {
             return false;
         }
         self.note_proposal(&record.project, Some(record));
+        self.set_ready(
+            &record.project,
+            generation,
+            record.state == ProposalState::Ready,
+        );
         self.ready_gap().await;
         let (dir, written, fail) = (self.repo_dir(&record.project), record.clone(), self.fails());
         let saved = blocking(move || {
@@ -136,6 +141,7 @@ impl ProfileService {
                 .ok()
                 .flatten();
             self.note_proposal(&record.project, kept.as_ref());
+            self.set_ready(&record.project, generation, false);
         }
         true
     }

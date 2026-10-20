@@ -99,6 +99,8 @@ pub(super) struct Active {
     /// Never sent on: dropped with this entry by `unregister`, which closes every
     /// receiver a request subscribed to wait for the tail (`service_tail.rs`).
     pub(super) done: tokio::sync::watch::Sender<()>,
+    /// Set by this generation's `save_if_current` of `Ready` (`service_tail.rs`).
+    pub(super) ready: bool,
 }
 
 #[derive(Default)]
@@ -150,9 +152,9 @@ pub struct ProfileService {
     /// The rollback's seam: when set, `save_if_current`'s write fails.
     #[cfg(test)]
     pub(super) fail_save: std::sync::atomic::AtomicBool,
-    /// The tail wait's seam: when set, it replaces `PROFILE_READY_TAIL_BOUND`.
+    /// The tail wait's seam: its bound, and how many requests reached its await.
     #[cfg(test)]
-    pub(super) tail_bound: Mutex<Option<Duration>>,
+    pub(super) tail_seam: Mutex<super::service_tail::TailSeam>,
     /// Decision 6 and milestone 9.16 ruling C9: the drain's starter and hold probe.
     pub(super) starter: Mutex<super::service_queue::Starters>,
 }
@@ -239,7 +241,7 @@ impl ProfileService {
             #[cfg(test)]
             fail_save: std::sync::atomic::AtomicBool::new(false),
             #[cfg(test)]
-            tail_bound: Mutex::new(None),
+            tail_seam: Mutex::default(),
             starter: Mutex::default(),
         })
     }
@@ -391,6 +393,7 @@ impl ProfileService {
                     ..CheckCounter::default()
                 }),
                 done: tokio::sync::watch::Sender::new(()),
+                ready: false,
             },
         );
         Some((generation, token))
