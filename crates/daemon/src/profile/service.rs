@@ -96,6 +96,9 @@ pub(super) struct Active {
     pub(super) scout_id: Option<String>,
     /// Milestone 9.10 decision 10: its verification's progress.
     pub(super) counter: Arc<CheckCounter>,
+    /// Never sent on: dropped with this entry by `unregister`, which closes every
+    /// receiver a request subscribed to wait for the tail (`service_tail.rs`).
+    pub(super) done: tokio::sync::watch::Sender<()>,
 }
 
 #[derive(Default)]
@@ -147,6 +150,9 @@ pub struct ProfileService {
     /// The rollback's seam: when set, `save_if_current`'s write fails.
     #[cfg(test)]
     pub(super) fail_save: std::sync::atomic::AtomicBool,
+    /// The tail wait's seam: when set, it replaces `PROFILE_READY_TAIL_BOUND`.
+    #[cfg(test)]
+    pub(super) tail_bound: Mutex<Option<Duration>>,
     /// Decision 6 and milestone 9.16 ruling C9: the drain's starter and hold probe.
     pub(super) starter: Mutex<super::service_queue::Starters>,
 }
@@ -232,6 +238,8 @@ impl ProfileService {
             ready_gap: Mutex::new(None),
             #[cfg(test)]
             fail_save: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(test)]
+            tail_bound: Mutex::new(None),
             starter: Mutex::default(),
         })
     }
@@ -382,6 +390,7 @@ impl ProfileService {
                     ticks: self.progress_ticks.clone(),
                     ..CheckCounter::default()
                 }),
+                done: tokio::sync::watch::Sender::new(()),
             },
         );
         Some((generation, token))

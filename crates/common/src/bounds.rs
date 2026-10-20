@@ -42,6 +42,13 @@ const _: () = assert!(LESSONS_START_BOUND.as_secs() <= TUNING_START_BOUND.as_sec
 /// (`docs/timing-budgets.md`).
 pub const LESSONS_READ_BOUND: Duration = Duration::from_secs(30);
 
+/// How long `profile confirm` (Use this), `profile detect` and `profile edit` wait for a
+/// detection that has already published `Ready` to end its registration (its tail:
+/// `after_ready`, then `unmark`'s file work on `spawn_blocking`, a few milliseconds when
+/// idle). Past it they refuse as before, with `already_running`'s text (the daemon's
+/// `profile::service_tail`). A detection that is not yet `Ready` is refused at once.
+pub const PROFILE_READY_TAIL_BOUND: Duration = Duration::from_secs(5);
+
 /// Milestone 9.18 decision 11: how long `lessons graph`'s profile fallback may walk the
 /// checkout for its module directories; past it the graph has no modules (the daemon's
 /// `run::driver::lessons_requests::modules_at`). It is checked between `read_dir`

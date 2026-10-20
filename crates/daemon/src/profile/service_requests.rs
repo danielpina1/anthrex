@@ -81,7 +81,9 @@ impl ProfileService {
     }
 
     /// Refuses when work for `project` runs (or a rejected one still cleans up).
+    /// A detection that already published `Ready` is waited for first (`service_tail.rs`).
     pub(super) async fn refuse_if_running(&self, project: &Path) -> Result<(), String> {
+        self.wait_ready_tail(project).await;
         let stopping_now = crate::lock(&self.table)
             .active
             .get(project)
@@ -249,6 +251,8 @@ impl ProfileService {
         shown: Option<String>,
     ) -> Result<ProfileReply, String> {
         let project = self.project_of(dir).await?;
+        // Before `writes`: the tail it waits for takes them (`service_tail.rs`).
+        self.wait_ready_tail(&project).await;
         let _writes = self.hold_writes(&project).await;
         let active = crate::lock(&self.table).active.contains_key(&project);
         if active {
