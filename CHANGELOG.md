@@ -221,6 +221,15 @@ your runs before downgrading below 0.2.0.
 
 ### Fixed
 
+- **A distilled lesson the store could not take is no longer lost.** When the distill
+  call answered but `lessons.jsonl` could not be written (its read timed out, it was
+  not a regular file, the disk was full), the answer, already paid for, was dropped
+  and the entry was distilled again later. The worker now keeps the answer in
+  `lessons.pending.json` beside the store before it appends it, appends it from there
+  (each line once, so a retry never writes it twice), and serves that repository
+  nothing else until it is written. A daemon restart keeps it. A failed write is
+  retried after 30 s, doubling; after five tries the entry is closed `gave_up` (`the
+  distilled result could not be written to the store after 5 tries: …`).
 - **A host sleep no longer stalls an open turn or delivers into it.** Across a laptop
   sleep the wall clock jumped, so the stall watchdog interrupted an open worker turn
   and the outbox delivered a message mid-turn (against decision 42), and the minutes
