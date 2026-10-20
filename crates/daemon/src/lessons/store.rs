@@ -251,7 +251,8 @@ pub async fn compact_locked(locks: &LessonLocks, repo_dir: &Path, now: u64) -> O
 
 /// PR #80's review, item 1: removes every crashed compaction's temporary file in
 /// `repo_dir` (`lessons.jsonl.<pid>.<n>.tmp`, `write_atomic`'s name for the store; a
-/// file of exactly that shape, nothing else). The caller holds the repository's
+/// file of exactly that shape, nothing else), and every crashed write's of the
+/// pending results' file. The caller holds the repository's
 /// [`LessonLocks`] entry, under which no rewrite is in flight, so every such file is a
 /// crashed one's. It runs before each compaction, so a worker's start sweeps before
 /// compaction can run again. Blocking. A missing directory has nothing to sweep.
@@ -275,10 +276,13 @@ fn sweep_rewrites(repo_dir: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Whether `name` is `lessons.jsonl.<pid>.<n>.tmp`, both numbers decimal.
+/// Whether `name` is `lessons.jsonl.<pid>.<n>.tmp`, both numbers decimal, or the same
+/// shape of the pending results' file (`lessons.pending.json`, written by the worker
+/// that compacts, between its passes: `super::pending`).
 fn is_rewrite_tmp(name: &str) -> bool {
     let decimal = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
     let Some(middle) = (name.strip_prefix(LESSONS_FILE))
+        .or_else(|| name.strip_prefix(super::pending::PENDING_FILE))
         .and_then(|rest| rest.strip_prefix('.'))
         .and_then(|rest| rest.strip_suffix(".tmp"))
     else {
