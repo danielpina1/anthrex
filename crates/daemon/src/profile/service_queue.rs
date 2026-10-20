@@ -298,6 +298,7 @@ impl ProfileService {
     /// stores it, provided verification dropped nothing; otherwise the review alert is
     /// raised as for any ready proposal (nothing to do here).
     pub(super) async fn after_ready(self: &Arc<Self>, project: &Path) {
+        self.panic_after_ready();
         if !self.queue_of(project).goals.iter().any(|goal| goal.yes) {
             return;
         }

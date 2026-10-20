@@ -9,8 +9,13 @@
 //! `Ready` proposal is a review proposal, which `edit` refuses earlier
 //! (`review_waiting`), so in a detection's tail only `confirm` and `detect` wait; `edit`
 //! waits only in the tail of an `Edit`-origin proposal's verification.
+//!
+//! The registration ends through [`Registration`], a drop guard, so a panic anywhere in
+//! the background work (or the task dropped or aborted) still ends it: before, the
+//! `Active` entry stayed, and every later `confirm` or `detect` waited out the bound.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use common::bounds::PROFILE_READY_TAIL_BOUND;
@@ -25,6 +30,41 @@ use super::service::ProfileService;
 pub(super) struct TailSeam {
     pub(super) bound: Option<Duration>,
     pub(super) parked: usize,
+    /// When set, `after_ready` panics: a detection's tail panicking after `Ready`.
+    pub(super) panic_after_ready: bool,
+}
+
+/// One proposal's registration, ended by `unregister` when dropped: at the end of the
+/// background work, after `end` and `unmark`, or during a panic's unwind, or when the
+/// task is dropped or aborted. `unregister` removes the entry only while `generation`
+/// still owns it, so a newer registration is never removed. `Drop` takes only the sync
+/// table lock (`daemon::lock`, which recovers from poisoning) and awaits nothing.
+///
+/// A panic skips `end` and `unmark`, which are async. What it leaves: `proposal.json` as
+/// the last save wrote it (after `Ready`, a usable `Ready` proposal), and the detection
+/// marker with any checkout the work had not discarded. The next `detect` rewrites the
+/// marker and discards leftover checkouts, `reject` cleans both, and a restart salvages
+/// them and fails a proposal left in progress.
+pub(super) struct Registration {
+    service: Arc<ProfileService>,
+    project: PathBuf,
+    generation: u64,
+}
+
+impl Registration {
+    pub(super) fn new(service: &Arc<ProfileService>, project: &Path, generation: u64) -> Self {
+        Registration {
+            service: service.clone(),
+            project: project.to_path_buf(),
+            generation,
+        }
+    }
+}
+
+impl Drop for Registration {
+    fn drop(&mut self) {
+        self.service.unregister(&self.project, self.generation);
+    }
 }
 
 impl ProfileService {
@@ -84,6 +124,16 @@ impl ProfileService {
 
     #[cfg(not(test))]
     fn parked(&self) {}
+
+    /// The panic seam (`tests_ready_panic.rs`), at the start of `after_ready`.
+    #[cfg(test)]
+    pub(super) fn panic_after_ready(&self) {
+        let panics = crate::lock(&self.tail_seam).panic_after_ready;
+        assert!(!panics, "the test panicked this detection after Ready");
+    }
+
+    #[cfg(not(test))]
+    pub(super) fn panic_after_ready(&self) {}
 
     fn tail_bound(&self) -> Duration {
         #[cfg(test)]
