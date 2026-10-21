@@ -16,6 +16,12 @@ release is a pre-release and any release may change behaviour or the protocol.
   detection to finish. `profile edit` still refuses a detection's ready proposal as
   one waiting for review; it waits the same way only right after an edit's own
   verification is ready. A detection still at work is refused at once, as before.
+- **A detection that fails unexpectedly no longer blocks its project.** If a
+  detection's background work, or the check of a row edit on its proposal, panicked,
+  it stayed registered as running until the daemon restarted, so every `profile
+  detect` and **Use this** for that project was refused, even after `profile reject`,
+  and after a 5 s wait once the proposal was ready. Its registration now ends on every
+  exit, a panic included.
 
 ## [0.3.0] — 2026-10-20
 

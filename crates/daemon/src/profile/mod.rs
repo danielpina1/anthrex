@@ -141,6 +141,8 @@ mod tests_ready;
 #[cfg(test)]
 mod tests_ready_gap;
 #[cfg(test)]
+mod tests_ready_panic;
+#[cfg(test)]
 mod tests_ready_tail;
 #[cfg(test)]
 mod tests_tiers;

@@ -21,6 +21,7 @@ use tokio_util::sync::CancellationToken;
 use super::proposal::{apply_verification, from_findings};
 use super::row_edit::settle_row_edit;
 use super::service::{ProfileService, blocking, next_scout_secs};
+use super::service_tail::Registration;
 use super::store;
 use super::verify::{self, VerifyJob};
 use crate::headless::codex_guard::GuardEntry;
@@ -154,6 +155,7 @@ impl ProfileService {
             reached.notify_one();
             resume.notified().await;
         }
+        self.panic_seam(|seam| seam.panic_in_gap);
     }
 
     #[cfg(not(test))]
@@ -177,9 +179,11 @@ impl ProfileService {
         !job.token.is_cancelled() && self.save_if_current(job.generation, &job.record).await
     }
 
-    /// Detection end to end (decision 8), then its registration ends.
+    /// Detection end to end (decision 8), then its registration ends, on a panic too
+    /// ([`Registration`]).
     pub(super) async fn detect_in_background(self: Arc<Self>, mut job: Job) {
         let (project, generation) = (job.pre.project.clone(), job.generation);
+        let registration = Registration::new(&self, &project, generation);
         let stop = match self.mark(&project).await {
             Ok(()) => match self.scout_phase(&mut job).await {
                 Ok(proposed) => self.verify_phase(&mut job, proposed).await,
@@ -189,7 +193,7 @@ impl ProfileService {
         };
         self.end(&mut job, stop).await;
         self.unmark(&project).await;
-        self.unregister(&project, generation);
+        drop(registration);
     }
 
     /// The detection marker (`store::DETECTION_FILE`), before any checkout is made: a
@@ -233,6 +237,7 @@ impl ProfileService {
     /// An edit's verification (decision 10): no scout, straight to `Verifying`.
     pub(super) async fn verify_in_background(self: Arc<Self>, mut job: Job) {
         let (project, generation) = (job.pre.project.clone(), job.generation);
+        let registration = Registration::new(&self, &project, generation);
         let proposed = job.record.proposed.clone().unwrap_or_default();
         let stop = match self.mark(&project).await {
             Ok(()) => self.verify_phase(&mut job, proposed).await,
@@ -240,7 +245,7 @@ impl ProfileService {
         };
         self.end(&mut job, stop).await;
         self.unmark(&project).await;
-        self.unregister(&project, generation);
+        drop(registration);
     }
 
     async fn end(&self, job: &mut Job, stop: Result<(), Stop>) {
