@@ -7,6 +7,16 @@ release is a pre-release and any release may change behaviour or the protocol.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Use this right after a detection is ready.** A detection publishes its ready
+  proposal a few milliseconds before it stops counting as running. `profile confirm`
+  (the card's **Use this**) and `profile detect` sent in that window were refused with
+  "detection is already running ... (state ready)". They now wait up to 5 s for the
+  detection to finish. `profile edit` still refuses a detection's ready proposal as
+  one waiting for review; it waits the same way only right after an edit's own
+  verification is ready. A detection still at work is refused at once, as before.
+
 ## [0.3.0] — 2026-10-20
 
 The protocol version is now 26 (22 for milestone 9.13's `OrchestratorInfo.untrusted`,

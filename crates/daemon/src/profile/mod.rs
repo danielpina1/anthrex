@@ -36,6 +36,7 @@ mod service_requests;
 mod service_restore;
 pub mod service_run;
 pub mod service_start;
+mod service_tail;
 pub mod store;
 pub mod verify;
 mod verify_steps;
@@ -139,6 +140,8 @@ mod tests_queue_service;
 mod tests_ready;
 #[cfg(test)]
 mod tests_ready_gap;
+#[cfg(test)]
+mod tests_ready_tail;
 #[cfg(test)]
 mod tests_tiers;
 #[cfg(test)]
